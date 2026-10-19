@@ -2,7 +2,7 @@
 
 Curso de fundamentos matemáticos y computacionales de los grandes modelos de lenguaje, en español. Parte del nivel de primer curso de ingeniería y llega hasta el preentrenamiento a escala, el ajuste a preferencias, los agentes y la interpretabilidad.
 
-**Campus web:** CAMPUS_URL
+**Campus web:** https://nava98.github.io/anatomia-de-un-llm/
 
 ## Contenido
 
