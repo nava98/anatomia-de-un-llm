@@ -1,0 +1,112 @@
+% =====================================================================
+\chapter{Multimodalidad: imágenes y audio como tokens}
+\label{tema:6}
+% =====================================================================
+
+Un Transformer opera sobre secuencias de vectores de dimensión $d$ y no depende de cómo se hayan obtenido. Para que procese imágenes o audio basta con una aplicación que convierta la señal en una secuencia de vectores, el análogo de la tabla de \emph{embeddings} para el texto. Este tema estudia las dos construcciones más citadas: el Vision Transformer, que divide la imagen en parches y proyecta cada uno linealmente, y los codificadores de audio, que parten de un espectrograma o de un códec neuronal que produce tokens discretos. Se sigue a Dosovitskiy \emph{et al.}~\cite[§3.1]{vit}, la §11.8 de Zhang \emph{et al.}~\cite{d2l}, a Radford \emph{et al.}~\cite[§2.1 y §2.2]{whisper} y a Zeghidour \emph{et al.}~\cite{soundstream}, junto con el informe técnico de Gemini~1.5~\cite[§3.1]{gemini15}.
+
+\section{El Vision Transformer}
+
+\begin{definicion}[Incrustación por parches]\label{def:vit}
+Sea una imagen $X\in\R^{H_{\mathrm{img}}\times W_{\mathrm{img}}\times C_{\mathrm{in}}}$ y sea $P$ un divisor de $H_{\mathrm{img}}$ y de $W_{\mathrm{img}}$. Se divide la imagen en $N_p=H_{\mathrm{img}}W_{\mathrm{img}}/P^{2}$ parches de $P\times P$ píxeles, se aplana cada uno en un vector $x_p^{(k)}\in\R^{1\times P^{2}C_{\mathrm{in}}}$ y se define
+\[
+z_0=\bigl[x_{\mathrm{clase}};\ x_p^{(1)}E;\ x_p^{(2)}E;\ \dots;\ x_p^{(N_p)}E\bigr]+E_{\mathrm{pos}},
+\]
+con $E\in\R^{P^{2}C_{\mathrm{in}}\times d}$, un vector aprendido $x_{\mathrm{clase}}\in\R^{1\times d}$ y posiciones aprendidas $E_{\mathrm{pos}}\in\R^{(N_p+1)\times d}$~\cite[§3.1, ec.~1]{vit}. La secuencia $z_0$, de $N_p+1$ filas, entra en un Transformer codificador.
+\end{definicion}
+
+\begin{proposicion}[Tokens y coste de un ViT]\label{prop:vit}
+Con la notación de la \cref{def:vit}:
+\begin{enumerate}
+  \item la proyección $E$ tiene $P^{2}C_{\mathrm{in}}d$ parámetros, independientemente del tamaño de la imagen;
+  \item si el lado de la imagen se multiplica por $\kappa$ con $P$ fijo, el número de parches se multiplica por $\kappa^{2}$, el coste de las capas lineales de cada bloque por unos $\kappa^{2}$ y el de los productos de la atención por unos $\kappa^{4}$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $E$ tiene $P^{2}C_{\mathrm{in}}$ filas y $d$ columnas. (ii) $N_p'=(\kappa H_{\mathrm{img}})(\kappa W_{\mathrm{img}})/P^{2}=\kappa^{2}N_p$. Las capas lineales cuestan un número fijo de FLOPs por token, luego escalan con $N_p$; los productos $QK\T$ y por $V$ cuestan $O(N_p^{2}d)$ y escalan con $N_p^{2}$. Las aproximaciones se deben al token de clase, que añade una fila más.
+\end{proof}
+
+\begin{table}[ht]
+\centering\small
+\caption{Número de parches y dimensión de cada parche aplanado para imágenes RGB ($C_{\mathrm{in}}=3$).}\label{tab:vit}
+\begin{tabular}{@{}cccc@{}}
+\toprule
+Imagen & Parche & $N_p$ & $P^{2}C_{\mathrm{in}}$ \\
+\midrule
+$224\times 224$ & $16\times 16$ & $14^{2}=196$ & 768 \\
+$384\times 384$ & $16\times 16$ & $24^{2}=576$ & 768 \\
+$224\times 224$ & $32\times 32$ & $7^{2}=49$ & 3072 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El modelo ViT-Base tiene 12 capas, $d=768$, un MLP de dimensión 3072 y 12 cabezas, con unos $8{,}6\cdot 10^{7}$ parámetros~\cite[tabla~1]{vit}. Con parches de 16 y una imagen de $224\times 224$, la secuencia tiene $196+1=197$ tokens y $E$ tiene $768\cdot 768=589\,824$ parámetros.
+
+\begin{observacion}[Parches y convoluciones]
+Aplicar $E$ a cada parche es lo mismo que aplicar una convolución con $d$ filtros de tamaño $P\times P$ y paso $P$: cada filtro es una columna de $E$ reordenada como un tensor $P\times P\times C_{\mathrm{in}}$, y el paso igual al tamaño hace que los parches no se solapen. Es la forma en que suele implementarse.
+\end{observacion}
+
+\section{Audio}
+
+El audio es una señal unidimensional muestreada a miles de muestras por segundo: a $16$~kHz, treinta segundos son $480\,000$ muestras, demasiadas para usarlas como tokens. Hay dos formas habituales de reducirlas.
+
+\begin{ejemplo}[El codificador de Whisper]\label{ej:whisper}
+Whisper remuestrea el audio a $16$~kHz y lo divide en fragmentos de $30$~s~\cite[§2.1]{whisper}. Sobre cada fragmento calcula un espectrograma log-Mel de 80 canales con ventanas de $25$~ms y desplazamiento de $10$~ms, lo que da $30/0{,}01=3000$ vectores de dimensión~80. Dos convoluciones unidimensionales de anchura~3 con activación GELU, la segunda con paso~2, reducen la secuencia a $1500$ vectores, a los que se suman posiciones sinusoidales antes de entrar en el codificador Transformer~\cite[§2.2]{whisper}.
+\end{ejemplo}
+
+La segunda vía convierte el audio en enteros. Un \emph{códec neuronal} como SoundStream~\cite{soundstream} o EnCodec~\cite{encodec} consta de un codificador convolucional que produce un vector por cada fotograma de unos milisegundos, un cuantizador que sustituye ese vector por índices de diccionarios finitos y un decodificador que reconstruye la onda. SoundStream usa un cuantizador vectorial residual: el primer diccionario aproxima el vector, el segundo cuantiza el error del primero, y así sucesivamente.
+
+\begin{proposicion}[Tasa de un cuantizador vectorial residual]\label{prop:rvq}
+Un códec que produce $\nu$ fotogramas por segundo y cuantiza cada uno con $N_q$ diccionarios de $K$ entradas genera $\nu N_q$ tokens por segundo y una tasa de $\nu N_q\log_2K$ bits por segundo.
+\end{proposicion}
+
+\begin{proof}
+Cada fotograma se representa por $N_q$ índices, uno por diccionario, y cada índice elige entre $K$ valores, lo que requiere $\log_2K$ bits.
+\end{proof}
+
+Con valores ilustrativos, $\nu=50$~Hz, $N_q=8$ y $K=1024$, se obtienen 400 tokens por segundo y $4$~kbit/s, dentro del intervalo de 3 a 18~kbit/s que cubre SoundStream~\cite{soundstream}. Con estos tokens, el audio se modela con el mismo objetivo de predicción del siguiente token del módulo~1.
+
+\section{Fusión con el modelo de lenguaje}
+
+Hay dos formas de unir los vectores de otra modalidad con los de texto. En la \emph{fusión con adaptador}, un codificador separado (un ViT, por ejemplo) produce vectores que una proyección lineal o un pequeño MLP lleva a la dimensión $d$ del modelo de lenguaje, y se insertan en la secuencia de texto. En la \emph{fusión nativa}, el modelo se entrena desde el principio con secuencias en las que se intercalan tokens de varias modalidades.
+
+\begin{observacion}[Lo que es público]
+El informe de Gemini~1.5 afirma que el modelo es multimodal de forma nativa y admite datos de distintas modalidades intercalados en una misma secuencia: texto, imágenes, audio y vídeo, con ejemplos de 107 horas de audio y 10,5 horas de vídeo a un fotograma por segundo~\cite[§3.1]{gemini15}. No describe sus codificadores. Claude y las versiones de Grok posteriores a Grok-1 aceptan imágenes según la documentación pública de sus productos, pero sus codificadores tampoco son públicos; Grok-1, el único con pesos publicados, es un modelo de texto~\cite{grok1}. Lo que sí puede afirmarse en general es que, sea cual sea el codificador, las demás modalidades acaban como vectores en el mismo flujo residual que el texto.
+\end{observacion}
+
+\begin{lecturas}
+\item Dosovitskiy \emph{et al.}~\cite{vit}, §3.1 «Vision Transformer (ViT)», ecuaciones~1 a~4 y tabla~1.
+\item Zhang \emph{et al.}~\cite{d2l}, §11.8 «Transformers for Vision».
+\item Radford \emph{et al.}~\cite{whisper}, §2.1 «Data Processing» y §2.2 «Model».
+\item Zeghidour \emph{et al.}~\cite{soundstream} y Défossez \emph{et al.}~\cite{encodec}: códecs neuronales de audio.
+\item Seminario CS25~\cite{cs25}, sesión de V.~Lin sobre modelos multimodales nativos; temario de CMU 11-711~\cite{cmu11711}, bloque de multimodalidad.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-parche}
+¿Qué se gana y qué se pierde al pasar de parches de $16\times 16$ a parches de $32\times 32$ en una imagen de $224\times 224$? Cuantifique la variación del número de tokens y del coste de la atención.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-res}
+¿Cuántos parches produce un ViT con parches de 16 para imágenes de $224\times 224$ y de $384\times 384$? ¿Por qué factor crecen el coste de las capas lineales y el de la atención?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-d2l}
+Un ViT con parches de $16\times 16$, token de clase, $d=512$ y MLP de dimensión 2048 recibe imágenes de $96\times 96$ o de $192\times 192$. (a) Cuente los tokens $n$ en cada caso. (b) Estime los FLOPs por bloque de las capas lineales, $n(8d^{2}+4d\,\dff)$, y de la atención, $4n^{2}d$. (c) ¿Cuánto crece el coste por bloque al duplicar el lado y qué fracción corresponde a la atención en cada caso? (d) ¿A partir de qué $n$ la atención costaría más que las capas lineales?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §11.8 «Transformers for Vision», ejercicio~1 (efecto del tamaño de la imagen en el coste).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-whisper}
+Con los datos del \cref{ej:whisper}: (a) ¿cuántas muestras tiene un fragmento? (b) ¿Cuántos vectores salen del espectrograma y cuántos de las convoluciones? (c) ¿Cuántos vectores procesa el codificador para una grabación de 10 minutos? (d) Compare con un códec de $\nu=50$~Hz y $N_q=8$ diccionarios que se modelase token a token.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-vitb}
+Para ViT-Base con parches de 16 sobre imágenes RGB de $224\times 224$, calcule los parámetros de $E$, de $E_{\mathrm{pos}}$ y del token de clase, y la fracción que suponen sobre los $8{,}6\cdot 10^{7}$ parámetros del modelo.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-conv}
+(a) Demuestre que la incrustación por parches de la \cref{def:vit} coincide con una convolución bidimensional con $d$ filtros de tamaño $P\times P\times C_{\mathrm{in}}$ y paso $P$. (b) Demuestre que una convolución de tamaño $P$ y paso $S\le P$ sobre una imagen de lado $\ell$, con $S$ divisor de $\ell-P$, produce $\bigl((\ell-P)/S+1\bigr)^{2}$ vectores, y evalúe el resultado con $\ell=224$, $P=16$ y $S=8$.
+\end{ejercicio}

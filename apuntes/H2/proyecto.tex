@@ -1,0 +1,63 @@
+% =====================================================================
+\chapter*{Proyecto de fase}
+\phantomsection\addcontentsline{toc}{chapter}{Proyecto de fase}
+\markboth{Proyecto de fase}{}
+\label{cap:proyecto}
+% =====================================================================
+
+\section*{Generador de nombres españoles con un perceptrón multicapa en PyTorch}
+
+\paragraph{Objetivo.} Construir un modelo de lenguaje de caracteres basado en un perceptrón multicapa, según el modelo de Bengio \emph{et al.}~\cite{bengio} estudiado en M09, §6.3, que supere en \emph{perplejidad de validación} al modelo de bigramas del módulo~1 con los mismos datos. El punto de partida es la clase \texttt{MLPCaracteres} de M10, §6.2. El proyecto consiste en mejorarla con las técnicas de los módulos~7 y~11 y en documentar los experimentos.
+
+\paragraph{Datos y protocolo.} Son fijos, para que todos los resultados sean comparables.
+\begin{itemize}[leftmargin=1.4em]
+  \item La lista de 316 nombres del cuaderno \texttt{M1\_bigramas.ipynb}, con el vocabulario de $\abs{\V}=28$ símbolos
+\[\texttt{.abcdefghijklmnñopqrstuvwxyz}\]
+en el que «\texttt{.}» marca el inicio y el fin de cada nombre.
+  \item Partición: \texttt{rng = np.random.default\_rng(7)} e \texttt{idx = rng.permutation(316)}. Los 47 primeros índices (15\,\%) forman el conjunto de validación y los 269 restantes, el de entrenamiento.
+  \item Perplejidad: $\PPL=\exp(\text{entropía cruzada media por carácter predicho})$, incluido el «\texttt{.}» final de cada nombre (M01, §5.1).
+  \item Línea base: modelo de bigramas con suavizado aditivo de parámetro $\alpha$ (M01, §3.3). Con esta partición, $\alpha=0{,}2$ da una perplejidad de validación de $12{,}42$, y $\alpha=1$, de $12{,}96$. Esta cifra debe reproducirse antes de cualquier otro experimento.
+\end{itemize}
+
+\paragraph{Entregables.}
+\begin{enumerate}[label=\arabic*.]
+  \item Un cuaderno \texttt{H2-proyecto.ipynb} que se ejecute en CPU de principio a fin en menos de 3 minutos, con semilla fija.
+  \item Un informe de dos páginas como máximo con la arquitectura y el número de parámetros, las curvas de pérdida de entrenamiento y validación, una tabla de experimentos, la perplejidad final frente a la línea base y 20 nombres generados.
+  \item Una celda que compruebe con \texttt{assert} que la perplejidad de validación del perceptrón es menor que la del modelo de bigramas.
+\end{enumerate}
+
+\paragraph{Pasos sugeridos.}
+\begin{enumerate}[label=\arabic*.]
+  \item Reproducir la línea base de bigramas y elegir $\alpha$ por validación (M08, §6.5).
+  \item Construir el conjunto de datos con un contexto de $B$ caracteres, rellenado con «\texttt{.}» al inicio. Con $B=3$ resultan 1885 ejemplos de entrenamiento y 321 de validación.
+  \item Partir de \texttt{MLPCaracteres} (\texttt{nn.Embedding}, \texttt{view}, \texttt{nn.Linear}, ReLU, \texttt{nn.Linear}) y usar \texttt{F.cross\_entropy} sobre los logits, que aplica la evaluación estable de log-sum-exp (M11, §6.3). Reproducir su perplejidad de validación de $10{,}31$ (descenso de gradiente con el lote completo, $\eta=0{,}5$, $\lambda=0{,}005$, 1000 pasos).
+  \item Vigilar la validación cada pocos pasos. Sin decaimiento de pesos, el modelo memoriza los 269 nombres: perplejidad de entrenamiento $3{,}76$ y de validación $30{,}73$ (M09, §6.4).
+  \item Regularizar y optimizar: dropout (M11, §4.1), decaimiento de pesos o AdamW (M07, §6.1 y §6.2), calendario coseno (M07, §6.3) y recorte del gradiente (M11, §4.2).
+  \item Barrer al menos $B\in\{2,3,4,5\}$ y dos valores de $H$. Repetir la mejor configuración con 3 semillas e informar de la media y la dispersión.
+  \item Generar nombres por muestreo con temperatura (M01, §4.3) y comentar cuáles son nuevos y cuáles están copiados del conjunto de entrenamiento.
+\end{enumerate}
+
+\paragraph{Referencia orientativa.} Con la receta de M10, §6.2, tres semillas dan perplejidades de $10{,}31$, $10{,}36$ y $10{,}37$. Basta añadir dropout de $0{,}3$ y alargar el contexto a $B=4$ (4724 parámetros) para bajar a valores entre $9{,}92$ y $10{,}07$, con media $9{,}99$; con $B=5$ se obtiene $9{,}89$ en una semilla. No es la única ruta: AdamW con minibatches de 128 ejemplos y decaimiento coseno también supera al modelo de bigramas. Con poca regularización, el sobreajuste aparece en unos cientos de pasos.
+
+\paragraph{Criterios de evaluación.} El proyecto se califica sobre 100 según la \cref{tab:criterios}.
+
+\begin{table}[h]
+\centering\small
+\caption{Criterios de evaluación del proyecto de fase.}\label{tab:criterios}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.3cm}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Criterio & Peso & Excelente & Suficiente & Insuficiente \\
+\midrule
+Línea base y protocolo & 15\,\% & Reproduce $12{,}42$, justifica $\alpha$ por validación y respeta la partición & Bigrama correcto con otro $\alpha$ razonable & Partición distinta o perplejidad mal calculada \\
+\addlinespace
+Modelo y código PyTorch & 25\,\% & \texttt{nn.Module} limpio, semilla fija, menos de 3 min, \texttt{model.eval()} y \texttt{torch.no\_grad()} al validar, sin fugas de validación & Funciona, pero con código repetido o lento & No se ejecuta o mezcla entrenamiento y validación \\
+\addlinespace
+Resultado frente al bigrama & 25\,\% & Perplejidad media $\le 10{,}1$ en 3 semillas (mejora la receta de M10, §6.2) & Supera al bigrama ($<12{,}42$) en la semilla entregada & No lo supera \\
+\addlinespace
+Experimentos y diagnóstico & 20\,\% & Barrido de $B$ y $H$, curvas, sobreajuste identificado y corregido, efecto de cada regularizador medido por separado & Una o dos variantes con curvas & Un único entrenamiento sin curvas \\
+\addlinespace
+Informe y muestras & 15\,\% & Claro, dos páginas como máximo, muestras comentadas (nuevas frente a copiadas) & Completo, pero sin análisis de las muestras & Faltan el informe o las muestras \\
+\bottomrule
+\end{tabularx}
+\end{table}

@@ -1,0 +1,180 @@
+% =====================================================================
+\chapter{Datos, ventanas y objetivo de entrenamiento}
+\label{tema:1}
+% =====================================================================
+
+Un modelo de lenguaje autorregresivo se entrena con una única secuencia larga de enteros, de la que se extraen ventanas de longitud fija. Este tema formaliza esa preparación de los datos, define la función que se minimiza (la entropía cruzada media sobre todas las posiciones de un lote) y demuestra tres propiedades de esa función que se usan durante todo el módulo: su gradiente respecto de los logits, su invariancia frente a traslaciones de los logits, que permite calcularla de forma estable, y su valor cuando la predicción es uniforme. Se sigue el §4.1 y el §5.1 de la tarea~1 de CS336~\cite{cs336}, el §9.3.3 de~\cite{d2l} y la clase~7 de CS224N~\cite{cs224n}.
+
+\section{El corpus como secuencia de tokens}
+
+\begin{definicion}[Corpus tokenizado]\label{def:corpus}
+Sea $\V$ un vocabulario de tamaño $K$, identificado con $\{0,1,\dots,K-1\}$. Un \emph{corpus tokenizado} es una secuencia $u_{1:n}=(u_1,\dots,u_n)\in\V^{n}$. Si el texto original está formado por varios documentos, se concatenan en una sola secuencia, separados por un token delimitador.
+\end{definicion}
+
+La concatenación es una decisión de ingeniería con una justificación precisa: todas las ventanas tienen la misma longitud y no hace falta rellenar con símbolos de relleno (\emph{padding}), que consumen cómputo sin aportar señal~\cite[§5.1]{cs336}. El precio es que una ventana puede cruzar la frontera entre dos documentos; el delimitador permite al modelo aprender que lo que sigue no depende de lo anterior.
+
+\begin{ejemplo}[El corpus de la práctica]\label{ej:corpus}
+El cuaderno del módulo genera 200 líneas de texto sintético en español con cuatro plantillas: partes del tiempo, recetas, diálogos y descripciones de objetos inventados. Por ejemplo:
+\begin{center}\small
+\begin{tabular}{@{}l@{}}
+\texttt{objeto. una taza blanca de barro. sirve para llevar libros.}\\
+\texttt{receta. asa calabaza con cebolla durante diez minutos. añade sal y sirve templado.}
+\end{tabular}
+\end{center}
+El corpus tiene $n=16\,066$ caracteres y $46$ caracteres distintos. Se tokeniza por caracteres: $\V$ es la lista ordenada de caracteres distintos, de modo que $K=46$, el salto de línea \nl\ es el token~$0$ y el espacio el token~$1$. Un tokenizador BPE (módulo~12) acortaría las secuencias, pero con un corpus tan pequeño apenas hay pares frecuentes que fusionar.
+\end{ejemplo}
+
+Un corpus sintético tiene una ventaja metodológica: se conoce el proceso que lo genera. Se sabe, por ejemplo, que tras «receta.» viene uno de seis verbos y que «un reloj» exige «negro» y no «negra». Esto permite juzgar qué ha aprendido el modelo y calcular la pérdida mínima alcanzable (\cref{tema:4}).
+
+\section{Ventanas de contexto y lotes}
+
+\begin{definicion}[Ventana de contexto]\label{def:ventana}
+Sea $T\ge 1$ la \emph{longitud de contexto}. Para cada $i\in\{1,\dots,n-T\}$, la \emph{ventana} que empieza en $i$ es el par
+\[
+x=(u_i,u_{i+1},\dots,u_{i+T-1}),\qquad y=(u_{i+1},u_{i+2},\dots,u_{i+T}),
+\]
+es decir, $y_t=x_{t+1}$ para $t<T$ e $y_T=u_{i+T}$. La secuencia $y$ es la \emph{ventana objetivo}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:ventanas}
+Un corpus de $n$ tokens tiene exactamente $n-T$ ventanas de longitud $T$, y cada una contiene $T$ problemas de predicción: predecir $y_t$ a partir del prefijo $x_{1:t}$, para $t=1,\dots,T$.
+\end{proposicion}
+
+\begin{proof}
+La ventana que empieza en $i$ necesita los tokens $u_i,\dots,u_{i+T}$, es decir, $T+1$ tokens consecutivos. Esto exige $i\ge 1$ e $i+T\le n$, luego $i\in\{1,\dots,n-T\}$, que tiene $n-T$ elementos. En la posición $t$, el contexto disponible es $x_{1:t}=u_{i:i+t-1}$ y el token que lo sigue en el corpus es $u_{i+t}=y_t$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:sal-y-sol}
+Con el texto «sal y sol\nl» ($n=10$) y $T=4$ hay $10-4=6$ ventanas:
+\begin{center}\small
+\begin{tabular}{@{}ccc@{\qquad}ccc@{}}
+\toprule
+Inicio & $x$ & $y$ & Inicio & $x$ & $y$ \\
+\midrule
+1 & \tok{sal\vs} & \tok{al\vs y} & 4 & \tok{\vs y\vs s} & \tok{y\vs so} \\
+2 & \tok{al\vs y} & \tok{l\vs y\vs} & 5 & \tok{y\vs so} & \tok{\vs sol} \\
+3 & \tok{l\vs y\vs} & \tok{\vs y\vs s} & 6 & \tok{\vs sol} & \tok{sol}\nl \\
+\bottomrule
+\end{tabular}
+\end{center}
+En la primera ventana el modelo debe predecir «a» tras «s», «l» tras «sa», el espacio tras «sal» e «y» tras «sal\vs». En total hay $6\cdot 4=24$ predicciones en un texto de 10 caracteres.
+\end{ejemplo}
+
+\begin{definicion}[Lote]\label{def:lote}
+Un \emph{lote} de tamaño $B$ es un par de matrices de enteros $X,Y\in\V^{B\times T}$ cuyas filas son $B$ ventanas, con inicios elegidos de forma independiente y uniforme en $\{1,\dots,n-T\}$. Un lote contiene $B\cdot T$ predicciones.
+\end{definicion}
+
+Con $B=T=32$, cada paso de entrenamiento ve $1024$ predicciones; en $800$ pasos son $819\,200$, unas $57$ veces los $14\,459$ tokens de entrenamiento del \cref{ej:corpus}. Con tan pocos datos es inevitable repetir; los grandes modelos, en cambio, ven cada token una vez o pocas veces (módulo~16).
+
+\begin{observacion}[Partición en entrenamiento y validación]\label{obs:particion}
+El conjunto de validación se obtiene cortando el corpus \emph{por posición}: el 90~\% inicial ($14\,459$ tokens) se usa para entrenar y el 10~\% final ($1\,607$ tokens) para validar. Si se eligieran ventanas al azar para cada conjunto, una ventana de validación podría solaparse con una de entrenamiento y la pérdida de validación subestimaría el error de generalización.
+\end{observacion}
+
+La alternativa al muestreo independiente de inicios es partir el corpus en trozos consecutivos sin solape, con un desplazamiento inicial aleatorio en cada época, como hace~\cite[§9.3.3]{d2l}. El \cref{eje:1-d2l} compara ambas estrategias.
+
+\section{La pérdida de entropía cruzada}
+
+En cada posición $t$ de cada ventana, el modelo devuelve un vector de \emph{logits} $z_t\in\R^{K}$ y la distribución predicha $p_t=\softmax(z_t)$, con $p_{t,j}=e^{z_{t,j}}/\sum_{a}e^{z_{t,a}}$.
+
+\begin{definicion}[Pérdida de entrenamiento]\label{def:perdida}
+La pérdida de una posición con objetivo $y\in\V$ y logits $z$ es
+\[
+\ell(z,y)=-\ln\softmax(z)_y.
+\]
+La pérdida de un lote es la media sobre sus $B\cdot T$ posiciones,
+\[
+\mathcal{L}(\theta)=\frac{1}{BT}\sum_{b=1}^{B}\sum_{t=1}^{T}\ell\bigl(z_{b,t}(\theta),\,Y_{b,t}\bigr),
+\]
+donde $z_{b,t}(\theta)$ son los logits que el modelo de parámetros $\theta$ produce en la posición $t$ de la fila $b$ a partir de $X_{b,1:t}$.
+\end{definicion}
+
+La pérdida $\ell$ es la entropía cruzada entre la distribución degenerada en $y$ y la distribución predicha~\cite[§4.1]{cs336}. Su media sobre el corpus es la estimación de máxima verosimilitud del módulo~1 aplicada a un modelo con parámetros compartidos: minimizar $\mathcal{L}$ equivale a maximizar $\sum\ln P_\theta(y_t\mid x_{1:t})$.
+
+\begin{definicion}[Perplejidad]\label{def:ppl}
+Si una secuencia de $m$ predicciones tiene pérdidas $\ell_1,\dots,\ell_m$, su \emph{perplejidad} es
+\[
+\PPL=\exp\Bigl(\frac1m\sum_{i=1}^{m}\ell_i\Bigr).
+\]
+\end{definicion}
+
+La perplejidad es el número de opciones equiprobables entre las que el modelo duda en media: un modelo uniforme sobre $K$ símbolos tiene perplejidad $K$. Es independiente de la base del logaritmo, porque $e^{\mathcal{L}}=2^{\mathcal{L}/\ln 2}$. En la práctica del módulo, el modelo de bigramas del módulo~1 llega a $2{,}035$ nats por carácter ($\PPL=7{,}65$) y el mini-GPT a $0{,}324$ ($\PPL=1{,}38$).
+
+\section{Gradiente y estabilidad numérica}
+
+\begin{proposicion}[Gradiente de la entropía cruzada]\label{prop:gradiente}
+Sea $p=\softmax(z)$. Para todo $i\in\V$,
+\[
+\frac{\partial\ell(z,y)}{\partial z_i}=p_i-\ind[i=y],
+\]
+es decir, $\nabla_z\ell=p-e_y$, donde $e_y$ es el vector \emph{one-hot} de $y$.
+\end{proposicion}
+
+\begin{proof}
+Por la definición de la softmax, $\ell(z,y)=-z_y+\ln\sum_{a}e^{z_a}$. La derivada del primer término respecto de $z_i$ es $-\ind[i=y]$. La del segundo es $e^{z_i}/\sum_a e^{z_a}=p_i$ por la regla de la cadena.
+\end{proof}
+
+\begin{ejemplo}\label{ej:gradiente}
+Sean $K=3$, $z=(2,1,0)$ y el objetivo $y$ el primero de los tres tokens: $\sum_a e^{z_a}=7{,}389+2{,}718+1=11{,}107$, luego $p=(0{,}6652;\allowbreak\,0{,}2447;\allowbreak\,0{,}0900)$, $\ell=-\ln 0{,}6652=0{,}4076$ y $\nabla_z\ell=(-0{,}3348;\allowbreak\,0{,}2447;\allowbreak\,0{,}0900)$. El gradiente sube el logit correcto y baja los demás en proporción a su probabilidad; sus componentes suman cero.
+\end{ejemplo}
+
+El gradiente de la \cref{prop:gradiente} es la única señal que recibe todo el mini-GPT: la retropropagación (módulo~10) la transporta desde los logits hasta los embeddings.
+
+\begin{proposicion}[Invariancia frente a traslaciones]\label{prop:traslacion}
+Para todo $c\in\R$, $\softmax(z+c\mathbf 1)=\softmax(z)$. En consecuencia, con $z^{\star}=\max_a z_a$,
+\[
+\ell(z,y)=-(z_y-z^{\star})+\ln\sum_{a}e^{\,z_a-z^{\star}},
+\]
+y todos los exponentes del segundo miembro son menores o iguales que~0.
+\end{proposicion}
+
+\begin{proof}
+$e^{z_j+c}/\sum_a e^{z_a+c}=e^{c}e^{z_j}/(e^{c}\sum_a e^{z_a})=\softmax(z)_j$. Tomando $c=-z^{\star}$ y aplicando $\ell=-\ln\softmax(z)_y$ se obtiene la fórmula, en la que $z_a-z^{\star}\le 0$.
+\end{proof}
+
+La fórmula estable evita el desbordamiento: en precisión simple el mayor número representable es unos $3{,}4\cdot 10^{38}\approx e^{88{,}7}$, de modo que $e^{1000}$ daría infinito y el cociente, un valor indefinido. Es la técnica \emph{log-sum-exp} del módulo~11, que CS336 exige en su implementación de la entropía cruzada~\cite[§4.1]{cs336}.
+
+\begin{proposicion}[Pérdida de la predicción uniforme]\label{prop:lnK}
+Si todos los logits de una posición son iguales, la pérdida vale $\ln K$ para cualquier objetivo.
+\end{proposicion}
+
+\begin{proof}
+Si $z=c\mathbf 1$, por la \cref{prop:traslacion} $\softmax(z)=\softmax(\mathbf 0)=(1/K,\dots,1/K)$, y $\ell=-\ln(1/K)=\ln K$.
+\end{proof}
+
+Con $K=46$, $\ln 46=3{,}829$ nats ($5{,}52$ bits). Una red recién inicializada con pesos pequeños produce logits casi iguales, y su pérdida inicial está cerca de ese valor; en la práctica del módulo el primer lote da $4{,}046$. Una pérdida inicial muy superior a $\ln K$ indica una inicialización defectuosa: el modelo está muy seguro de respuestas equivocadas.
+
+\begin{lecturas}
+\item Stanford CS336~\cite{cs336}, tarea~1, §4.1 «Cross-entropy loss» (ecuaciones 16--18) y §5.1 «Data Loader».
+\item Zhang \emph{et al.}~\cite{d2l}, §9.3.2 «Perplexity» y §9.3.3 «Partitioning Sequences».
+\item Stanford CS224N~\cite{cs224n}, clase~7 «Pretraining (Scaling, Systems, Data)».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.1.3 «Batch and Minibatch Algorithms».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-desplazada}
+¿Por qué la ventana objetivo $y$ es la ventana de entrada $x$ desplazada una posición? ¿Cuántas predicciones contiene un lote de forma $(B,T)$? Particularice para $B=T=32$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-hola}
+Con el texto «hola\nl» y $T=2$, escriba todas las ventanas $(x,y)$ y cuente las predicciones. ¿Por qué no hay una ventana que empiece en el cuarto carácter?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-d2l}
+Un corpus tiene $n=10$ tokens $u_1,\dots,u_{10}$ y se usan ventanas de $T=4$. (a) ¿Cuántas ventanas hay si cualquier inicio es válido? (b) Si en su lugar se corta el corpus en trozos consecutivos sin solape, empezando tras descartar los $k\in\{0,1,2,3\}$ primeros tokens, ¿cuántos trozos se obtienen con cada $k$? Si se elige $k$ al azar con probabilidad uniforme y después uno de los trozos de ese corte, también con probabilidad uniforme, ¿con qué probabilidad resulta elegida cada una de las ventanas de (a)? ¿Es uniforme este muestreo? ¿Qué procedimiento sí lo es? (c) ¿Qué problema aparecería si cada ejemplo tuviera que ser una frase completa, y cómo lo resuelve el corpus concatenado?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §9.3, ejercicios~4 y~5 (se fijan $n$ y $T$ y se pide el recuento explícito).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-estable}
+(a) Calcule $\ell(o,y)$ para $o=(1000,\,1001,\,999)$ con objetivo el primer componente, aplicando la \cref{prop:traslacion}. ¿Qué ocurriría al calcular $e^{1000}$ en precisión simple? (b) Una secuencia de 4 tokens tiene pérdidas $(0{,}5;\allowbreak\,1{,}2;\allowbreak\,0{,}1;\allowbreak\,2{,}0)$. Calcule su perplejidad.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §4.1, problema \emph{cross\_entropy} y ecuación~(18) (datos numéricos añadidos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-ppl}
+Un lote tiene pérdida media $0{,}7$ nats por carácter. Calcule su perplejidad y su pérdida en bits por carácter, y compruebe que la perplejidad no depende de la base.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-cabeza-cero}
+Demuestre que, si la capa de salida del modelo, $z=Wh+b$, se inicializa con $W=0$ y $b=0$, la pérdida inicial de cualquier lote es exactamente $\ln K$, sean cuales sean los demás parámetros. Demuestre además que, en ese punto, el gradiente de la pérdida respecto de $b$ es $\tfrac1K\mathbf 1-\hat\pi$, donde $\hat\pi$ es la frecuencia empírica de cada token entre los objetivos del lote, y explique qué aprende el sesgo en el primer paso de descenso de gradiente.
+\end{ejercicio}

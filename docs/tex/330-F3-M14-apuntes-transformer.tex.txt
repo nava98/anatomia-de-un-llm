@@ -1,0 +1,1818 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase III — Módulo 14
+%  El Transformer completo
+%  Compilar: latexmk -r ../latexmkrc M14-transformer.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 14}
+
+\hypersetup{pdftitle={Módulo 14. El Transformer completo},pdfauthor={Anatomía de un LLM}}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\uno}{\mathbf{1}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\RMS}{\operatorname{RMS}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+\newcommand{\Norm}{\operatorname{Norm}}
+\newcommand{\Attn}{\operatorname{Attn}}
+\newcommand{\MHA}{\operatorname{MHA}}
+\newcommand{\MLP}{\operatorname{MLP}}
+\newcommand{\FFN}{\operatorname{FFN}}
+\newcommand{\SwiGLU}{\operatorname{SwiGLU}}
+\newcommand{\SiLU}{\operatorname{SiLU}}
+\newcommand{\GELU}{\operatorname{GELU}}
+\newcommand{\ReLU}{\operatorname{ReLU}}
+\newcommand{\PE}{\operatorname{PE}}
+\newcommand{\RoPE}{\operatorname{RoPE}}
+\newcommand{\Real}{\operatorname{Re}}
+\newcommand{\Loss}{\mathcal{L}}
+\newcommand{\dff}{d_{\mathrm{ff}}}
+\newcommand{\nctx}{n_{\mathrm{ctx}}}
+\newcommand{\Wdown}{W_{\mathrm{d}}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase III \textperiodcentered\ Secuencias y Transformer}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 14\par}\vspace{0.3cm}
+{\LARGE El Transformer completo\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+En el módulo~13 se construyó la atención causal multicabeza. Este módulo la integra en la arquitectura completa de un modelo de lenguaje: el Transformer \emph{decoder-only}, una pila de $L$ bloques idénticos, cada uno formado por una subcapa de atención y una subcapa de perceptrón multicapa, unidas por conexiones residuales y precedidas por normalizaciones. Se completa con la tabla de embeddings de entrada, la codificación de la posición y la capa de salida que produce los logits. Es la arquitectura publicada de GPT-2 y de la familia LLaMA; Google y xAI han publicado que Gemini~1.5 y Grok-1 son Transformer con mezcla de expertos, y Anthropic no ha publicado la arquitectura de Claude. El módulo termina con la contabilidad de recursos: a partir de cinco números de configuración se calculan exactamente los parámetros, la memoria y el cómputo de entrenamiento de un modelo como LLaMA-2~7B.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item escribir las ecuaciones de un Transformer decoder-only pre-norm, indicar la forma de cada tensor y demostrar que la salida en la posición $t$ solo depende de los tokens $x_{1:t}$;
+  \item desarrollar el flujo residual como suma de aportaciones, comparar las variantes pre-norm y post-norm y justificar la normalización final;
+  \item definir las subcapas MLP con GELU y SwiGLU, demostrar las propiedades de la función SiLU y dimensionar $\dff$ para igualar presupuestos de parámetros;
+  \item construir la codificación sinusoidal y RoPE y demostrar que la primera se desplaza por una aplicación lineal y que la segunda solo depende de la posición relativa;
+  \item contar exactamente los parámetros de un Transformer, justificar la aproximación $12Ld^{2}$ y calcular la memoria de inferencia y de entrenamiento;
+  \item contar los FLOPs de una pasada hacia delante, derivar la regla $C\approx 6ND$ y estimar el tiempo de entrenamiento a partir del rendimiento del hardware.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1, los logits, la softmax y la entropía cruzada (temas~4 y~5). De los módulos~2 y~3, el producto de matrices, las matrices ortogonales y las matrices diagonales por bloques. Del módulo~4, la regla de la cadena y el jacobiano. Del módulo~7, el optimizador Adam y sus dos momentos (tema~5). Del módulo~9, el perceptrón multicapa y las funciones de activación. Del módulo~10, la retropropagación en capas lineales. Del módulo~11, las conexiones residuales, RMSNorm, la posición pre-norm y la precisión mixta (temas~2, 3 y~5). Del módulo~13, la atención escalada, la máscara causal y la atención multicabeza, que se usan en todos los temas.
+
+\section*{Organización}
+\begin{center}
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Arquitectura del Transformer decoder-only & \cite{vaswani}, \cite{gpt2}, \cite{jm3}, \cite{bishopdl} \\
+2 & Flujo residual y posición de la normalización & \cite{xiong}, \cite{gpt2}, \cite{elhage}, \cite{cs336} \\
+3 & La subcapa MLP: GELU y SwiGLU & \cite{vaswani}, \cite{shazeer}, \cite{llama}, \cite{cs336} \\
+4 & Codificación de la posición: sinusoidal y RoPE & \cite{vaswani}, \cite{roformer}, \cite{d2l}, \cite{cs224n} \\
+5 & Contar parámetros y memoria & \cite{kaplan}, \cite{llama2}, \cite{jm3}, \cite{cs336} \\
+6 & Contar el cómputo: FLOPs y la regla $6ND$ & \cite{kaplan}, \cite{llama2}, \cite{cs336} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La arquitectura sigue el capítulo~7 de Jurafsky y Martin~\cite{jm3} (§7.2 a §7.5), el capítulo~12 de Bishop y Bishop~\cite{bishopdl} (§12.1.7, §12.1.9 y §12.3.1) y las secciones~11.6 y~11.7 de Zhang \emph{et al.}~\cite{d2l}, junto con los artículos originales: Vaswani \emph{et al.}~\cite{vaswani} para el Transformer y la codificación sinusoidal, Radford \emph{et al.}~\cite{gpt2} para GPT-2, Touvron \emph{et al.}~\cite{llama,llama2} para LLaMA y Llama~2, Xiong \emph{et al.}~\cite{xiong} para la posición de la normalización, Zhang y Sennrich~\cite{rmsnorm} para RMSNorm, Shazeer~\cite{shazeer} para SwiGLU, Su \emph{et al.}~\cite{roformer} para RoPE, Press y Wolf~\cite{presswolf} para los embeddings atados y Kaplan \emph{et al.}~\cite{kaplan} para el recuento de parámetros y de cómputo. La descripción del flujo residual como espacio de comunicación procede de Elhage \emph{et al.}~\cite{elhage}. Los ejercicios universitarios proceden de la práctica~1 del curso CS336 de Stanford~\cite{cs336}, de la práctica~4 del curso CS224N~\cite{cs224n} y de los ejercicios del capítulo~7 de~\cite{jm3}. Las dimensiones de la capa intermedia de LLaMA se han comprobado en el código publicado por Meta~\cite{llamacode}. Sobre Claude, Gemini y Grok solo se usa información pública~\cite{gemini15,grok1}.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\V$, $V=\abs{\V}$ & vocabulario y su tamaño \\
+$n$, $\nctx$ & longitud de la secuencia y longitud máxima de contexto \\
+$d$, $h$, $d_k=d/h$ & dimensión del modelo, cabezas y dimensión por cabeza \\
+$L$, $\dff$ & número de bloques y dimensión de la capa intermedia del MLP \\
+$H^{\ell}\in\R^{n\times d}$, $h^{\ell}_t$ & flujo residual tras el bloque $\ell$ y su fila $t$ \\
+$W_E\in\R^{V\times d}$, $W_U\in\R^{d\times V}$ & matrices de embedding y de \emph{unembedding} \\
+$W_Q,W_K,W_V,W_O$ & proyecciones de la atención ($d\times d$) \\
+$W_g,W_u\in\R^{d\times\dff}$ & matrices de puerta y de subida de SwiGLU \\
+$\Wdown\in\R^{\dff\times d}$ & matriz de bajada de SwiGLU \\
+$M\in\{0,-\infty\}^{n\times n}$ & máscara causal \\
+$\sigma(x)$, $\SiLU(x)=x\,\sigma(x)$ & sigmoide logística y función SiLU \\
+$R(\alpha)$, $R_m$ & rotación de ángulo $\alpha$; matriz de RoPE en la posición $m$ \\
+$\PE(p)$ & codificación sinusoidal de la posición $p$ \\
+$N$, $D$, $C$ & número de parámetros, de tokens de entrenamiento y de FLOPs \\
+$P$ & matriz de permutación \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Los vectores de tokens son filas: una secuencia es una matriz $X\in\R^{n\times d}$ y una capa lineal actúa como $X\mapsto XW$, como en~\cite{jm3} y en el código de PyTorch. Los números grandes se escriben con espacio fino como separador de miles ($6\,738\,415\,616$).
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Arquitectura del Transformer decoder-only}
+\label{tema:1}
+% =====================================================================
+
+Este tema describe la arquitectura completa de un Transformer decoder-only: la entrada (tokens y embeddings), la pila de bloques y la capa de salida que produce los logits. Se demuestran dos propiedades estructurales: cada bloque conserva la forma $n\times d$ y la salida en la posición $t$ solo depende de los tokens $x_{1:t}$. Se sigue~\cite[§7.2--§7.5]{jm3}, \cite[§12.1.7 y §12.3.1]{bishopdl}, el artículo original~\cite[§3]{vaswani} y la descripción de la práctica~1 de CS336~\cite[§3.1 y §3.4]{cs336}.
+
+\section{Entrada: tokens y embeddings}
+
+Un tokenizador (módulo~12) transforma el texto en una secuencia de enteros $x_{1:n}=(x_1,\dots,x_n)$ con $x_t\in\{1,\dots,V\}$.
+
+\begin{definicion}[Embedding de tokens]\label{def:embedding}
+Sea $W_E\in\R^{V\times d}$ una matriz de parámetros cuya fila $j$, $e_j\in\R^{d}$, es el \emph{embedding} del token $j$. La entrada de la red es la matriz $H^{0}\in\R^{n\times d}$ cuya fila $t$ es
+\[
+h^{0}_t=e_{x_t}\;(+\,p_t),
+\]
+donde $p_t\in\R^{d}$ es un vector de posición que solo se suma en los modelos con posiciones absolutas (\cref{tema:4}). Equivalentemente, $H^{0}=OW_E$, siendo $O\in\{0,1\}^{n\times V}$ la matriz cuyas filas son las codificaciones \emph{one-hot} de los tokens.
+\end{definicion}
+
+La forma matricial $OW_E$ muestra que el embedding es una capa lineal sin sesgo aplicada a vectores \emph{one-hot}; en la práctica se implementa como una indexación de filas, que no hace ninguna multiplicación~\cite[§7.4]{jm3}.
+
+\section{El bloque decoder-only}
+
+Se recuerda la atención del módulo~13. Para una matriz $Z\in\R^{n\times d}$ y $h$ cabezas de dimensión $d_k=d/h$, la cabeza $i$ calcula $Q_i=ZW_Q^{(i)}$, $K_i=ZW_K^{(i)}$, $V_i=ZW_V^{(i)}$, con $W_Q^{(i)},W_K^{(i)},W_V^{(i)}\in\R^{d\times d_k}$, y
+\[
+\operatorname{head}_i(Z)=\softmax\Bigl(\frac{Q_iK_i\T}{\sqrt{d_k}}+M\Bigr)V_i,\qquad
+M_{tu}=\begin{cases}0,& u\le t,\\ -\infty,& u>t,\end{cases}
+\]
+donde la softmax se aplica por filas. La atención multicabeza concatena las cabezas y proyecta: $\MHA(Z)=[\operatorname{head}_1(Z)\;\cdots\;\operatorname{head}_h(Z)]\,W_O$, con $W_O\in\R^{d\times d}$. Agrupando por columnas las $h$ matrices $W_Q^{(i)}$ se obtiene una sola matriz $W_Q\in\R^{d\times d}$, y lo mismo para $W_K$ y $W_V$.
+
+\begin{definicion}[Bloque pre-norm]\label{def:bloque}
+Sean $\Norm_1,\Norm_2:\R^{d}\to\R^{d}$ dos normalizaciones (RMSNorm en LLaMA, LayerNorm en GPT-2), aplicadas fila a fila, y sea $\MLP:\R^{d}\to\R^{d}$ un perceptrón aplicado fila a fila (\cref{tema:3}). El \emph{bloque decoder-only pre-norm} es la aplicación $B:\R^{n\times d}\to\R^{n\times d}$, $H\mapsto H'$, dada por
+\[
+A=H+\MHA\bigl(\Norm_1(H)\bigr),\qquad H'=A+\MLP\bigl(\Norm_2(A)\bigr).
+\]
+\end{definicion}
+
+\begin{definicion}[Transformer decoder-only]\label{def:transformer}
+Un \emph{Transformer decoder-only} de $L$ capas es la composición
+\[
+H^{\ell}=B_\ell\bigl(H^{\ell-1}\bigr)\quad(\ell=1,\dots,L),\qquad Z=\Norm_f\bigl(H^{L}\bigr)\,W_U\in\R^{n\times V},
+\]
+donde $H^{0}$ es la entrada de la \cref{def:embedding}, cada $B_\ell$ es un bloque con parámetros propios, $\Norm_f$ es la \emph{normalización final} y $W_U\in\R^{d\times V}$ es la matriz de \emph{unembedding}. La fila $t$ de $Z$ son los logits de la distribución del token siguiente: $P(x_{t+1}=j\mid x_{1:t})=\softmax(z_t)_j$.
+\end{definicion}
+
+La \cref{fig:bloque} representa la arquitectura. Las dos subcapas tienen papeles complementarios: la atención es la única operación que combina filas distintas, es decir, que mezcla información \emph{entre} tokens; las normalizaciones y el MLP actúan sobre cada fila por separado~\cite[§7.2]{jm3}.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=6.5mm,minimum width=34mm,align=center},
+  suma/.style={draw,thick,circle,inner sep=1pt}]
+  \node[caja] (emb) at (0,0) {Embedding $W_E$ ($V\times d$)};
+  \node[caja] (n1) at (0,1.5) {$\Norm_1$};
+  \node[caja] (att) at (0,2.5) {Atención causal multicabeza};
+  \node[suma] (s1) at (0,3.5) {$+$};
+  \node[caja] (n2) at (0,4.5) {$\Norm_2$};
+  \node[caja] (mlp) at (0,5.5) {MLP (SwiGLU)};
+  \node[suma] (s2) at (0,6.5) {$+$};
+  \node[caja] (nf) at (0,7.8) {$\Norm_f$};
+  \node[caja] (un) at (0,8.8) {Unembedding $W_U$ ($d\times V$)};
+  \node (out) at (0,9.9) {logits $Z\in\R^{n\times V}$};
+  \node (in) at (0,-1.0) {tokens $x_{1:n}$};
+  \draw[->,thick] (in) -- (emb);
+  \draw[->,thick] (emb) -- node[right,pos=0.45] {$H^{\ell-1}$} (n1);
+  \draw[->,thick] (n1) -- (att);
+  \draw[->,thick] (att) -- (s1);
+  \draw[->,thick] (s1) -- (n2);
+  \draw[->,thick] (n2) -- (mlp);
+  \draw[->,thick] (mlp) -- (s2);
+  \draw[->,thick] (s2) -- node[right] {$H^{\ell}$} (nf);
+  \draw[->,thick] (nf) -- (un);
+  \draw[->,thick] (un) -- (out);
+  \draw[->,thick] (0,0.9) -- (-2.75,0.9) |- (s1);
+  \draw[->,thick] (0,4.0) -- (-2.75,4.0) |- (s2);
+  \node[draw,dashed,rounded corners=3pt,fit=(n1)(att)(s1)(n2)(mlp)(s2),inner xsep=26pt,inner ysep=8pt] (blk) {};
+  \node[anchor=west] at (blk.east) {$\times L$};
+  \node[rotate=90,font=\footnotesize,above] at (-2.75,2.2) {identidad};
+\end{tikzpicture}
+\caption{Transformer decoder-only pre-norm. El recuadro discontinuo es un bloque (\cref{def:bloque}), que se repite $L$ veces. Las líneas de la izquierda son las conexiones residuales: el camino desde el embedding hasta $\Norm_f$ solo atraviesa sumas.}
+\label{fig:bloque}
+\end{figure}
+
+\begin{proposicion}[Conservación de la forma]\label{prop:forma}
+Si $H\in\R^{n\times d}$, entonces $B(H)\in\R^{n\times d}$. En consecuencia, todos los flujos $H^{0},\dots,H^{L}$ tienen forma $n\times d$, y solo la entrada ($n$ enteros $\to n\times d$) y la salida ($n\times d\to n\times V$) cambian de dimensión.
+\end{proposicion}
+
+\begin{proof}
+Las normalizaciones actúan fila a fila de $\R^{d}$ en $\R^{d}$. Cada cabeza produce una matriz $n\times d_k$; la concatenación de las $h$ cabezas tiene forma $n\times hd_k=n\times d$, y el producto por $W_O\in\R^{d\times d}$ conserva esa forma. El MLP transforma cada fila de $\R^{d}$ en $\R^{d}$. Las dos sumas residuales suman matrices $n\times d$. Por inducción sobre $\ell$, todo $H^{\ell}$ es $n\times d$.
+\end{proof}
+
+La \cref{prop:forma} es la razón por la que los bloques pueden apilarse en cualquier número: $L$ es un hiperparámetro libre, que va de $12$ en GPT-2 \emph{small} a $80$ en Llama~2~70B~\cite{gpt2,llama2}.
+
+\section{Causalidad}
+
+\begin{proposicion}[Causalidad del decoder]\label{prop:causal}
+En un Transformer decoder-only, la fila $t$ de $H^{\ell}$, para todo $\ell$, y la fila $t$ de los logits $Z$ solo dependen de los tokens $x_1,\dots,x_t$.
+\end{proposicion}
+
+\begin{proof}
+Se dice que una matriz $H$ \emph{es causal} si cada fila $h_t$ es función de $x_{1:t}$. Se razona por inducción sobre $\ell$. La matriz $H^{0}$ es causal porque $h^{0}_t=e_{x_t}+p_t$ solo depende de $x_t$. Supóngase que $H^{\ell-1}$ es causal.
+\begin{enumerate}
+  \item Toda operación aplicada fila a fila ($\Norm_1$, $\Norm_2$, $\MLP$, las proyecciones $ZW$) transforma matrices causales en matrices causales, porque la fila $t$ del resultado solo depende de la fila $t$ de la entrada.
+  \item En cada cabeza, los pesos de la fila $t$ son $\alpha_{tu}=\softmax(s_t+M_t)_u$, con $s_{tu}=q_t\cdot k_u/\sqrt{d_k}$. Para $u>t$, el exponente es $-\infty$ y $\alpha_{tu}=e^{-\infty}/\sum_{u'}e^{s_{tu'}+M_{tu'}}=0$; para $u\le t$, $\alpha_{tu}$ solo depende de $q_t$ y de $k_1,\dots,k_t$. La salida $\sum_{u\le t}\alpha_{tu}v_u$ solo depende de las filas $1,\dots,t$ de una matriz causal, luego de $x_{1:t}$.
+  \item La suma de matrices causales es causal.
+\end{enumerate}
+Así $A$ y $H^{\ell}=B_\ell(H^{\ell-1})$ son causales. Finalmente, $Z=\Norm_f(H^{L})W_U$ se obtiene con operaciones fila a fila.
+\end{proof}
+
+\begin{corolario}[Una pasada, $n$ predicciones]\label{cor:paralelo}
+Una sola evaluación del Transformer sobre $x_{1:n}$ proporciona las $n$ distribuciones $P(\cdot\mid x_{1:t})$, $t=1,\dots,n$. La pérdida de entrenamiento de una secuencia, la entropía cruzada media del módulo~1,
+\[
+\Loss=-\frac{1}{n-1}\sum_{t=1}^{n-1}\ln\softmax(z_t)_{x_{t+1}},
+\]
+se calcula, por tanto, con una única pasada hacia delante y una única pasada hacia atrás.
+\end{corolario}
+
+\begin{proof}
+Por la \cref{prop:causal}, la fila $z_t$ calculada con toda la secuencia coincide con la que se obtendría con la secuencia truncada $x_{1:t}$. Es, por tanto, el vector de logits de $P(\cdot\mid x_{1:t})$ de la \cref{def:transformer}.
+\end{proof}
+
+Esta propiedad es la que hace eficiente el entrenamiento de los Transformer frente a las redes recurrentes: las $n$ posiciones se procesan en paralelo como un producto de matrices~\cite[§7.3]{jm3}. En la generación, en cambio, los tokens se producen de uno en uno, y la \cref{prop:causal} permite reutilizar las claves y los valores ya calculados (la caché KV del módulo~19).
+
+\section{Salida: unembedding y embeddings atados}
+
+La capa de salida transforma cada vector $h\in\R^{d}$ en $V$ logits mediante $z=hW_U$. Si se escribe $u_j\in\R^{d}$ para la columna $j$ de $W_U$, el logit del token $j$ es el producto escalar $z_j=h\cdot u_j$: el modelo puntúa cada token por la alineación de $h$ con un vector \emph{plantilla} de ese token~\cite[§7.5]{jm3}.
+
+\begin{definicion}[Embeddings atados]\label{def:atados}
+Un Transformer tiene los \emph{embeddings atados} (\emph{weight tying}) si $W_U=W_E\T$, es decir, si la plantilla de salida de cada token coincide con su embedding de entrada: $z_j=h\cdot e_j$.
+\end{definicion}
+
+Press y Wolf~\cite{presswolf} mostraron que atar los embeddings reduce la perplejidad de varios modelos de lenguaje y el número de parámetros. El Transformer original comparte la misma matriz entre los embeddings y la capa previa a la softmax, y multiplica los embeddings por $\sqrt{d}$~\cite[§3.4]{vaswani}. GPT-2 también ata los embeddings; LLaMA y Llama~2 usan dos matrices independientes~\cite{llamacode}.
+
+\begin{proposicion}[Ahorro del atado]\label{prop:ahorro}
+Atar los embeddings reduce el número de parámetros en exactamente $Vd$. Para un vector $h$ fijo, el token de mayor logit es el $j$ que maximiza $\norm{e_j}\cos\angle(h,e_j)$.
+\end{proposicion}
+
+\begin{proof}
+Sin atar, $W_E$ y $W_U$ aportan $Vd$ parámetros cada una; atadas, se comparte una sola matriz de $Vd$ parámetros. Por otra parte, $z_j=h\cdot e_j=\norm{h}\norm{e_j}\cos\angle(h,e_j)$, y el factor $\norm{h}>0$ es común a todos los $j$.
+\end{proof}
+
+\begin{table}[ht]
+\centering\small
+\caption{Elecciones de arquitectura de tres modelos con detalles públicos.}\label{tab:modelos}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Elemento & Transformer (2017) & GPT-2 (2019) & LLaMA / Llama~2 (2023) \\
+\midrule
+Normalización & LayerNorm, post-norm & LayerNorm, pre-norm & RMSNorm, pre-norm \\
+MLP & ReLU, $\dff=4d$ & GELU, $\dff=4d$ & SwiGLU, $\dff\approx\tfrac83 d$ \\
+Posición & sinusoidal (sumada) & aprendida (sumada) & RoPE (en $q$ y $k$) \\
+Sesgos & sí & sí & no \\
+Embeddings & atados & atados & sin atar \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Conexión con los LLM]
+La \cref{tab:modelos} resume las diferencias entre las tres arquitecturas de referencia~\cite{vaswani,gpt2,llama}. Mistral, Qwen y Gemma siguen el esquema de LLaMA con variaciones. Gemini~1.5 y Grok-1 sustituyen el MLP de cada bloque por una mezcla de expertos (módulo~18)~\cite{gemini15,grok1}; Anthropic no ha publicado la arquitectura detallada de Claude.
+\end{observacion}
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, §7.2 «Transformer Blocks», §7.3, §7.4 y §7.5 «The Language Modeling Head».
+\item Bishop y Bishop~\cite{bishopdl}, §12.1.7 «Transformer layers» y §12.3.1 «Decoder transformers».
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.1 y §3.4 «Embeddings and Softmax».
+\item Hashimoto y Liang~\cite{cs336}, §3.1 «Transformer LM» y §3.5 «The Full Transformer LM».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-formas}
+Un Transformer decoder-only tiene $V=100$, $d=8$, $h=2$, $\dff=32$ y recibe una secuencia de $n=5$ tokens. Indique la forma de: (a) la entrada; (b) $H^{0}$; (c) $Q_i$ en una cabeza; (d) la matriz de pesos de atención de una cabeza; (e) la capa intermedia del MLP; (f) los logits. ¿Cuántas distribuciones del token siguiente produce una pasada?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-atados}
+En un modelo con embeddings atados, ¿qué matriz se comparte y con qué forma? ¿Por qué es razonable que la entrada y la salida usen los mismos vectores? ¿Cuántos parámetros ahorra en GPT-2 \emph{small} ($V=50\,257$, $d=768$)?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-logits}
+Un modelo con embeddings atados tiene $V=3$ y $d=2$, con $e_1=(1,0)$, $e_2=(0,1)$ y $e_3=(1,1)$. El vector normalizado de la última posición es $h=(2,1)$. Calcule los logits y la distribución del token siguiente. ¿Qué token es el más probable y por qué, según la \cref{prop:ahorro}?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-mascara}
+(a) Con $n=4$, ¿cuántos pesos de atención de una cabeza pueden ser no nulos? ¿Qué fracción de la matriz $n\times n$ representan cuando $n=1024$? (b) En la fila $t=3$ las puntuaciones escaladas son $s_3=(1,2,0,5)$. Calcule los pesos de atención con la máscara causal.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-infinito}
+¿Por qué la máscara causal usa $-\infty$ y no $0$ en las posiciones futuras? Compruébelo calculando los pesos de la fila del \cref{eje:1-mascara} si se sumara $0$ en lugar de $-\infty$.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.2.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-perm-mascara}
+Sea $M\in\{0,-\infty\}^{n\times n}$ la máscara causal y sea $P$ la matriz de la permutación $\pi$ de $\{1,\dots,n\}$, es decir, $(PA)_{t\cdot}=A_{\pi(t)\cdot}$. Demuestre que $PMP\T=M$ si y solo si $\pi$ es la identidad. Interprete el resultado: ¿qué información sobre el orden aporta la máscara por sí sola?
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Flujo residual y posición de la normalización}
+\label{tema:2}
+% =====================================================================
+
+En el módulo~11 se estudiaron las conexiones residuales y la normalización para una red genérica. Este tema las aplica al bloque del \cref{tema:1}: desarrolla el flujo residual de un Transformer como suma de $2L$ aportaciones, compara las variantes pre-norm y post-norm y justifica la normalización final y la inicialización escalada. Se sigue~\cite[§7.2]{jm3}, la discusión de la práctica~1 de CS336~\cite[§3.4]{cs336}, el análisis de Xiong \emph{et al.}~\cite{xiong}, la §2.3 de~\cite{gpt2} y la interpretación de Elhage \emph{et al.}~\cite{elhage}.
+
+\section{El flujo residual}
+
+Para simplificar la notación, se numeran las $2L$ subcapas del Transformer en el orden en que se aplican: la subcapa $k=2\ell-1$ es la atención del bloque $\ell$ y la subcapa $k=2\ell$ es su MLP. Sea $F_k$ la función que calcula la subcapa $k$ \emph{incluida su normalización de entrada}: $F_{2\ell-1}=\MHA\circ\Norm_1$ y $F_{2\ell}=\MLP\circ\Norm_2$.
+
+\begin{definicion}[Flujo residual]\label{def:flujo}
+El \emph{flujo residual} es la sucesión de matrices $R^{0}=H^{0}$ y $R^{k}=R^{k-1}+F_k(R^{k-1})$, $k=1,\dots,2L$. Se cumple $R^{2\ell}=H^{\ell}$ y $R^{2\ell-1}=A^{\ell}$, la matriz intermedia del bloque $\ell$. La fila $t$ de $R^{k}$ es el vector del flujo del token $t$.
+\end{definicion}
+
+\begin{proposicion}[Desarrollo telescópico]\label{prop:telescopica}
+En un Transformer pre-norm,
+\[
+H^{L}=H^{0}+\sum_{k=1}^{2L}F_k\bigl(R^{k-1}\bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+De la \cref{def:flujo}, $R^{k}-R^{k-1}=F_k(R^{k-1})$. Sumando para $k=1,\dots,2L$, los términos intermedios se cancelan: $R^{2L}-R^{0}=\sum_{k}F_k(R^{k-1})$. Basta usar $R^{2L}=H^{L}$ y $R^{0}=H^{0}$.
+\end{proof}
+
+La \cref{prop:telescopica} sustenta la lectura del flujo como un \emph{canal de comunicación}~\cite{elhage}: ninguna subcapa sobrescribe el flujo; cada una lee de él (tras normalizar) y le \emph{suma} su salida. De ahí se siguen tres consecuencias.
+\begin{enumerate}
+  \item Una subcapa puede escribir en una dirección de $\R^{d}$ que lee otra subcapa muchas capas después. Esta descomposición es la base de la interpretabilidad mecanicista (módulo~23).
+  \item Toda subcapa debe producir vectores de $\R^{d}$, pues su salida se suma al flujo. Esa es la función de $W_O$ en la atención y de $\Wdown$ en el MLP.
+  \item Si una subcapa aprende a escribir casi cero, el modelo se comporta como uno con una subcapa menos.
+\end{enumerate}
+
+\begin{ejemplo}[Lectura de aportaciones]\label{ej:aportaciones}
+Sea $d=2$ y $h^{0}=(1,0)$ el vector de un token. Si la atención del primer bloque escribe $(0;\;0{,}5)$ y el MLP escribe $(-0{,}2;\;0{,}3)$, entonces $a^{1}=(1;\;0{,}5)$ y $h^{1}=(0{,}8;\;0{,}8)$. Cada aportación se recupera restando vectores consecutivos del flujo, y su componente en una dirección unitaria $u$ es el producto escalar con $u$.
+\end{ejemplo}
+
+\begin{proposicion}[Jacobiano del flujo]\label{prop:jac-flujo}
+Sea $J_k$ el jacobiano de $F_k$ evaluado en $R^{k-1}$, con todas las matrices vectorizadas. Entonces
+\[
+\frac{\partial H^{L}}{\partial H^{0}}=\prod_{k=2L}^{1}\bigl(I+J_k\bigr)=I+\sum_{k=1}^{2L}J_k+\sum_{k>k'}J_kJ_{k'}+\cdots+J_{2L}\cdots J_1,
+\]
+donde el producto se ordena de izquierda a derecha con $k$ decreciente.
+\end{proposicion}
+
+\begin{proof}
+Por la regla de la cadena, $\partial R^{k}/\partial R^{k-1}=I+J_k$ y $\partial H^{L}/\partial H^{0}=\prod_{k}\partial R^{k}/\partial R^{k-1}$ en el orden indicado. El desarrollo se obtiene multiplicando los $2L$ binomios, eligiendo en cada factor $I$ o $J_k$; los productos se mantienen en orden decreciente de $k$ porque las matrices no conmutan.
+\end{proof}
+
+El término $I$ del desarrollo es el \emph{camino identidad}: el gradiente de la pérdida respecto de $H^{L}$ llega a $H^{0}$ sumado, sin atravesar ninguna normalización ni producto de jacobianos. Es la versión para el Transformer del teorema del jacobiano residual del módulo~11.
+
+\section{Pre-norm frente a post-norm}
+
+\begin{definicion}[Post-norm]\label{def:postnorm}
+El \emph{bloque post-norm} del Transformer original~\cite[§3.1]{vaswani} aplica la normalización después de la suma residual:
+\[
+A=\Norm_1\bigl(H+\MHA(H)\bigr),\qquad H'=\Norm_2\bigl(A+\MLP(A)\bigr).
+\]
+\end{definicion}
+
+\begin{proposicion}[No hay camino identidad en post-norm]\label{prop:postnorm}
+En un Transformer post-norm con normalización RMSNorm sin ganancia, $\Norm(x)=x/\RMS(x)$, se cumple $\RMS(h^{\ell}_t)=1$ para toda fila $t$ y toda capa $\ell\ge 1$, y el jacobiano de la salida respecto de la entrada es
+\[
+\frac{\partial H^{L}}{\partial H^{0}}=\prod_{k=2L}^{1}N_k\,(I+J_k),
+\]
+donde $N_k$ es el jacobiano de la normalización $k$. Cada $N_k$ es singular.
+\end{proposicion}
+
+\begin{proof}
+La salida de cada bloque es la salida de una normalización, luego tiene RMS igual a~1. La regla de la cadena aplicada a $R^{k}=\Norm(R^{k-1}+F_k(R^{k-1}))$ da el factor $N_k(I+J_k)$. Para una fila $x\in\R^{d}$, el jacobiano de $x\mapsto x/\RMS(x)$ es $\frac{1}{\RMS(x)}\bigl(I-\frac{xx\T}{d\,\RMS(x)^{2}}\bigr)$ (módulo~11, tema~3), que anula el vector $x$: en efecto, $\bigl(I-\frac{xx\T}{\norm{x}^{2}}\bigr)x=0$ porque $d\,\RMS(x)^{2}=\norm{x}^{2}$. Luego cada $N_k$ es singular.
+\end{proof}
+
+En post-norm, toda la señal, y todo el gradiente, atraviesa $2L$ normalizaciones; no existe un término $I$ aislado como en la \cref{prop:jac-flujo}. Xiong \emph{et al.}~\cite[§3.3, teorema~1]{xiong} cuantifican la diferencia en la inicialización: bajo hipótesis de concentración de las normas, la norma del gradiente de los pesos de la última capa es del orden de $d\sqrt{\ln d}$ en post-norm, sin dependencia de $L$, y del orden de $d\sqrt{\ln d/L}$ en pre-norm. Gradientes grandes en las capas altas obligan a un calentamiento (\emph{warmup}) largo de la tasa de aprendizaje en post-norm; pre-norm se entrena de forma estable con un calentamiento corto o nulo.
+
+\begin{table}[ht]
+\centering\small
+\caption{Comparación de las dos posiciones de la normalización.}\label{tab:prepost}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Aspecto & Post-norm (2017) & Pre-norm (GPT-2, LLaMA) \\
+\midrule
+Ecuación & $\Norm(x+F(x))$ & $x+F(\Norm(x))$ \\
+Camino identidad & no (\cref{prop:postnorm}) & sí (\cref{prop:jac-flujo}) \\
+Norma del flujo & fija & crece con la profundidad \\
+Calentamiento & imprescindible & tolerante \\
+Normalización final & innecesaria & necesaria \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{El precio de pre-norm: crecimiento del flujo}
+
+\begin{proposicion}[Crecimiento del flujo en un Transformer]\label{prop:crecimiento}
+Supóngase que, en la inicialización, las aportaciones $F_k(R^{k-1})_t$ de una fila son vectores aleatorios de media nula, incorrelados entre sí y con $h^{0}_t$, con $\E\norm{F_k(R^{k-1})_t}^{2}=s^{2}$. Entonces
+\[
+\E\norm{h^{L}_t}^{2}=\E\norm{h^{0}_t}^{2}+2L\,s^{2}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:telescopica}, $h^{L}_t=h^{0}_t+\sum_{k=1}^{2L}F_k(R^{k-1})_t$. Al desarrollar $\norm{h^{L}_t}^{2}$ como producto escalar de la suma consigo misma, los términos cruzados tienen esperanza nula por la incorrelación y la media nula; quedan las $1+2L$ normas al cuadrado.
+\end{proof}
+
+La \cref{prop:crecimiento} tiene dos consecuencias prácticas. Primera: como la norma del flujo crece, el vector $h^{L}_t$ debe normalizarse antes del unembedding; de lo contrario, la escala de los logits dependería de la profundidad. Es la normalización final $\Norm_f$ de la \cref{def:transformer}, que GPT-2 introdujo junto con la posición pre-norm~\cite[§2.3]{gpt2} y que Jurafsky y Martin señalan como la capa adicional que exige pre-norm~\cite[§7.2.3]{jm3}. Segunda: GPT-2 multiplica en la inicialización los pesos de las capas que escriben en el flujo ($W_O$ y la última matriz del MLP) por $1/\sqrt{N}$, con $N=2L$ el número de capas residuales; así cada $s^{2}$ se divide por $2L$ y la norma esperada del flujo final queda acotada independientemente de la profundidad.
+
+\begin{ejemplo}\label{ej:crecimiento}
+En GPT-2 \emph{small}, $L=12$ y hay $N=24$ capas residuales. Si $\E\norm{h^{0}_t}^{2}=1$ y cada subcapa aporta $s^{2}=1$, la \cref{prop:crecimiento} da $\E\norm{h^{12}_t}^{2}=25$. Con el factor $1/\sqrt{24}\approx 0{,}2041$ en los pesos de salida, $s^{2}=1/24$ y $\E\norm{h^{12}_t}^{2}=1+24/24=2$.
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+Casi todos los modelos de lenguaje abiertos posteriores a GPT-2 usan pre-norm; la práctica de CS336 la describe como una de las pocas modificaciones de consenso respecto del Transformer original~\cite[§7.3]{cs336}. LLaMA sustituye LayerNorm por RMSNorm~\cite{rmsnorm}, que no centra el vector ni tiene sesgo, y normaliza la entrada de cada subcapa para mejorar la estabilidad del entrenamiento~\cite[§2.2]{llama}.
+\end{observacion}
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, §7.2 «Transformer Blocks» y §7.2.2 «Layer Norm».
+\item Xiong \emph{et al.}~\cite{xiong}, §3.3 «Understanding the Transformer at initialization».
+\item Radford \emph{et al.}~\cite{gpt2}, §2.3 «Model».
+\item Elhage \emph{et al.}~\cite{elhage}, apartado sobre el flujo residual como canal de comunicación.
+\item Hashimoto y Liang~\cite{cs336}, §3.4 «Pre-Norm Transformer Block».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-prepost}
+Escriba las ecuaciones de un bloque pre-norm y de uno post-norm. Sustituya la primera ecuación en la segunda en cada caso y determine en cuál existe un camino desde la entrada $x$ hasta la salida que no atraviesa ninguna normalización.
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, §3.4 y §7.3, ecuaciones~(25) a~(28) y problema \texttt{pre\_norm\_ablation}; el experimento de entrenamiento se sustituye por el análisis de las ecuaciones.}
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:2-final}
+Explique por qué un Transformer pre-norm necesita una normalización final antes del unembedding y uno post-norm no.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-rms}
+Con los datos del \cref{ej:aportaciones} y RMSNorm sin ganancia, $\Norm(x)=x/\RMS(x)$ con $\RMS(x)=\sqrt{\frac1d\sum_i x_i^{2}}$, calcule: (a) la entrada normalizada de la atención, $\Norm(h^{0})$; (b) la entrada normalizada del MLP, $\Norm(a^{1})$; (c) $\Norm(h^{1})$; (d) la componente de cada aportación en la dirección $u=(0,1)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-crecimiento}
+Un modelo pre-norm tiene $L=32$ bloques. En la inicialización, $\E\norm{h^{0}_t}^{2}=1$ y cada subcapa aporta $s^{2}=0{,}5$. (a) Calcule $\E\norm{h^{L}_t}^{2}$ y el cociente entre la norma cuadrática media final y la inicial. (b) ¿Por qué factor deberían escalarse los pesos de salida de las subcapas para que $\E\norm{h^{L}_t}^{2}=1{,}5$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cota}
+Supóngase que los jacobianos de la \cref{prop:jac-flujo} cumplen $\norm{J_k}_2\le\varepsilon$ para todo $k$. Demuestre que
+\[
+\Bigl\lVert\frac{\partial H^{L}}{\partial H^{0}}-I\Bigr\rVert_2\le(1+\varepsilon)^{2L}-1,
+\]
+y deduzca que, si $2L\varepsilon\le 1$, la desviación respecto de la identidad es a lo sumo $(e-1)\,2L\varepsilon$. Interprete el resultado.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{La subcapa MLP: GELU y SwiGLU}
+\label{tema:3}
+% =====================================================================
+
+La segunda subcapa de cada bloque es un perceptrón de una capa oculta que se aplica por separado a cada token. Contiene unos dos tercios de los parámetros del modelo. Este tema define el MLP clásico del Transformer original y de GPT-2, las unidades lineales con puerta y la variante SwiGLU de LLaMA, demuestra las propiedades de la activación SiLU y justifica la elección $\dff\approx\frac83 d$. Se sigue~\cite[§3.3]{vaswani}, \cite[§11.7.2]{d2l}, \cite[§7.2.1]{jm3}, el artículo de Shazeer~\cite{shazeer} y la §3.4.2 de la práctica de CS336~\cite{cs336}.
+
+\section{El MLP posición a posición}
+
+\begin{definicion}[MLP posición a posición]\label{def:ffn}
+Sea $\phi:\R\to\R$ una función de activación aplicada componente a componente. El \emph{MLP posición a posición} con dimensión intermedia $\dff$ es
+\[
+\FFN(x)=\phi\bigl(xW_1+b_1\bigr)W_2+b_2,\qquad W_1\in\R^{d\times\dff},\;W_2\in\R^{\dff\times d},
+\]
+aplicado a cada fila $x\in\R^{d}$ de la matriz de entrada con los mismos parámetros.
+\end{definicion}
+
+El Transformer original usa $\phi=\ReLU$, $d=512$ y $\dff=2048=4d$~\cite[§3.3]{vaswani}; GPT-2 usa la misma proporción con la activación GELU. Que el MLP actúe fila a fila tiene una consecuencia estructural.
+
+\begin{lema}[Las operaciones fila a fila conmutan con las permutaciones]\label{lem:filas}
+Sea $f:\R^{d}\to\R^{m}$ y sea $\hat f:\R^{n\times d}\to\R^{n\times m}$ la aplicación que actúa como $f$ sobre cada fila. Para toda matriz de permutación $P\in\R^{n\times n}$, $\hat f(PX)=P\,\hat f(X)$.
+\end{lema}
+
+\begin{proof}
+La fila $t$ de $PX$ es la fila $\pi(t)$ de $X$, para cierta permutación $\pi$. La fila $t$ de $\hat f(PX)$ es, por tanto, $f(x_{\pi(t)})$, que es la fila $\pi(t)$ de $\hat f(X)$, es decir, la fila $t$ de $P\hat f(X)$.
+\end{proof}
+
+El \cref{lem:filas} se aplica al MLP, a las normalizaciones y a las proyecciones lineales. Por eso la atención es la única subcapa sensible al orden de los tokens, y por eso hace falta codificar la posición (\cref{tema:4}).
+
+\section{Activaciones suaves: GELU y SiLU}
+
+\begin{definicion}[GELU y SiLU]\label{def:gelu-silu}
+Sean $\Phi$ la función de distribución de la normal estándar y $\sigma(x)=1/(1+e^{-x})$ la sigmoide. Se definen
+\[
+\GELU(x)=x\,\Phi(x),\qquad \SiLU(x)=x\,\sigma(x).
+\]
+La función SiLU también se llama \emph{Swish} con parámetro~$1$~\cite{shazeer}.
+\end{definicion}
+
+Ambas multiplican $x$ por un número entre $0$ y $1$ que crece con $x$: son versiones suaves de $\ReLU(x)=x\cdot\mathbf{1}[x>0]$, en las que el interruptor $\mathbf{1}[x>0]$ se sustituye por una función de distribución~\cite{gelu}.
+
+\begin{proposicion}[Propiedades de SiLU]\label{prop:silu}
+La función SiLU cumple:
+\begin{enumerate}
+  \item $\SiLU(x)-\ReLU(x)\to 0$ cuando $x\to\pm\infty$;
+  \item $\SiLU'(x)=\sigma(x)\bigl(1+x(1-\sigma(x))\bigr)$; en particular, $\SiLU(0)=0$ y $\SiLU'(0)=1/2$;
+  \item tiene un único punto crítico $x^{*}<0$, que es un mínimo global, con $\SiLU(x^{*})=x^{*}+1$. Numéricamente, $x^{*}\approx-1{,}2785$ y $\SiLU(x^{*})\approx-0{,}2785$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Para $x>0$, $\SiLU(x)-\ReLU(x)=x(\sigma(x)-1)=-x/(1+e^{x})\to 0$. Para $x<0$, $\SiLU(x)-0=x/(1+e^{-x})=xe^{x}/(1+e^{x})\to 0$, porque $xe^{x}\to 0$ cuando $x\to-\infty$.
+
+(ii) Con $\sigma'=\sigma(1-\sigma)$ y la regla del producto, $\SiLU'(x)=\sigma(x)+x\sigma(x)(1-\sigma(x))$. En $x=0$, $\sigma(0)=1/2$.
+
+(iii) Como $\sigma(x)>0$, los puntos críticos son las raíces de $g(x)=1+x(1-\sigma(x))$. Para $x\ge 0$, $g(x)\ge 1>0$. En $(-\infty,0)$,
+\[
+g'(x)=(1-\sigma)-x\sigma(1-\sigma)=(1-\sigma(x))\bigl(1-x\sigma(x)\bigr)>0,
+\]
+luego $g$ es estrictamente creciente; además $g(0)=1$ y $g(x)\to-\infty$ cuando $x\to-\infty$, porque $1-\sigma(x)\to 1$. Por el teorema de Bolzano y la monotonía, $g$ tiene una única raíz $x^{*}<0$, con $g<0$ a su izquierda y $g>0$ a su derecha: $\SiLU$ decrece y luego crece, y $x^{*}$ es el mínimo global. De $g(x^{*})=0$ se obtiene $\sigma(x^{*})=1+1/x^{*}$, luego $\SiLU(x^{*})=x^{*}\sigma(x^{*})=x^{*}+1$. La raíz numérica se obtiene por bisección.
+\end{proof}
+
+A diferencia de ReLU, SiLU es derivable en todo punto, no es monótona y deja pasar valores negativos pequeños, lo que evita las neuronas cuyo gradiente es nulo en todo el semieje negativo.
+
+\section{Unidades lineales con puerta y SwiGLU}
+
+\begin{definicion}[SwiGLU]\label{def:swiglu}
+Sean $W_g,W_u\in\R^{d\times\dff}$ y $\Wdown\in\R^{\dff\times d}$. La subcapa \emph{SwiGLU} es
+\[
+\SwiGLU(x)=\bigl(\SiLU(xW_g)\odot xW_u\bigr)\,\Wdown,
+\]
+donde $\odot$ es el producto componente a componente. La rama $xW_g$ es la \emph{puerta} y $xW_u$ la \emph{rama lineal}.
+\end{definicion}
+
+Las unidades lineales con puerta (GLU) de Dauphin \emph{et al.}~\cite{dauphin} multiplican una proyección lineal por una puerta sigmoide; Shazeer~\cite[§2]{shazeer} probó varias funciones en la puerta y encontró que la variante con Swish mejoraba la perplejidad del Transformer. Las componentes de la capa intermedia ya no son $\phi(\text{lineal})$, sino productos de dos formas lineales del token: la puerta decide cuánto de la rama lineal se transmite.
+
+\begin{proposicion}[Presupuesto de parámetros]\label{prop:presupuesto}
+Sin sesgos, el MLP de la \cref{def:ffn} tiene $2d\,\dff$ parámetros, y SwiGLU tiene $3d\,\dff$. Con $\dff=4d$, el primero tiene $8d^{2}$ parámetros; SwiGLU tiene el mismo número si y solo si $\dff=\frac83 d$.
+\end{proposicion}
+
+\begin{proof}
+$W_1$ y $W_2$ tienen $d\,\dff$ entradas cada una; $W_g$, $W_u$ y $\Wdown$, también. Con $\dff=4d$: $2d\cdot 4d=8d^{2}$. La ecuación $3d\,\dff=8d^{2}$ tiene la única solución $\dff=8d/3$.
+\end{proof}
+
+El mismo argumento iguala el cómputo, porque el coste de cada producto es proporcional al número de pesos (\cref{tema:6}). Shazeer~\cite[§2]{shazeer} reduce $\dff$ en un factor $2/3$ por esta razón: en sus experimentos, el MLP de dos matrices usa $\dff=3072$ y las variantes con puerta $\dff=2048$.
+
+\begin{ejemplo}[LLaMA]\label{ej:llama-dff}
+El código publicado de LLaMA~\cite{llamacode} calcula la dimensión intermedia como $\lfloor\frac23\cdot 4d\rfloor$ y la redondea hacia arriba al múltiplo de $256$ más próximo. Para $d=4096$ (LLaMA-2~7B): $\lfloor 10\,922{,}67\rfloor=10\,922$ y $\lceil 10\,922/256\rceil=43$, luego $\dff=43\cdot 256=11\,008$. El MLP tiene $3\cdot 4096\cdot 11\,008=135\,266\,304$ parámetros, un $0{,}78\,\%$ más que $8d^{2}=134\,217\,728$. Para $d=5120$ (LLaMA-2~13B), el mismo cálculo da $\dff=13\,824$. El redondeo a múltiplos de potencias de~$2$ aprovecha mejor las unidades de multiplicación de matrices de las GPU (módulo~17).
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+SwiGLU es el MLP de LLaMA~\cite[§2.2]{llama}, de Llama~3 y de Qwen~2.5, según la práctica de CS336~\cite[§3.4.2]{cs336}. Shazeer no ofrece una explicación teórica de la mejora; la práctica propone comprobarla empíricamente comparando SwiGLU con un MLP SiLU sin puerta de $\dff=4d$, que tiene aproximadamente el mismo número de parámetros (problema \texttt{swiglu\_ablation}). En los modelos con mezcla de expertos (módulo~18), cada experto es una subcapa de este tipo.
+\end{observacion}
+
+\begin{lecturas}
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.3 «Position-wise Feed-Forward Networks».
+\item Zhang \emph{et al.}~\cite{d2l}, §11.7.2 «Positionwise Feed-Forward Networks».
+\item Jurafsky y Martin~\cite{jm3}, §7.2.1 «Feedforward layer».
+\item Shazeer~\cite{shazeer}, §2 «Gated Linear Units (GLU) and Variants».
+\item Hashimoto y Liang~\cite{cs336}, §3.4.2 «Position-Wise Feed-Forward Network».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-base}
+Explique por qué el MLP no mezcla información entre tokens. Cuente los parámetros del MLP del Transformer base de Vaswani \emph{et al.}\ ($d=512$, $\dff=2048$, con sesgos) y diga qué fracción corresponde a los sesgos.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-llama}
+Justifique $\dff=\frac83 d$ en SwiGLU. Para $d=4096$, calcule $\frac83 d$, el múltiplo de $256$ inmediatamente superior y cuántos parámetros de más tiene el MLP de LLaMA-2~7B respecto de $8d^{2}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-swiglu}
+Sea $d=\dff=2$, $x=(1,-1)$ y
+\[
+W_g=\begin{pmatrix}2&0\\1&1\end{pmatrix},\qquad W_u=\begin{pmatrix}1&1\\0&2\end{pmatrix},\qquad \Wdown=\begin{pmatrix}1&-1\\2&0\end{pmatrix}.
+\]
+Calcule $\SwiGLU(x)$ indicando la puerta, la rama lineal y la capa intermedia. Use $\sigma(1)=0{,}7311$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-cs336}
+Para un modelo con $d=1600$: (a) compruebe que $\dff=4288$ es el múltiplo de $64$ más cercano a $\frac83 d$; (b) cuente los parámetros de la subcapa SwiGLU con ese $\dff$ y los de un MLP SiLU sin puerta, $\FFN_{\SiLU}(x)=\SiLU(xW_1)W_2$, con $\dff=4d$, ambos sin sesgos; (c) calcule el cociente entre ambos. (d) Repita (a) y (b) para $d=768$.
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, §3.4.2, problema \texttt{positionwise\_feedforward}, y §7.3, problema \texttt{swiglu\_ablation} (se sustituye el experimento por el recuento).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-silu}
+Demuestre las propiedades (ii) y (iii) de la \cref{prop:silu} sin consultar la demostración. Después demuestre que $\SiLU(x)=\frac{x}{2}\bigl(1+\tanh\frac{x}{2}\bigr)$ y deduzca que $\SiLU(x)-\SiLU(-x)=x$ y que $\SiLU(x)+\SiLU(-x)=x\tanh\frac{x}{2}$. ¿Qué dice la primera identidad sobre la parte impar de SiLU?
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Codificación de la posición: sinusoidal y RoPE}
+\label{tema:4}
+% =====================================================================
+
+Sin información de posición, la atención trata la secuencia como un conjunto. Este tema demuestra esa propiedad, define la codificación sinusoidal del Transformer original y las posiciones aprendidas de GPT-2, y estudia con detalle la codificación rotatoria RoPE de LLaMA, cuya puntuación de atención solo depende de la distancia entre tokens. Se sigue~\cite[§3.5]{vaswani}, \cite[§11.6.3]{d2l}, \cite[§12.1.9]{bishopdl}, \cite[§7.4]{jm3}, el artículo de Su \emph{et al.}~\cite[§3.2]{roformer} y las secciones~2 y~3 de la práctica~4 de CS224N~\cite{cs224n}.
+
+\section{La atención no ve el orden}
+
+\begin{proposicion}[Equivariancia por permutaciones]\label{prop:equivariancia}
+Sea
+\[
+f(X)=\softmax\bigl(XW_Q(XW_K)\T/\sqrt{d_k}\bigr)XW_V
+\]
+la autoatención \emph{sin máscara}, con la softmax por filas. Para toda matriz de permutación $P$, $f(PX)=P\,f(X)$.
+\end{proposicion}
+
+\begin{proof}
+Sea $S=XW_QW_K\T X\T/\sqrt{d_k}$. Con $PX$ en lugar de $X$, la matriz de puntuaciones es $PSP\T$, cuya entrada $(t,u)$ es $S_{\pi(t)\pi(u)}$. La softmax por filas de $PSP\T$ es $P\softmax(S)P\T$: la fila $t$ contiene los mismos números que la fila $\pi(t)$ de $S$, reordenados por $\pi$, y la softmax de un vector reordenado es la softmax reordenada. Por tanto $f(PX)=P\softmax(S)P\T PXW_V=P\softmax(S)XW_V=Pf(X)$, porque $P\T P=I$.
+\end{proof}
+
+Junto con el \cref{lem:filas}, la \cref{prop:equivariancia} implica que un Transformer sin máscara y sin posiciones es equivariante: barajar los tokens de la entrada solo baraja las filas de la salida, de modo que «el perro muerde al hombre» y «el hombre muerde al perro» producen los mismos vectores por palabra. La máscara causal rompe la simetría (\cref{eje:1-perm-mascara}), y la práctica de CS336 recuerda que un decoder causal puede, en principio, inferir posiciones sin codificación explícita~\cite[§7.3]{cs336}; aun así, todos los modelos de la \cref{tab:modelos} codifican la posición de forma explícita.
+
+\section{Codificación sinusoidal y posiciones aprendidas}
+
+\begin{definicion}[Codificación sinusoidal]\label{def:sinusoidal}
+Sea $d$ par y $\omega_i=10000^{-2i/d}$ para $i=0,\dots,d/2-1$. La \emph{codificación sinusoidal} de la posición $p\in\mathbb{N}$ es el vector $\PE(p)\in\R^{d}$ con componentes
+\[
+\PE(p)_{2i}=\sin(p\,\omega_i),\qquad \PE(p)_{2i+1}=\cos(p\,\omega_i),
+\]
+que se suma al embedding del token: $h^{0}_t=e_{x_t}+\PE(t)$~\cite[§3.5]{vaswani}.
+\end{definicion}
+
+Cada par $(2i,2i+1)$ es un punto que gira sobre la circunferencia unidad con frecuencia angular $\omega_i$; las frecuencias decrecen geométricamente desde $\omega_0=1$ hasta $\omega_{d/2-1}\approx 10^{-4}$. Es como un reloj con $d/2$ agujas que giran a velocidades distintas~\cite[§11.6.3.1]{d2l}.
+
+\begin{ejemplo}\label{ej:pe4}
+Con $d=4$: $\omega_0=1$ y $\omega_1=10000^{-1/2}=0{,}01$. Entonces $\PE(1)=(0{,}8415;\;0{,}5403;\;0{,}0100;\;1{,}0000)$ y $\PE(2)=(0{,}9093;\;-0{,}4161;\;0{,}0200;\;0{,}9998)$, redondeando a cuatro decimales. La norma es constante: $\norm{\PE(p)}^{2}=d/2=2$ para todo $p$.
+\end{ejemplo}
+
+\begin{teorema}[Desplazamiento lineal]\label{teo:desplazamiento}
+Para cada $k\in\mathbb{Z}$ existe una matriz ortogonal $M_k\in\R^{d\times d}$, que no depende de $p$, tal que $\PE(p+k)=M_k\,\PE(p)$ para todo $p$.
+\end{teorema}
+
+\begin{proof}
+Se fija un par $i$ y se escribe $a=p\,\omega_i$, $b=k\,\omega_i$. Por las fórmulas del seno y del coseno de la suma,
+\[
+\begin{pmatrix}\sin(a+b)\\ \cos(a+b)\end{pmatrix}=\begin{pmatrix}\cos b&\sin b\\ -\sin b&\cos b\end{pmatrix}\begin{pmatrix}\sin a\\ \cos a\end{pmatrix}.
+\]
+La matriz $2\times 2$ solo depende de $b=k\omega_i$ y es una rotación, luego ortogonal. Sea $M_k$ la matriz diagonal por bloques con estos $d/2$ bloques; es ortogonal porque lo es cada bloque, y la igualdad se cumple par a par.
+\end{proof}
+
+El \cref{teo:desplazamiento} es la afirmación de Vaswani \emph{et al.}~\cite[§3.5]{vaswani} de que $\PE(p+k)$ es una función lineal de $\PE(p)$ para cada desplazamiento fijo, y la propiedad de posición relativa de~\cite[§11.6.3.2]{d2l}. La esperanza era que la red aprendiera a atender por posiciones relativas mediante esa aplicación lineal.
+
+\begin{definicion}[Posiciones aprendidas]
+Un modelo con \emph{posiciones aprendidas} añade una matriz de parámetros $W_P\in\R^{\nctx\times d}$ y suma su fila $t$ al embedding del token $t$. Es la opción de GPT-2~\cite{gpt2}. Aporta $\nctx d$ parámetros y no define ninguna codificación para posiciones $t>\nctx$.
+\end{definicion}
+
+\section{Codificación rotatoria (RoPE)}
+
+En lugar de sumar la posición al embedding, RoPE la introduce en cada capa, girando las consultas y las claves~\cite{roformer}. Sea
+\[
+R(\alpha)=\begin{pmatrix}\cos\alpha&-\sin\alpha\\ \sin\alpha&\cos\alpha\end{pmatrix}
+\]
+la rotación plana de ángulo $\alpha$.
+
+\begin{lema}[Rotaciones planas]\label{lem:rotaciones}
+Para todos $a,b\in\R$: (i) $R(a)R(b)=R(a+b)$; (ii) $R(a)\T=R(-a)$; (iii) en consecuencia, $R(a)\T R(b)=R(b-a)$ y $R(a)$ es ortogonal.
+\end{lema}
+
+\begin{proof}
+(i) La entrada $(1,1)$ del producto es $\cos a\cos b-\sin a\sin b=\cos(a+b)$ y la entrada $(2,1)$ es $\sin a\cos b+\cos a\sin b=\sin(a+b)$; las entradas $(1,2)$ y $(2,2)$ son $-\sin(a+b)$ y $\cos(a+b)$ por el mismo cálculo. (ii) Al trasponer se intercambian los senos de fuera de la diagonal; como $\cos(-a)=\cos a$ y $\sin(-a)=-\sin a$, el resultado es $R(-a)$. (iii) $R(a)\T R(b)=R(-a)R(b)=R(b-a)$ por (ii) y (i); con $b=a$ se obtiene $R(a)\T R(a)=R(0)=I$.
+\end{proof}
+
+\begin{definicion}[RoPE]\label{def:rope}
+Sea $d_k$ par y $\theta_i=10000^{-2i/d_k}$ para $i=0,\dots,d_k/2-1$. Para cada posición $m$ se define la matriz diagonal por bloques
+\[
+R_m=\diag\bigl(R(m\theta_0),\,R(m\theta_1),\,\dots,\,R(m\theta_{d_k/2-1})\bigr)\in\R^{d_k\times d_k}.
+\]
+RoPE sustituye, en cada cabeza y cada capa, la consulta $q_m$ del token $m$ por $\tilde q_m=R_mq_m$ y la clave $k_n$ del token $n$ por $\tilde k_n=R_nk_n$. Los valores $v_n$ no se modifican.
+\end{definicion}
+
+\begin{teorema}[RoPE es relativa]\label{teo:rope}
+Para todos $q,k\in\R^{d_k}$ y todas las posiciones $m,n$,
+\[
+(R_mq)\T(R_nk)=q\T R_{n-m}\,k.
+\]
+En particular, la puntuación de atención entre el token $m$ y el token $n$ solo depende de las posiciones a través de la diferencia $n-m$.
+\end{teorema}
+
+\begin{proof}
+La traspuesta de una matriz diagonal por bloques es la matriz diagonal por bloques de las traspuestas, y el producto de dos matrices diagonales por bloques con bloques del mismo tamaño se calcula bloque a bloque. Por el \cref{lem:rotaciones}(iii) aplicado a cada bloque,
+\[
+R_m\T R_n=\diag\bigl(R(m\theta_i)\T R(n\theta_i)\bigr)_{i}=\diag\bigl(R((n-m)\theta_i)\bigr)_{i}=R_{n-m}.
+\]
+Finalmente, $(R_mq)\T(R_nk)=q\T R_m\T R_nk=q\T R_{n-m}k$.
+\end{proof}
+
+\begin{corolario}\label{cor:rope-norma}
+RoPE conserva las normas: $\norm{R_mq}=\norm{q}$. Solo modifica el ángulo entre la consulta y la clave.
+\end{corolario}
+
+\begin{proof}
+$R_m$ es ortogonal por el \cref{lem:rotaciones}, luego $\norm{R_mq}^{2}=q\T R_m\T R_mq=q\T q$.
+\end{proof}
+
+Para un solo par ($d_k=2$), si $\varphi=(n-m)\theta$, el desarrollo de $q\T R(\varphi)k$ es
+\begin{equation}\label{eq:rope2d}
+q\T R(\varphi)\,k=(q\cdot k)\cos\varphi-(q_1k_2-q_2k_1)\sin\varphi .
+\end{equation}
+
+\begin{ejemplo}[Misma distancia, misma puntuación]\label{ej:rope}
+Sean $d_k=2$, $\theta=\pi/6$, $q=(1,2)$ y $k=(3,1)$, de modo que $q\cdot k=5$ y $q_1k_2-q_2k_1=-5$. Por~\eqref{eq:rope2d}, para $n-m=-2$ la puntuación es $5\cos(-\pi/3)+5\sin(-\pi/3)=2{,}5-4{,}330=-1{,}830$, y para $n-m=+2$ es $2{,}5+4{,}330=6{,}830$. La \cref{tab:rope} muestra que tres pares de posiciones con la misma diferencia dan la misma puntuación.
+\end{ejemplo}
+
+\begin{table}[ht]
+\centering\small
+\caption{Puntuaciones $(R_mq)\T(R_nk)$ del \cref{ej:rope}.}\label{tab:rope}
+\begin{tabular}{@{}cccr@{}}
+\toprule
+$m$ (consulta) & $n$ (clave) & $n-m$ & Puntuación \\
+\midrule
+3 & 1 & $-2$ & $-1{,}830$ \\
+5 & 3 & $-2$ & $-1{,}830$ \\
+2 & 0 & $-2$ & $-1{,}830$ \\
+1 & 3 & $+2$ & $6{,}830$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proposicion}[Forma compleja]\label{prop:rope-compleja}
+Identifíquese cada par $(a,b)$ con el número complejo $z=a+ib$. Entonces la rotación $R(\alpha)$ equivale a multiplicar por $e^{i\alpha}$, y, con $\langle u,v\rangle=\Real(u\bar v)$, el producto escalar de dos pares rotados es
+\[
+\bigl\langle z_1e^{im\theta},\,z_2e^{in\theta}\bigr\rangle=\Real\bigl(z_1\bar z_2\,e^{i(m-n)\theta}\bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+$e^{i\alpha}(a+ib)=(a\cos\alpha-b\sin\alpha)+i(a\sin\alpha+b\cos\alpha)$, que es el vector $R(\alpha)(a,b)\T$. Para $u=a+ib$ y $v=c+id$, $\Real(u\bar v)=ac+bd$ es el producto escalar real. Finalmente, $\overline{z_2e^{in\theta}}=\bar z_2e^{-in\theta}$, y los exponentes se suman.
+\end{proof}
+
+La forma compleja es la que usan el artículo original~\cite[§3.2.1]{roformer} y el código de LLaMA~\cite{llamacode}, que agrupa las componentes consecutivas de $q$ y $k$ en números complejos. La fase $e^{i(m-n)\theta}$ hace el papel del desfase entre dos osciladores de la misma frecuencia: solo importa la diferencia de fases, como en la interferencia de dos ondas.
+
+\begin{table}[ht]
+\centering\small
+\caption{Comparación de las codificaciones de posición. La propiedad relativa es la del \cref{teo:desplazamiento} para la sinusoidal y la del \cref{teo:rope} para RoPE.}\label{tab:posiciones}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Método & Dónde actúa & Parámetros & Relativa & Modelos \\
+\midrule
+Sinusoidal & suma al embedding & $0$ & indirecta & Transformer \\
+Aprendida & suma al embedding & $\nctx d$ & no & GPT-2, GPT-3 \\
+RoPE & gira $q$ y $k$ en cada capa & $0$ & exacta & LLaMA, Qwen \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Conexión con los LLM]
+RoPE no gira los valores $v$: la posición debe influir en \emph{a quién} se atiende, no en \emph{qué} contenido se copia al flujo residual. La práctica de CS336 precalcula los cosenos y senos una sola vez y los comparte entre capas, porque RoPE no tiene parámetros entrenables~\cite[§3.4.3]{cs336}. Los métodos para ampliar el contexto de un modelo con RoPE (módulo~16) modifican las frecuencias $\theta_i$; la más lenta tiene periodo $2\pi\cdot 10000^{(d_k-2)/d_k}$, que con la dimensión por cabeza de LLaMA-2~7B, $d_k=128$, vale unas $54\,410$ posiciones.
+\end{observacion}
+
+\begin{lecturas}
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.5 «Positional Encoding».
+\item Zhang \emph{et al.}~\cite{d2l}, §11.6.3 «Positional Encoding» (posición absoluta y relativa).
+\item Bishop y Bishop~\cite{bishopdl}, §12.1.9 «Positional encoding».
+\item Su \emph{et al.}~\cite{roformer}, §3.2 «Rotary position embedding».
+\item CS224N~\cite{cs224n}, práctica~4, sección~2 «Position Embeddings Exploration».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-v}
+¿Por qué RoPE gira $q$ y $k$ pero no $v$? ¿Qué ocurriría si también girase $v$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-pe}
+Calcule $\PE(1)$ y $\PE(2)$ con $d=4$ y compruebe que cada par cumple $\sin^{2}+\cos^{2}=1$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-mk}
+Con $d=2$ ($\omega_0=1$), escriba la matriz $M_1$ del \cref{teo:desplazamiento} con cuatro decimales y compruebe numéricamente que $M_1\PE(1)=\PE(2)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-rope}
+Con $d_k=2$, $\theta=\pi/6$, $q=(1,2)$ y $k=(3,1)$, calcule $R(3\theta)q$, $R(\theta)k$ y su producto escalar. Compruebe que coincide con $q\T R(-2\theta)k$ y que $\norm{R(\theta)k}=\norm{k}$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-rope-dem}
+Demuestre el \cref{teo:rope} para RoPE en $d_k$ dimensiones, justificando cada propiedad de las matrices diagonales por bloques que se use. Compruebe el caso $m=n$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-perm}
+Una capa calcula $Q=XW_Q$, $K=XW_K$, $V=XW_V$, $H=\softmax(QK\T/\sqrt d)V$ y $Z=\ReLU(HW_1+\uno b_1)W_2+\uno b_2$, con $X\in\R^{T\times d}$ y $\uno$ un vector columna de unos. (a) Demuestre que, si $X'=PX$ con $P$ de permutación, entonces $Z'=PZ$; puede usar $\softmax(PAP\T)=P\softmax(A)P\T$ y $\ReLU(PA)=P\ReLU(A)$. (b) Explique por qué es un problema para modelar texto. (c) ¿Pueden dos posiciones enteras distintas recibir la misma codificación sinusoidal?
+\fuente{adaptado de CS224N~\cite{cs224n}, práctica~4, sección~2, apartados (a) y (b).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-compleja}
+Escriba cada par de componentes como un complejo y defina $\RoPE(z,t)=z\,e^{it\theta}$. (a) Demuestre que $\langle\RoPE(z_1,t_1),\RoPE(z_2,t_2)\rangle=\langle\RoPE(z_1,t_1-t_2),\RoPE(z_2,0)\rangle$, con $\langle u,v\rangle=\Real(u\bar v)$. (b) Compruébelo con $z_1=1+2i$, $z_2=3+i$, $\theta=\pi/6$, $t_1=3$ y $t_2=1$.
+\fuente{adaptado de CS224N~\cite{cs224n}, práctica~4, sección~3, apartado (g)(ii) «Relative Embeddings».}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Contar parámetros y memoria}
+\label{tema:5}
+% =====================================================================
+
+A partir de la configuración de un Transformer ($V$, $d$, $L$, $h$, $\dff$) puede calcularse sin ejecutar nada cuántos parámetros tiene y cuánta memoria necesita para la inferencia y para el entrenamiento. Este tema deduce la fórmula exacta para la arquitectura de LLaMA, la aproximación $N\approx 12Ld^{2}$ de Kaplan \emph{et al.}~\cite[§2.1]{kaplan} y el coste en bytes por parámetro del entrenamiento con Adam en precisión mixta. Se sigue también~\cite[§7.1.1 y ejercicio~7.1]{jm3} y el problema \texttt{transformer\_accounting} de CS336~\cite{cs336}.
+
+\section{Parámetros de un bloque}
+
+\begin{proposicion}[La atención no depende del número de cabezas]\label{prop:cabezas}
+Sin sesgos, la atención multicabeza con $h$ cabezas de dimensión $d_k=d/h$ tiene $4d^{2}$ parámetros, cualquiera que sea $h$.
+\end{proposicion}
+
+\begin{proof}
+Cada cabeza tiene tres matrices $d\times d_k$, con $3dd_k$ parámetros; las $h$ cabezas suman $3hdd_k=3d^{2}$. La proyección de salida $W_O$ tiene $d^{2}$. En total, $4d^{2}$.
+\end{proof}
+
+\begin{proposicion}[Parámetros de un bloque]\label{prop:bloque}
+\begin{enumerate}
+  \item Un bloque de tipo LLaMA (RMSNorm con ganancia, SwiGLU, sin sesgos) tiene $4d^{2}+3d\,\dff+2d$ parámetros.
+  \item Un bloque de tipo GPT-2 (LayerNorm con ganancia y sesgo, MLP con $\dff=4d$, sesgos en todas las capas lineales) tiene $12d^{2}+13d$ parámetros.
+  \item Con $\dff=4d$ en un MLP de dos matrices o $\dff=\frac83 d$ en SwiGLU, la parte matricial del bloque tiene $12d^{2}$ parámetros: $4d^{2}$ en la atención y $8d^{2}$ en el MLP.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Atención: $4d^{2}$ (\cref{prop:cabezas}). SwiGLU: $3d\,\dff$ (\cref{prop:presupuesto}). Dos RMSNorm con un vector de ganancia de dimensión $d$ cada una: $2d$.
+
+(ii) Atención: $3d^{2}+d^{2}$ en matrices y $3d+d$ en sesgos. MLP: $4d^{2}+4d^{2}$ en matrices y $4d+d$ en sesgos. Dos LayerNorm: $2(d+d)=4d$. Matrices: $12d^{2}$; vectores: $4d+5d+4d=13d$.
+
+(iii) Es la \cref{prop:presupuesto} sumada a la \cref{prop:cabezas}.
+\end{proof}
+
+\section{Parámetros del modelo completo}
+
+\begin{teorema}[Recuento exacto]\label{teo:recuento}
+Un Transformer de tipo LLaMA con embeddings sin atar tiene
+\[
+N=L\bigl(4d^{2}+3d\,\dff+2d\bigr)+2Vd+d
+\]
+parámetros. Con embeddings atados, el término $2Vd$ se sustituye por $Vd$; con posiciones aprendidas, se añaden $\nctx d$.
+\end{teorema}
+
+\begin{proof}
+Hay $L$ bloques (\cref{prop:bloque}); la matriz de embedding y la de unembedding tienen $Vd$ parámetros cada una; la normalización final tiene $d$. Las variantes se siguen de la \cref{prop:ahorro} y de la definición de posiciones aprendidas.
+\end{proof}
+
+\begin{corolario}[Aproximación de Kaplan]\label{cor:kaplan}
+Si $\dff=4d$ (o $\frac83 d$ en SwiGLU), los parámetros sin contar embeddings ni normalizaciones son exactamente $12Ld^{2}$, y
+\[
+\frac{N}{12Ld^{2}}=1+\frac{V}{6Ld}+\frac{2L+1}{12Ld}\qquad\text{(sin atar)}.
+\]
+\end{corolario}
+
+\begin{proof}
+Sustituyendo $3d\,\dff=8d^{2}$ en el \cref{teo:recuento}, $N=12Ld^{2}+2Ld+2Vd+d$. Dividiendo por $12Ld^{2}$ se obtiene la expresión.
+\end{proof}
+
+Kaplan \emph{et al.}~\cite[§2.1, ecuación~(2.1) y tabla~1]{kaplan} definen $N$ como el número de parámetros \emph{sin embeddings}, $N\approx 2d\,L(2d_{\mathrm{attn}}+\dff)=12Ld^{2}$, porque observaron que las leyes de escalado se expresan mejor con esa cantidad (módulo~16).
+
+\begin{ejemplo}[LLaMA-2~7B]\label{ej:llama7b}
+La configuración publicada es $d=4096$, $L=32$, $h=32$, $\dff=11\,008$ y $V=32\,000$, con embeddings sin atar~\cite[tabla~2]{llama}, \cite{llamacode}. La \cref{tab:llama7b} aplica la \cref{prop:bloque}. Por el \cref{teo:recuento},
+\[
+N=32\cdot 202\,383\,360+2\cdot 131\,072\,000+4096=6\,738\,415\,616.
+\]
+La aproximación $12Ld^{2}=6\,442\,450\,944$ cubre el $95{,}6\,\%$ de $N$; los embeddings suponen el $3{,}9\,\%$. El MLP contiene el $64{,}2\,\%$ de todos los parámetros y la atención el $31{,}9\,\%$.
+\end{ejemplo}
+
+\begin{table}[ht]
+\centering\small
+\caption{Parámetros de un bloque de LLaMA-2~7B.}\label{tab:llama7b}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Pieza & Fórmula & Parámetros \\
+\midrule
+$W_Q,W_K,W_V,W_O$ & $4d^{2}$ & $67\,108\,864$ \\
+SwiGLU & $3d\,\dff$ & $135\,266\,304$ \\
+Dos RMSNorm & $2d$ & $8\,192$ \\
+\midrule
+Bloque & & $202\,383\,360$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Memoria}
+
+\begin{definicion}[Memoria de los parámetros]
+Si cada parámetro se almacena con $b$ bytes, los pesos ocupan $Nb$ bytes. Se usan $b=4$ en fp32, $b=2$ en bf16 y fp16, $b=1$ en int8 y $b=1/2$ en int4 (módulos~11 y~19). En este módulo, $1~\mathrm{GB}=10^{9}$~bytes y $1~\mathrm{GiB}=2^{30}$~bytes.
+\end{definicion}
+
+\begin{proposicion}[Estado del entrenamiento con Adam en precisión mixta]\label{prop:16bytes}
+Entrenar con Adam en precisión mixta requiere, sin contar las activaciones, $16$~bytes por parámetro.
+\end{proposicion}
+
+\begin{proof}
+Por cada parámetro se almacenan: el peso de trabajo en bf16 ($2$~bytes), su gradiente en bf16 ($2$), la copia maestra del peso en fp32, que evita que las actualizaciones pequeñas se pierdan por redondeo (módulo~11, tema~5) ($4$), y los dos momentos de Adam $m$ y $v$ en fp32 (módulo~7) ($4+4$). En total, $2+2+4+4+4=16$.
+\end{proof}
+
+\begin{table}[ht]
+\centering\small
+\caption{Memoria de LLaMA-2~7B ($N=6\,738\,415\,616$) según el uso.}\label{tab:memoria}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Uso & Bytes por parámetro & Memoria \\
+\midrule
+Inferencia en bf16 & $2$ & $13{,}5$~GB \\
+Inferencia en int4 (módulo~19) & $0{,}5$ & $3{,}4$~GB \\
+Pesos en fp32 & $4$ & $27{,}0$~GB \\
+Entrenamiento, Adam en precisión mixta & $16$ & $107{,}8$~GB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La \cref{tab:memoria} explica por qué un modelo de $7\cdot 10^{9}$ parámetros cabe en una GPU de $24$~GB para la inferencia en bf16, pero no para el entrenamiento: con $16$~bytes por parámetro, en $24$~GB solo caben los estados de un modelo de $1{,}5\cdot 10^{9}$ parámetros, y aún habría que añadir las activaciones. Las técnicas ZeRO y FSDP (módulo~17) reparten estos $16$~bytes entre varias GPU.
+
+\begin{observacion}[Conexión con los LLM]
+Las cifras de esta sección se aplican a cualquier modelo cuya configuración sea pública, como GPT-2, LLaMA o Grok-1~\cite{grok1}. Anthropic y Google no publican la configuración de Claude ni de Gemini, de modo que su número de parámetros no puede calcularse con estas fórmulas.
+\end{observacion}
+
+\begin{lecturas}
+\item Kaplan \emph{et al.}~\cite{kaplan}, §2.1 «Parameter and Compute Scaling of Transformers» y tabla~1.
+\item Jurafsky y Martin~\cite{jm3}, §7.1.1 (coste de la atención multicabeza) y §7.8 «Current models and some numbers».
+\item Touvron \emph{et al.}~\cite{llama}, §2.2 «Architecture» y tabla~2.
+\item Hashimoto y Liang~\cite{cs336}, problemas \texttt{transformer\_accounting} y \texttt{adamw\_accounting}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{2}{eje:5-slp}
+Un Transformer tiene $L$ capas, dimensión $d$, $A$ cabezas con $d_k=d_v=d/A$ y $\dff=4d$. (a) Cuente los parámetros de $W_Q$, $W_K$, $W_V$ y $W_O$ en una capa. ¿Depende el resultado de $A$? (b) Cuente los parámetros de una capa MLP. (c) Demuestre que la pila de $L$ bloques tiene unos $12Ld^{2}$ parámetros, sin contar sesgos ni normalizaciones. (d) Aplíquelo a $d=512$ y $L=6$.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.1 (se añade el apartado~(d)).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-gpt2}
+GPT-2 \emph{small}: $d=768$, $L=12$, $V=50\,257$, $\nctx=1024$, posiciones aprendidas, MLP con $\dff=4d$, LayerNorm con ganancia y sesgo, sesgos en todas las capas lineales y embeddings atados. Calcule el número de parámetros de un bloque y del modelo. ¿Qué fracción cubre $12Ld^{2}$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-13b}
+LLaMA-2~13B: $d=5120$, $L=40$, $\dff=13\,824$, $V=32\,000$, sin atar. Calcule $N$ exactamente y compárelo con $12Ld^{2}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-mem13b}
+Para LLaMA-2~13B ($N$ del \cref{eje:5-13b}), calcule la memoria de los pesos en bf16 y la del estado completo de entrenamiento con Adam en precisión mixta, sin activaciones. ¿Cuántas GPU de $80$~GB hacen falta como mínimo para el estado de entrenamiento?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-xl}
+Un modelo con la arquitectura de este módulo (pre-norm, RMSNorm con ganancia, SwiGLU, RoPE, sin sesgos, embeddings sin atar) tiene la forma de GPT-2 XL: $V=50\,257$, $\nctx=1024$, $L=48$, $d=1600$, $h=25$ y $\dff=4288$. Cuente sus parámetros entrenables y la memoria que ocupan en fp32.
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, problema \texttt{transformer\_accounting}, apartado~(a).}
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:5-24gb}
+Una GPU tiene $24$~GB. Sin contar activaciones, ¿cuál es el mayor número de parámetros de un modelo que cabe en ella (a) para la inferencia en bf16, (b) para la inferencia en int4 y (c) para el entrenamiento con Adam en precisión mixta? ¿Qué componentes del estado de entrenamiento no son necesarios para la inferencia?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-fraccion}
+Sea $f=2Vd/N$ la fracción de parámetros de embeddings de un modelo sin atar con $\dff=\frac83 d$ (\cref{cor:kaplan}). (a) Demuestre que, si $V$ y la razón $\alpha=L/d$ están fijos, $f\sim V/(6\alpha d^{2})$ cuando $d\to\infty$. (b) Calcule $f$ para LLaMA-2~7B y para el modelo del \cref{eje:5-xl} y explique por qué el atado de embeddings se abandona en los modelos grandes.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Contar el cómputo: FLOPs y la regla \texorpdfstring{$6ND$}{6ND}}
+\label{tema:6}
+% =====================================================================
+
+El coste de un Transformer se mide en operaciones de coma flotante (FLOPs). Casi todas proceden de productos de matrices, de modo que basta un único lema para contarlas. Este tema deduce el coste de una pasada hacia delante, unos $2N$ FLOPs por token más un término de atención proporcional al contexto, y el coste del entrenamiento, $C\approx 6ND$. Se sigue~\cite[§2.1]{kaplan}, la sección de contabilidad de recursos de la práctica~1 de CS336~\cite[§3.5]{cs336} y los datos de entrenamiento de Llama~2~\cite[§2.2.1 y tabla~2]{llama2}.
+
+\section{El coste de un producto de matrices}
+
+\begin{definicion}[FLOP]
+Un \emph{FLOP} es una suma o una multiplicación en coma flotante. El \emph{rendimiento} de un acelerador se mide en FLOP/s; su \emph{aprovechamiento} (MFU, \emph{model FLOPs utilization}) es el cociente entre los FLOP/s útiles que alcanza un entrenamiento y el máximo teórico del hardware~\cite[problema \texttt{adamw\_accounting}]{cs336}.
+\end{definicion}
+
+\begin{lema}[Regla $2mkp$]\label{lem:2mkp}
+El producto de una matriz $m\times k$ por una matriz $k\times p$ requiere $2mkp$ FLOPs, contando como $2k$ las operaciones de cada producto escalar de longitud $k$.
+\end{lema}
+
+\begin{proof}
+El resultado tiene $mp$ entradas, y cada una es un producto escalar $\sum_{r=1}^{k}a_rb_r$ que requiere $k$ multiplicaciones y $k$ sumas de acumulación (o $k-1$ si no se cuenta la primera, que no altera el orden de magnitud). En total, $mp\cdot 2k$.
+\end{proof}
+
+\section{La pasada hacia delante}
+
+\begin{proposicion}[Coste hacia delante]\label{prop:forward}
+Sea $N_{\mathrm{mat}}$ el número de parámetros de las matrices que multiplican al flujo (proyecciones de atención, MLP y unembedding). Una pasada hacia delante sobre una secuencia de $n$ tokens requiere
+\[
+C_{\mathrm{fwd}}=2nN_{\mathrm{mat}}+4Ln^{2}d
+\]
+FLOPs, más operaciones elemento a elemento (normalizaciones, softmax, activaciones, RoPE) de coste $O(Lnd+Ln^{2}h)$, que se desprecian. Por token, el coste es $2N_{\mathrm{mat}}+4Lnd\approx 2N+4Lnd$.
+\end{proposicion}
+
+\begin{proof}
+Cada matriz de pesos $W\in\R^{a\times b}$ multiplica a una matriz $n\times a$; por el \cref{lem:2mkp}, cuesta $2nab$, es decir, $2n$ FLOPs por peso. Sumando sobre todas las matrices se obtiene $2nN_{\mathrm{mat}}$. El embedding de entrada es una indexación y no cuesta FLOPs. Quedan los dos productos de la atención que no involucran pesos: en cada capa y cada cabeza, $Q_iK_i\T$ es $(n\times d_k)(d_k\times n)$ y cuesta $2n^{2}d_k$, y el producto de los pesos por $V_i$ es $(n\times n)(n\times d_k)$ y cuesta lo mismo. Con $h$ cabezas y $hd_k=d$, son $4n^{2}d$ por capa y $4Ln^{2}d$ en total. Dividiendo por $n$ se obtiene el coste por token; $N_{\mathrm{mat}}$ difiere de $N$ solo en el embedding de entrada y las normalizaciones.
+\end{proof}
+
+\begin{observacion}
+Kaplan \emph{et al.}~\cite[§2.1, ecuación~(2.2)]{kaplan} escriben $C_{\mathrm{fwd}}\approx 2N+2Ln_{\mathrm{ctx}}d$ por token. El factor es la mitad del de la \cref{prop:forward}, lo que concuerda con tener en cuenta la máscara causal: el token $t$ solo atiende a $t$ posiciones, y el promedio de $t$ sobre la secuencia es aproximadamente $n/2$. La práctica de CS336 cuenta los productos completos $n\times n$, como la \cref{prop:forward}.
+\end{observacion}
+
+\begin{corolario}[Contexto en el que la atención iguala a los pesos]\label{cor:nstar}
+El término de atención por token, $4Lnd$, iguala a $2N$ cuando $n^{*}=N/(2Ld)$.
+\end{corolario}
+
+\begin{proof}
+Se despeja $n$ en $4Lnd=2N$.
+\end{proof}
+
+Para LLaMA-2~7B, $n^{*}=6\,738\,415\,616/(2\cdot 32\cdot 4096)\approx 25\,705$ tokens; con su contexto de $4096$ tokens, la atención añade un $15{,}9\,\%$ al coste $2N$. Para contextos mucho mayores domina el término cuadrático, lo que motiva FlashAttention (módulo~17) y la atención con ventana deslizante (módulo~18).
+
+\section{La pasada hacia atrás y la regla \texorpdfstring{$6ND$}{6ND}}
+
+\begin{teorema}[El retroceso cuesta el doble]\label{teo:backward}
+Sea $Y=XW$ una capa lineal con $X\in\R^{n\times a}$ y $W\in\R^{a\times b}$, y sea $G=\partial\Loss/\partial Y\in\R^{n\times b}$. La pasada hacia delante cuesta $2nab$ FLOPs y la pasada hacia atrás, que calcula
+\[
+\frac{\partial\Loss}{\partial X}=GW\T\qquad\text{y}\qquad\frac{\partial\Loss}{\partial W}=X\T G,
+\]
+cuesta $4nab$ FLOPs.
+\end{teorema}
+
+\begin{proof}
+Las dos fórmulas de los gradientes son las de la retropropagación por una capa lineal (módulo~10). Por el \cref{lem:2mkp}: $Y=XW$ es $(n\times a)(a\times b)$, con $2nab$ FLOPs; $GW\T$ es $(n\times b)(b\times a)$, con $2nba$; $X\T G$ es $(a\times n)(n\times b)$, con $2anb$. El primer gradiente hace falta para propagar hacia las capas anteriores y el segundo para actualizar $W$.
+\end{proof}
+
+\begin{corolario}[Regla $6ND$]\label{cor:6nd}
+Entrenar un Transformer de $N$ parámetros con $D$ tokens cuesta $C\approx 6ND$ FLOPs, despreciando el término de atención y las operaciones elemento a elemento.
+\end{corolario}
+
+\begin{proof}
+Por el \cref{teo:backward}, cada peso de una capa lineal cuesta $2+4=6$ FLOPs por token entre las dos pasadas. Sumando sobre todos los pesos y todos los tokens, $6ND$. La actualización de Adam cuesta $O(N)$ FLOPs por paso, despreciables frente a los $O(N\cdot\text{tokens por paso})$ de las dos pasadas.
+\end{proof}
+
+Kaplan \emph{et al.}\ enuncian la misma estimación, $C\approx 6N$ FLOPs por token de entrenamiento~\cite[§2.1]{kaplan}, que es la base de las leyes de escalado del módulo~16.
+
+\begin{ejemplo}[Coste de LLaMA-2~7B]\label{ej:coste7b}
+Llama~2~7B se entrenó con $D=2\cdot 10^{12}$ tokens~\cite[§2.1]{llama2}. Por el \cref{cor:6nd},
+\[
+C\approx 6\cdot 6{,}738\cdot 10^{9}\cdot 2\cdot 10^{12}=8{,}086\cdot 10^{22}~\text{FLOPs}.
+\]
+Una GPU A100 tiene un máximo de $312\cdot 10^{12}$~FLOP/s en bf16. Con un aprovechamiento del $40\,\%$, el entrenamiento requeriría $8{,}086\cdot 10^{22}/(0{,}4\cdot 312\cdot 10^{12})\approx 6{,}48\cdot 10^{8}$~s, unas $180\,000$ horas de GPU. El artículo declara $184\,320$ horas de A100-80GB para el modelo de 7B~\cite[tabla~2]{llama2}, lo que corresponde a un aprovechamiento del $39\,\%$.
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+La regla $6ND$ permite estimar el coste de cualquier entrenamiento cuyos $N$ y $D$ sean públicos. Para Claude, Gemini y Grok, sus desarrolladores no han publicado $D$, y en los modelos con mezcla de expertos (módulo~18) el coste depende de los parámetros \emph{activos} por token, no del total.
+\end{observacion}
+
+\begin{lecturas}
+\item Kaplan \emph{et al.}~\cite{kaplan}, §2.1 y tabla~1 (parámetros y cómputo por operación).
+\item Hashimoto y Liang~\cite{cs336}, §3.5, apartado «Resource accounting», y los problemas de contabilidad \texttt{transformer\_accounting} y \texttt{adamw\_accounting}.
+\item Touvron \emph{et al.}~\cite{llama2}, §2.2.1 y tabla~2 (horas de GPU de Llama~2).
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-2n}
+Explique por qué una pasada hacia delante cuesta unos $2$ FLOPs por parámetro y por token. Compruébelo contando las operaciones del producto de un vector de $\R^{2}$ por una matriz $2\times 3$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-horas}
+LLaMA-2~7B ($N=6{,}738\cdot 10^{9}$) se entrenó con $2\cdot 10^{12}$ tokens. Calcule los FLOPs de entrenamiento y las horas de A100 ($312\cdot 10^{12}$~FLOP/s) con un aprovechamiento del $40\,\%$. Despeje el aprovechamiento real a partir de las $184\,320$ horas declaradas.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-small}
+Considere la arquitectura del \cref{eje:5-xl} con la forma de GPT-2 \emph{small} ($L=12$, $d=768$, $h=12$, $\dff=2048$, $V=50\,257$) y una secuencia de $n=1024$ tokens. (a) Enumere los productos de matrices de un bloque y su coste con el \cref{lem:2mkp}. (b) Calcule el coste total de la pasada hacia delante. (c) ¿Qué parte domina? (d) Compare las proporciones con las del modelo con forma de GPT-2 XL que se dan en la solución.
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, problema \texttt{transformer\_accounting}, apartados~(b)--(d).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-16k}
+Repita el recuento de la pasada hacia delante del modelo del \cref{eje:5-xl} con $n=16\,384$ en lugar de $1024$. ¿Por qué factor se multiplica el total? ¿Qué fracción pasa a corresponder a los productos $QK\T$ y $AV$?
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, problema \texttt{transformer\_accounting}, apartado~(e).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-h100}
+Se entrena el modelo del \cref{eje:5-xl} durante $400\,000$ pasos con lotes de $1024$ secuencias de $1024$ tokens en una sola GPU H100, cuyo máximo en TF32 es $495\cdot 10^{12}$~FLOP/s, con un aprovechamiento del $50\,\%$. Supóngase que la pasada hacia atrás cuesta el doble que la pasada hacia delante. ¿Cuántas horas tarda? Compárelo con la estimación $6ND$.
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, problema \texttt{adamw\_accounting}, apartado~(d).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-6nd}
+Demuestre el \cref{teo:backward} para una capa $Y=XW+\uno c\T$ con sesgo $c\in\R^{b}$: obtenga los tres gradientes, cuente sus FLOPs y demuestre que el coste del sesgo es despreciable frente al de $W$ cuando $a$ es grande. Compruebe el recuento con $n=1$ y $a=b=2$ sin sesgo.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-atencion}
+Para LLaMA-2~7B con $n=4096$: (a) calcule la fracción que representa el término de atención $4Lnd$ respecto de $2N$; (b) obtenga $n^{*}$ del \cref{cor:nstar}; (c) demuestre que la fracción es lineal en $n$ y compruebe la coherencia de (a) y (b).
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los recuentos de parámetros y de FLOPs se dan exactos. Todas las cifras se han comprobado con un programa en Python.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-formas}
+\datos $V=100$, $d=8$, $h=2$, $\dff=32$, $n=5$.
+\planteamiento seguir la \cref{def:transformer} y la \cref{prop:forma}; la dimensión por cabeza es $d_k=d/h$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) La entrada es un vector de $n=5$ enteros en $\{1,\dots,100\}$.
+  \item (b) $H^{0}=OW_E$ con $O\in\{0,1\}^{5\times 100}$ y $W_E\in\R^{100\times 8}$: forma $5\times 8$.
+  \item (c) $d_k=8/2=4$; $Q_i=ZW_Q^{(i)}$ con $W_Q^{(i)}\in\R^{8\times 4}$: forma $5\times 4$.
+  \item (d) $\softmax(Q_iK_i\T/\sqrt{d_k}+M)$: $(5\times 4)(4\times 5)$, forma $5\times 5$, con ceros por encima de la diagonal.
+  \item (e) $XW_g$ y $XW_u$ con $W_g,W_u\in\R^{8\times 32}$: forma $5\times 32$.
+  \item (f) $Z=\Norm_f(H^{L})W_U$ con $W_U\in\R^{8\times 100}$: forma $5\times 100$.
+\end{enumerate}
+\resultado \textbf{(a) 5 enteros; (b) $5\times 8$; (c) $5\times 4$; (d) $5\times 5$; (e) $5\times 32$; (f) $5\times 100$.} Una pasada produce \textbf{5 distribuciones}, una por fila de $Z$ (\cref{cor:paralelo}).
+\comprobacion todas las matrices del flujo tienen forma $5\times 8$, como exige la \cref{prop:forma}; las dos cabezas de $5\times 4$ concatenadas dan de nuevo $5\times 8$.
+\end{solucion}
+
+\begin{solucion}{eje:1-atados}
+\datos $W_E\in\R^{V\times d}$; el unembedding necesita una matriz $d\times V$; $V=50\,257$, $d=768$.
+\planteamiento aplicar la \cref{def:atados} y la \cref{prop:ahorro}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Se comparte $W_E$, de forma $V\times d$; la salida usa su traspuesta, $W_U=W_E\T$, de forma $d\times V$.
+  \item El logit del token $j$ es $z_j=h\cdot e_j$: el vector final del flujo se compara con el embedding de cada token.
+  \item Si $h$ se parece al embedding de un token, ese token recibe un logit alto. Tokens que aparecen en contextos parecidos deben tener a la vez embeddings parecidos y plantillas de salida parecidas, de modo que usar los mismos vectores es coherente.
+  \item Ahorro: $Vd=50\,257\cdot 768=38\,597\,376$ parámetros.
+\end{enumerate}
+\resultado \textbf{se comparte $W_E\in\R^{V\times d}$; en GPT-2 \emph{small} se ahorran $38\,597\,376$ parámetros.}
+\comprobacion es el $31{,}0\,\%$ del total de $124\,439\,808$ parámetros calculado en el \cref{eje:5-gpt2}: $38\,597\,376/124\,439\,808=0{,}3102$.
+\end{solucion}
+
+\begin{solucion}{eje:1-logits}
+\datos $e_1=(1,0)$, $e_2=(0,1)$, $e_3=(1,1)$; $h=(2,1)$; embeddings atados.
+\planteamiento $z_j=h\cdot e_j$ y $p=\softmax(z)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $z_1=2\cdot 1+1\cdot 0=2$; $z_2=2\cdot 0+1\cdot 1=1$; $z_3=2\cdot 1+1\cdot 1=3$.
+  \item $e^{2}=7{,}389$; $e^{1}=2{,}718$; $e^{3}=20{,}09$; suma $=30{,}19$.
+  \item $p=(7{,}389;\;2{,}718;\;20{,}09)/30{,}19=(0{,}2447;\;0{,}0900;\;0{,}6652)$.
+  \item Por la \cref{prop:ahorro}, el ganador maximiza $\norm{e_j}\cos\angle(h,e_j)=z_j/\norm{h}$. Con $\norm{h}=\sqrt5=2{,}236$: $0{,}8944$, $0{,}4472$ y $1{,}342$.
+\end{enumerate}
+\resultado \textbf{$z=(2,1,3)$ y $p=(0{,}2447;\;0{,}0900;\;0{,}6652)$.} El token~3 es el más probable: su embedding forma un ángulo pequeño con $h$ ($\cos=0{,}9487$) y además tiene la mayor norma, $\sqrt2$.
+\comprobacion $0{,}2447+0{,}0900+0{,}6652=0{,}9999\approx 1$, por redondeo; el orden de $p$ coincide con el de $z$, como exige la monotonía de la softmax (módulo~1).
+\end{solucion}
+
+\begin{solucion}{eje:1-mascara}
+\datos $n=4$ y $n=1024$; fila $t=3$ con $s_3=(1,2,0,5)$.
+\planteamiento en la fila $t$ solo son finitas las entradas $u\le t$ (\cref{prop:causal}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) La fila $t$ tiene $t$ entradas permitidas: $1+2+3+4=10$ pesos no nulos posibles.
+  \item En general, $n(n+1)/2$ de las $n^{2}$ entradas; la fracción es $(n+1)/(2n)$. Con $n=1024$: $1025/2048=0{,}5005$.
+  \item (b) Para $t=3$ se descarta $u=4$: $s_3+M_3=(1,2,0,-\infty)$.
+  \item $e^{1}=2{,}718$, $e^{2}=7{,}389$, $e^{0}=1$, $e^{-\infty}=0$; suma $=11{,}11$.
+  \item Pesos: $(2{,}718;\;7{,}389;\;1;\;0)/11{,}11=(0{,}2447;\;0{,}6652;\;0{,}0900;\;0)$.
+\end{enumerate}
+\resultado \textbf{(a) 10 pesos, y una fracción de $0{,}5005$ con $n=1024$. (b) Los pesos de la fila~3 son $(0{,}2447;\;0{,}6652;\;0{,}0900;\;0)$.}
+\comprobacion los pesos suman~1, y son los mismos números del \cref{eje:1-logits} reordenados, porque las puntuaciones finitas son de nuevo $\{0,1,2\}$.
+\end{solucion}
+
+\begin{solucion}{eje:1-infinito}
+\datos fila $s_3=(1,2,0,5)$ del \cref{eje:1-mascara}.
+\planteamiento la máscara se \emph{suma} a las puntuaciones antes de la softmax; comparar el efecto de sumar $-\infty$ y de sumar $0$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sumar $0$ no modifica las puntuaciones: la softmax se calcula sobre $(1,2,0,5)$ y la posición futura sigue presente.
+  \item $e^{5}=148{,}4$; suma $=2{,}718+7{,}389+1+148{,}4=159{,}5$.
+  \item Pesos: $(0{,}0170;\;0{,}0463;\;0{,}0063;\;0{,}9304)$.
+  \item Con $-\infty$, en cambio, $e^{-\infty}=0$ y el peso futuro es exactamente nulo (\cref{eje:1-mascara}).
+\end{enumerate}
+\resultado \textbf{con $0$, el token futuro recibe un peso de $0{,}9304$}: el modelo podría copiar la respuesta que debe predecir. La máscara debe usar $-\infty$ (en la práctica, el menor número representable) para que la softmax asigne peso nulo.
+\comprobacion la alternativa de multiplicar los pesos por una máscara de ceros y unos después de la softmax anularía la entrada, pero la fila dejaría de sumar~1; sumar $-\infty$ antes de la softmax anula y normaliza a la vez.
+\end{solucion}
+
+\begin{solucion}{eje:1-perm-mascara}
+\datos $M_{tu}=0$ si $u\le t$ y $-\infty$ si $u>t$; $(PMP\T)_{tu}=M_{\pi(t)\pi(u)}$.
+\planteamiento contar las entradas finitas de cada fila, un número que la permutación de columnas no altera.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La fila $t$ de $M$ tiene exactamente $t$ entradas finitas (las de $u\le t$).
+  \item La fila $t$ de $PMP\T$ es la fila $\pi(t)$ de $M$ con las columnas reordenadas por $\pi$; reordenar no cambia cuántas entradas son finitas. Luego tiene $\pi(t)$ entradas finitas.
+  \item Si $PMP\T=M$, las filas $t$ de ambas matrices tienen el mismo número de entradas finitas: $\pi(t)=t$ para todo $t$, es decir, $\pi$ es la identidad.
+  \item Recíprocamente, si $\pi$ es la identidad, $P=I$ y $PMP\T=M$.
+\end{enumerate}
+\resultado \textbf{$PMP\T=M$ si y solo si $\pi=\mathrm{id}$.} La máscara distingue todas las posiciones: la fila $t$ es la única que ve exactamente $t$ tokens. Por eso un decoder causal sin codificación de posición ya no es equivariante por permutaciones y puede, en principio, inferir la posición, como señala la práctica de CS336~\cite[§7.3]{cs336}.
+\comprobacion con $n=2$ y $\pi$ el intercambio, $PMP\T=\bigl(\begin{smallmatrix}0&0\\-\infty&0\end{smallmatrix}\bigr)\ne M=\bigl(\begin{smallmatrix}0&-\infty\\0&0\end{smallmatrix}\bigr)$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-prepost}
+\datos un bloque con entrada $x$, subcapas $\MHA$ y $\MLP$ y normalizaciones $\Norm_1$, $\Norm_2$.
+\planteamiento escribir las dos variantes y seguir el término $x$ hasta la salida.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Pre-norm: $a=x+\MHA(\Norm_1(x))$ y $y=a+\MLP(\Norm_2(a))$.
+  \item Sustituyendo: $y=x+\MHA(\Norm_1(x))+\MLP(\Norm_2(a))$. El término $x$ aparece sumado sin modificar.
+  \item Post-norm: $a=\Norm_1(x+\MHA(x))$ y $y=\Norm_2(a+\MLP(a))$.
+  \item Sustituyendo: $y=\Norm_2\bigl(\Norm_1(x+\MHA(x))+\MLP(\cdots)\bigr)$. La entrada $x$ pasa por $\Norm_1$, que la divide por un RMS, y el resultado vuelve a reescalarse en $\Norm_2$. Ningún sumando de $y$ es $x$ sin modificar.
+\end{enumerate}
+\resultado \textbf{en pre-norm} existe un camino identidad $x\to y$ que no atraviesa ninguna normalización; en post-norm toda la señal atraviesa las dos normalizaciones.
+\comprobacion con $L$ bloques, pre-norm da $H^{L}=H^{0}+\sum_k F_k(\cdot)$ (\cref{prop:telescopica}), mientras que en post-norm $\RMS(h^{L}_t)=1$ sea cual sea la entrada (\cref{prop:postnorm}), de modo que $H^{L}$ no puede escribirse como $H^{0}$ más algo.
+\end{solucion}
+
+\begin{solucion}{eje:2-final}
+\planteamiento comparar la escala de $h^{L}_t$ en las dos variantes (\cref{prop:postnorm,prop:crecimiento}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item En post-norm, la salida de cada bloque es la salida de una normalización: $h^{L}_t$ ya tiene RMS controlado (igual a~1 si no hay ganancia) antes del unembedding.
+  \item En pre-norm, $h^{L}_t=h^{0}_t+\sum_k F_k(\cdot)_t$ y su norma cuadrática media crece linealmente con el número de subcapas (\cref{prop:crecimiento}).
+  \item Los logits $z=h^{L}_tW_U$ escalan con $\norm{h^{L}_t}$; sin normalizar, su escala y, por tanto, la temperatura efectiva de la softmax (módulo~1) dependerían de la profundidad y cambiarían durante el entrenamiento.
+\end{enumerate}
+\resultado \textbf{pre-norm necesita $\Norm_f$ porque el flujo no está normalizado en ningún punto y su norma crece; en post-norm la última operación de la pila ya es una normalización.}
+\comprobacion es la capa adicional que señalan Jurafsky y Martin~\cite[§7.2.3]{jm3} y la que añade GPT-2 tras el último bloque~\cite[§2.3]{gpt2}.
+\end{solucion}
+
+\begin{solucion}{eje:2-rms}
+\datos $h^{0}=(1,0)$; aportaciones $(0;\;0{,}5)$ y $(-0{,}2;\;0{,}3)$; $d=2$; $\Norm(x)=x/\RMS(x)$.
+\planteamiento calcular el RMS de cada vector del flujo y dividir; proyectar cada aportación sobre $u=(0,1)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\RMS(h^{0})=\sqrt{(1^{2}+0^{2})/2}=\sqrt{0{,}5}=0{,}7071$; $\Norm(h^{0})=(1{,}414;\;0)$.
+  \item (b) $a^{1}=(1;\;0{,}5)$; $\RMS(a^{1})=\sqrt{(1+0{,}25)/2}=\sqrt{0{,}625}=0{,}7906$; $\Norm(a^{1})=(1{,}265;\;0{,}6325)$.
+  \item (c) $h^{1}=(0{,}8;\;0{,}8)$; $\RMS(h^{1})=0{,}8$; $\Norm(h^{1})=(1;\;1)$.
+  \item (d) Componentes sobre $u$: $h^{0}\cdot u=0$; atención $0{,}5$; MLP $0{,}3$.
+\end{enumerate}
+\resultado \textbf{(a) $(1{,}414;\;0)$; (b) $(1{,}265;\;0{,}6325)$; (c) $(1;\;1)$; (d) $0$, $0{,}5$ y $0{,}3$.}
+\comprobacion $0+0{,}5+0{,}3=0{,}8=h^{1}\cdot u$, como predice la \cref{prop:telescopica}; cada vector normalizado tiene RMS~1, por ejemplo $\sqrt{(1{,}265^{2}+0{,}6325^{2})/2}=\sqrt{(1{,}600+0{,}4000)/2}=1{,}000$.
+\end{solucion}
+
+\begin{solucion}{eje:2-crecimiento}
+\datos $L=32$, luego $2L=64$ subcapas; $\E\norm{h^{0}_t}^{2}=1$; $s^{2}=0{,}5$; objetivo $1{,}5$.
+\planteamiento aplicar la \cref{prop:crecimiento}; multiplicar los pesos de salida por $c$ multiplica cada aportación por $c$ y $s^{2}$ por $c^{2}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\E\norm{h^{32}_t}^{2}=1+64\cdot 0{,}5=33$; cociente $33/1=33$ (la norma típica crece en un factor $\sqrt{33}=5{,}745$).
+  \item (b) Se exige $1+64\cdot 0{,}5\,c^{2}=1{,}5$, es decir, $32c^{2}=0{,}5$.
+  \item $c^{2}=0{,}5/32=1/64$; $c=1/8=0{,}125$.
+\end{enumerate}
+\resultado \textbf{(a) $33$; (b) $c=1/8$}, que es exactamente $1/\sqrt{2L}=1/\sqrt{64}$, el factor de GPT-2 con $N=2L$ capas residuales.
+\comprobacion con $c=1/8$, cada subcapa aporta $0{,}5/64=0{,}0078$ y las $64$ suman $0{,}5$: $1+0{,}5=1{,}5$.
+\end{solucion}
+
+\begin{solucion}{eje:2-cota}
+\datos $\partial H^{L}/\partial H^{0}=\prod_{k=2L}^{1}(I+J_k)$ con $\norm{J_k}_2\le\varepsilon$.
+\planteamiento desarrollar el producto como en la \cref{prop:jac-flujo} y acotar cada término con la submultiplicatividad de la norma.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Al multiplicar los $2L$ binomios se obtiene $I+\sum_{S}J_S$, donde $S$ recorre los subconjuntos no vacíos de $\{1,\dots,2L\}$ y $J_S$ es el producto de los $J_k$ con $k\in S$ en orden decreciente.
+  \item Por la desigualdad triangular y $\norm{AB}_2\le\norm{A}_2\norm{B}_2$: $\norm{J_S}_2\le\varepsilon^{\abs{S}}$.
+  \item Hay $\binom{2L}{j}$ subconjuntos de tamaño $j$; luego $\norm{\partial H^{L}/\partial H^{0}-I}_2\le\sum_{j=1}^{2L}\binom{2L}{j}\varepsilon^{j}=(1+\varepsilon)^{2L}-1$, por el binomio de Newton.
+  \item Como $1+\varepsilon\le e^{\varepsilon}$, $(1+\varepsilon)^{2L}-1\le e^{2L\varepsilon}-1$.
+  \item La función $x\mapsto e^{x}-1$ es convexa y vale $0$ en $x=0$ y $e-1$ en $x=1$; en $[0,1]$ queda por debajo de la cuerda: $e^{x}-1\le(e-1)x$. Con $x=2L\varepsilon\le 1$ se obtiene la cota $(e-1)\,2L\varepsilon$.
+\end{enumerate}
+\resultado \textbf{$\norm{\partial H^{L}/\partial H^{0}-I}_2\le(1+\varepsilon)^{2L}-1\le(e-1)\,2L\varepsilon$ si $2L\varepsilon\le 1$.} Si cada subcapa es una perturbación pequeña del flujo, la red completa se comporta, a efectos del gradiente, como la identidad más una corrección de orden $2L\varepsilon$: el gradiente no se desvanece ni explota. La inicialización escalada de GPT-2 busca precisamente que $\varepsilon$ decrezca con la profundidad.
+\comprobacion con $L=32$ y $\varepsilon=0{,}01$: $(1{,}01)^{64}-1=0{,}8905$ y $(e-1)\cdot 0{,}64=1{,}100$; la primera cota es menor que la segunda, como debe ser.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-base}
+\datos $d=512$, $\dff=2048$, con sesgos $b_1\in\R^{2048}$ y $b_2\in\R^{512}$.
+\planteamiento aplicar la \cref{def:ffn} y el \cref{lem:filas}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El MLP calcula $\phi(xW_1+b_1)W_2+b_2$ para cada fila $x$ por separado y con los mismos parámetros: la fila $t$ de la salida solo depende de la fila $t$ de la entrada, de modo que no hay intercambio de información entre tokens.
+  \item Matrices: $2\cdot 512\cdot 2048=2\,097\,152$.
+  \item Sesgos: $2048+512=2560$.
+  \item Total: $2\,097\,152+2560=2\,099\,712$.
+  \item Fracción de sesgos: $2560/2\,099\,712=0{,}001219$.
+\end{enumerate}
+\resultado \textbf{$2\,099\,712$ parámetros; los sesgos son el $0{,}12\,\%$.} Por eso LLaMA y la práctica de CS336 los omiten sin pérdida apreciable de capacidad.
+\comprobacion $8d^{2}=8\cdot 262\,144=2\,097\,152$ coincide con la parte matricial (\cref{prop:presupuesto}).
+\end{solucion}
+
+\begin{solucion}{eje:3-llama}
+\datos MLP clásico con $\dff=4d$; SwiGLU con tres matrices; $d=4096$.
+\planteamiento igualar parámetros (\cref{prop:presupuesto}) y redondear hacia arriba a múltiplo de $256$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item MLP clásico: $d\cdot 4d+4d\cdot d=8d^{2}$. SwiGLU: $3d\,\dff$. Igualdad: $\dff=8d/3$.
+  \item $8\cdot 4096/3=32\,768/3=10\,922{,}67$.
+  \item $10\,922{,}67/256=42{,}67$; el entero siguiente es $43$ y $43\cdot 256=11\,008$.
+  \item SwiGLU de LLaMA-2: $3\cdot 4096\cdot 11\,008=135\,266\,304$. Referencia: $8\cdot 4096^{2}=8\cdot 16\,777\,216=134\,217\,728$.
+  \item Exceso: $135\,266\,304-134\,217\,728=1\,048\,576$.
+\end{enumerate}
+\resultado \textbf{$\dff=11\,008$; el MLP tiene $1\,048\,576=2^{20}$ parámetros más por bloque que $8d^{2}$, un $0{,}78\,\%$.}
+\comprobacion $3\cdot 4096\cdot(11\,008-32\,768/3)=12\,288\cdot 11\,008-4096\cdot 32\,768=135\,266\,304-134\,217\,728=1\,048\,576$.
+\end{solucion}
+
+\begin{solucion}{eje:3-swiglu}
+\datos $x=(1,-1)$; $W_g$, $W_u$, $\Wdown$ del enunciado; $\sigma(1)=0{,}7311$, luego $\sigma(-1)=1-0{,}7311=0{,}2689$.
+\planteamiento calcular la puerta $xW_g$, la rama lineal $xW_u$, la capa intermedia $\SiLU(xW_g)\odot xW_u$ y multiplicar por $\Wdown$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Puerta: $xW_g=(1\cdot 2+(-1)\cdot 1;\;1\cdot 0+(-1)\cdot 1)=(1;\;-1)$.
+  \item $\SiLU(1)=1\cdot 0{,}7311=0{,}7311$; $\SiLU(-1)=-1\cdot 0{,}2689=-0{,}2689$.
+  \item Rama lineal: $xW_u=(1\cdot 1+(-1)\cdot 0;\;1\cdot 1+(-1)\cdot 2)=(1;\;-1)$.
+  \item Capa intermedia: $(0{,}7311\cdot 1;\;(-0{,}2689)\cdot(-1))=(0{,}7311;\;0{,}2689)$.
+  \item Salida: $(0{,}7311\cdot 1+0{,}2689\cdot 2;\;0{,}7311\cdot(-1)+0{,}2689\cdot 0)=(1{,}269;\;-0{,}7311)$.
+\end{enumerate}
+\resultado \textbf{$\SwiGLU(x)=(1{,}269;\;-0{,}7311)$}, con puerta $(1;-1)$, rama lineal $(1;-1)$ y capa intermedia $(0{,}7311;\;0{,}2689)$.
+\comprobacion las dos componentes de la capa intermedia suman $1$ porque, con estos datos, valen $\sigma(1)$ y $\sigma(-1)$, y $\sigma(x)+\sigma(-x)=1$. La segunda componente es positiva aunque la puerta sea negativa: el producto de dos ramas negativas da un valor positivo, algo imposible con ReLU.
+\end{solucion}
+
+\begin{solucion}{eje:3-cs336}
+\datos $d=1600$ y $d=768$; SwiGLU con $3d\,\dff$ parámetros; $\FFN_{\SiLU}$ con $2d\cdot 4d$.
+\planteamiento dividir $\frac83 d$ por $64$, redondear al entero más próximo y contar con la \cref{prop:presupuesto}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\frac83\cdot 1600=4266{,}67$; $4266{,}67/64=66{,}67$; el entero más cercano es $67$ y $67\cdot 64=4288$. Los candidatos vecinos distan $4266{,}67-4224=42{,}67$ y $4288-4266{,}67=21{,}33$.
+  \item (b) SwiGLU: $3\cdot 1600\cdot 4288=4800\cdot 4288=20\,582\,400$.
+  \item $\FFN_{\SiLU}$ con $\dff=6400$: $2\cdot 1600\cdot 6400=20\,480\,000$.
+  \item (c) Cociente: $20\,582\,400/20\,480\,000=1{,}005$.
+  \item (d) $\frac83\cdot 768=2048=32\cdot 64$, múltiplo exacto. SwiGLU: $3\cdot 768\cdot 2048=4\,718\,592$; $\FFN_{\SiLU}$ con $\dff=3072$: $2\cdot 768\cdot 3072=4\,718\,592$.
+\end{enumerate}
+\resultado \textbf{(a) $\dff=4288$; (b) $20\,582\,400$ frente a $20\,480\,000$; (c) $1{,}005$; (d) $\dff=2048$ y ambos MLP tienen exactamente $4\,718\,592$ parámetros.} La comparación del problema \texttt{swiglu\_ablation} es, por tanto, justa: difiere en menos de un $0{,}5\,\%$ de parámetros.
+\comprobacion con $d=768$ se recupera la proporción de Shazeer: $\dff=2048$ para la variante con puerta y $3072=4\cdot 768$ para la de dos matrices~\cite[§3.1]{shazeer}.
+\end{solucion}
+
+\begin{solucion}{eje:3-silu}
+\datos $\SiLU(x)=x\sigma(x)$; $\sigma'=\sigma(1-\sigma)$; $\sigma(-x)=1-\sigma(x)$.
+\planteamiento (ii) y (iii) como en la \cref{prop:silu}; para la identidad, expresar $\sigma$ con la tangente hiperbólica.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (ii) Regla del producto: $\SiLU'(x)=\sigma(x)+x\sigma(x)(1-\sigma(x))=\sigma(x)\bigl(1+x(1-\sigma(x))\bigr)$; en $0$, $\sigma(0)=\tfrac12$ y $\SiLU'(0)=\tfrac12$.
+  \item (iii) Los puntos críticos son los ceros de $g(x)=1+x(1-\sigma(x))$. Si $x\ge 0$, $g(x)\ge 1$. Si $x<0$, $g'(x)=(1-\sigma(x))(1-x\sigma(x))>0$, $g(0)=1$ y $g(x)\to-\infty$ cuando $x\to-\infty$; hay una única raíz $x^{*}<0$, que es mínimo porque $\SiLU'$ pasa de negativa a positiva. De $g(x^{*})=0$: $\sigma(x^{*})=1+1/x^{*}$ y $\SiLU(x^{*})=x^{*}+1$.
+  \item $\tanh\frac{x}{2}=\dfrac{1-e^{-x}}{1+e^{-x}}$, luego $1+\tanh\frac x2=\dfrac{2}{1+e^{-x}}=2\sigma(x)$ y $\SiLU(x)=\frac{x}{2}\bigl(1+\tanh\frac x2\bigr)$.
+  \item $\SiLU(x)-\SiLU(-x)=x\sigma(x)+x\sigma(-x)=x\bigl(\sigma(x)+1-\sigma(x)\bigr)=x$.
+  \item $\SiLU(x)+\SiLU(-x)=x\bigl(\sigma(x)-\sigma(-x)\bigr)=x\bigl(2\sigma(x)-1\bigr)=x\tanh\frac x2$.
+  \item La parte impar de una función es $\frac12\bigl(f(x)-f(-x)\bigr)$; para SiLU vale $x/2$.
+\end{enumerate}
+\resultado \textbf{$\SiLU'(0)=\tfrac12$; mínimo único en $x^{*}\approx-1{,}2785$ con valor $x^{*}+1\approx-0{,}2785$; $\SiLU(x)=\frac x2(1+\tanh\frac x2)$; $\SiLU(x)-\SiLU(-x)=x$.} SiLU es la recta $x/2$ más la función par $\frac x2\tanh\frac x2\ge 0$.
+\comprobacion con $x=1$: $\SiLU(1)-\SiLU(-1)=0{,}7311-(-0{,}2689)=1$ y $\SiLU(1)+\SiLU(-1)=0{,}4622\approx\tanh(0{,}5)=0{,}4621$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-v}
+\planteamiento separar los dos papeles de la atención: decidir a quién se atiende ($q\cdot k$) y qué se copia ($v$).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La puntuación $(R_mq)\T(R_nk)=q\T R_{n-m}k$ solo depende de la distancia $n-m$ (\cref{teo:rope}); para ello basta girar $q$ y $k$.
+  \item El valor $v_n$ es el contenido que se suma al flujo residual. Si se girase según la posición $n$, el mismo token aportaría vectores distintos según dónde estuviera, y la suma ponderada mezclaría contenidos girados con ángulos diferentes.
+  \item Las capas siguientes tendrían que deshacer esas rotaciones para reconocer el contenido, un trabajo adicional sin ventaja.
+\end{enumerate}
+\resultado \textbf{girar $q$ y $k$ basta para que los pesos dependan de la distancia; girar $v$ mezclaría la posición absoluta en el contenido copiado.}
+\comprobacion el artículo original~\cite{roformer}, el código de LLaMA~\cite{llamacode} y la práctica de CS336~\cite[§3.4.3]{cs336} aplican RoPE solo a consultas y claves.
+\end{solucion}
+
+\begin{solucion}{eje:4-pe}
+\datos $d=4$; $\omega_0=1$, $\omega_1=10000^{-2/4}$; ángulos en radianes.
+\planteamiento aplicar la \cref{def:sinusoidal} y redondear a cuatro decimales.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\omega_0=10000^{0}=1$; $\omega_1=10000^{-1/2}=1/100=0{,}01$.
+  \item $p=1$: $\sin 1=0{,}8415$; $\cos 1=0{,}5403$; $\sin 0{,}01=0{,}0100$; $\cos 0{,}01=0{,}99995\approx 1{,}0000$.
+  \item $p=2$: $\sin 2=0{,}9093$; $\cos 2=-0{,}4161$; $\sin 0{,}02=0{,}0200$; $\cos 0{,}02=0{,}9998$.
+\end{enumerate}
+\resultado
+\[
+\PE(1)=(0{,}8415;\;0{,}5403;\;0{,}0100;\;1{,}0000),\qquad \PE(2)=(0{,}9093;\;-0{,}4161;\;0{,}0200;\;0{,}9998).
+\]
+\comprobacion $0{,}8415^{2}+0{,}5403^{2}=0{,}7081+0{,}2919=1{,}0000$ y $0{,}9093^{2}+0{,}4161^{2}=0{,}8268+0{,}1731=0{,}9999\approx 1$; el par lento casi no cambia entre $p=1$ y $p=2$.
+\end{solucion}
+
+\begin{solucion}{eje:4-mk}
+\datos $d=2$, $\omega_0=1$; $\PE(p)=(\sin p,\cos p)$; $k=1$.
+\planteamiento por el \cref{teo:desplazamiento}, $M_1=\bigl(\begin{smallmatrix}\cos 1&\sin 1\\-\sin 1&\cos 1\end{smallmatrix}\bigr)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $M_1=\begin{pmatrix}0{,}5403&0{,}8415\\-0{,}8415&0{,}5403\end{pmatrix}$.
+  \item Primera componente de $M_1\PE(1)$: $0{,}5403\cdot 0{,}8415+0{,}8415\cdot 0{,}5403=2\cdot 0{,}4547=0{,}9093$.
+  \item Segunda: $-0{,}8415\cdot 0{,}8415+0{,}5403\cdot 0{,}5403=-0{,}7081+0{,}2919=-0{,}4162$.
+\end{enumerate}
+\resultado \textbf{$M_1\PE(1)=(0{,}9093;\;-0{,}4162)$, que coincide con $\PE(2)=(0{,}9093;\;-0{,}4161)$} salvo una unidad en el cuarto decimal, debida a operar con datos redondeados.
+\comprobacion la primera componente es $2\sin 1\cos 1=\sin 2$ y la segunda $\cos^{2}1-\sin^{2}1=\cos 2$: las fórmulas del ángulo doble.
+\end{solucion}
+
+\begin{solucion}{eje:4-rope}
+\datos $\theta=\pi/6$; $q=(1,2)$; $k=(3,1)$; $m=3$, $n=1$; $\cos(\pi/6)=0{,}8660$, $\sin(\pi/6)=0{,}5$.
+\planteamiento girar cada vector, hacer el producto escalar y comparar con~\eqref{eq:rope2d}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $3\theta=\pi/2$ y $R(\pi/2)=\bigl(\begin{smallmatrix}0&-1\\1&0\end{smallmatrix}\bigr)$; $R(3\theta)q=(0\cdot 1-1\cdot 2;\;1\cdot 1+0\cdot 2)=(-2;\;1)$.
+  \item $R(\theta)k=(0{,}8660\cdot 3-0{,}5\cdot 1;\;0{,}5\cdot 3+0{,}8660\cdot 1)=(2{,}098;\;2{,}366)$.
+  \item Producto escalar: $(-2)\cdot 2{,}098+1\cdot 2{,}366=-4{,}196+2{,}366=-1{,}830$.
+  \item Fórmula relativa con $\varphi=(n-m)\theta=-\pi/3$: $q\cdot k=5$ y $q_1k_2-q_2k_1=1-6=-5$; $q\T R(\varphi)k=5\cdot 0{,}5-(-5)\cdot(-0{,}8660)=2{,}5-4{,}330=-1{,}830$.
+  \item Normas: $\norm{R(\theta)k}^{2}=2{,}098^{2}+2{,}366^{2}=4{,}402+5{,}598=10{,}00=3^{2}+1^{2}$.
+\end{enumerate}
+\resultado \textbf{$R(3\theta)q=(-2;1)$, $R(\theta)k=(2{,}098;\;2{,}366)$; ambos caminos dan $-1{,}830$} y la norma de $k$ se conserva.
+\comprobacion coincide con la fila $(m,n)=(3,1)$ de la \cref{tab:rope}.
+\end{solucion}
+
+\begin{solucion}{eje:4-rope-dem}
+\datos $R_m=\diag(R(m\theta_0),\dots,R(m\theta_{d_k/2-1}))$.
+\planteamiento probar el caso de un bloque y extenderlo a la matriz por bloques.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Para un bloque, $R(a)\T R(b)=R(b-a)$ por el \cref{lem:rotaciones}: la traspuesta es la rotación de ángulo opuesto (paridad del seno y del coseno) y las rotaciones se componen sumando ángulos (fórmulas de la suma).
+  \item Si $A=\diag(A_1,\dots,A_r)$, entonces $A\T=\diag(A_1\T,\dots,A_r\T)$: la entrada $(i,j)$ de $A\T$ es la $(j,i)$ de $A$, que es nula fuera de los bloques diagonales.
+  \item Si $B=\diag(B_1,\dots,B_r)$ con bloques del mismo tamaño, $AB=\diag(A_1B_1,\dots,A_rB_r)$: en el producto por bloques, los términos $A_{ij}B_{jk}$ con $i\ne j$ o $j\ne k$ son nulos.
+  \item Por los pasos 1 a 3, $R_m\T R_n=\diag\bigl(R((n-m)\theta_i)\bigr)_i=R_{n-m}$.
+  \item Por $(AB)\T=B\T A\T$: $(R_mq)\T(R_nk)=q\T R_m\T R_nk=q\T R_{n-m}k$.
+  \item Caso $m=n$: $R_0=\diag(R(0))=I$ y se recupera $q\cdot k$, la puntuación sin posición.
+\end{enumerate}
+\resultado \textbf{$(R_mq)\T(R_nk)=q\T R_{n-m}k$:} la puntuación solo depende de $n-m$.
+\comprobacion el \cref{eje:4-rope} lo verifica numéricamente: $-1{,}830$ por ambos caminos.
+\end{solucion}
+
+\begin{solucion}{eje:4-perm}
+\datos $X'=PX$ con $P$ de permutación, de modo que $P\T P=I$ y $P\uno=\uno$; identidades dadas para softmax y ReLU.
+\planteamiento seguir la permutación a través de cada operación de la capa.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $Q'=X'W_Q=PXW_Q=PQ$; del mismo modo $K'=PK$ y $V'=PV$.
+  \item $Q'(K')\T=PQ(PK)\T=PQK\T P\T$, porque $(PK)\T=K\T P\T$.
+  \item $\softmax(PQK\T P\T/\sqrt d)=P\softmax(QK\T/\sqrt d)P\T$; dividir por $\sqrt d$ no afecta a la permutación.
+  \item $H'=P\softmax(\cdot)P\T PV=P\softmax(\cdot)V=PH$.
+  \item $H'W_1+\uno b_1=PHW_1+P\uno b_1=P(HW_1+\uno b_1)$, porque $P\uno=\uno$.
+  \item $\ReLU(P(\cdot))=P\ReLU(\cdot)$; al multiplicar por $W_2$ y sumar $\uno b_2=P\uno b_2$, la $P$ queda delante: $Z'=PZ$.
+  \item (b) Barajar las palabras solo baraja las filas de la salida: el vector de cada palabra no depende del orden, y frases como «el perro muerde al hombre» y «el hombre muerde al perro» no se distinguen.
+  \item (c) Basta considerar el par $i=0$, $(\sin t,\cos t)$. Si coincide para dos enteros $t\ne t'$, entonces $t-t'=2\pi k$ con $k$ entero no nulo, luego $\pi=(t-t')/(2k)$ sería racional, lo que es falso.
+\end{enumerate}
+\resultado \textbf{$Z'=PZ$; sin posiciones el modelo ignora el orden; dos posiciones enteras distintas nunca reciben la misma codificación sinusoidal.}
+\comprobacion numéricamente, con $T=3$, $d=2$, pesos aleatorios y $P$ la permutación cíclica, $f(PX)$ y $Pf(X)$ coinciden hasta la precisión de la máquina. Un caso casi repetido: $t-t'=710$ desfasa el par~0 solo $710-113\cdot 2\pi=6{,}0\cdot 10^{-5}$~rad, pero los pares lentos sí distinguen las dos posiciones.
+\end{solucion}
+
+\begin{solucion}{eje:4-compleja}
+\datos $\RoPE(z,t)=ze^{it\theta}$; $\langle u,v\rangle=\Real(u\bar v)$; $z_1=1+2i$, $z_2=3+i$, $\theta=\pi/6$, $t_1=3$, $t_2=1$.
+\planteamiento el conjugado de $e^{i\alpha}$ es $e^{-i\alpha}$ y los exponentes se suman (\cref{prop:rope-compleja}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Miembro izquierdo: $\Real\bigl(z_1e^{it_1\theta}\,\bar z_2e^{-it_2\theta}\bigr)=\Real\bigl(z_1\bar z_2e^{i(t_1-t_2)\theta}\bigr)$.
+  \item Miembro derecho: $\Real\bigl(z_1e^{i(t_1-t_2)\theta}\,\bar z_2e^{-i\cdot 0}\bigr)=\Real\bigl(z_1\bar z_2e^{i(t_1-t_2)\theta}\bigr)$. Son la misma expresión.
+  \item (b) Izquierdo: $e^{3i\theta}=e^{i\pi/2}=i$ y $z_1i=-2+i$; $e^{i\theta}=0{,}8660+0{,}5i$ y $z_2e^{i\theta}=(2{,}598-0{,}5)+i(1{,}5+0{,}8660)=2{,}098+2{,}366i$.
+  \item Producto escalar: $(-2)\cdot 2{,}098+1\cdot 2{,}366=-1{,}830$.
+  \item Derecho: $e^{2i\theta}=e^{i\pi/3}=0{,}5+0{,}8660i$ y $z_1e^{i\pi/3}=(0{,}5-1{,}732)+i(0{,}8660+1)=-1{,}232+1{,}866i$; con $z_2=3+i$: $(-1{,}232)\cdot 3+1{,}866\cdot 1=-3{,}696+1{,}866=-1{,}830$.
+\end{enumerate}
+\resultado \textbf{ambos miembros valen $\Real(z_1\bar z_2e^{i(t_1-t_2)\theta})$; con los datos, $-1{,}830$.}
+\comprobacion es el valor del \cref{eje:4-rope}: multiplicar por $e^{it\theta}$ es la rotación $R(t\theta)$ escrita en complejos.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-slp}
+\datos $L$ capas, dimensión $d$, $A$ cabezas con $d_k=d_v=d/A$, $\dff=4d$; en (d), $d=512$ y $L=6$.
+\planteamiento aplicar la \cref{prop:cabezas} y la \cref{prop:bloque}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Cada cabeza: $W_Q^{(i)},W_K^{(i)},W_V^{(i)}\in\R^{d\times d/A}$, con $3d^{2}/A$ parámetros; las $A$ cabezas: $3d^{2}$. Más $W_O\in\R^{d\times d}$: $4d^{2}$. No depende de $A$.
+  \item (b) $W_1\in\R^{d\times 4d}$ y $W_2\in\R^{4d\times d}$: $8d^{2}$.
+  \item (c) Por bloque, $4d^{2}+8d^{2}=12d^{2}$; con $L$ bloques, $12Ld^{2}$. Los sesgos ($13d$) y las normalizaciones son $O(d)$ por bloque, despreciables frente a $d^{2}$.
+  \item (d) $512^{2}=262\,144$; $12\cdot 6\cdot 262\,144=18\,874\,368$.
+\end{enumerate}
+\resultado \textbf{(a) $4d^{2}$, independiente de $A$; (b) $8d^{2}$; (c) $12Ld^{2}$; (d) $18\,874\,368\approx 1{,}89\cdot 10^{7}$.}
+\comprobacion la fracción despreciada en (c) es $13d/(12d^{2})=13/(12d)$, que con $d=512$ vale $0{,}0021$.
+\end{solucion}
+
+\begin{solucion}{eje:5-gpt2}
+\datos $d=768$, $L=12$, $V=50\,257$, $\nctx=1024$; atados; posiciones aprendidas; una LayerNorm final.
+\planteamiento bloque por la \cref{prop:bloque}(ii); fuera de los bloques, embeddings (una sola vez), posiciones y normalización final.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $d^{2}=589\,824$; $12d^{2}=7\,077\,888$; $13d=9984$; bloque $=7\,087\,872$.
+  \item $12$ bloques: $12\cdot 7\,087\,872=85\,054\,464$.
+  \item Embedding de tokens: $50\,257\cdot 768=38\,597\,376$. Posiciones: $1024\cdot 768=786\,432$. LayerNorm final: $2\cdot 768=1536$.
+  \item Total: $85\,054\,464+38\,597\,376+786\,432+1536=124\,439\,808$.
+  \item $12Ld^{2}=12\cdot 12\cdot 589\,824=84\,934\,656$; fracción $84\,934\,656/124\,439\,808=0{,}6825$.
+\end{enumerate}
+\resultado \textbf{bloque $=7\,087\,872$; $N=124\,439\,808$; $12Ld^{2}$ cubre solo el $68{,}3\,\%$.}
+\comprobacion es el «GPT-2 de 124~M» de las implementaciones abiertas; en un modelo pequeño los embeddings pesan mucho ($31\,\%$, \cref{eje:1-atados}).
+\end{solucion}
+
+\begin{solucion}{eje:5-13b}
+\datos $d=5120$, $L=40$, $\dff=13\,824$, $V=32\,000$; sin atar; RMSNorm sin sesgo.
+\planteamiento aplicar el \cref{teo:recuento}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $d^{2}=26\,214\,400$; atención $4d^{2}=104\,857\,600$.
+  \item SwiGLU: $5120\cdot 13\,824=70\,778\,880$; por $3$: $212\,336\,640$.
+  \item Normalizaciones: $2d=10\,240$. Bloque: $104\,857\,600+212\,336\,640+10\,240=317\,204\,480$.
+  \item $40$ bloques: $12\,688\,179\,200$.
+  \item Embeddings: $2\cdot 32\,000\cdot 5120=327\,680\,000$. Normalización final: $5120$.
+  \item $N=12\,688\,179\,200+327\,680\,000+5120=13\,015\,864\,320$.
+  \item $12Ld^{2}=12\cdot 40\cdot 26\,214\,400=12\,582\,912\,000$; cociente $0{,}9667$.
+\end{enumerate}
+\resultado \textbf{$N=13\,015\,864\,320\approx 1{,}302\cdot 10^{10}$; $12Ld^{2}$ cubre el $96{,}7\,\%$.}
+\comprobacion el $3{,}3\,\%$ restante son los embeddings ($2{,}5\,\%$) y el exceso del redondeo de $\dff$ hacia arriba ($13\,824>\frac83\cdot 5120=13\,653{,}3$).
+\end{solucion}
+
+\begin{solucion}{eje:5-mem13b}
+\datos $N=13\,015\,864\,320$; $2$ y $16$ bytes por parámetro (\cref{prop:16bytes}); $1~\mathrm{GB}=10^{9}$~bytes.
+\planteamiento memoria $=N\cdot$ bytes por parámetro.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Pesos en bf16: $13\,015\,864\,320\cdot 2=26\,031\,728\,640$~bytes $=26{,}03$~GB.
+  \item Entrenamiento: $13\,015\,864\,320\cdot 16=208\,253\,829\,120$~bytes $=208{,}3$~GB.
+  \item GPU de $80$~GB: $208{,}3/80=2{,}603$, luego al menos $3$.
+\end{enumerate}
+\resultado \textbf{$26{,}03$~GB para la inferencia; $208{,}3$~GB para el entrenamiento sin activaciones; al menos 3 GPU de 80~GB}, repartiendo el estado como en ZeRO (módulo~17).
+\comprobacion $208{,}3/26{,}03=8{,}00=16/2$.
+\end{solucion}
+
+\begin{solucion}{eje:5-xl}
+\datos $V=50\,257$, $L=48$, $d=1600$, $\dff=4288$; sin atar; sin sesgos; dos RMSNorm por bloque y una final; fp32 $=4$~bytes.
+\planteamiento aplicar el \cref{teo:recuento}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Atención: $d^{2}=2\,560\,000$; $4d^{2}=10\,240\,000$.
+  \item SwiGLU: $3\cdot 1600\cdot 4288=20\,582\,400$ (\cref{eje:3-cs336}).
+  \item Normalizaciones: $3200$. Bloque: $10\,240\,000+20\,582\,400+3200=30\,825\,600$.
+  \item $48$ bloques: $1\,479\,628\,800$.
+  \item Embeddings: $2\cdot 50\,257\cdot 1600=160\,822\,400$. Normalización final: $1600$.
+  \item $N=1\,479\,628\,800+160\,822\,400+1600=1\,640\,452\,800$.
+  \item Memoria en fp32: $1\,640\,452\,800\cdot 4=6\,561\,811\,200$~bytes $=6{,}562$~GB ($6{,}111$~GiB).
+\end{enumerate}
+\resultado \textbf{$N=1\,640\,452\,800\approx 1{,}64\cdot 10^{9}$ parámetros; $6{,}56$~GB en fp32.}
+\comprobacion $12Ld^{2}=1\,474\,560\,000$ es el $89{,}9\,\%$ de $N$; la diferencia son casi exclusivamente los dos embeddings.
+\end{solucion}
+
+\begin{solucion}{eje:5-24gb}
+\datos $24$~GB $=2{,}4\cdot 10^{10}$~bytes; $2$, $0{,}5$ y $16$ bytes por parámetro.
+\planteamiento $N_{\max}=\text{memoria}/\text{bytes por parámetro}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) bf16: $2{,}4\cdot 10^{10}/2=1{,}2\cdot 10^{10}$ parámetros.
+  \item (b) int4: $2{,}4\cdot 10^{10}/0{,}5=4{,}8\cdot 10^{10}$ parámetros.
+  \item (c) Entrenamiento: $2{,}4\cdot 10^{10}/16=1{,}5\cdot 10^{9}$ parámetros.
+  \item Para la inferencia sobran el gradiente ($2$~bytes), la copia maestra en fp32 ($4$) y los momentos $m$ y $v$ ($8$): $14$ de los $16$ bytes.
+\end{enumerate}
+\resultado \textbf{(a) $1{,}2\cdot 10^{10}$; (b) $4{,}8\cdot 10^{10}$; (c) $1{,}5\cdot 10^{9}$ parámetros.} El estado de entrenamiento ocupa $8$ veces más que los pesos en bf16.
+\comprobacion LLaMA-2~7B cabe en (a) ($13{,}5$~GB, \cref{tab:memoria}) pero no en (c), que exigiría $107{,}8$~GB.
+\end{solucion}
+
+\begin{solucion}{eje:5-fraccion}
+\datos $N=12Ld^{2}+2Ld+2Vd+d$ (\cref{cor:kaplan}); $L=\alpha d$; $V$ y $\alpha$ fijos.
+\planteamiento sustituir $L=\alpha d$ y quedarse con el término dominante del denominador.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $N=12\alpha d^{3}+2\alpha d^{2}+2Vd+d$.
+  \item $f=\dfrac{2Vd}{12\alpha d^{3}+2\alpha d^{2}+2Vd+d}=\dfrac{2V}{12\alpha d^{2}}\cdot\dfrac{1}{1+\frac{1}{6d}+\frac{V}{6\alpha d^{2}}+\frac{1}{12\alpha d^{2}}}$.
+  \item El segundo factor tiende a~1 cuando $d\to\infty$; luego $f\sim V/(6\alpha d^{2})$.
+  \item (b) Valores exactos con los $N$ del \cref{ej:llama7b} y del \cref{eje:5-xl}. Para LLaMA-2~7B, $f=262\,144\,000/6\,738\,415\,616=0{,}0389$.
+  \item Para el modelo del \cref{eje:5-xl}, $f=160\,822\,400/1\,640\,452\,800=0{,}0980$.
+  \item Aproximación asintótica: $32\,000/(6\cdot 32\cdot 4096)=0{,}0407$ y $50\,257/(6\cdot 48\cdot 1600)=0{,}1091$.
+\end{enumerate}
+\resultado \textbf{$f\sim V/(6\alpha d^{2})$}: con un vocabulario fijo, los embeddings son una fracción despreciable de los modelos grandes ($3{,}9\,\%$ en LLaMA-2~7B frente a $9{,}8\,\%$ en el modelo de $1{,}6\cdot 10^{9}$ y $31\,\%$ en GPT-2 \emph{small}). Atar ahorra poco en un modelo grande y renuncia a la flexibilidad de dos matrices distintas.
+\comprobacion la aproximación sobreestima ligeramente $f$, porque desprecia en el denominador el propio término $2Vd$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-2n}
+\datos $y=xW$ con $x\in\R^{2}$ y $W\in\R^{2\times 3}$.
+\planteamiento contar las operaciones que intervienen por cada peso.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Cada salida es $y_j=\sum_i x_iW_{ij}$: cada peso $W_{ij}$ interviene en una multiplicación $x_iW_{ij}$.
+  \item Cada producto se acumula en $y_j$ con una suma.
+  \item Por token, $2$ FLOPs por peso; como cada token pasa una vez por cada peso de las capas lineales, la pasada hacia delante cuesta unos $2N$ FLOPs por token (\cref{prop:forward}).
+  \item Con $W\in\R^{2\times 3}$: $3$ salidas, cada una con $2$ productos y $2$ sumas (contando la acumulación inicial), $3\cdot 4=12$ FLOPs.
+\end{enumerate}
+\resultado \textbf{$2$ FLOPs por parámetro y por token: una multiplicación y una suma.}
+\comprobacion $12=2\cdot 6$, con $6$ pesos; coincide con el \cref{lem:2mkp} con $m=1$, $k=2$ y $p=3$.
+\end{solucion}
+
+\begin{solucion}{eje:6-horas}
+\datos $N=6{,}738\cdot 10^{9}$; $D=2\cdot 10^{12}$; $312\cdot 10^{12}$~FLOP/s; aprovechamiento del $40\,\%$; $184\,320$~h declaradas.
+\planteamiento $C\approx 6ND$ (\cref{cor:6nd}); tiempo $=C/(\text{aprovechamiento}\cdot\text{máximo})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $6\cdot 6{,}738\cdot 10^{9}=4{,}043\cdot 10^{10}$; $C=4{,}043\cdot 10^{10}\cdot 2\cdot 10^{12}=8{,}086\cdot 10^{22}$~FLOPs.
+  \item Velocidad efectiva: $0{,}4\cdot 312\cdot 10^{12}=1{,}248\cdot 10^{14}$~FLOP/s.
+  \item Tiempo: $8{,}086\cdot 10^{22}/1{,}248\cdot 10^{14}=6{,}479\cdot 10^{8}$~s; en horas, $6{,}479\cdot 10^{8}/3600=1{,}800\cdot 10^{5}$~h.
+  \item Aprovechamiento real: $8{,}086\cdot 10^{22}/(184\,320\cdot 3600\cdot 312\cdot 10^{12})=8{,}086\cdot 10^{22}/2{,}070\cdot 10^{23}=0{,}3906$.
+\end{enumerate}
+\resultado \textbf{$C\approx 8{,}09\cdot 10^{22}$~FLOPs; unas $180\,000$ horas de A100; aprovechamiento real del $39\,\%$.}
+\comprobacion $180\,000/184\,320=0{,}977$, y $0{,}3906/0{,}4=0{,}977$: las dos estimaciones son coherentes.
+\end{solucion}
+
+\begin{solucion}{eje:6-small}
+\datos $L=12$, $d=768$, $\dff=2048$, $V=50\,257$, $n=1024$; regla $2mkp$.
+\planteamiento enumerar los productos con sus formas; las operaciones elemento a elemento se desprecian (\cref{prop:forward}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Proyecciones $Q,K,V$: $(n\times d)(d\times 3d)$: $2\cdot 1024\cdot 768\cdot 2304=3\,623\,878\,656$.
+  \item $QK\T$ en todas las cabezas: $2n^{2}d=2\cdot 1024^{2}\cdot 768=1\,610\,612\,736$.
+  \item Pesos por $V$: $2n^{2}d=1\,610\,612\,736$.
+  \item Salida $W_O$: $2\cdot 1024\cdot 768^{2}=1\,207\,959\,552$.
+  \item SwiGLU, tres productos $(n\times d)(d\times\dff)$: $3\cdot 2\cdot 1024\cdot 768\cdot 2048=9\,663\,676\,416$.
+  \item Bloque: suma de 1 a 5, $17\,716\,740\,096$. Doce bloques: $212\,600\,881\,152$.
+  \item Unembedding: $2\cdot 1024\cdot 768\cdot 50\,257=79\,047\,426\,048$.
+  \item Total: $212\,600\,881\,152+79\,047\,426\,048=291\,648\,307\,200\approx 2{,}916\cdot 10^{11}$.
+  \item Proporciones: proyecciones de atención $19{,}9\,\%$; $QK\T$ y $AV$ $13{,}3\,\%$; MLP $39{,}8\,\%$; unembedding $27{,}1\,\%$.
+\end{enumerate}
+\resultado \textbf{pasada hacia delante $\approx 2{,}916\cdot 10^{11}$~FLOPs por secuencia; domina el MLP ($39{,}8\,\%$), seguido del unembedding ($27{,}1\,\%$).} La comparación con el modelo con forma de GPT-2 XL ($n=1024$) es:
+\begin{center}\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Componente & GPT-2 \emph{small} & GPT-2 XL \\
+\midrule
+Proyecciones $Q,K,V,O$ & $19{,}9\,\%$ & $28{,}6\,\%$ \\
+$QK\T$ y $AV$ & $13{,}3\,\%$ & $9{,}2\,\%$ \\
+MLP SwiGLU & $39{,}8\,\%$ & $57{,}5\,\%$ \\
+Unembedding & $27{,}1\,\%$ & $4{,}7\,\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Al crecer el modelo, el MLP y las proyecciones, que escalan con $d^{2}$, ganan peso; el unembedding, que escala con $d$, y la parte cuadrática, $n^{2}d$ con $n$ fijo, lo pierden.
+\comprobacion sin la parte cuadrática, el coste debe ser $2nN_{\mathrm{mat}}$ con $N_{\mathrm{mat}}=12\cdot 7\,077\,888+38\,597\,376=123\,532\,032$: $2\cdot 1024\cdot 123\,532\,032=252\,993\,601\,536$, y sumando $12\cdot 3\,221\,225\,472=38\,654\,705\,664$ se recupera $291\,648\,307\,200$.
+\end{solucion}
+
+\begin{solucion}{eje:6-16k}
+\datos modelo del \cref{eje:5-xl}; $n$ pasa de $1024$ a $16\,384$, un factor $16$.
+\planteamiento los productos con pesos escalan con $n$; $QK\T$ y $AV$ escalan con $n^{2}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Con $n=1024$ (como en el \cref{eje:6-small}): bloque $=6{,}984\cdot 10^{10}$; unembedding $=1{,}647\cdot 10^{11}$; total $=48\cdot 6{,}984\cdot 10^{10}+1{,}647\cdot 10^{11}=3{,}517\cdot 10^{12}$.
+  \item Parte cuadrática: $48\cdot 4\cdot 1024^{2}\cdot 1600=3{,}221\cdot 10^{11}$; parte lineal: $3{,}517\cdot 10^{12}-3{,}221\cdot 10^{11}=3{,}195\cdot 10^{12}$.
+  \item Con $n=16\,384$: lineal $16\cdot 3{,}195\cdot 10^{12}=5{,}111\cdot 10^{13}$; cuadrática $256\cdot 3{,}221\cdot 10^{11}=8{,}246\cdot 10^{13}$.
+  \item Total: $1{,}336\cdot 10^{14}$; factor $1{,}336\cdot 10^{14}/3{,}517\cdot 10^{12}=37{,}98$.
+  \item Fracción de atención: $8{,}246\cdot 10^{13}/1{,}336\cdot 10^{14}=0{,}617$; MLP: $0{,}242$.
+\end{enumerate}
+\resultado \textbf{el coste se multiplica por $\approx 38$ (no por $16$) y $QK\T$ y $AV$ pasan del $9{,}2\,\%$ al $61{,}7\,\%$}; el MLP baja al $24{,}2\,\%$.
+\comprobacion el factor está entre $16$ (todo lineal) y $256$ (todo cuadrático): $16\cdot 0{,}9084+256\cdot 0{,}0916=37{,}98$.
+\end{solucion}
+
+\begin{solucion}{eje:6-h100}
+\datos pasada hacia delante por secuencia $F=3{,}517\cdot 10^{12}$ (\cref{eje:6-16k}); lotes de $B=1024$; $400\,000$ pasos; retroceso $=2F$; $495\cdot 10^{12}$~FLOP/s al $50\,\%$; $N=1{,}640\cdot 10^{9}$.
+\planteamiento coste por paso $=3F\cdot B$; tiempo $=$ coste total $/$ velocidad efectiva.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Por secuencia: $3F=1{,}055\cdot 10^{13}$~FLOPs.
+  \item Por paso: $1{,}055\cdot 10^{13}\cdot 1024=1{,}080\cdot 10^{16}$.
+  \item Total: $1{,}080\cdot 10^{16}\cdot 4\cdot 10^{5}=4{,}321\cdot 10^{21}$.
+  \item Velocidad efectiva: $0{,}5\cdot 495\cdot 10^{12}=2{,}475\cdot 10^{14}$~FLOP/s.
+  \item Tiempo: $4{,}321\cdot 10^{21}/2{,}475\cdot 10^{14}=1{,}746\cdot 10^{7}$~s $=4850$~h.
+  \item Regla $6ND$: $D=4\cdot 10^{5}\cdot 1024\cdot 1024=4{,}194\cdot 10^{11}$ tokens; $6\cdot 1{,}640\cdot 10^{9}\cdot 4{,}194\cdot 10^{11}=4{,}128\cdot 10^{21}$ FLOPs, es decir, $4633$~h.
+\end{enumerate}
+\resultado \textbf{unas $4850$~h, es decir, unos $202$ días en una sola H100.}
+\comprobacion $6ND$ da un $4{,}5\,\%$ menos: ignora $QK\T$ y $AV$ y, en cambio, cuenta como multiplicados los $8{,}04\cdot 10^{7}$ parámetros del embedding de entrada, que solo se indexan. Las dos cifras son del mismo orden.
+\end{solucion}
+
+\begin{solucion}{eje:6-6nd}
+\datos $Y=XW+\uno c\T$, $X\in\R^{n\times a}$, $W\in\R^{a\times b}$, $c\in\R^{b}$, $G=\partial\Loss/\partial Y$.
+\planteamiento obtener los gradientes con la regla de la cadena (módulo~10) y contar con el \cref{lem:2mkp}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Pasada hacia delante: $XW$ cuesta $2nab$; sumar el sesgo a las $nb$ entradas, $nb$.
+  \item $Y_{tj}=\sum_rX_{tr}W_{rj}+c_j$, luego $\partial\Loss/\partial X_{tr}=\sum_jG_{tj}W_{rj}$, es decir, $\partial\Loss/\partial X=GW\T$: $2nba$ FLOPs.
+  \item $\partial\Loss/\partial W_{rj}=\sum_tX_{tr}G_{tj}$, es decir, $\partial\Loss/\partial W=X\T G$: $2anb$ FLOPs.
+  \item $\partial\Loss/\partial c_j=\sum_tG_{tj}$, es decir, $\partial\Loss/\partial c=G\T\uno$: unas $nb$ sumas.
+  \item Total: $6nab+2nb$. El cociente entre el coste del sesgo y el de $W$ es $2nb/(6nab)=1/(3a)\to 0$ cuando $a$ crece.
+  \item Sin sesgo, con $n=1$ y $a=b=2$: pasada hacia delante $2\cdot 1\cdot 2\cdot 2=8$; retroceso $16$; total $24=6\cdot 1\cdot 4$.
+\end{enumerate}
+\resultado \textbf{pasada hacia delante $2nab$, retroceso $4nab$, más $O(nb)$ por el sesgo}; por peso y por token, $6$ FLOPs, de donde $C\approx 6ND$.
+\comprobacion con $a=768$, el sesgo supone $1/(3\cdot 768)=0{,}043\,\%$ del coste de la capa.
+\end{solucion}
+
+\begin{solucion}{eje:6-atencion}
+\datos $L=32$, $d=4096$, $n=4096$, $N=6\,738\,415\,616$.
+\planteamiento comparar $4Lnd$ con $2N$ (\cref{prop:forward,cor:nstar}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $4\cdot 32\cdot 4096\cdot 4096=128\cdot 16\,777\,216=2\,147\,483\,648$; $2N=13\,476\,831\,232$; fracción $=0{,}1593$.
+  \item (b) $n^{*}=N/(2Ld)=6\,738\,415\,616/262\,144=25\,705$.
+  \item (c) La fracción es $4Lnd/(2N)=n/n^{*}$, lineal en $n$; con $n=4096$, $4096/25\,705=0{,}1593$.
+\end{enumerate}
+\resultado \textbf{con $n=4096$ la atención añade un $15{,}9\,\%$ al coste $2N$; lo iguala con $n^{*}\approx 25\,705$ tokens.}
+\comprobacion (a) y (c) dan el mismo valor; con contextos de $10^{5}$ tokens la atención cuadruplicaría el coste de los pesos ($10^{5}/25\,705=3{,}9$).
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+\def\UrlBreaks{\do\/\do-}
+
+\bibitem{bishopdl}
+C.~M. Bishop y H.~Bishop.
+\newblock \emph{Deep Learning: Foundations and Concepts}.
+\newblock Springer, 2024.
+\newblock Cap.~12, «Transformers» (§12.1 «Attention», en particular §12.1.7 «Transformer layers» y §12.1.9 «Positional encoding»; §12.3.1 «Decoder transformers»).
+\newblock \url{https://www.bishopbook.com/}
+
+\bibitem{cs224n}
+CS224N: Natural Language Processing with Deep Learning.
+\newblock Stanford University, invierno de 2025. Práctica~4, «Self-Attention, Transformers, and Pretraining».
+\newblock \url{https://web.stanford.edu/class/cs224n/assignments_w25/a4.pdf}
+
+\bibitem{dauphin}
+Y.~N. Dauphin, A.~Fan, M.~Auli y D.~Grangier.
+\newblock Language modeling with gated convolutional networks.
+\newblock En \emph{International Conference on Machine Learning (ICML)}, 2017.
+\newblock \url{https://arxiv.org/abs/1612.08083}
+
+\bibitem{elhage}
+N.~Elhage \emph{et al.}
+\newblock A mathematical framework for Transformer circuits.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 2021.
+\newblock \url{https://transformer-circuits.pub/2021/framework/index.html}
+
+\bibitem{gemini15}
+Gemini Team, Google.
+\newblock Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context.
+\newblock Informe técnico, 2024.
+\newblock \url{https://arxiv.org/abs/2403.05530}
+
+\bibitem{cs336}
+T.~Hashimoto y P.~Liang.
+\newblock CS336: Language Modeling from Scratch.
+\newblock Stanford University, primavera de 2026. Práctica~1, «Basics», versión~26.0.3.
+\newblock \url{https://github.com/stanford-cs336/assignment1-basics}
+
+\bibitem{gelu}
+D.~Hendrycks y K.~Gimpel.
+\newblock Gaussian error linear units (GELUs).
+\newblock Prepublicación, 2016.
+\newblock \url{https://arxiv.org/abs/1606.08415}
+
+\bibitem{jm3}
+D.~Jurafsky y J.~H. Martin.
+\newblock \emph{Speech and Language Processing}, 3.ª ed., borrador del 19 de agosto de 2026.
+\newblock Cap.~7, «Transformers and Pretraining».
+\newblock \url{https://web.stanford.edu/~jurafsky/slp3/}
+
+\bibitem{kaplan}
+J.~Kaplan, S.~McCandlish, T.~Henighan, T.~B. Brown, B.~Chess, R.~Child, S.~Gray, A.~Radford, J.~Wu y D.~Amodei.
+\newblock Scaling laws for neural language models.
+\newblock Prepublicación, 2020.
+\newblock \url{https://arxiv.org/abs/2001.08361}
+
+\bibitem{llamacode}
+Meta.
+\newblock Código de inferencia de Llama~2, archivo \texttt{llama/model.py}.
+\newblock Repositorio \texttt{meta-llama/llama}, 2023.
+\newblock \url{https://github.com/meta-llama/llama}
+
+\bibitem{presswolf}
+O.~Press y L.~Wolf.
+\newblock Using the output embedding to improve language models.
+\newblock En \emph{Proceedings of the 15th Conference of the European Chapter of the Association for Computational Linguistics (EACL)}, 2017.
+\newblock \url{https://arxiv.org/abs/1608.05859}
+
+\bibitem{gpt2}
+A.~Radford, J.~Wu, R.~Child, D.~Luan, D.~Amodei e I.~Sutskever.
+\newblock Language models are unsupervised multitask learners.
+\newblock Informe técnico, OpenAI, 2019.
+
+\bibitem{shazeer}
+N.~Shazeer.
+\newblock GLU variants improve Transformer.
+\newblock Prepublicación, 2020.
+\newblock \url{https://arxiv.org/abs/2002.05202}
+
+\bibitem{roformer}
+J.~Su, Y.~Lu, S.~Pan, A.~Murtadha, B.~Wen e Y.~Liu.
+\newblock RoFormer: Enhanced Transformer with rotary position embedding.
+\newblock Prepublicación, 2021. Publicado en \emph{Neurocomputing}, 568, 2024.
+\newblock \url{https://arxiv.org/abs/2104.09864}
+
+\bibitem{llama}
+H.~Touvron \emph{et al.}
+\newblock LLaMA: Open and efficient foundation language models.
+\newblock Prepublicación, 2023.
+\newblock \url{https://arxiv.org/abs/2302.13971}
+
+\bibitem{llama2}
+H.~Touvron \emph{et al.}
+\newblock Llama 2: Open foundation and fine-tuned chat models.
+\newblock Prepublicación, 2023.
+\newblock \url{https://arxiv.org/abs/2307.09288}
+
+\bibitem{vaswani}
+A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N. Gomez, Ł.~Kaiser e I.~Polosukhin.
+\newblock Attention is all you need.
+\newblock En \emph{Advances in Neural Information Processing Systems 30 (NeurIPS)}, 2017.
+\newblock \url{https://arxiv.org/abs/1706.03762}
+
+\bibitem{grok1}
+xAI.
+\newblock Grok-1: código y pesos publicados.
+\newblock 2024.
+\newblock \url{https://github.com/xai-org/grok-1}
+
+\bibitem{xiong}
+R.~Xiong, Y.~Yang, D.~He, K.~Zheng, S.~Zheng, C.~Xing, H.~Zhang, Y.~Lan, L.~Wang y T.-Y. Liu.
+\newblock On layer normalization in the Transformer architecture.
+\newblock En \emph{International Conference on Machine Learning (ICML)}, 2020.
+\newblock \url{https://arxiv.org/abs/2002.04745}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock Cap.~11, «Attention Mechanisms and Transformers» (§11.6 «Self-Attention and Positional Encoding» y §11.7 «The Transformer Architecture»).
+\newblock \url{https://d2l.ai/}
+
+\bibitem{rmsnorm}
+B.~Zhang y R.~Sennrich.
+\newblock Root mean square layer normalization.
+\newblock En \emph{Advances in Neural Information Processing Systems 32 (NeurIPS)}, 2019.
+\newblock \url{https://arxiv.org/abs/1910.07467}
+
+\end{thebibliography}
+
+
+\end{document}

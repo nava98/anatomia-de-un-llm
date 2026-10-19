@@ -1,0 +1,182 @@
+% =====================================================================
+\chapter{Modelos de espacio de estados}
+\label{tema:5}
+% =====================================================================
+
+La atención guarda todo el pasado y lo consulta en cada paso; una red recurrente lo resume en un estado de tamaño fijo. Los modelos de espacio de estados (SSM) son redes recurrentes lineales con una estructura heredada de la teoría de sistemas: se definen en tiempo continuo, se discretizan y pueden calcularse como recurrencia, con coste constante por token en la generación, o como convolución, en paralelo durante el entrenamiento. Mamba los hace selectivos, haciendo que sus parámetros dependan de la entrada, y recupera el cálculo paralelo mediante un barrido asociativo. Se sigue a Gu, Goel y Ré~\cite[§2]{s4}, a Gu y Dao~\cite[§2 y §3]{mamba}, la parte de la clase~10 de CS336 dedicada a las alternativas al Transformer~\cite{cs336} y la sesión de A.~Gu en el seminario CS25~\cite{cs25}. Los sistemas discretos y su respuesta al impulso siguen el curso 6.003 del MIT~\cite{mit6003}.
+
+\section{Sistemas lineales continuos y su discretización}
+
+\begin{definicion}[Modelo de espacio de estados]\label{def:ssm}
+Sean $A\in\R^{n\times n}$, $B\in\R^{n\times 1}$ y $C\in\R^{1\times n}$. El \emph{modelo de espacio de estados} continuo con entrada escalar $x(t)$, estado $h(t)\in\R^{n}$ y salida $y(t)$ es
+\[
+h'(t)=Ah(t)+Bx(t),\qquad y(t)=Ch(t)
+\]
+\cite[ecs.~1a y~1b]{mamba}. Un modelo de lenguaje aplica un SSM independiente a cada una de las $d$ componentes de la secuencia de vectores.
+\end{definicion}
+
+Para procesar una secuencia se fija un paso $\Delta>0$ y se supone que la entrada es constante en cada intervalo de longitud $\Delta$ (\emph{retención de orden cero}).
+
+\begin{proposicion}[Discretización por retención de orden cero]\label{prop:zoh}
+Sea $n=1$, con $A=a\ne 0$ y $B=\beta$. Si $x(\tau)=x_t$ es constante en $[t\Delta,(t+1)\Delta)$, entonces $h_{t+1}=\Abar h_t+\Bbar x_t$, con
+\[
+\Abar=e^{a\Delta},\qquad \Bbar=\frac{e^{a\Delta}-1}{a}\,\beta .
+\]
+Si $a<0$, entonces $0<\Abar<1$. En el caso matricial, $\Abar=\exp(\Delta A)$ y $\Bbar=(\Delta A)^{-1}\bigl(\exp(\Delta A)-I\bigr)\Delta B$~\cite[ec.~4]{mamba}.
+\end{proposicion}
+
+\begin{proof}
+Multiplicando la ecuación $h'-ah=\beta x$ por $e^{-a\tau}$ se obtiene $\bigl(e^{-a\tau}h(\tau)\bigr)'=e^{-a\tau}\beta x_t$ en el intervalo. Integrando entre $t\Delta$ y $(t+1)\Delta$ y multiplicando por $e^{a(t+1)\Delta}$,
+\[
+h((t+1)\Delta)=e^{a\Delta}h(t\Delta)+\beta x_t\int_{0}^{\Delta}e^{a(\Delta-u)}\,du=e^{a\Delta}h(t\Delta)+\beta x_t\,\frac{e^{a\Delta}-1}{a}.
+\]
+Si $a<0$, $a\Delta<0$ y $0<e^{a\Delta}<1$. El caso matricial es idéntico, con la exponencial de una matriz y la integral $\int_0^{\Delta}e^{A(\Delta-u)}du=A^{-1}(e^{\Delta A}-I)$ cuando $A$ es invertible.
+\end{proof}
+
+S4 usa en su lugar la discretización bilineal, $\Abar=(I-\frac\Delta2A)^{-1}(I+\frac\Delta2A)$ y $\Bbar=(I-\frac\Delta2A)^{-1}\Delta B$~\cite[§2.3]{s4}.
+
+\begin{observacion}[Conexión con la física]
+Con $a=-1/\tau_{c}$, la ecuación escalar es la de un circuito RC de constante de tiempo $\tau_{c}$, y $\Abar=e^{-\Delta/\tau_{c}}$ es la fracción de carga que conserva el condensador tras un intervalo $\Delta$. Un paso pequeño respecto de $\tau_{c}$ da $\Abar\approx 1$, una memoria larga; un paso grande da $\Abar\approx 0$, y el estado olvida casi todo.
+\end{observacion}
+
+\section{Recurrencia y convolución}
+
+\begin{definicion}[SSM discreto]\label{def:ssmdiscreto}
+El SSM discreto con matrices $(\Abar,\Bbar,C)$ y estado inicial $h_0=0$ transforma la sucesión $(x_t)_{t\ge1}$ en
+\[
+h_t=\Abar h_{t-1}+\Bbar x_t,\qquad y_t=Ch_t
+\]
+\cite[ecs.~2a y~2b]{mamba}.
+\end{definicion}
+
+\begin{proposicion}[Forma convolucional]\label{prop:conv}
+Si $(\Abar,\Bbar,C)$ no dependen de $t$, la salida del SSM discreto es la convolución causal
+\[
+y_t=\sum_{j=0}^{t-1}\bar K_j\,x_{t-j},\qquad \bar K_j=C\Abar^{\,j}\Bbar,
+\]
+y $\bar K$ es la respuesta del sistema al impulso unitario ($x_1=1$ y $x_t=0$ para $t>1$).
+\end{proposicion}
+
+\begin{proof}
+Se demuestra por inducción que $h_t=\sum_{j=0}^{t-1}\Abar^{\,j}\Bbar x_{t-j}$. Para $t=1$, $h_1=\Abar\cdot 0+\Bbar x_1$. Si es cierto para $t-1$, $h_t=\Abar\sum_{j=0}^{t-2}\Abar^{\,j}\Bbar x_{t-1-j}+\Bbar x_t=\sum_{j'=1}^{t-1}\Abar^{\,j'}\Bbar x_{t-j'}+\Abar^{0}\Bbar x_t$, con $j'=j+1$. Multiplicando por $C$ se obtiene $y_t$. Con el impulso unitario, solo sobrevive el término $j=t-1$ y $y_t=\bar K_{t-1}$.
+\end{proof}
+
+\begin{ejemplo}[Memoria que se desvanece]\label{ej:ssm}
+Sean $\Abar=0{,}5$, $\Bbar=C=1$ y $x=(1,0,0,2)$. Por recurrencia, $h=(1;\ 0{,}5;\ 0{,}25;\ 0{,}125+2=2{,}125)$. Por convolución, con $\bar K=(1;\ 0{,}5;\ 0{,}25;\ 0{,}125)$, $y_4=\bar K_0x_4+\bar K_3x_1=2+0{,}125=2{,}125$. El valor inicial pesa $0{,}5^{3}=0{,}125$ tres pasos después. Estos coeficientes se obtienen, por ejemplo, de $a=-1$ y $\Delta=\ln 2$ con la \cref{prop:zoh}, que da $\Abar=0{,}5$ y $\Bbar=0{,}5\beta$, tomando $\beta=2$.
+\end{ejemplo}
+
+Las dos formas tienen costes complementarios. La recurrencia cuesta $O(n)$ operaciones por token y un estado de tamaño fijo, como una red recurrente, pero es secuencial. La convolución se calcula en paralelo sobre toda la secuencia, por ejemplo con la transformada rápida de Fourier en $O(T\log T)$, que es como S4 entrena~\cite[§2.4]{s4}. Gu y Dao llaman a esta propiedad \emph{invariancia temporal lineal}~\cite[§2]{mamba}.
+
+\section{Selección: el modelo de Mamba}
+
+La invariancia temporal impide que el modelo decida, según el contenido, qué recordar y qué olvidar: el núcleo $\bar K$ trata igual cada token. Gu y Dao argumentan que esta es la razón por la que los SSM anteriores eran débiles en lenguaje, y proponen que los parámetros dependan de la entrada~\cite[§3.1 y §3.2]{mamba}.
+
+\begin{definicion}[SSM selectivo]\label{def:selectivo}
+Un \emph{SSM selectivo} usa en el instante $t$ las matrices $B_t=s_B(x_t)$, $C_t=s_C(x_t)$ y el paso $\Delta_t=\softplus\bigl(p+s_\Delta(x_t)\bigr)$, donde $s_B$, $s_C$ y $s_\Delta$ son proyecciones lineales de la entrada y $p$ es un parámetro, y discretiza con la \cref{prop:zoh} en cada instante~\cite[§3.2, algoritmo~2]{mamba}. La matriz $A$ es fija y diagonal.
+\end{definicion}
+
+\begin{teorema}[Selección y puertas]\label{teo:puerta}
+Sea un SSM selectivo escalar con $A=-1$, $B=1$ y $\Delta_t=\softplus(z_t)$, donde $z_t$ es una función lineal de $x_t$. Su recurrencia es
+\[
+h_t=(1-g_t)\,h_{t-1}+g_t\,x_t,\qquad g_t=\sigma(z_t),
+\]
+la de una red recurrente con una puerta que interpola entre conservar el estado y sustituirlo por la entrada~\cite[§3.5.1, teorema~1]{mamba}.
+\end{teorema}
+
+\begin{proof}
+Por la \cref{prop:zoh} con $a=-1$ y $\beta=1$: $\Abar_t=e^{-\Delta_t}$ y $\Bbar_t=(e^{-\Delta_t}-1)/(-1)=1-e^{-\Delta_t}$. Como $\softplus(z)=\ln(1+e^{z})$,
+\[
+e^{-\Delta_t}=\frac{1}{1+e^{z_t}}=1-\frac{e^{z_t}}{1+e^{z_t}}=1-\sigma(z_t).
+\]
+Luego $\Abar_t=1-g_t$ y $\Bbar_t=g_t$, y la recurrencia $h_t=\Abar_th_{t-1}+\Bbar_tx_t$ es la del enunciado.
+\end{proof}
+
+\begin{ejemplo}[Una puerta selectiva]\label{ej:puerta}
+Sean $h_0=0$, $(z_1,z_2,z_3)=(0,2,-2)$ y $x=(1,3,-1)$. Entonces $g=(0{,}5;\ 0{,}8808;\ 0{,}1192)$ y
+\[
+h_1=0{,}5,\quad h_2=0{,}1192\cdot 0{,}5+0{,}8808\cdot 3=2{,}702,\quad h_3=0{,}8808\cdot 2{,}702+0{,}1192\cdot(-1)=2{,}261.
+\]
+Con $z_3=-2$ el modelo conserva casi todo el estado e ignora casi por completo la entrada $x_3$; con $z_2=2$ hace lo contrario.
+\end{ejemplo}
+
+\section{El barrido paralelo}
+
+Con parámetros dependientes de $t$, el coeficiente de $x_{t-j}$ en $h_t$ es $\Abar_t\cdots\Abar_{t-j+1}\Bbar_{t-j}$, que depende de $t$: ya no hay núcleo fijo ni convolución. La linealidad en el estado basta, sin embargo, para paralelizar.
+
+\begin{proposicion}[Asociatividad de la composición de pasos]\label{prop:scan}
+Sea $\phi_t(h)=a_th+b_t$ el paso $t$ de una recurrencia escalar, representado por el par $(a_t,b_t)$. Se define
+\[
+(a,b)\bullet(a',b')=(a'a,\ a'b+b').
+\]
+Entonces $(\phi_{t'}\circ\phi_t)$ está representado por $(a_t,b_t)\bullet(a_{t'},b_{t'})$, la operación $\bullet$ es asociativa y, con $h_0=0$, $h_t$ es la segunda componente de $(a_1,b_1)\bullet\cdots\bullet(a_t,b_t)$.
+\end{proposicion}
+
+\begin{proof}
+$\phi_{t'}(\phi_t(h))=a_{t'}(a_th+b_t)+b_{t'}=(a_{t'}a_t)h+(a_{t'}b_t+b_{t'})$, que es la afín representada por $(a_t,b_t)\bullet(a_{t'},b_{t'})$. La asociatividad se sigue de la de la composición de funciones; directamente,
+\[
+\bigl((a,b)\bullet(a',b')\bigr)\bullet(a'',b'')=(a''a'a,\ a''a'b+a''b'+b'')=(a,b)\bullet\bigl((a',b')\bullet(a'',b'')\bigr).
+\]
+Por último, $h_t=\phi_t\circ\cdots\circ\phi_1(0)$, y la afín $h\mapsto\alpha h+\beta$ evaluada en $0$ vale $\beta$.
+\end{proof}
+
+Por la \cref{prop:scan}, los estados $h_1,\dots,h_T$ son los prefijos de un producto asociativo, que un algoritmo de barrido paralelo calcula con profundidad $O(\log T)$ y trabajo $O(T)$. Mamba combina este barrido con la fusión de las operaciones en la memoria rápida de la GPU y el recálculo de los estados intermedios en la pasada hacia atrás, sin escribir nunca el estado expandido en la memoria principal~\cite[§3.3.2]{mamba}. Con estado vectorial y $A$ diagonal, cada componente es una recurrencia escalar independiente.
+
+\section{Comparación con la atención}
+
+\begin{table}[ht]
+\centering\small
+\caption{Atención causal frente a un SSM selectivo, por capa, con $T$ tokens y dimensión $d$.}\label{tab:ssm}
+\begin{tabular}{@{}lll@{}}
+\toprule
+& Atención & SSM selectivo \\
+\midrule
+Coste del entrenamiento & $O(T^{2}d)$ & $O(Td)$ por cada dimensión de estado \\
+Memoria en la generación & caché que crece con $T$ & estado de tamaño fijo \\
+Coste por token generado & $O(Td)$ & independiente de $T$ \\
+Recuperar un dato exacto lejano & directo & limitado por la compresión del estado \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Gu y Dao informan de un rendimiento de inferencia unas cinco veces mayor que el de un Transformer de tamaño similar~\cite[§4.5]{mamba}. La clase~10 de CS336 señala la debilidad complementaria: los SSM anteriores a Mamba resolvían mal las tareas de recuperación asociativa, importantes en lenguaje, y los diseños recientes son híbridos que conservan algunas capas de atención; Jamba, por ejemplo, intercala capas Transformer y Mamba en proporción $1:7$ dentro de una MoE de $5{,}2\cdot 10^{10}$ parámetros~\cite{cs336,jamba}. No hay información pública de que Claude, Gemini o Grok usen SSM.
+
+\begin{lecturas}
+\item Gu, Goel y Ré~\cite{s4}, §2 (SSM continuo, discretización bilineal y representación convolucional).
+\item Gu y Dao~\cite{mamba}, §2 «State Space Models», §3.2 «Improving SSMs with Selection», §3.3.2 y §3.5.1 «Connection to Gating Mechanisms».
+\item Stanford CS336~\cite{cs336}, clase~10, sección sobre alternativas al Transformer.
+\item Seminario CS25~\cite{cs25}, sesión de A.~Gu «On the Tradeoffs of State Space Models and Transformers».
+\item MIT 6.003~\cite{mit6003}, sistemas discretos, respuesta al impulso y polos.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-scan}
+Explique por qué S4 puede entrenarse como una convolución y Mamba no, y qué propiedad de la recurrencia de Mamba permite, aun así, calcularla en paralelo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-conv}
+Sea el SSM escalar con $\Abar=0{,}9$, $\Bbar=C=1$ y entrada $x=(1,0,0,0,1)$. Calcule la salida por recurrencia y compruébela con la convolución de la \cref{prop:conv}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-zoh}
+Sea el sistema escalar con $a=-2$, $\beta=1$ y $\Delta=0{,}5$. Calcule $\Abar$ y $\Bbar$ con la retención de orden cero, con la discretización bilineal y con el método de Euler explícito ($\Abar=1+\Delta a$, $\Bbar=\Delta\beta$). ¿Cuál de los tres conserva la estabilidad del sistema continuo con cualquier $\Delta>0$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-mit1}
+(a) Un sistema discreto cumple $y[n]=0{,}75\,y[n-1]+x[n-1]$ y está en reposo inicial. Calcule su respuesta al impulso para $n=0,\dots,4$ y dé su fórmula cerrada. (b) Se conectan en cascada dos SSM escalares, el primero con $\Abar=1/2$ y el segundo con $\Abar=1/4$, ambos con $\Bbar=C=1$. Calcule la respuesta al impulso para $n=0,\dots,3$ por recurrencia y compruebe la fórmula $h[n]=2(1/2)^{n}-(1/4)^{n}$.
+\fuente{adaptado de MIT 6.003~\cite{mit6003}, \emph{Homework}~2, problema~1 «Finding outputs» (sistemas H1 y H3).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-puerta}
+Con el \cref{teo:puerta}, $h_0=1$, $z=(1,-1,3)$ y $x=(0,2,-1)$, calcule $\Delta_t$, $g_t$ y $h_t$ para $t=1,2,3$, y compruebe en $t=1$ que la discretización de orden cero y la forma con puerta dan el mismo resultado.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-mit2}
+Se busca un SSM cuya respuesta al impulso sea $K=(1,0,\frac12,0,\frac14,0,\dots)$, es decir, $K_n=(1/2)^{n/2}$ si $n$ es par y $0$ si es impar. (a) Compruebe que la recurrencia $y[n]=\frac12y[n-2]+x[n]$ la produce. (b) Escríbala como SSM con estado en $\R^{2}$, $\Abar=\begin{pmatrix}0&1/2\\1&0\end{pmatrix}$, $\Bbar=(1,0)\T$ y $C=(1,0)$; calcule $C\Abar^{\,n}\Bbar$ para $n=0,\dots,4$ y los autovalores de $\Abar$. (c) Demuestre que ningún SSM escalar puede producir esta respuesta.
+\fuente{adaptado de MIT 6.003~\cite{mit6003}, \emph{Homework}~2, problema~6 «Unit-sample response».}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-barrido}
+(a) Con los pares $(a_t,b_t)=(0{,}5;\,1)$, $(0{,}5;\,0)$, $(0{,}5;\,0)$ y $(0{,}5;\,2)$, calcule $h_4$ agrupando la composición de la \cref{prop:scan} en árbol, $\bigl(e_1\bullet e_2\bigr)\bullet\bigl(e_3\bullet e_4\bigr)$, y compare con el \cref{ej:ssm}. (b) Demuestre que $(1,0)$ es elemento neutro de $\bullet$ y que $\bullet$ no es conmutativa.
+\end{ejercicio}

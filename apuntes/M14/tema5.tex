@@ -1,0 +1,158 @@
+% =====================================================================
+\chapter{Contar parámetros y memoria}
+\label{tema:5}
+% =====================================================================
+
+A partir de la configuración de un Transformer ($V$, $d$, $L$, $h$, $\dff$) puede calcularse sin ejecutar nada cuántos parámetros tiene y cuánta memoria necesita para la inferencia y para el entrenamiento. Este tema deduce la fórmula exacta para la arquitectura de LLaMA, la aproximación $N\approx 12Ld^{2}$ de Kaplan \emph{et al.}~\cite[§2.1]{kaplan} y el coste en bytes por parámetro del entrenamiento con Adam en precisión mixta. Se sigue también~\cite[§7.1.1 y ejercicio~7.1]{jm3} y el problema \texttt{transformer\_accounting} de CS336~\cite{cs336}.
+
+\section{Parámetros de un bloque}
+
+\begin{proposicion}[La atención no depende del número de cabezas]\label{prop:cabezas}
+Sin sesgos, la atención multicabeza con $h$ cabezas de dimensión $d_k=d/h$ tiene $4d^{2}$ parámetros, cualquiera que sea $h$.
+\end{proposicion}
+
+\begin{proof}
+Cada cabeza tiene tres matrices $d\times d_k$, con $3dd_k$ parámetros; las $h$ cabezas suman $3hdd_k=3d^{2}$. La proyección de salida $W_O$ tiene $d^{2}$. En total, $4d^{2}$.
+\end{proof}
+
+\begin{proposicion}[Parámetros de un bloque]\label{prop:bloque}
+\begin{enumerate}
+  \item Un bloque de tipo LLaMA (RMSNorm con ganancia, SwiGLU, sin sesgos) tiene $4d^{2}+3d\,\dff+2d$ parámetros.
+  \item Un bloque de tipo GPT-2 (LayerNorm con ganancia y sesgo, MLP con $\dff=4d$, sesgos en todas las capas lineales) tiene $12d^{2}+13d$ parámetros.
+  \item Con $\dff=4d$ en un MLP de dos matrices o $\dff=\frac83 d$ en SwiGLU, la parte matricial del bloque tiene $12d^{2}$ parámetros: $4d^{2}$ en la atención y $8d^{2}$ en el MLP.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Atención: $4d^{2}$ (\cref{prop:cabezas}). SwiGLU: $3d\,\dff$ (\cref{prop:presupuesto}). Dos RMSNorm con un vector de ganancia de dimensión $d$ cada una: $2d$.
+
+(ii) Atención: $3d^{2}+d^{2}$ en matrices y $3d+d$ en sesgos. MLP: $4d^{2}+4d^{2}$ en matrices y $4d+d$ en sesgos. Dos LayerNorm: $2(d+d)=4d$. Matrices: $12d^{2}$; vectores: $4d+5d+4d=13d$.
+
+(iii) Es la \cref{prop:presupuesto} sumada a la \cref{prop:cabezas}.
+\end{proof}
+
+\section{Parámetros del modelo completo}
+
+\begin{teorema}[Recuento exacto]\label{teo:recuento}
+Un Transformer de tipo LLaMA con embeddings sin atar tiene
+\[
+N=L\bigl(4d^{2}+3d\,\dff+2d\bigr)+2Vd+d
+\]
+parámetros. Con embeddings atados, el término $2Vd$ se sustituye por $Vd$; con posiciones aprendidas, se añaden $\nctx d$.
+\end{teorema}
+
+\begin{proof}
+Hay $L$ bloques (\cref{prop:bloque}); la matriz de embedding y la de unembedding tienen $Vd$ parámetros cada una; la normalización final tiene $d$. Las variantes se siguen de la \cref{prop:ahorro} y de la definición de posiciones aprendidas.
+\end{proof}
+
+\begin{corolario}[Aproximación de Kaplan]\label{cor:kaplan}
+Si $\dff=4d$ (o $\frac83 d$ en SwiGLU), los parámetros sin contar embeddings ni normalizaciones son exactamente $12Ld^{2}$, y
+\[
+\frac{N}{12Ld^{2}}=1+\frac{V}{6Ld}+\frac{2L+1}{12Ld}\qquad\text{(sin atar)}.
+\]
+\end{corolario}
+
+\begin{proof}
+Sustituyendo $3d\,\dff=8d^{2}$ en el \cref{teo:recuento}, $N=12Ld^{2}+2Ld+2Vd+d$. Dividiendo por $12Ld^{2}$ se obtiene la expresión.
+\end{proof}
+
+Kaplan \emph{et al.}~\cite[§2.1, ecuación~(2.1) y tabla~1]{kaplan} definen $N$ como el número de parámetros \emph{sin embeddings}, $N\approx 2d\,L(2d_{\mathrm{attn}}+\dff)=12Ld^{2}$, porque observaron que las leyes de escalado se expresan mejor con esa cantidad (módulo~16).
+
+\begin{ejemplo}[LLaMA-2~7B]\label{ej:llama7b}
+La configuración publicada es $d=4096$, $L=32$, $h=32$, $\dff=11\,008$ y $V=32\,000$, con embeddings sin atar~\cite[tabla~2]{llama}, \cite{llamacode}. La \cref{tab:llama7b} aplica la \cref{prop:bloque}. Por el \cref{teo:recuento},
+\[
+N=32\cdot 202\,383\,360+2\cdot 131\,072\,000+4096=6\,738\,415\,616.
+\]
+La aproximación $12Ld^{2}=6\,442\,450\,944$ cubre el $95{,}6\,\%$ de $N$; los embeddings suponen el $3{,}9\,\%$. El MLP contiene el $64{,}2\,\%$ de todos los parámetros y la atención el $31{,}9\,\%$.
+\end{ejemplo}
+
+\begin{table}[ht]
+\centering\small
+\caption{Parámetros de un bloque de LLaMA-2~7B.}\label{tab:llama7b}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Pieza & Fórmula & Parámetros \\
+\midrule
+$W_Q,W_K,W_V,W_O$ & $4d^{2}$ & $67\,108\,864$ \\
+SwiGLU & $3d\,\dff$ & $135\,266\,304$ \\
+Dos RMSNorm & $2d$ & $8\,192$ \\
+\midrule
+Bloque & & $202\,383\,360$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Memoria}
+
+\begin{definicion}[Memoria de los parámetros]
+Si cada parámetro se almacena con $b$ bytes, los pesos ocupan $Nb$ bytes. Se usan $b=4$ en fp32, $b=2$ en bf16 y fp16, $b=1$ en int8 y $b=1/2$ en int4 (módulos~11 y~19). En este módulo, $1~\mathrm{GB}=10^{9}$~bytes y $1~\mathrm{GiB}=2^{30}$~bytes.
+\end{definicion}
+
+\begin{proposicion}[Estado del entrenamiento con Adam en precisión mixta]\label{prop:16bytes}
+Entrenar con Adam en precisión mixta requiere, sin contar las activaciones, $16$~bytes por parámetro.
+\end{proposicion}
+
+\begin{proof}
+Por cada parámetro se almacenan: el peso de trabajo en bf16 ($2$~bytes), su gradiente en bf16 ($2$), la copia maestra del peso en fp32, que evita que las actualizaciones pequeñas se pierdan por redondeo (módulo~11, tema~5) ($4$), y los dos momentos de Adam $m$ y $v$ en fp32 (módulo~7) ($4+4$). En total, $2+2+4+4+4=16$.
+\end{proof}
+
+\begin{table}[ht]
+\centering\small
+\caption{Memoria de LLaMA-2~7B ($N=6\,738\,415\,616$) según el uso.}\label{tab:memoria}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Uso & Bytes por parámetro & Memoria \\
+\midrule
+Inferencia en bf16 & $2$ & $13{,}5$~GB \\
+Inferencia en int4 (módulo~19) & $0{,}5$ & $3{,}4$~GB \\
+Pesos en fp32 & $4$ & $27{,}0$~GB \\
+Entrenamiento, Adam en precisión mixta & $16$ & $107{,}8$~GB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La \cref{tab:memoria} explica por qué un modelo de $7\cdot 10^{9}$ parámetros cabe en una GPU de $24$~GB para la inferencia en bf16, pero no para el entrenamiento: con $16$~bytes por parámetro, en $24$~GB solo caben los estados de un modelo de $1{,}5\cdot 10^{9}$ parámetros, y aún habría que añadir las activaciones. Las técnicas ZeRO y FSDP (módulo~17) reparten estos $16$~bytes entre varias GPU.
+
+\begin{observacion}[Conexión con los LLM]
+Las cifras de esta sección se aplican a cualquier modelo cuya configuración sea pública, como GPT-2, LLaMA o Grok-1~\cite{grok1}. Anthropic y Google no publican la configuración de Claude ni de Gemini, de modo que su número de parámetros no puede calcularse con estas fórmulas.
+\end{observacion}
+
+\begin{lecturas}
+\item Kaplan \emph{et al.}~\cite{kaplan}, §2.1 «Parameter and Compute Scaling of Transformers» y tabla~1.
+\item Jurafsky y Martin~\cite{jm3}, §7.1.1 (coste de la atención multicabeza) y §7.8 «Current models and some numbers».
+\item Touvron \emph{et al.}~\cite{llama}, §2.2 «Architecture» y tabla~2.
+\item Hashimoto y Liang~\cite{cs336}, problemas \texttt{transformer\_accounting} y \texttt{adamw\_accounting}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{2}{eje:5-slp}
+Un Transformer tiene $L$ capas, dimensión $d$, $A$ cabezas con $d_k=d_v=d/A$ y $\dff=4d$. (a) Cuente los parámetros de $W_Q$, $W_K$, $W_V$ y $W_O$ en una capa. ¿Depende el resultado de $A$? (b) Cuente los parámetros de una capa MLP. (c) Demuestre que la pila de $L$ bloques tiene unos $12Ld^{2}$ parámetros, sin contar sesgos ni normalizaciones. (d) Aplíquelo a $d=512$ y $L=6$.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.1 (se añade el apartado~(d)).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-gpt2}
+GPT-2 \emph{small}: $d=768$, $L=12$, $V=50\,257$, $\nctx=1024$, posiciones aprendidas, MLP con $\dff=4d$, LayerNorm con ganancia y sesgo, sesgos en todas las capas lineales y embeddings atados. Calcule el número de parámetros de un bloque y del modelo. ¿Qué fracción cubre $12Ld^{2}$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-13b}
+LLaMA-2~13B: $d=5120$, $L=40$, $\dff=13\,824$, $V=32\,000$, sin atar. Calcule $N$ exactamente y compárelo con $12Ld^{2}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-mem13b}
+Para LLaMA-2~13B ($N$ del \cref{eje:5-13b}), calcule la memoria de los pesos en bf16 y la del estado completo de entrenamiento con Adam en precisión mixta, sin activaciones. ¿Cuántas GPU de $80$~GB hacen falta como mínimo para el estado de entrenamiento?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-xl}
+Un modelo con la arquitectura de este módulo (pre-norm, RMSNorm con ganancia, SwiGLU, RoPE, sin sesgos, embeddings sin atar) tiene la forma de GPT-2 XL: $V=50\,257$, $\nctx=1024$, $L=48$, $d=1600$, $h=25$ y $\dff=4288$. Cuente sus parámetros entrenables y la memoria que ocupan en fp32.
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, problema \texttt{transformer\_accounting}, apartado~(a).}
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:5-24gb}
+Una GPU tiene $24$~GB. Sin contar activaciones, ¿cuál es el mayor número de parámetros de un modelo que cabe en ella (a) para la inferencia en bf16, (b) para la inferencia en int4 y (c) para el entrenamiento con Adam en precisión mixta? ¿Qué componentes del estado de entrenamiento no son necesarios para la inferencia?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-fraccion}
+Sea $f=2Vd/N$ la fracción de parámetros de embeddings de un modelo sin atar con $\dff=\frac83 d$ (\cref{cor:kaplan}). (a) Demuestre que, si $V$ y la razón $\alpha=L/d$ están fijos, $f\sim V/(6\alpha d^{2})$ cuando $d\to\infty$. (b) Calcule $f$ para LLaMA-2~7B y para el modelo del \cref{eje:5-xl} y explique por qué el atado de embeddings se abandona en los modelos grandes.
+\end{ejercicio}

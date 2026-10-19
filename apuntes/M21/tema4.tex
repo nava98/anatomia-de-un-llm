@@ -1,0 +1,145 @@
+% =====================================================================
+\chapter{Preferencias, modelo de recompensa y RLHF}
+\label{tema:4}
+% =====================================================================
+
+Las personas no asignan con fiabilidad una nota absoluta a una respuesta, pero sí deciden con bastante consistencia cuál de dos respuestas prefieren. Este tema presenta el modelo de comparaciones por pares de Bradley y Terry~\cite{bt}, su estimación por máxima verosimilitud y su uso para entrenar un modelo de recompensa a partir de preferencias humanas, como en Christiano \emph{et al.}~\cite{christiano}, Stiennon \emph{et al.}~\cite{stiennon} y Ouyang \emph{et al.}~\cite{instructgpt}. Termina con el procedimiento completo de RLHF de InstructGPT. La parte de aprendizaje de recompensas sigue además la tarea~3 de CS234~\cite{cs234a3}.
+
+\section{El modelo de Bradley--Terry}
+
+\begin{definicion}[Modelo de Bradley--Terry]\label{def:bt}
+Sean $n$ objetos con puntuaciones latentes $r_1,\dots,r_n\in\R$. El \emph{modelo de Bradley--Terry} postula que, al comparar $i$ con $j$, se prefiere $i$ con probabilidad
+\[
+P(i\pref j)=\frac{e^{r_i}}{e^{r_i}+e^{r_j}}=\sigma(r_i-r_j),
+\]
+y que las comparaciones son independientes entre sí.
+\end{definicion}
+
+La segunda igualdad se obtiene dividiendo numerador y denominador entre $e^{r_i}$. El modelo es una regresión logística (módulo~8) cuyo predictor es la \emph{diferencia} de puntuaciones.
+
+\begin{proposicion}[Propiedades]\label{prop:bt}
+\begin{enumerate}
+  \item $P(i\pref j)+P(j\pref i)=1$, y $P(i\pref j)=\tfrac12$ si y solo si $r_i=r_j$.
+  \item Las probabilidades no cambian si se suma una misma constante $c$ a todas las puntuaciones; las puntuaciones solo están determinadas salvo una traslación.
+  \item Las \emph{razones de probabilidades} se multiplican: $\dfrac{P(i\pref j)}{P(j\pref i)}\cdot\dfrac{P(j\pref k)}{P(k\pref j)}=\dfrac{P(i\pref k)}{P(k\pref i)}$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\sigma(z)+\sigma(-z)=1$, y $\sigma(z)=\tfrac12$ solo para $z=0$. (ii) $(r_i+c)-(r_j+c)=r_i-r_j$. (iii) $\sigma(z)/\sigma(-z)=e^{z}$, luego el primer miembro vale $e^{r_i-r_j}e^{r_j-r_k}=e^{r_i-r_k}$.
+\end{proof}
+
+La propiedad (iii) es una forma de transitividad: si $i$ gana a $j$ con razón $3{:}1$ y $j$ a $k$ con razón $2{:}1$, el modelo predice que $i$ gana a $k$ con razón $6{:}1$, es decir, con probabilidad $6/7$.
+
+\begin{definicion}[Modelo de Plackett--Luce]\label{def:pl}
+Para ordenar $K$ objetos, el modelo de Plackett--Luce elige el primero con probabilidad proporcional a $e^{r_i}$, el segundo entre los restantes con la misma regla, y así sucesivamente:
+\[
+P(i_1\pref i_2\pref\dots\pref i_K)=\prod_{k=1}^{K}\frac{e^{r_{i_k}}}{\sum_{m\ge k}e^{r_{i_m}}}.
+\]
+Con $K=2$ se reduce al modelo de Bradley--Terry.
+\end{definicion}
+
+\section{Estimación por máxima verosimilitud}
+
+\begin{proposicion}[Pérdida del modelo de recompensa]\label{prop:bt-mv}
+Sea $\mathcal{D}=\{(x^{(m)},y_w^{(m)},y_l^{(m)})\}_{m=1}^{M}$ un conjunto de comparaciones en las que $y_w$ fue preferida a $y_l$, y sea $r_\phi(x,y)$ una recompensa parametrizada. Bajo el modelo de Bradley--Terry, el estimador de máxima verosimilitud de $\phi$ minimiza
+\[
+\LRM(\phi)=-\frac1M\sum_{m=1}^{M}\log\sigma\bigl(r_\phi(x^{(m)},y_w^{(m)})-r_\phi(x^{(m)},y_l^{(m)})\bigr).
+\]
+Con $z=r_\phi(x,y_w)-r_\phi(x,y_l)$, el gradiente de cada término es $-(1-\sigma(z))\bigl(\nabla_\phi r_\phi(x,y_w)-\nabla_\phi r_\phi(x,y_l)\bigr)$.
+\end{proposicion}
+
+\begin{proof}
+Por independencia, la verosimilitud es $\prod_m\sigma(z_m)$; su logaritmo cambiado de signo y dividido por $M$ es $\LRM$, y minimizarlo equivale a maximizar la verosimilitud. Para el gradiente, $\frac{d}{dz}\log\sigma(z)=\sigma'(z)/\sigma(z)=1-\sigma(z)$, porque $\sigma'=\sigma(1-\sigma)$; la regla de la cadena con $\nabla_\phi z$ completa la expresión.
+\end{proof}
+
+El factor $1-\sigma(z)=\sigma(-z)$ es la probabilidad que el modelo asigna al orden \emph{equivocado}: los pares ya bien ordenados apenas contribuyen y los mal ordenados empujan con fuerza.
+
+\begin{ejemplo}\label{ej:bt}
+Si $r_w=2$ y $r_l=0{,}5$, entonces $P(y_w\pref y_l)=\sigma(1{,}5)=0{,}818$ y la pérdida es $-\ln 0{,}818=0{,}201$. Si $r_w=r_l$, $P=\tfrac12$ y la pérdida es $\ln 2=0{,}693$, el valor de un modelo que no distingue. La derivada respecto a $r_w$ es $-(1-\sigma(1{,}5))=-0{,}182$: el descenso de gradiente aumenta $r_w$, con menos intensidad cuanto más seguro está ya el modelo.
+\end{ejemplo}
+
+\begin{proposicion}[Estimador con dos objetos]\label{prop:bt-dos}
+Si en $n$ comparaciones entre $a$ y $b$ se prefiere $a$ en $n_a$ ocasiones, con $0<n_a<n$, el estimador de máxima verosimilitud de la diferencia es $\widehat{r_a-r_b}=\log\bigl(n_a/(n-n_a)\bigr)$, y la probabilidad estimada es la frecuencia observada $n_a/n$.
+\end{proposicion}
+
+\begin{proof}
+Con $z=r_a-r_b$, la log-verosimilitud es $\ell(z)=n_a\log\sigma(z)+(n-n_a)\log\sigma(-z)$. Su derivada es $n_a(1-\sigma(z))-(n-n_a)\sigma(z)=n_a-n\sigma(z)$, que se anula en $\sigma(z)=n_a/n$, es decir, en $z=\log\bigl(n_a/(n-n_a)\bigr)$. Como $\ell''(z)=-n\sigma(z)(1-\sigma(z))<0$, es un máximo.
+\end{proof}
+
+Si $n_a=n$, la verosimilitud crece sin cota cuando $z\to\infty$ y el estimador no existe: un modelo de recompensa sobreajustado puede separar las preferencias de entrenamiento con márgenes arbitrariamente grandes. En la práctica lo impiden la regularización y la parada temprana.
+
+\section{Modelos de recompensa neuronales}
+
+En el ajuste de LLM, $r_\phi(x,y)$ es un Transformer, normalmente inicializado desde el modelo SFT, en el que la capa de salida sobre el vocabulario se sustituye por una cabeza lineal que produce un escalar a partir del estado oculto del último token~\cite{stiennon,instructgpt}. Tres detalles merecen mención.
+\begin{itemize}[leftmargin=1.4em,label=\textendash]
+  \item \emph{Comparaciones de segmentos.} Christiano \emph{et al.}~\cite{christiano} aplicaron Bradley--Terry a pares de fragmentos de trayectoria en tareas de control, con la recompensa de un fragmento igual a la suma de recompensas por paso predichas (\cref{eje:4-cs234}).
+  \item \emph{Ordenaciones.} En InstructGPT, los anotadores ordenaban entre $K=4$ y $K=9$ respuestas a la misma instrucción. Cada ordenación produce $\binom{K}{2}$ comparaciones, que se tratan en un mismo lote y se ponderan por $1/\binom{K}{2}$ para que las instrucciones con más respuestas no dominen~\cite[§3.5]{instructgpt}.
+  \item \emph{Normalización.} Por la \cref{prop:bt}(ii), la recompensa aprendida está definida salvo una constante; se suele trasladar para que las demostraciones de referencia tengan recompensa media nula antes del RL~\cite{stiennon,instructgpt}.
+\end{itemize}
+
+\section{El procedimiento RLHF de InstructGPT}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},node distance=5mm,
+  caja/.style={draw,thick,rounded corners=2pt,align=center,inner sep=3pt,minimum height=12mm,text width=2.35cm}]
+  \node[caja] (pre) {modelo\\preentrenado};
+  \node[caja,right=of pre] (sft) {1. SFT con\\demostraciones};
+  \node[caja,right=of sft] (rm) {2. modelo de\\recompensa $r_\phi$};
+  \node[caja,right=of rm] (ppo) {3. PPO con\\penalización KL};
+  \node[caja,right=of ppo] (fin) {modelo\\ajustado};
+  \draw[->,thick] (pre) -- (sft);
+  \draw[->,thick] (sft) -- (rm);
+  \draw[->,thick] (rm) -- (ppo);
+  \draw[->,thick] (ppo) -- (fin);
+  \draw[->,thick,dashed] (sft.south) -- ++(0,-0.6) -| node[pos=0.25,below] {$\pi_\theta$ inicial y referencia $\piref$ congelada} (ppo.south);
+  \node[font=\footnotesize,above=1mm of rm] {ordenaciones humanas, Bradley--Terry};
+\end{tikzpicture}
+\caption{Las tres etapas de RLHF según InstructGPT~\cite{instructgpt}. El modelo SFT inicializa la política, sirve de referencia congelada para la penalización KL y, en general, también inicializa el modelo de recompensa.}
+\label{fig:rlhf}
+\end{figure}
+
+El procedimiento de Ouyang \emph{et al.}~\cite[§3.5]{instructgpt} consta de tres etapas (\cref{fig:rlhf}):
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Ajuste supervisado}: el modelo preentrenado se ajusta con demostraciones escritas por anotadores (módulo~20).
+  \item \emph{Modelo de recompensa}: se recogen ordenaciones de respuestas del modelo SFT y se entrena $r_\phi$ con la pérdida de la \cref{prop:bt-mv}. En el artículo, los modelos de recompensa tienen $6\cdot 10^{9}$ parámetros.
+  \item \emph{Optimización por refuerzo}: se maximiza $\E[r_\phi(x,y)]-\beta\,\KL(\pi_\theta\,\|\,\piref)$ con PPO (\cref{tema:3}). La variante PPO-ptx añade un término $\gamma\,\E_{x\sim\mathcal{D}_{\mathrm{pre}}}[\log\pi_\theta(x)]$ de verosimilitud sobre datos de preentrenamiento para reducir la pérdida de rendimiento en tareas clásicas.
+\end{enumerate}
+
+Con este procedimiento, las respuestas de un modelo de $1{,}3\cdot 10^{9}$ parámetros fueron preferidas por los evaluadores a las de GPT-3 de $1{,}75\cdot 10^{11}$ parámetros~\cite{instructgpt}. El coste práctico es alto: durante la tercera etapa conviven en memoria la política, la referencia, el modelo de recompensa y el crítico de PPO, cuatro redes del tamaño de un LLM. Esta es la principal motivación práctica de DPO (\cref{tema:5}).
+
+\begin{lecturas}
+\item R.~A. Bradley y M.~E. Terry~\cite{bt}, artículo original del modelo de comparaciones por pares.
+\item P.~Christiano \emph{et al.}~\cite{christiano} y N.~Stiennon \emph{et al.}~\cite{stiennon}: aprendizaje de recompensas a partir de preferencias humanas.
+\item L.~Ouyang \emph{et al.}~\cite{instructgpt}, §3.5 «Models»: modelo de recompensa, PPO y PPO-ptx.
+\item CS234~\cite{cs234a3}, tarea~3, sección~2 «Learning from preferences».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-conceptos}
+(a) Explique por qué se recogen comparaciones entre respuestas en lugar de notas absolutas. (b) Justifique si es verdadera o falsa la afirmación «las probabilidades de Bradley--Terry no cambian si se suma~5 a todas las recompensas». (c) ¿Qué ocurre con la recompensa aprendida si se multiplican todas por~2?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-bt}
+Un modelo de recompensa da $r_w-r_l=1$. Calcule $P(y_w\pref y_l)$, la pérdida $-\log\sigma(r_w-r_l)$ y su derivada respecto a $r_w$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-cs234}
+Un modelo de recompensa predice $\hat r_\theta(o_t,a_t)$ en cada paso, y la probabilidad de preferir la trayectoria $\sigma^{1}$ a $\sigma^{2}$ es $\sigma(z)$, con $z=\sum_t\hat r_\theta(o^{1}_t,a^{1}_t)-\sum_t\hat r_\theta(o^{2}_t,a^{2}_t)$. La pérdida es la entropía cruzada con etiqueta $\mu\in\{0;\ 0{,}5;\ 1\}$: $L=-[\mu\log\sigma(z)+(1-\mu)\log(1-\sigma(z))]$. (a) Exprese $\nabla_\theta L$ en función de los $\nabla_\theta\hat r_\theta$. (b) Con recompensas por paso $(0{,}5;\ 1{,}0)$ en $\sigma^{1}$ y $(0{,}2;\ 0{,}3)$ en $\sigma^{2}$, calcule $P(\sigma^{1}\pref\sigma^{2})$, $L$ y $\partial L/\partial z$ para $\mu=1$ y para $\mu=0{,}5$.
+\fuente{adaptado de Stanford CS234, invierno de 2025, tarea~3, problema~2.1, apartados (a) y (b)~\cite{cs234a3}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-ranking}
+(a) ¿Cuántas comparaciones produce una ordenación de $K=4$ respuestas? ¿Y de $K=9$? (b) Un anotador ordena tres respuestas como $A\pref B\pref C$ y el modelo de recompensa les asigna $r_A=1{,}0$, $r_B=0{,}2$ y $r_C=-0{,}5$. Calcule la pérdida de cada comparación y la pérdida media ponderada por $1/\binom{3}{2}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-mv}
+En diez comparaciones entre las respuestas $a$ y $b$, los anotadores prefieren $a$ siete veces. Calcule el estimador de máxima verosimilitud de $r_a-r_b$ con la \cref{prop:bt-dos} y compruebe que reproduce la frecuencia observada. Con la \cref{prop:bt}(iii), si además $b$ gana a $c$ con razón $2{:}1$, ¿qué probabilidad predice el modelo para $a\pref c$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-convexidad}
+Sea un modelo de recompensa lineal $r_u(x,y)=u^{\top}\varphi(x,y)$, con $\varphi$ un vector de características fijo y $u\in\R^{d}$. (a) Demuestre que $\LRM(u)$ es convexa en $u$ calculando su matriz hessiana. (b) Demuestre que, si existe $u_0$ con $u_0^{\top}(\varphi(x,y_w)-\varphi(x,y_l))>0$ para todas las comparaciones, el ínfimo de $\LRM$ es~0 y no se alcanza. (c) Interprete (b) en relación con el sobreajuste del modelo de recompensa.
+\end{ejercicio}

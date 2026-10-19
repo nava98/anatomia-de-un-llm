@@ -1,0 +1,1875 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase IV — Módulo 17
+%  Hardware y sistemas distribuidos
+%  Compilar: latexmk -r ../latexmkrc M17-hardware.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 17}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\FLOP}{\mathrm{FLOP}}
+\newcommand{\Ppico}{P_{\mathrm{pico}}}
+\newcommand{\Bmem}{B_{\mathrm{mem}}}
+\newcommand{\Icrit}{I^{\ast}}
+\newcommand{\fl}{\operatorname{fl}}
+\newcommand{\ulp}{\operatorname{ulp}}
+\newcommand{\MFU}{\mathrm{MFU}}
+\newcommand{\PUE}{\mathrm{PUE}}
+\newcommand{\GELU}{\operatorname{GELU}}
+\newcommand{\kB}{k_{\mathrm{B}}}
+\usetikzlibrary{patterns}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 17. Hardware y sistemas distribuidos},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase IV \textperiodcentered\ Escala, sistemas y arquitecturas modernas}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 17\par}\vspace{0.3cm}
+{\LARGE Hardware y sistemas distribuidos\par}
+\vspace{0.2cm}
+{\large Aceleradores, memoria, precisión y paralelismo en el entrenamiento de modelos de lenguaje\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+El módulo~16 estableció que entrenar un modelo de $N$ parámetros con $D$ tokens cuesta $C\approx 6ND$ operaciones en coma flotante. Para Chinchilla ($N=7\cdot 10^{10}$, $D=1{,}4\cdot 10^{12}$) eso son unas $5{,}9\cdot 10^{23}$ operaciones: un procesador que ejecutase $10^{11}$ operaciones por segundo tardaría unos $1{,}9\cdot 10^{5}$ años, mientras que un millar de aceleradores modernos bien coordinados lo hace en un par de meses. Este módulo estudia de dónde procede esa diferencia y cuál es su precio. Se analiza por qué los aceleradores están especializados en el producto de matrices, por qué el rendimiento suele estar limitado por el movimiento de datos y no por el cálculo, cómo se reescriben los algoritmos para respetar la jerarquía de memoria, qué formatos numéricos se usan y con qué garantías, cómo se reparte el entrenamiento entre miles de dispositivos y cuánto cuesta en tiempo, dinero y energía. Sobre el hardware y la infraestructura de Claude, Gemini y Grok solo se usa información pública; las cifras de hardware proceden de hojas de especificaciones publicadas y son aproximadas.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item contar las operaciones de un producto de matrices y de una pasada de entrenamiento, justificar la regla de $6$ operaciones por parámetro y token, y explicar el funcionamiento de los núcleos tensoriales y de las matrices sistólicas;
+  \item situar cada nivel de la jerarquía de memoria por capacidad y ancho de banda, definir la intensidad aritmética, demostrar la cota del modelo \emph{roofline} y decidir si una operación está limitada por el cómputo o por la memoria;
+  \item analizar el tráfico de memoria de la atención estándar y de FlashAttention, y demostrar la exactitud de la softmax en línea en la que se basa;
+  \item describir los formatos fp32, fp16, bf16 y fp8, acotar el error de redondeo y justificar cada elemento de la receta de entrenamiento en precisión mixta;
+  \item definir las operaciones colectivas, calcular el coste del \emph{all-reduce} en anillo y analizar el paralelismo de datos, de tensores y de etapas, así como la partición de estados de ZeRO;
+  \item estimar el coste, la duración, la energía y la refrigeración de un entrenamiento, y comparar la energía por operación con el límite de Landauer.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~2 se usa el producto de matrices y su interpretación por bloques; del módulo~6, la entropía de Shannon (para el límite de Landauer); del módulo~7, el optimizador Adam y su estado; del módulo~10, la retropropagación y el coste de memoria de las activaciones; del módulo~11, los formatos de coma flotante; de los módulos~13 y~14, la atención y el bloque Transformer, y del módulo~16, la regla $C\approx 6ND$ y la asignación de Chinchilla $D\approx 20N$.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Cómputo matricial y aceleradores & \cite{hp}, \cite{cs336}, \cite{jouppi}, \cite{kaplan} \\
+2 & Jerarquía de memoria y modelo \emph{roofline} & \cite{roofline}, \cite{hp}, \cite{scaling}, \cite{hongkung} \\
+3 & Algoritmos conscientes de la E/S: FlashAttention & \cite{flash}, \cite{milakov}, \cite{cs336} \\
+4 & Precisión numérica y precisión mixta & \cite{higham}, \cite{micikevicius}, \cite{fp8}, \cite{mit65940} \\
+5 & Entrenamiento distribuido & \cite{cs336}, \cite{megatron}, \cite{gpipe}, \cite{narayanan}, \cite{zero} \\
+6 & Coste, energía y límites físicos & \cite{kaplan}, \cite{palm}, \cite{horowitz}, \cite{landauer} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La organización sigue el bloque de sistemas del curso CS336 de Stanford, «Language Modeling from Scratch»~\cite{cs336}: la clase sobre GPU y TPU, la clase~6 sobre programación de núcleos de cálculo (\emph{kernels}) con Triton y la clase~7 sobre paralelismo, junto con la tarea~2 (\emph{systems})~\cite{cs336a2}, de la que proceden varios ejercicios. La arquitectura de los aceleradores sigue los capítulos~4 («Data-Level Parallelism in Vector, SIMD, and GPU Architectures») y~7 («Domain-Specific Architectures») de Hennessy y Patterson~\cite{hp} y las clases de CMU 15-418/618~\cite{cmu418} sobre procesadores paralelos y GPU. El modelo \emph{roofline} se toma del artículo original de Williams, Waterman y Patterson~\cite{roofline} y del capítulo «All About Rooflines» del libro \emph{How to Scale Your Model}~\cite{scaling}. La parte numérica sigue a Higham~\cite{higham} y las clases de cuantización de MIT 6.5940~\cite{mit65940}. Los métodos se toman de sus artículos originales: Micikevicius \emph{et al.}~\cite{micikevicius} para la precisión mixta, Dao \emph{et al.}~\cite{flash} para FlashAttention, Shoeybi \emph{et al.}~\cite{megatron} y Narayanan \emph{et al.}~\cite{narayanan} para el paralelismo de tensores y de etapas, Huang \emph{et al.}~\cite{gpipe} para GPipe y Rajbhandari \emph{et al.}~\cite{zero} para ZeRO. Como dispositivo de referencia se usa la GPU NVIDIA A100 SXM de 80~GB~\cite{a100}. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$F$, $Q$ & número de operaciones en coma flotante (FLOP) y bytes transferidos de un núcleo de cálculo \\
+$\Ppico$, $\Bmem$ & rendimiento máximo (FLOP/s) y ancho de banda de memoria (bytes/s) del dispositivo \\
+$I=F/Q$, $\Icrit=\Ppico/\Bmem$ & intensidad aritmética e intensidad crítica (FLOP/byte) \\
+$s$ & bytes por número (2 en bf16 y fp16, 4 en fp32) \\
+$M$ & capacidad de la memoria rápida (SRAM), en elementos \\
+$n$, $d$ & en el tema~3, longitud de la secuencia y dimensión de cada cabeza de atención \\
+$N$, $D$, $C\approx 6ND$ & parámetros del modelo, tokens de entrenamiento y cómputo total \\
+$p$, $\varepsilon=2^{-p}$, $u=\varepsilon/2$ & bits de mantisa, épsilon de la máquina y unidad de redondeo \\
+$\fl(x)$, $\ulp(x)$ & redondeo al número representable más cercano y separación entre representables junto a $x$ \\
+$n_{\mathrm{d}}$ & número de dispositivos (GPU) \\
+$S$, $W$ & tamaño de un tensor comunicado (bytes) y ancho de banda de enlace (bytes/s) \\
+$p_{\mathrm{e}}$, $m$ & etapas del pipeline y número de microlotes \\
+$\Psi$ & número de parámetros en el análisis de ZeRO \\
+$\MFU$, $\PUE$ & utilización de FLOP del modelo y eficiencia energética del centro de datos \\
+$\kB$, $T$ & constante de Boltzmann y temperatura absoluta \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Cómputo matricial y aceleradores}
+\label{tema:1}
+% =====================================================================
+
+Casi todo el cómputo de un modelo de lenguaje consiste en productos de matrices densas. Este tema cuenta con precisión esas operaciones, deduce la regla de seis operaciones por parámetro y por token del entrenamiento y describe los dos diseños de hardware que las ejecutan de forma eficiente: la GPU, con sus núcleos tensoriales, y la matriz sistólica de la TPU. Se siguen los capítulos~4 y~7 de Hennessy y Patterson~\cite{hp}, la clase sobre GPU de CMU 15-418/618~\cite{cmu418}, la contabilidad de recursos de la tarea~1 de CS336~\cite[§3.5]{cs336a1}, el artículo de Kaplan \emph{et al.}~\cite[§2.1]{kaplan} y el de Jouppi \emph{et al.}~\cite{jouppi}.
+
+\section{Contar operaciones}
+
+\begin{definicion}[FLOP]
+Se llama \emph{operación en coma flotante} (FLOP, del inglés \emph{floating-point operation}) a una suma o a una multiplicación de dos números reales representados en coma flotante. Una multiplicación seguida de una suma acumulada, $c\gets c+ab$ (operación MAC o FMA), cuenta como dos FLOP. El \emph{rendimiento} de un dispositivo se mide en FLOP por segundo (FLOP/s).
+\end{definicion}
+
+Conviene distinguir \emph{FLOP} (cantidad de operaciones) de \emph{FLOP/s} (velocidad). En este módulo, $1$~TFLOP/s $=10^{12}$~FLOP/s.
+
+\begin{proposicion}[Coste del producto de matrices]\label{prop:flop-matmul}
+Sean $A\in\R^{m\times k}$ y $B\in\R^{k\times n}$. El cálculo directo de $C=AB$ requiere $2mkn$ FLOP.
+\end{proposicion}
+
+\begin{proof}
+Cada elemento $C_{ij}=\sum_{l=1}^{k}A_{il}B_{lj}$ es un producto escalar de longitud $k$: $k$ multiplicaciones y, partiendo de un acumulador nulo, $k$ sumas, es decir, $2k$ FLOP. Como $C$ tiene $mn$ elementos, el total es $2k\cdot mn=2mkn$.
+\end{proof}
+
+\begin{observacion}
+Estrictamente bastan $k-1$ sumas por elemento, pero el convenio $2mkn$ es el habitual~\cite[§3.5]{cs336a1} y coincide con el número de operaciones MAC multiplicado por dos. Algoritmos como el de Strassen reducen el exponente asintótico, pero no se usan en el entrenamiento de redes porque son menos estables numéricamente y peor adaptados al hardware.
+\end{observacion}
+
+\begin{ejemplo}[Una capa lineal de un Transformer]\label{ej:capa-lineal}
+Una proyección $Y=XW$ con $X\in\R^{T\times d}$ ($T=2048$ tokens) y $W\in\R^{d\times d}$ ($d=4096$) cuesta $2\cdot 2048\cdot 4096\cdot 4096=6{,}87\cdot 10^{10}$ FLOP. Por la \cref{prop:flop-matmul}, el coste es $2$ FLOP por cada parámetro de $W$ y por cada token.
+\end{ejemplo}
+
+\section{La regla de seis operaciones por parámetro y token}
+
+\begin{proposicion}[Coste de entrenamiento de una capa lineal]\label{prop:6nd-capa}
+Sea una capa lineal $Y=XW$ con $X\in\R^{T\times a}$ y $W\in\R^{a\times b}$, y sea $G=\partial\mathcal{L}/\partial Y\in\R^{T\times b}$ el gradiente que llega a su salida. La pasada hacia delante cuesta $2Tab$ FLOP y la pasada hacia atrás, que calcula $\partial\mathcal{L}/\partial X$ y $\partial\mathcal{L}/\partial W$, cuesta $4Tab$ FLOP. En total, $6$ FLOP por parámetro y por token.
+\end{proposicion}
+
+\begin{proof}
+La pasada hacia delante es un producto $(T\times a)(a\times b)$ y cuesta $2Tab$ por la \cref{prop:flop-matmul}. Por la regla de la cadena en forma matricial (módulo~10), $\partial\mathcal{L}/\partial X=GW\T$, producto $(T\times b)(b\times a)$ de coste $2Tba$, y $\partial\mathcal{L}/\partial W=X\T G$, producto $(a\times T)(T\times b)$ de coste $2aTb$. La pasada hacia atrás cuesta $4Tab$ y el total, $6Tab$. Como la capa tiene $ab$ parámetros y procesa $T$ tokens, el coste por parámetro y token es $6Tab/(abT)=6$.
+\end{proof}
+
+\begin{corolario}[Regla $C\approx 6ND$]\label{cor:6nd}
+Si casi todos los parámetros de un modelo pertenecen a capas lineales y se desprecian las operaciones que no multiplican pesos (normalizaciones, activaciones, producto $QK\T$ de la atención), entrenar un modelo de $N$ parámetros con $D$ tokens cuesta $C\approx 6ND$ FLOP: $2ND$ en la pasada hacia delante y $4ND$ en la pasada hacia atrás.
+\end{corolario}
+
+\begin{proof}
+Basta sumar la \cref{prop:6nd-capa} sobre todas las capas lineales: cada uno de los $N$ parámetros contribuye $6$ FLOP por token, y hay $D$ tokens.
+\end{proof}
+
+La aproximación es la de Kaplan \emph{et al.}~\cite[§2.1 y tabla~1]{kaplan}, que estiman la pasada hacia delante en $2N+2n_{\mathrm{capas}}n_{\mathrm{ctx}}d$ FLOP por token; el segundo término, debido a la atención, es pequeño cuando $n_{\mathrm{ctx}}\ll 12d$. Los parámetros de la tabla de \emph{embeddings} de entrada no intervienen en productos de matrices (se leen por índice) y suelen excluirse de $N$.
+
+\section{Arquitectura de una GPU}
+
+Una CPU dedica la mayor parte de su superficie a hacer rápido un único hilo de ejecución: cachés grandes, predicción de saltos, ejecución fuera de orden. Una GPU invierte el compromiso y dedica la superficie a muchas unidades aritméticas sencillas que ejecutan la misma instrucción sobre datos distintos~\cite[cap.~4]{hp}.
+
+\begin{definicion}[Modelo de ejecución SIMT]
+Una GPU de NVIDIA está formada por \emph{multiprocesadores de streaming} (SM). Un programa para GPU (\emph{kernel}) se lanza como una rejilla de \emph{bloques de hilos}; cada bloque se asigna a un SM y sus hilos pueden cooperar a través de una memoria compartida del SM. El SM ejecuta los hilos en grupos de 32, llamados \emph{warps}, que avanzan con la misma instrucción sobre datos distintos (\emph{single instruction, multiple threads}).
+\end{definicion}
+
+Si los hilos de un warp toman ramas distintas de una condición, el SM ejecuta las dos ramas una tras otra (\emph{divergencia}), y el rendimiento cae. Mientras un warp espera un dato de memoria, el SM ejecuta otro: la GPU oculta la latencia de la memoria con paralelismo, no con cachés~\cite{cmu418}. La A100 tiene 108 SM, cada uno con un banco de registros de 256~KB y 192~KB de memoria L1 y compartida~\cite{a100}.
+
+\begin{definicion}[Núcleo tensorial]
+Un \emph{núcleo tensorial} (\emph{tensor core}) es una unidad que ejecuta en una sola instrucción el producto acumulado $D\gets AB+C$ de pequeñas matrices, con $A$ y $B$ en un formato de baja precisión (fp16, bf16, fp8) y el acumulador en mayor precisión (normalmente fp32).
+\end{definicion}
+
+Los núcleos tensoriales aparecieron en la arquitectura Volta (2017). En la A100, el rendimiento máximo en bf16 con núcleos tensoriales es de 312~TFLOP/s, frente a 19{,}5~TFLOP/s en fp32 con las unidades ordinarias~\cite{a100}: un factor $312/19{,}5=16$. Un programa que no expresa su cálculo como productos de matrices en baja precisión desaprovecha casi todo el chip.
+
+\section{Matrices sistólicas}
+
+\begin{definicion}[Matriz sistólica]
+Una \emph{matriz sistólica} de $n\times n$ es una rejilla de celdas MAC conectadas solo con sus vecinas. En cada ciclo de reloj, cada celda recibe un valor por la izquierda y otro por arriba, acumula su producto y los reenvía a la derecha y hacia abajo. En la variante \emph{de salida estacionaria}, la celda $(i,j)$ acumula el elemento $C_{ij}$ del producto.
+\end{definicion}
+
+El nombre alude al latido del corazón: los datos recorren la rejilla a ritmo constante. La ventaja es la reutilización. Cada elemento de $A$ que entra por el borde izquierdo es usado por las $n$ celdas de su fila sin volver a leerse de memoria, y lo mismo cada elemento de $B$ en su columna. Para ello las filas de $A$ y las columnas de $B$ entran escalonadas, como en la \cref{fig:sistolica}; el \cref{eje:1-sistolica} demuestra que cada celda recibe los factores correctos en el mismo ciclo.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  mac/.style={draw,thick,minimum size=11mm}]
+  \foreach \i in {1,2,3}{\foreach \j in {1,2,3}{
+     \node[mac] (c\i\j) at (1.6*\j,-1.6*\i) {$c_{\i\j}$};}}
+  \foreach \i in {1,2,3}{\foreach \j/\k in {1/2,2/3}{\draw[->] (c\i\j) -- (c\i\k);}}
+  \foreach \j in {1,2,3}{\foreach \i/\k in {1/2,2/3}{\draw[->] (c\i\j) -- (c\k\j);}}
+  \node[anchor=east] at (0.5,-1.6) {$a_{13}\;a_{12}\;a_{11}$};
+  \node[anchor=east] at (0.5,-3.2) {$a_{23}\;a_{22}\;a_{21}\;\cdot$};
+  \node[anchor=east] at (0.5,-4.8) {$a_{33}\;a_{32}\;a_{31}\;\cdot\;\cdot$};
+  \foreach \i in {1,2,3}{\draw[->] (0.55,-1.6*\i) -- (c\i1);}
+  \node[anchor=south,align=center] at (1.6,-0.35) {$b_{31}$\\$b_{21}$\\$b_{11}$};
+  \node[anchor=south,align=center] at (3.2,-0.35) {$b_{32}$\\$b_{22}$\\$b_{12}$\\$\cdot$};
+  \node[anchor=south,align=center] at (4.8,-0.35) {$b_{33}$\\$b_{23}$\\$b_{13}$\\$\cdot$\\$\cdot$};
+  \foreach \j in {1,2,3}{\draw[->] (1.6*\j,-0.35) -- (c1\j);}
+\end{tikzpicture}
+\caption{Matriz sistólica de salida estacionaria de $3\times 3$. Las filas de $A$ entran por la izquierda y las columnas de $B$ por arriba, retrasadas un ciclo por cada fila o columna (los puntos indican ciclos de espera). La celda $(i,j)$ acumula $c_{ij}=\sum_k a_{ik}b_{kj}$.}
+\label{fig:sistolica}
+\end{figure}
+
+\begin{ejemplo}[TPU v1]\label{ej:tpu}
+La primera TPU de Google~\cite{jouppi} contiene una matriz sistólica de $256\times 256=65\,536$ celdas MAC de 8 bits y funciona a 700~MHz. Su rendimiento máximo es $65\,536\cdot 2\cdot 7\cdot 10^{8}=9{,}18\cdot 10^{13}$ operaciones por segundo, unas 92 billones (92~TOPS), que es la cifra publicada. Cada operando leído se reutiliza 256 veces dentro de la rejilla.
+\end{ejemplo}
+
+\begin{observacion}
+Los núcleos tensoriales de una GPU y la matriz sistólica de una TPU son dos soluciones al mismo problema: aumentar el número de operaciones por cada dato leído. El \cref{tema:2} cuantifica esta idea con la intensidad aritmética. El capítulo~7 de Hennessy y Patterson~\cite{hp} presenta la TPU como ejemplo de \emph{arquitectura de dominio específico}: renuncia a la generalidad a cambio de eficiencia en una sola operación.
+\end{observacion}
+
+\begin{lecturas}
+\item Hennessy y Patterson~\cite{hp}, cap.~4, «Data-Level Parallelism in Vector, SIMD, and GPU Architectures», y cap.~7, «Domain-Specific Architectures» (sección sobre la TPU).
+\item CMU 15-418/618~\cite{cmu418}, clases «Modern multicore processors» y «Graphic processing units and CUDA».
+\item CS336~\cite{cs336a1}, tarea~1, §3.5, apartado \emph{Resource accounting}.
+\item Kaplan \emph{et al.}~\cite{kaplan}, §2.1 y tabla~1 (recuento de FLOP de un Transformer).
+\item Jouppi \emph{et al.}~\cite{jouppi}, descripción de la unidad de multiplicación de matrices.
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-reutilizacion}
+En una matriz sistólica de $n\times n$ que calcula $C=AB$ con $A,B\in\R^{n\times n}$: (a) ¿cuántas operaciones MAC realiza en total cada celda?; (b) ¿cuántas veces se usa cada elemento de $A$ leído de memoria?; (c) explique por qué este diseño reduce la energía por operación respecto a leer los dos operandos de memoria en cada MAC.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-flop}
+(a) Calcule los FLOP del producto de una matriz $2\times 3$ por una $3\times 4$. (b) Una capa lineal $W\in\R^{4096\times 16\,384}$ procesa un lote de $8$ secuencias de $2048$ tokens. Calcule los FLOP de la pasada hacia delante, de la pasada hacia atrás y del paso completo, y compruebe que el total es $6$ FLOP por parámetro y token.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-tpu}
+(a) Compruebe la cifra de 92~TOPS de la TPU v1 a partir de sus datos (\cref{ej:tpu}). (b) ¿Cuánto tardaría, como mínimo, en multiplicar dos matrices de $4096\times 4096$ en int8? (c) Calcule el cociente entre el rendimiento bf16 de los núcleos tensoriales de la A100 y su rendimiento fp32 ordinario.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-gpt2}
+Un Transformer de tipo GPT-2 \emph{small} sin sesgos tiene vocabulario $V=50\,257$, contexto $T=1024$, $L=12$ bloques, $d=768$ y un MLP SwiGLU con $d_{\mathrm{ff}}=2048$ (tres matrices $d\times d_{\mathrm{ff}}$). La tabla de \emph{embeddings} y la cabeza de salida son matrices distintas, y cada bloque tiene dos RMSNorm, más una final ($d$ parámetros cada una). (a) Cuente los parámetros y la memoria que ocupan en fp32. (b) Cuente los FLOP de una pasada hacia delante de una secuencia de $T$ tokens (solo productos de matrices) y el porcentaje que corresponde a las proyecciones de la atención, a los productos $QK\T$ y por $V$, al MLP y a la cabeza de salida.
+\fuente{adaptado de CS336~\cite{cs336a1}, tarea~1, §3.5, problema \texttt{transformer\_accounting}, apartado~(d) (configuración simplificada).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-sistolica}
+Considere la matriz sistólica de salida estacionaria de $n\times n$ de la \cref{fig:sistolica}. El elemento $a_{ik}$ entra en la celda $(i,1)$ en el ciclo $t=k+i-1$ y avanza una celda a la derecha por ciclo; el elemento $b_{kj}$ entra en la celda $(1,j)$ en el ciclo $t=k+j-1$ y avanza una celda hacia abajo por ciclo. Demuestre que $a_{ik}$ y $b_{kj}$ llegan a la celda $(i,j)$ en el mismo ciclo, que la celda $(i,j)$ recibe exactamente los $n$ pares $(a_{ik},b_{kj})$, $k=1,\dots,n$, y que el producto completo termina en el ciclo $3n-2$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Jerarquía de memoria y modelo roofline}
+\label{tema:2}
+% =====================================================================
+
+Calcular es barato; traer los datos es caro. Este tema describe la jerarquía de memoria de un acelerador, define la intensidad aritmética de una operación y demuestra la cota del modelo \emph{roofline}, que decide si una operación está limitada por el cómputo o por la memoria. Después aplica el modelo al producto de matrices, al producto de matriz por vector y a la generación de texto, y analiza el \emph{tiling} como técnica para aumentar la intensidad. Se siguen el artículo de Williams, Waterman y Patterson~\cite{roofline}, el capítulo~4 de Hennessy y Patterson~\cite{hp}, el capítulo «All About Rooflines» de \emph{How to Scale Your Model}~\cite{scaling}, la clase~6 de CS336~\cite{cs336} y el resultado de Hong y Kung~\cite{hongkung}.
+
+\section{La jerarquía de memoria}
+
+Cada nivel de memoria de un acelerador es más grande y más lento que el anterior. La \cref{tab:jerarquia} resume los niveles de la A100; las cifras son aproximadas y proceden de la hoja de especificaciones y de la guía de ajuste de NVIDIA~\cite{a100}.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.3cm} >{\raggedright\arraybackslash}p{3.3cm} >{\raggedright\arraybackslash}p{2.6cm} >{\raggedright\arraybackslash}X@{}}
+\toprule
+Nivel & Capacidad & Ancho de banda & Uso \\
+\midrule
+Registros & 256~KB por SM & máximo & operandos de cada instrucción \\
+SRAM (L1 y memoria compartida) & 192~KB por SM ($\approx 20$~MB en total) & decenas de TB/s agregados & bloques de datos gestionados por el programa (\emph{tiling}) \\
+Caché L2 & 40~MB & intermedio & compartida por todos los SM \\
+HBM & 80~GB & $\approx 2$~TB/s & pesos, activaciones y estado del optimizador \\
+NVLink (entre GPU de un nodo) & --- & 600~GB/s & comunicación del paralelismo \\
+Red entre nodos (InfiniBand) & --- & decenas de GB/s por GPU & el enlace más lento \\
+\bottomrule
+\end{tabularx}
+\caption{Jerarquía de memoria y de comunicación de una A100 SXM de 80~GB (valores aproximados).}
+\label{tab:jerarquia}
+\end{table}
+
+La HBM (\emph{High Bandwidth Memory}) es una pila de chips de DRAM montada junto al procesador: grande, pero lejana. La SRAM está dentro de cada SM: diminuta, pero muy rápida. Un \emph{kernel} eficiente carga un bloque de datos de la HBM a la SRAM, realiza con él todas las operaciones posibles y solo entonces escribe el resultado.
+
+\section{Intensidad aritmética y modelo roofline}
+
+\begin{definicion}[Intensidad aritmética]
+Sea un \emph{kernel} que realiza $F$ FLOP y transfiere $Q$ bytes entre la memoria principal (HBM) y el procesador. Su \emph{intensidad aritmética} es $I=F/Q$, en FLOP por byte.
+\end{definicion}
+
+\begin{definicion}[Modelo roofline]
+Sea un dispositivo con rendimiento máximo $\Ppico$ (FLOP/s) y ancho de banda de memoria $\Bmem$ (bytes/s). Su \emph{intensidad crítica} es $\Icrit=\Ppico/\Bmem$. El \emph{modelo roofline}~\cite{roofline} asigna a un \emph{kernel} de intensidad $I$ el rendimiento alcanzable
+\[
+P(I)=\min\bigl(\Ppico,\;I\,\Bmem\bigr).
+\]
+Se dice que el \emph{kernel} está \emph{limitado por la memoria} si $I<\Icrit$ y \emph{limitado por el cómputo} si $I>\Icrit$.
+\end{definicion}
+
+\begin{teorema}[Cota del roofline]\label{teo:roofline}
+Sea un \emph{kernel} que realiza $F$ FLOP y transfiere $Q$ bytes en un dispositivo con parámetros $\Ppico$ y $\Bmem$. Su tiempo de ejecución cumple
+\[
+t\ \ge\ \max\Bigl(\frac{F}{\Ppico},\ \frac{Q}{\Bmem}\Bigr),
+\qquad\text{y por tanto}\qquad
+\frac{F}{t}\ \le\ \min\bigl(\Ppico,\ I\,\Bmem\bigr),\quad I=\frac{F}{Q}.
+\]
+\end{teorema}
+
+\begin{proof}
+En un tiempo $t$ el dispositivo no puede realizar más de $\Ppico t$ FLOP, luego $F\le\Ppico t$, es decir, $t\ge F/\Ppico$. Del mismo modo, la memoria no puede servir más de $\Bmem t$ bytes, luego $t\ge Q/\Bmem$. Ambas desigualdades se cumplen a la vez, así que $t\ge\max(F/\Ppico,Q/\Bmem)$. Dividiendo $F$ por los dos miembros,
+\[
+\frac{F}{t}\le\frac{F}{\max(F/\Ppico,\,Q/\Bmem)}=\min\Bigl(\Ppico,\ \frac{F\,\Bmem}{Q}\Bigr)=\min(\Ppico,\ I\,\Bmem).\qedhere
+\]
+\end{proof}
+
+La cota se alcanza solo si el cálculo y la transferencia se solapan por completo; si se ejecutasen en serie, el tiempo sería la suma $F/\Ppico+Q/\Bmem$, que es como mucho el doble del máximo. En ejes logarítmicos, $P(I)$ es una rampa de pendiente~1 seguida de un techo horizontal: de ahí el nombre (\cref{fig:roofline}).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=2.5cm,y=1.6cm,font=\small]
+  \draw[->] (0,0) -- (4.3,0) node[right] {$I$ (FLOP/byte)};
+  \draw[->] (0,0) -- (0,3.3) node[above] {$P$ (TFLOP/s)};
+  \foreach \x/\l in {0/1,1/10,2/100,3/1000,4/10\,000}{\draw (\x,0.05)--(\x,-0.05) node[below] {$\l$};}
+  \foreach \y/\l in {0/1,1/10,2/100,3/1000}{\draw (0.04,\y)--(-0.04,\y) node[left] {$\l$};}
+  \draw[very thick] (0,0.301) -- (2.193,2.494) -- (4.1,2.494);
+  \draw[dashed,regla] (2.193,0) node[below=11pt,black] {$\Icrit=156$} -- (2.193,2.494);
+  \node[above] at (3.2,2.494) {techo de cómputo: $312$};
+  \node[rotate=32.6,above=3pt] at (0.95,1.25) {$P=I\cdot\Bmem$};
+  \foreach \x/\y/\t/\pos in {0/0.301/matriz${}\times{}$vector/right,0.398/0.699/GELU/right,1.931/2.232/$n=256$/below right,3.135/2.494/$n=4096$/below}{
+    \fill (\x,\y) circle (1.6pt) node[\pos,font=\scriptsize] {\t};}
+\end{tikzpicture}
+\caption{Modelo roofline de la A100 en bf16 ($\Ppico=312$~TFLOP/s, $\Bmem=2$~TB/s), en ejes logarítmicos. Se marcan el producto de matriz por vector ($I\approx 1$), una activación GELU ($I=2{,}5$, \cref{eje:2-gelu}) y dos productos de matrices cuadradas ($I=n/3$).}
+\label{fig:roofline}
+\end{figure}
+
+\begin{ejemplo}[Intensidad crítica de la A100]\label{ej:icrit}
+Con $\Ppico=312\cdot 10^{12}$~FLOP/s en bf16 y $\Bmem\approx 2\cdot 10^{12}$~bytes/s (la cifra exacta es $2{,}039$~TB/s~\cite{a100}; se redondea a~2 en todo el módulo), $\Icrit=312/2=156$~FLOP/byte. Un \emph{kernel} debe hacer al menos 156 operaciones por cada byte que lee o escribe para aprovechar el cómputo.
+\end{ejemplo}
+
+\section{Producto de matrices y producto de matriz por vector}
+
+\begin{proposicion}[Intensidad del producto de matrices]\label{prop:intensidad-matmul}
+Sea $C=AB$ con $A\in\R^{m\times k}$, $B\in\R^{k\times n}$, y sean $s$ los bytes por número. Si cada matriz se lee o escribe una sola vez, la intensidad es
+\[
+I=\frac{2mkn}{s\,(mk+kn+mn)}.
+\]
+En particular, para matrices cuadradas ($m=k=n$), $I=2n/(3s)$, que en bf16 ($s=2$) vale $n/3$.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:flop-matmul}, $F=2mkn$. Hay que leer $A$ ($mk$ números) y $B$ ($kn$ números) y escribir $C$ ($mn$ números), luego $Q=s(mk+kn+mn)$. Con $m=k=n$, $Q=3sn^{2}$ e $I=2n^{3}/(3sn^{2})=2n/(3s)$.
+\end{proof}
+
+\begin{corolario}[Producto de matriz por vector]\label{cor:matvec}
+Si $n=1$ (un solo vector) y $m,k\gg 1$, la intensidad es $I\approx 2/s$, que en bf16 vale $1$~FLOP/byte. Con $b$ vectores ($n=b\ll m,k$), $I\approx 2b/s$, que en bf16 vale $b$.
+\end{corolario}
+
+\begin{proof}
+Con $n=b$, $I=2mkb/(s(mk+kb+mb))$. Dividiendo numerador y denominador por $mk$, $I=2b/(s(1+b/m+b/k))$, que tiende a $2b/s$ cuando $b/m$ y $b/k$ son pequeños.
+\end{proof}
+
+En el producto de matriz por vector cada peso leído se usa en una sola multiplicación. En la A100, $P\le 1\cdot 2=2$~TFLOP/s, un $0{,}6\,\%$ del máximo. Por eso la generación de texto token a token está limitada por la memoria (módulo~19): con lote~1, cada token exige un producto de matriz por vector con cada matriz de pesos.
+
+\begin{ejemplo}[Cota de velocidad de generación]\label{ej:decode}
+Un modelo de $7\cdot 10^{9}$ parámetros en bf16 ocupa $1{,}4\cdot 10^{10}$ bytes. Generar un token con lote~1 obliga a leer todos los pesos al menos una vez, de modo que, por el \cref{teo:roofline}, el tiempo por token es al menos $1{,}4\cdot 10^{10}/(2\cdot 10^{12})=7$~ms: como mucho unos $143$ tokens por segundo, sea cual sea el rendimiento de cómputo. Con un lote de $b$ peticiones, los pesos se leen una vez para los $b$ tokens y la intensidad se multiplica por $b$ (\cref{cor:matvec}): agrupar peticiones es la palanca principal de la inferencia.
+\end{ejemplo}
+
+\section{Tiling y cota inferior de tráfico}
+
+Un producto de matrices grande no cabe en la SRAM. El tráfico efectivo con la HBM depende de cómo se recorra.
+
+\begin{proposicion}[Tráfico del producto por bloques]\label{prop:tiling}
+Sean $A,B\in\R^{n\times n}$ y sea $b$ un divisor de $n$. El algoritmo que, para cada bloque $b\times b$ de $C$, recorre los $n/b$ pares de bloques $b\times b$ de $A$ y de $B$ que contribuyen a él, los carga en la SRAM y acumula su producto, transfiere
+\[
+Q(b)=s\Bigl(\frac{2n^{3}}{b}+n^{2}\Bigr)\ \text{bytes},
+\]
+necesita una SRAM con capacidad para $3b^{2}$ números y tiene intensidad $I(b)=2n^{3}/Q(b)\approx b/s$ si $n\gg b$.
+\end{proposicion}
+
+\begin{proof}
+Hay $(n/b)^{2}$ bloques de $C$. Para cada uno se cargan $n/b$ bloques de $A$ y $n/b$ bloques de $B$, de $b^{2}$ números cada uno: $2(n/b)b^{2}=2nb$ números. En total se leen $(n/b)^{2}\cdot 2nb=2n^{3}/b$ números y se escriben los $n^{2}$ de $C$, una vez cada uno. Multiplicando por $s$ se obtiene $Q(b)$. En cada momento la SRAM contiene un bloque de $A$, uno de $B$ y el acumulador de $C$: $3b^{2}$ números. Por último, $I(b)=2n^{3}/(s(2n^{3}/b+n^{2}))=b/(s(1+b/(2n)))$, que tiende a $b/s$.
+\end{proof}
+
+La intensidad crece linealmente con el tamaño del bloque. Si la SRAM admite $M$ números, la condición $3b^{2}\le M$ da $b\le\sqrt{M/3}$ y un tráfico del orden de $n^{3}/\sqrt{M}$. Hong y Kung demostraron que este orden es óptimo:
+
+\begin{teorema}[Hong y Kung, 1981]\label{teo:hongkung}
+Todo algoritmo que calcula el producto de dos matrices $n\times n$ por el método clásico de $n^{3}$ productos con una memoria rápida de $M$ números transfiere $\Omega\bigl(n^{3}/\sqrt{M}\bigr)$ números entre la memoria rápida y la lenta.
+\end{teorema}
+
+La demostración, mediante el juego de los guijarros rojos y azules, puede consultarse en~\cite{hongkung}. El \cref{eje:2-tiling} pide aplicar la \cref{prop:tiling} a la SRAM de un SM.
+
+\begin{observacion}
+La \cref{prop:tiling} describe un solo nivel de la jerarquía. En una GPU hay varios: registros, SRAM y caché L2. La caché L2 (40~MB en la A100) permite que bloques de hilos vecinos reutilicen los mismos bloques de $A$ y $B$, de modo que el tráfico real con la HBM es menor que el que da la proposición con el $b$ de la SRAM. El principio es el mismo en cada nivel: cuanto mayor es el bloque que cabe, mayor es la reutilización.
+\end{observacion}
+
+\section{Utilización efectiva}
+
+\begin{definicion}[Utilización de FLOP del modelo]\label{def:mfu}
+Sea un entrenamiento que procesa $\tau$ tokens por segundo con un modelo de $N$ parámetros en $n_{\mathrm{d}}$ dispositivos de rendimiento máximo $\Ppico$. Su \emph{utilización de FLOP del modelo} es~\cite[§4.1 y apéndice~B]{palm}
+\[
+\MFU=\frac{6N\tau}{n_{\mathrm{d}}\,\Ppico}.
+\]
+\end{definicion}
+
+El numerador cuenta solo los FLOP «útiles» del \cref{cor:6nd}; la recomputación de activaciones (\cref{tema:5}) no suma. Los entrenamientos grandes bien optimizados se sitúan típicamente entre el 30~\% y el 60~\% de MFU (PaLM 540B declaró un 46{,}2~\%~\cite[§4.1]{palm}); el resto se pierde en comunicación, en operaciones limitadas por la memoria y en esperas.
+
+\begin{lecturas}
+\item Williams, Waterman y Patterson~\cite{roofline}, artículo original del modelo roofline.
+\item Hennessy y Patterson~\cite{hp}, cap.~4, apartado sobre el modelo roofline.
+\item Austin \emph{et al.}~\cite{scaling}, parte~1, capítulo «All About Rooflines», incluidos sus problemas resueltos.
+\item CS336~\cite{cs336}, clase~6 (\emph{kernels}, \emph{tiling} y fusión).
+\item CMU 15-418/618~\cite{cmu418}, clase «Locality, communication, and contention».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-matvec}
+Explique con el modelo roofline por qué multiplicar una matriz $4096\times 4096$ en bf16 por un vector usa una fracción mínima del máximo de la A100. Calcule la intensidad y el rendimiento alcanzable con un vector y con 64 vectores a la vez.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-matmul}
+Producto de dos matrices $2048\times 2048$ en bf16 en una A100. Calcule los FLOP, los bytes mínimos transferidos, la intensidad, el tiempo de cómputo $F/\Ppico$ y el tiempo de memoria $Q/\Bmem$. ¿Qué limita?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-gelu}
+Una activación GELU en bf16 lee y escribe cada elemento (2~bytes en cada sentido) y realiza unos 10 FLOP por elemento. Calcule su intensidad y su rendimiento alcanzable en la A100. ¿Qué técnica evita este coste?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-int8}
+Se guardan los pesos en int8 (1 byte) y se mantienen las activaciones y el cálculo en bf16: la operación es el producto de $X\in\R^{B\times D}$ (bf16) por $W\in\R^{D\times F}$ (int8), con salida $B\times F$ en bf16. (a) Escriba los FLOP y los bytes transferidos. (b) Suponiendo $B\ll D,F$, ¿a partir de qué tamaño de lote $B$ es la operación limitada por el cómputo en la A100? Compárelo con pesos en bf16. (c) Con $D=F=4096$, halle el valor exacto.
+\fuente{adaptado de Austin \emph{et al.}~\cite{scaling}, capítulo «All About Rooflines», problema~2 (\emph{int8 + bf16 matmul}), con los datos de la A100.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cuadrada}
+Demuestre que el producto de dos matrices $n\times n$ en bf16, leyendo y escribiendo cada matriz una sola vez, tiene intensidad $I=n/3$, y halle el menor $n$ para el que está limitado por el cómputo en la A100.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-tiling}
+(a) Generalice la \cref{prop:tiling} a bloques rectangulares: si los bloques de $C$ son de $b_m\times b_n$ y se recorre la dimensión interna en trozos de $b_k$, demuestre que se leen $n^{3}(b_m+b_n)/(b_mb_n)$ números de $A$ y $B$. (b) Deduzca que, para un área fija $b_mb_n$, el tráfico es mínimo con bloques cuadrados. (c) Con una SRAM de 192~KiB y datos en bf16, halle el mayor bloque cuadrado $b$ potencia de~2 que cumple $3b^{2}s\le 192$~KiB y la intensidad aproximada que se obtiene respecto a la SRAM.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Algoritmos conscientes de la E/S: FlashAttention}
+\label{tema:3}
+% =====================================================================
+
+El \cref{tema:2} mostró que una operación de baja intensidad aritmética está limitada por la memoria, por rápido que sea el cómputo. Este tema aplica esa idea a la atención, cuya implementación directa escribe y lee de la HBM una matriz de tamaño cuadrático en la longitud de la secuencia. Se presentan la fusión de \emph{kernels}, el análisis de entrada y salida (E/S) de la atención estándar, la softmax en línea y el algoritmo FlashAttention, que calcula la atención exacta sin materializar esa matriz. Se siguen el artículo de Dao \emph{et al.}~\cite[§2--3]{flash}, el de Milakov y Gimelshein~\cite{milakov}, la clase~6 de CS336~\cite{cs336} y el §4 de la tarea~2 de ese curso~\cite{cs336a2}. En este tema, $n$ es la longitud de la secuencia, $d$ la dimensión de cada cabeza y $M$ la capacidad de la SRAM, medida en elementos.
+
+\section{Fusión de kernels}
+
+\begin{definicion}[Operación elemento a elemento]
+Una operación $y=g(x)$ sobre un tensor de $L$ elementos es \emph{elemento a elemento} si cada $y_i$ depende solo de $x_i$. Ejemplos: las activaciones GELU y SiLU, la suma de un sesgo, la multiplicación por un escalar.
+\end{definicion}
+
+\begin{proposicion}[Efecto de la fusión]\label{prop:fusion}
+Sea una cadena de $r$ operaciones elemento a elemento $g_r\circ\dots\circ g_1$ sobre un tensor de $L$ elementos de $s$ bytes, cada una con $f$ FLOP por elemento. Ejecutada como $r$ \emph{kernels} separados transfiere $2rLs$ bytes; fusionada en un solo \emph{kernel} transfiere $2Ls$ bytes. La intensidad pasa de $f/(2s)$ a $rf/(2s)$.
+\end{proposicion}
+
+\begin{proof}
+Cada \emph{kernel} separado lee su entrada de la HBM y escribe su salida en ella: $2Ls$ bytes, y $r$ \emph{kernels} suman $2rLs$. El \emph{kernel} fusionado lee $x$ una vez, aplica las $r$ funciones en registros y escribe el resultado una vez: $2Ls$ bytes. En ambos casos $F=rfL$, luego las intensidades son $rfL/(2rLs)=f/(2s)$ y $rfL/(2Ls)=rf/(2s)$.
+\end{proof}
+
+Los compiladores como \texttt{torch.compile} y los lenguajes como Triton automatizan esta fusión~\cite{cs336}. La atención no es una cadena elemento a elemento, porque la softmax normaliza por filas, pero la idea es la misma: no escribir resultados intermedios en la HBM.
+
+\section{La atención estándar y su tráfico de memoria}
+
+Sean $Q,K,V\in\R^{n\times d}$. La atención de una cabeza (módulo~13) calcula
+\[
+S=QK\T\in\R^{n\times n},\qquad P=\softmax(S)\ \text{(por filas)},\qquad O=PV\in\R^{n\times d},
+\]
+donde el factor $1/\sqrt{d}$ se supone incorporado en $Q$.
+
+\begin{proposicion}[Tráfico de la atención estándar]\label{prop:atencion-estandar}
+La implementación en tres \emph{kernels} (calcular y escribir $S$; leer $S$ y escribir $P$; leer $P$ y $V$ y escribir $O$) transfiere $4n^{2}+4nd$ elementos entre la HBM y el procesador, y necesita $n^{2}$ elementos de memoria adicional para $S$ o $P$.
+\end{proposicion}
+
+\begin{proof}
+El primer \emph{kernel} lee $Q$ y $K$ ($2nd$) y escribe $S$ ($n^{2}$). El segundo lee $S$ ($n^{2}$) y escribe $P$ ($n^{2}$). El tercero lee $P$ ($n^{2}$) y $V$ ($nd$) y escribe $O$ ($nd$). La suma es $2nd+n^{2}+2n^{2}+n^{2}+2nd=4n^{2}+4nd$. La matriz $S$ (o $P$, que puede sobrescribirla) ocupa $n^{2}$ elementos.
+\end{proof}
+
+Cuando $n\gg d$, el término $4n^{2}$ domina. La softmax tiene intensidad baja (unos pocos FLOP por elemento), de modo que el segundo \emph{kernel} está limitado por la memoria. Con $n=4096$ en bf16, $S$ ocupa $4096^{2}\cdot 2$~bytes $=32$~MiB por cabeza; con 32 cabezas, 1~GiB por capa y por secuencia. Además, la retropropagación necesita $P$, que debe guardarse (\cref{eje:3-pytorch}).
+
+\section{La softmax en línea}
+
+La softmax de una fila $x\in\R^{n}$ se calcula de forma estable restando el máximo (módulo~1): $\softmax(x)_i=e^{x_i-m}/\ell$, con $m=\max_j x_j$ y $\ell=\sum_j e^{x_j-m}$. Las dos cantidades $m$ y $\ell$ pueden obtenerse por bloques~\cite{milakov}.
+
+\begin{definicion}[Estadísticos de un bloque]
+Sea $\mathcal{B}\subseteq\{1,\dots,n\}$ no vacío. Sus \emph{estadísticos} son
+\[
+m_{\mathcal{B}}=\max_{j\in\mathcal{B}}x_j,\qquad \ell_{\mathcal{B}}=\sum_{j\in\mathcal{B}}e^{x_j-m_{\mathcal{B}}}.
+\]
+\end{definicion}
+
+\begin{lema}[Combinación de estadísticos]\label{lem:combinacion}
+Sean $\mathcal{B}_1$ y $\mathcal{B}_2$ bloques disjuntos con estadísticos $(m_1,\ell_1)$ y $(m_2,\ell_2)$, y sea $m=\max(m_1,m_2)$. Entonces los estadísticos de $\mathcal{B}_1\cup\mathcal{B}_2$ son
+\[
+m_{\mathcal{B}_1\cup\mathcal{B}_2}=m,\qquad \ell_{\mathcal{B}_1\cup\mathcal{B}_2}=\ell_1e^{m_1-m}+\ell_2e^{m_2-m}.
+\]
+Además, ningún factor $e^{m_i-m}$ es mayor que~1.
+\end{lema}
+
+\begin{proof}
+El máximo de una unión es el máximo de los máximos. Para la suma, $\ell_1e^{m_1-m}=\sum_{j\in\mathcal{B}_1}e^{x_j-m_1}e^{m_1-m}=\sum_{j\in\mathcal{B}_1}e^{x_j-m}$, y análogamente para $\mathcal{B}_2$. Como los bloques son disjuntos, la suma de ambas expresiones es $\sum_{j\in\mathcal{B}_1\cup\mathcal{B}_2}e^{x_j-m}$. Por último, $m\ge m_i$ implica $m_i-m\le 0$ y $e^{m_i-m}\le 1$.
+\end{proof}
+
+\begin{proposicion}[Combinación de salidas]\label{prop:combinacion-salida}
+Sean $v_1,\dots,v_n\in\R^{d}$ y, para cada bloque, $o_{\mathcal{B}}=\ell_{\mathcal{B}}^{-1}\sum_{j\in\mathcal{B}}e^{x_j-m_{\mathcal{B}}}v_j$ la salida de la atención restringida al bloque. Con la notación del \cref{lem:combinacion} y $\ell=\ell_1e^{m_1-m}+\ell_2e^{m_2-m}$,
+\[
+o_{\mathcal{B}_1\cup\mathcal{B}_2}=\frac{\ell_1e^{m_1-m}\,o_{\mathcal{B}_1}+\ell_2e^{m_2-m}\,o_{\mathcal{B}_2}}{\ell}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Por definición, $\ell_io_{\mathcal{B}_i}=\sum_{j\in\mathcal{B}_i}e^{x_j-m_i}v_j$; multiplicando por $e^{m_i-m}$ se obtiene $\sum_{j\in\mathcal{B}_i}e^{x_j-m}v_j$. Sumando para $i=1,2$, el numerador es $\sum_{j\in\mathcal{B}_1\cup\mathcal{B}_2}e^{x_j-m}v_j$, y por el \cref{lem:combinacion} el denominador es $\ell_{\mathcal{B}_1\cup\mathcal{B}_2}$. El cociente es, por definición, $o_{\mathcal{B}_1\cup\mathcal{B}_2}$.
+\end{proof}
+
+\begin{ejemplo}[Softmax en dos bloques]\label{ej:online}
+Sea $x=(1,3,2,0)$ con bloques $\{1,2\}$ y $\{3,4\}$. Bloque~1: $m_1=3$, $\ell_1=e^{-2}+1=1{,}1353$. Bloque~2: $m_2=2$, $\ell_2=1+e^{-2}=1{,}1353$. Combinados: $m=3$ y $\ell=1{,}1353\cdot 1+1{,}1353\cdot e^{-1}=1{,}5530$, que coincide con $\sum_je^{x_j-3}=e^{-2}+1+e^{-1}+e^{-3}$. La softmax es $(0{,}0871;\ 0{,}6439;\ 0{,}2369;\ 0{,}0321)$.
+\end{ejemplo}
+
+\section{El algoritmo FlashAttention}
+
+FlashAttention~\cite[algoritmo~1]{flash} divide $Q$ en $T_r$ bloques de $B_r$ filas y $K$, $V$ en $T_c$ bloques de $B_c$ filas, con
+\[
+B_c=\Bigl\lceil\frac{M}{4d}\Bigr\rceil,\qquad B_r=\min\Bigl(\Bigl\lceil\frac{M}{4d}\Bigr\rceil,\ d\Bigr),\qquad T_r=\frac{n}{B_r},\qquad T_c=\frac{n}{B_c},
+\]
+de forma que los bloques en uso caben en una SRAM de tamaño $O(M)$. Para cada fila de $Q$ mantiene en la HBM la salida parcial normalizada y los estadísticos $(m,\ell)$, y los actualiza con el \cref{lem:combinacion} y la \cref{prop:combinacion-salida} cada vez que procesa un nuevo bloque de claves (\cref{fig:flash-alg,fig:flash-bloques}).
+
+\begin{figure}[h]
+\centering
+\fbox{\begin{minipage}{0.88\textwidth}\small
+\textbf{FlashAttention, pasada hacia delante} (entrada: $Q,K,V\in\R^{n\times d}$ en HBM; SRAM de $M$ elementos).
+\begin{enumerate}[label=\arabic*.,leftmargin=1.6em]
+  \item Inicializar en HBM $O=0\in\R^{n\times d}$, $\ell=0\in\R^{n}$, $m=-\infty\in\R^{n}$.
+  \item Para $j=1,\dots,T_c$: cargar $K_j,V_j$ en SRAM.
+  \begin{enumerate}[label=\alph*.,leftmargin=1.4em]
+    \item Para $i=1,\dots,T_r$: cargar $Q_i$, $O_i$, $\ell_i$, $m_i$ en SRAM.
+    \item Calcular en SRAM $S_{ij}=Q_iK_j\T$ ($B_r\times B_c$), sus estadísticos por fila $(\tilde m_{ij},\tilde\ell_{ij})$ y $\tilde P_{ij}=\exp(S_{ij}-\tilde m_{ij})$.
+    \item Combinar $(m_i,\ell_i)$ con $(\tilde m_{ij},\tilde\ell_{ij})$ (\cref{lem:combinacion}) y $O_i$ con $\tilde\ell_{ij}^{-1}\tilde P_{ij}V_j$ (\cref{prop:combinacion-salida}).
+    \item Escribir en HBM los nuevos $O_i$, $\ell_i$, $m_i$.
+  \end{enumerate}
+  \item Devolver $O$; guardar $(m,\ell)$ para la pasada hacia atrás.
+\end{enumerate}
+\end{minipage}}
+\caption{Esquema del algoritmo~1 de Dao \emph{et al.}~\cite{flash}. Los bloques $S_{ij}$ y $\tilde P_{ij}$ viven solo en la SRAM.}
+\label{fig:flash-alg}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,scale=0.9]
+  \draw[step=0.75,regla,thin] (0,0) grid (4.5,4.5);
+  \draw[thick] (0,0) rectangle (4.5,4.5);
+  \fill[black!25] (1.5,2.25) rectangle (2.25,3.0);
+  \draw[very thick] (1.5,0) rectangle (2.25,4.5);
+  \node at (2.25,-0.45) {$S=QK\T$ ($n\times n$), nunca en HBM};
+  \draw[thick] (-1.35,0) rectangle (-0.6,4.5); \node at (-0.975,4.85) {$Q$};
+  \fill[black!25] (-1.35,2.25) rectangle (-0.6,3.0); \node[left] at (-1.35,2.625) {$Q_i$};
+  \draw[thick] (0,5.25) rectangle (4.5,6.0); \node[right] at (4.5,5.625) {$K\T$};
+  \fill[black!25] (1.5,5.25) rectangle (2.25,6.0); \node[above] at (1.875,6.0) {$K_j\T$};
+  \node[right,align=left] at (4.8,2.625) {bloque $S_{ij}$ en SRAM\\(sombreado)};
+  \draw[->,thick] (2.6,4.3) -- (2.6,0.2) node[midway,right] {$i$};
+  \draw[->,thick] (0.1,4.8) -- (4.4,4.8) node[midway,above=-1pt,font=\scriptsize] {$j$ (bucle externo)};
+\end{tikzpicture}
+\caption{Recorrido por bloques de FlashAttention: para cada bloque de claves $K_j$ (columna destacada) se recorren todos los bloques de consultas $Q_i$; solo el bloque $S_{ij}$ en curso existe, y solo en la SRAM.}
+\label{fig:flash-bloques}
+\end{figure}
+
+\begin{teorema}[Exactitud y memoria; Dao \emph{et al.}, teorema~1]\label{teo:flash-exacto}
+El algoritmo de la \cref{fig:flash-alg} devuelve exactamente $O=\softmax(QK\T)V$ (salvo redondeo), con $O(n^{2}d)$ FLOP y $O(n)$ memoria adicional en HBM aparte de la entrada y la salida.
+\end{teorema}
+
+\begin{proof}
+Se fija una fila $q$ de $Q$ y se razona por inducción sobre $j$. Tras procesar los bloques de claves $1,\dots,j$, la fila correspondiente de $O$ y sus estadísticos $(m,\ell)$ son los de la atención restringida a $\mathcal{B}_1\cup\dots\cup\mathcal{B}_j$. Para $j=1$ se combina el estado inicial ($\ell=0$, $O=0$, $m=-\infty$, que actúa como elemento neutro porque $\ell\,e^{-\infty}=0$) con los estadísticos del primer bloque. El paso de $j-1$ a $j$ es exactamente el \cref{lem:combinacion} y la \cref{prop:combinacion-salida} aplicados a $\mathcal{B}_1\cup\dots\cup\mathcal{B}_{j-1}$ y $\mathcal{B}_j$. Con $j=T_c$ la unión es $\{1,\dots,n\}$ y la fila es la de $\softmax(QK\T)V$. Cada par $(i,j)$ realiza $O(B_rB_cd)$ FLOP, y la suma sobre los $T_rT_c$ pares es $O(n^{2}d)$. La memoria adicional en HBM son los vectores $\ell$ y $m$, de $2n$ elementos.
+\end{proof}
+
+\begin{proposicion}[Tráfico de FlashAttention]\label{prop:flash-trafico}
+El algoritmo de la \cref{fig:flash-alg} transfiere
+\[
+Q_{\mathrm{FA}}=(nd+2n)+2nd+T_c\,(3nd+4n)
+\]
+elementos entre la HBM y el procesador. Como $T_c\approx 4nd/M$, el término dominante es $12\,n^{2}d^{2}/M$.
+\end{proposicion}
+
+\begin{proof}
+La inicialización escribe $O$, $\ell$ y $m$: $nd+2n$. En el bucle externo, $K_j$ y $V_j$ se cargan una vez cada uno: $2nd$ en total. Para cada $j$, el bucle interno recorre todos los bloques de $Q$, de modo que lee $Q$ completo ($nd$), lee y escribe $O$ completo ($2nd$) y lee y escribe $\ell$ y $m$ ($4n$): $3nd+4n$ por cada uno de los $T_c$ valores de $j$. Con $B_c\approx M/(4d)$ es $T_c=n/B_c\approx 4nd/M$, y $T_c\cdot 3nd\approx 12n^{2}d^{2}/M$.
+\end{proof}
+
+Dao \emph{et al.}~\cite[teorema~2]{flash} enuncian el resultado asintótico: la atención estándar requiere $\Theta(nd+n^{2})$ accesos a la HBM y FlashAttention $\Theta(n^{2}d^{2}M^{-1})$. Con valores típicos ($d$ entre 64 y 128, $M$ de unos $10^{5}$ elementos), $d^{2}/M$ es mucho menor que~1 y el ahorro es grande. También demuestran que ningún algoritmo exacto puede hacer $o(n^{2}d^{2}M^{-1})$ accesos para todo $M\in[d,nd]$~\cite[proposición~3]{flash}.
+
+\begin{observacion}[Pasada hacia atrás y recomputación]
+La retropropagación de la atención necesita $P$. FlashAttention no la guarda: almacena solo $(m,\ell)$ y, en la pasada hacia atrás, recalcula cada bloque $S_{ij}$ en la SRAM a partir de $Q_i$ y $K_j$. Realiza más FLOP que la implementación estándar, pero muchos menos accesos a la HBM, y resulta más rápida~\cite[§3.1]{flash}. Es el principio del roofline: en una operación limitada por la memoria, recalcular es más barato que leer.
+\end{observacion}
+
+\begin{lecturas}
+\item Dao \emph{et al.}~\cite{flash}, §2 «Background», §3.1 (algoritmo con \emph{tiling} y recomputación) y §3.2 (análisis de E/S).
+\item Milakov y Gimelshein~\cite{milakov}, cálculo en una pasada del normalizador de la softmax.
+\item CS336~\cite{cs336}, clase~6 (ejemplos de softmax y producto de matrices por bloques en Triton), y tarea~2~\cite{cs336a2}, §4 (implementación de FlashAttention).
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-jerarquia}
+Ordene de mayor a menor ancho de banda: HBM, registros, red entre nodos, SRAM, NVLink. ¿Qué nivel gestiona explícitamente FlashAttention y con qué decisión?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-online}
+Aplique la softmax en línea a $x=(2,-1,4,1)$ con bloques $(2,-1)$ y $(4,1)$. Dé $m_1$, $\ell_1$, $m_2$, $\ell_2$, el $\ell$ combinado y el vector $\softmax(x)$, y compruebe el resultado calculando $\ell$ directamente.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-S}
+Sea una cabeza de atención con $n=4096$ y $d=128$ en bf16 en una A100. (a) ¿Cuánto ocupa $S$? ¿Y con 32 cabezas? ¿Y con $n=32\,768$ por cabeza? (b) Compare el tiempo de escribir y volver a leer $S$ de la HBM con el tiempo de cómputo del producto $QK\T$ al rendimiento máximo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-trafico}
+Sea $n=4096$, $d=64$ y una SRAM de $M=2^{15}$ elementos. (a) Calcule $B_c$, $B_r$, $T_c$ y $T_r$. (b) Calcule el tráfico de la atención estándar (\cref{prop:atencion-estandar}) y el de FlashAttention (\cref{prop:flash-trafico}) en elementos, y su cociente.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-pytorch}
+Atención de una sola cabeza con lote~8, $d=64$ y todo en fp32. La diferenciación automática guarda, para la pasada hacia atrás, la matriz $P$ ($n\times n$) de cada secuencia. (a) ¿Cuánto ocupa $P$ para $n=4096$ y para $n=16\,384$? (b) ¿Cuánto ocupan $Q$, $K$ y $V$ juntos? (c) ¿Cómo crece el cociente entre ambas cantidades con $n$, y qué técnica elimina $P$?
+\fuente{adaptado de CS336~\cite{cs336a2}, tarea~2, §4.1.1, problema \texttt{pytorch\_attention} (datos simplificados).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-asociativa}
+Sobre los pares $(m,\ell)\in(\R\cup\{-\infty\})\times[0,\infty)$ se define la operación
+\[
+(m_1,\ell_1)\oplus(m_2,\ell_2)=\bigl(\max(m_1,m_2),\ \ell_1e^{m_1-\max(m_1,m_2)}+\ell_2e^{m_2-\max(m_1,m_2)}\bigr),
+\]
+con el convenio $0\cdot e^{-\infty}=0$. Demuestre que $\oplus$ es conmutativa y asociativa y que $(-\infty,0)$ es su elemento neutro. Deduzca que el resultado de la softmax en línea no depende de cómo se agrupen ni de en qué orden se procesen los bloques, y explique por qué esto permite repartir la reducción entre varios hilos.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Precisión numérica y precisión mixta}
+\label{tema:4}
+% =====================================================================
+
+Los núcleos tensoriales son mucho más rápidos en 16 u 8 bits que en 32, y cada bit que se ahorra reduce también la memoria y el tráfico. El precio es un mayor error de redondeo y un rango más estrecho. Este tema formaliza los formatos de coma flotante, acota el error de redondeo y de la suma acumulada, y justifica con esas cotas cada elemento de la receta de entrenamiento en precisión mixta. Se siguen los capítulos~2 a~4 de Higham~\cite{higham}, el artículo de Micikevicius \emph{et al.}~\cite[§3]{micikevicius}, la propuesta de formatos fp8~\cite{fp8}, las clases de cuantización de MIT 6.5940~\cite{mit65940} y el §2.1 de la tarea~2 de CS336~\cite{cs336a2}. El módulo~11 introdujo estos formatos de forma descriptiva; aquí se demuestran sus propiedades.
+
+\section{Formatos de coma flotante}
+
+\begin{definicion}[Formato binario de coma flotante]\label{def:formato}
+Un formato binario con $e$ bits de exponente y $p$ bits de mantisa representa los números \emph{normales}
+\[
+x=(-1)^{\sigma}\,(1{,}f_1f_2\dots f_p)_2\cdot 2^{E},\qquad E_{\min}\le E\le E_{\max},
+\]
+con $\sigma\in\{0,1\}$ y $f_i\in\{0,1\}$. En los formatos IEEE~754 el exponente se guarda con un sesgo $b=2^{e-1}-1$, y $E_{\min}=1-b$, $E_{\max}=b$; los códigos de exponente extremos se reservan para el cero, los números subnormales, los infinitos y los NaN.
+\end{definicion}
+
+\begin{proposicion}[Rango y separación]\label{prop:rango}
+En el formato de la \cref{def:formato}:
+\begin{enumerate}
+  \item el mayor número representable es $(2-2^{-p})\,2^{E_{\max}}$ y el menor normal positivo, $2^{E_{\min}}$;
+  \item en cada intervalo $[2^{E},2^{E+1})$ con $E_{\min}\le E\le E_{\max}$ hay $2^{p}$ números representables equiespaciados, separados por $\ulp=2^{E-p}$;
+  \item la separación entre $1$ y el siguiente representable es el \emph{épsilon de la máquina}, $\varepsilon=2^{-p}$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) La mantisa máxima es $(1{,}11\dots1)_2=2-2^{-p}$ y el exponente máximo es $E_{\max}$; la mantisa mínima de un normal es $1$ y el exponente mínimo, $E_{\min}$. (ii) Con $E$ fijo, la mantisa recorre los $2^{p}$ valores $1+k\,2^{-p}$, $k=0,\dots,2^{p}-1$, y $x=(1+k2^{-p})2^{E}=2^{E}+k\,2^{E-p}$: puntos equiespaciados con paso $2^{E-p}$. (iii) Es el caso $E=0$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Formato & bits (s-e-m) & máximo & menor normal & $\varepsilon=2^{-p}$ & uso típico \\
+\midrule
+fp32 & 1-8-23 & $3{,}40\cdot 10^{38}$ & $1{,}18\cdot 10^{-38}$ & $1{,}19\cdot 10^{-7}$ & copia maestra, acumulación \\
+fp16 & 1-5-10 & $65\,504$ & $6{,}10\cdot 10^{-5}$ & $9{,}77\cdot 10^{-4}$ & productos \\
+bf16 & 1-8-7 & $3{,}39\cdot 10^{38}$ & $1{,}18\cdot 10^{-38}$ & $7{,}81\cdot 10^{-3}$ & productos, activaciones \\
+fp8 E5M2 & 1-5-2 & $57\,344$ & $6{,}10\cdot 10^{-5}$ & $0{,}25$ & gradientes \\
+fp8 E4M3 & 1-4-3 & $448$ & $1{,}56\cdot 10^{-2}$ & $0{,}125$ & pesos, activaciones \\
+\bottomrule
+\end{tabular}
+\caption{Formatos de coma flotante usados en el entrenamiento. El formato E4M3 no sigue del todo IEEE~754: no tiene infinitos y reutiliza el código de exponente máximo, lo que eleva su máximo de 240 a 448~\cite{fp8}.}
+\label{tab:formatos}
+\end{table}
+
+El rango depende de los bits de exponente y la precisión, de los de mantisa. bf16 conserva los 8 bits de exponente de fp32 y, por tanto, su rango; fp16 tiene 3 bits más de mantisa, pero su rango es mucho menor. Por debajo del menor normal, los números subnormales extienden el rango con pérdida de precisión: en fp16 el menor positivo es $2^{-24}\approx 5{,}96\cdot 10^{-8}$.
+
+\section{Error de redondeo}
+
+\begin{definicion}[Redondeo y unidad de redondeo]
+Sea $\fl(x)$ el número representable más cercano a $x\in\R$ (redondeo al más cercano, con empates al par). La \emph{unidad de redondeo} del formato es $u=\varepsilon/2=2^{-p-1}$.
+\end{definicion}
+
+\begin{teorema}[Error relativo de redondeo]\label{teo:redondeo}
+Si $x$ está en el rango normal del formato, $\fl(x)=x(1+\delta)$ con $\abs{\delta}\le u$.
+\end{teorema}
+
+\begin{proof}
+Sea $x>0$ (el caso negativo es simétrico) con $2^{E}\le x<2^{E+1}$. Por la \cref{prop:rango}, los representables en ese intervalo están separados por $2^{E-p}$, y $2^{E+1}$ también es representable. El más cercano a $x$ está a distancia como mucho la mitad de la separación: $\abs{\fl(x)-x}\le 2^{E-p-1}$. Como $x\ge 2^{E}$, $\abs{\fl(x)-x}/x\le 2^{E-p-1}/2^{E}=2^{-p-1}=u$.
+\end{proof}
+
+La norma IEEE~754 exige que las operaciones básicas se redondeen correctamente: $\fl(a\circ b)=(a\circ b)(1+\delta)$, $\abs{\delta}\le u$, para $\circ\in\{+,-,\times,/\}$~\cite[cap.~2]{higham}. Es el \emph{modelo estándar} de la aritmética en coma flotante.
+
+\begin{lema}[Estancamiento]\label{lem:estancamiento}
+Sea $s>0$ representable con $2^{E}\le s<2^{E+1}$ y sea $0\le a<2^{E-p-1}=\ulp(s)/2$. Entonces $\fl(s+a)=s$.
+\end{lema}
+
+\begin{proof}
+El siguiente representable después de $s$ es $s+2^{E-p}$ (si $s+2^{E-p}=2^{E+1}$, también lo es). Como $s\le s+a<s+2^{E-p-1}$, el número $s+a$ está más cerca de $s$ que de $s+2^{E-p}$, y no hay representables entre ambos. Luego $\fl(s+a)=s$.
+\end{proof}
+
+\begin{corolario}[Actualizaciones perdidas]\label{cor:actualizacion}
+En bf16, si un peso vale $w=1$, toda actualización $0\le\Delta w<2^{-8}\approx 0{,}0039$ se pierde: $\fl(1+\Delta w)=1$.
+\end{corolario}
+
+\begin{proof}
+Es el \cref{lem:estancamiento} con $s=1$, $E=0$ y $p=7$: $\ulp(1)/2=2^{-8}$.
+\end{proof}
+
+\begin{lema}[Producto de factores de redondeo]\label{lem:gamma}
+Sean $\delta_1,\dots,\delta_k$ con $\abs{\delta_i}\le u$ y $ku<1$. Entonces
+\[
+\Bigl\lvert\prod_{i=1}^{k}(1+\delta_i)-1\Bigr\rvert\le\gamma_k,\qquad\gamma_k=\frac{ku}{1-ku}.
+\]
+\end{lema}
+
+\begin{proof}
+El producto está entre $(1-u)^{k}$ y $(1+u)^{k}$. Por arriba, como $1+u\le e^{u}$ y $e^{x}\le 1/(1-x)$ para $0\le x<1$ (equivale a $e^{-x}\ge 1-x$), se tiene $(1+u)^{k}\le e^{ku}\le 1/(1-ku)$, luego $(1+u)^{k}-1\le ku/(1-ku)=\gamma_k$. Por abajo, la desigualdad de Bernoulli da $(1-u)^{k}\ge 1-ku$, luego $1-(1-u)^{k}\le ku\le\gamma_k$.
+\end{proof}
+
+\begin{teorema}[Error de la suma recursiva]\label{teo:suma}
+Sea $\hat s_n$ el resultado de sumar $x_1,\dots,x_n$ en coma flotante en el orden $\hat s_1=x_1$, $\hat s_k=\fl(\hat s_{k-1}+x_k)$. Si $(n-1)u<1$ y no hay desbordamiento,
+\[
+\abs{\hat s_n-s_n}\le\gamma_{n-1}\sum_{i=1}^{n}\abs{x_i},\qquad s_n=\sum_{i=1}^{n}x_i.
+\]
+\end{teorema}
+
+\begin{proof}
+Por el modelo estándar, $\hat s_k=(\hat s_{k-1}+x_k)(1+\delta_k)$ con $\abs{\delta_k}\le u$, para $k=2,\dots,n$. Desarrollando la recurrencia,
+\[
+\hat s_n=x_1\prod_{k=2}^{n}(1+\delta_k)+\sum_{i=2}^{n}x_i\prod_{k=i}^{n}(1+\delta_k).
+\]
+Cada producto tiene como mucho $n-1$ factores; por el \cref{lem:gamma}, cada uno es $1+\theta_i$ con $\abs{\theta_i}\le\gamma_{n-1}$. Por tanto $\hat s_n-s_n=\sum_i x_i\theta_i$ y $\abs{\hat s_n-s_n}\le\gamma_{n-1}\sum_i\abs{x_i}$.
+\end{proof}
+
+La cota crece con $n$. En fp16, $u=2^{-11}\approx 4{,}9\cdot 10^{-4}$ y con $n=1000$ sumandos $\gamma_{999}\approx 0{,}95$: la cota no garantiza ni una cifra. En fp32, $u=2^{-24}\approx 6\cdot 10^{-8}$ y $\gamma_{999}\approx 6\cdot 10^{-5}$. Esta es la razón por la que los núcleos tensoriales acumulan los productos escalares en fp32 aunque los factores estén en 16 bits (\cref{eje:4-acumular}).
+
+\section{La receta de la precisión mixta}
+
+Micikevicius \emph{et al.}~\cite[§3]{micikevicius} proponen tres técnicas, que siguen siendo la base de la práctica actual.
+
+\begin{enumerate}[label=(\arabic*)]
+  \item \emph{Copia maestra de los pesos en fp32} (§3.1). Los productos usan una copia en 16 bits, pero la actualización $w\gets w-\eta g$ se aplica a una copia en fp32. Por el \cref{cor:actualizacion}, una actualización pequeña frente al peso se perdería en 16 bits; los autores observan que esto ocurre cuando el peso es unas $2^{11}$ veces mayor que la actualización.
+  \item \emph{Escalado de la pérdida} (§3.2). En fp16, los valores menores que $2^{-24}$ se anulan, y parte de los gradientes de activación caen por debajo. Se multiplica la pérdida por una constante $c$ antes de la retropropagación y se dividen los gradientes por $c$ antes de actualizar.
+  \item \emph{Acumulación en fp32} (§3.3). Los productos escalares acumulan en fp32, y las reducciones grandes (softmax, normalizaciones, pérdida) se calculan en fp32.
+\end{enumerate}
+
+\begin{proposicion}[El escalado por potencias de 2 es exacto]\label{prop:escalado}
+Sea $c=2^{k}$ con $k\in\mathbb{Z}$, y sea $x$ tal que $x$ y $cx$ están en el rango normal. Entonces $\fl(cx)=c\,\fl(x)$. En particular, multiplicar y después dividir por $c$ un número representable no introduce error.
+\end{proposicion}
+
+\begin{proof}
+Si $x=\pm(1{,}f)_2\,2^{E}$, entonces $cx=\pm(1{,}f)_2\,2^{E+k}$: la mantisa no cambia y solo se desplaza el exponente. El conjunto de representables en $[2^{E+k},2^{E+k+1})$ es el de $[2^{E},2^{E+1})$ multiplicado por $2^{k}$ (\cref{prop:rango}), de modo que el más cercano a $cx$ es $c$ veces el más cercano a $x$.
+\end{proof}
+
+Como la retropropagación es lineal en la semilla $\partial\mathcal{L}/\partial\mathcal{L}=1$, multiplicar la pérdida por $c$ multiplica por $c$ todos los gradientes, y por la \cref{prop:escalado} la división final por $c=2^{k}$ los restituye sin error adicional, salvo en los valores que se hayan desbordado o anulado. En la práctica se usa un escalado \emph{dinámico}: se duplica $c$ periódicamente y se reduce a la mitad, descartando el paso, cuando aparece un infinito. Con bf16, cuyo rango es el de fp32, el escalado no es necesario, y esa es la razón principal de que bf16 sea hoy el formato habitual de entrenamiento.
+
+\begin{observacion}[Memoria de la receta]
+Con Adam y precisión mixta, cada parámetro ocupa 2~bytes (pesos en 16 bits) $+$ 2 (gradiente en 16 bits) $+$ 12 (copia maestra, primer y segundo momento en fp32) $=16$~bytes~\cite[§3.1]{zero}. El \cref{tema:5} estudia cómo repartir esos 16~bytes entre dispositivos.
+\end{observacion}
+
+\section{Cuantización}
+
+El entrenamiento en fp8 y la inferencia en int8 o int4 llevan la idea al extremo. Con tan pocos bits de mantisa, cada tensor necesita su propio factor de escala.
+
+\begin{definicion}[Cuantización lineal simétrica]\label{def:cuantizacion}
+Sea $x\in\R^{L}$ y $b\ge 2$ un número de bits. La \emph{cuantización lineal simétrica} de $x$ con $b$ bits usa el paso $\Delta=\max_i\abs{x_i}/(2^{b-1}-1)$ y los enteros $q_i=\operatorname{round}(x_i/\Delta)\in\{-(2^{b-1}-1),\dots,2^{b-1}-1\}$. La \emph{descuantización} es $\hat x_i=\Delta\,q_i$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:cuantizacion}
+Con la \cref{def:cuantizacion}, $\abs{\hat x_i-x_i}\le\Delta/2$ para todo $i$.
+\end{proposicion}
+
+\begin{proof}
+Como $\abs{x_i/\Delta}\le 2^{b-1}-1$, el entero más cercano $q_i$ está en el rango admitido y cumple $\abs{q_i-x_i/\Delta}\le 1/2$. Multiplicando por $\Delta$, $\abs{\Delta q_i-x_i}\le\Delta/2$.
+\end{proof}
+
+El error depende del valor máximo del tensor: un solo valor atípico grande aumenta $\Delta$ y degrada la representación de todos los demás. Por eso se cuantiza por canales o por bloques, y se tratan aparte los valores atípicos~\cite{mit65940}. El módulo~19 retoma la cuantización para la inferencia.
+
+\begin{lecturas}
+\item Higham~\cite{higham}, cap.~2 «Floating Point Arithmetic», cap.~3 «Basics» (constantes $\gamma_k$) y cap.~4 «Summation».
+\item Micikevicius \emph{et al.}~\cite{micikevicius}, §3.1--3.3.
+\item Micikevicius \emph{et al.}~\cite{fp8}, formatos E4M3 y E5M2.
+\item MIT 6.5940~\cite{mit65940}, clases~5 y~6, «Quantization».
+\item CS336~\cite{cs336a2}, tarea~2, §2.1 (precisión mixta en PyTorch).
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-receta}
+Para cada uno de los siguientes elementos del entrenamiento, indique en qué formato se guarda o calcula en la receta de precisión mixta con bf16 y justifíquelo: (a) los factores de los productos de matrices; (b) el acumulador de esos productos; (c) la copia de los pesos que actualiza el optimizador; (d) los momentos de Adam; (e) la suma de la softmax. ¿Por qué no se necesita escalar la pérdida?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-formatos}
+A partir de la \cref{prop:rango}, calcule el máximo, el menor normal y $\varepsilon$ de fp16 (sesgo 15), bf16 (sesgo 127) y fp8 E5M2 (sesgo 15), y compruebe la \cref{tab:formatos}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-maestra}
+Un peso vale $w=1$. (a) ¿Qué resultado da $\fl(1+0{,}001)$ en bf16? ¿Y en fp16? ¿Y en fp32? (b) ¿A partir de qué valor modifica una actualización positiva el peso $w=1$ en bf16? (c) ¿Qué resultado da $\fl(1+0{,}004)$ en bf16, y cuál es el error relativo de la actualización aplicada?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-acumular}
+Se suma $1000$ veces el número $0{,}01$ en un acumulador. En fp16, $0{,}01$ se representa como $0{,}0100021$ y el acumulador vale exactamente $8$ tras la suma número~750. (a) ¿Qué separación hay entre números fp16 consecutivos en $[8,16)$? (b) ¿Cuánto aporta realmente cada suma a partir de ahí, y cuál es el resultado final? (c) ¿Y si el acumulador es fp32, aunque los sumandos sean fp16?
+\fuente{adaptado de CS336~\cite{cs336a2}, tarea~2, §2.1.5, problema \texttt{mixed\_precision\_accumulation}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-cuantizacion}
+Cuantice $x=(-1{,}234;\ 0{,}5;\ 0{,}0123;\ 2{,}54)$ en int8 simétrico ($b=8$). Calcule $\Delta$, los enteros $q_i$, los valores descuantizados y los errores, y compruebe la \cref{prop:cuantizacion}.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-estancamiento}
+Se suma indefinidamente $a=\fl_{16}(0{,}01)=0{,}0100021$ en un acumulador fp16 que parte de $8$ (como en el \cref{eje:4-acumular}). (a) Demuestre que en cada intervalo $[2^{E},2^{E+1})$ con $E=3,4$ cada suma aporta exactamente $\ulp=2^{E-10}$. (b) Demuestre, con el \cref{lem:estancamiento}, que al llegar a $32$ el acumulador ya no cambia. (c) Deduzca cuántas sumas hacen falta en total, contando las 750 iniciales, para que el acumulador se estanque.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Entrenamiento distribuido}
+\label{tema:5}
+% =====================================================================
+
+Un modelo grande no cabe en la memoria de un acelerador, y su entrenamiento tardaría siglos en uno solo. Este tema estudia cómo se reparte el trabajo entre muchos dispositivos. Empieza por las operaciones colectivas de comunicación y su coste, enuncia la ley de Amdahl y analiza las tres formas básicas de paralelismo (de datos, de tensores y de etapas), la partición de estados de ZeRO y la recomputación de activaciones. Se siguen la clase~7 de CS336~\cite{cs336} y el §8 de su tarea~2~\cite{cs336a2}, el capítulo~1 de Hennessy y Patterson~\cite{hp} para la ley de Amdahl, la clase «Interconnection networks» de CMU 15-418/618~\cite{cmu418}, los artículos de Patarasuk y Yuan~\cite{patarasuk}, Shoeybi \emph{et al.}~\cite[§3]{megatron}, Huang \emph{et al.}~\cite[§2.3]{gpipe}, Narayanan \emph{et al.}~\cite[§2--3]{narayanan}, Rajbhandari \emph{et al.}~\cite[§3--7]{zero} y Chen \emph{et al.}~\cite{chen-checkpoint}.
+
+\section{Operaciones colectivas}
+
+Sean $n_{\mathrm{d}}$ dispositivos (llamados \emph{rangos}) numerados $0,\dots,n_{\mathrm{d}}-1$, y sea $x^{(r)}$ un vector de $S$ bytes en el rango~$r$.
+
+\begin{definicion}[Operaciones colectivas]
+\begin{enumerate}
+  \item \emph{All-reduce}: al terminar, todos los rangos tienen $\sum_{r}x^{(r)}$.
+  \item \emph{Reduce-scatter}: se divide cada vector en $n_{\mathrm{d}}$ trozos $x^{(r)}_0,\dots,x^{(r)}_{n_{\mathrm{d}}-1}$; al terminar, el rango $c$ tiene solo el trozo $c$ de la suma, $\sum_r x^{(r)}_c$.
+  \item \emph{All-gather}: el rango $c$ tiene un trozo $y_c$; al terminar, todos los rangos tienen la concatenación $(y_0,\dots,y_{n_{\mathrm{d}}-1})$.
+\end{enumerate}
+\end{definicion}
+
+Un all-reduce equivale a un reduce-scatter seguido de un all-gather de los trozos ya sumados~\cite{cs336}.
+
+\begin{proposicion}[All-reduce en anillo]\label{prop:anillo}
+Sean $n_{\mathrm{d}}$ rangos conectados en anillo, cada uno capaz de enviar a su vecino a $W$ bytes/s mientras recibe del otro. El algoritmo en anillo realiza un all-reduce de $S$ bytes enviando cada rango $2(n_{\mathrm{d}}-1)S/n_{\mathrm{d}}$ bytes, en un tiempo (sin contar latencias)
+\[
+t_{\mathrm{AR}}=\frac{2(n_{\mathrm{d}}-1)}{n_{\mathrm{d}}}\cdot\frac{S}{W}.
+\]
+\end{proposicion}
+
+\begin{proof}
+\emph{Reduce-scatter.} Se divide cada vector en $n_{\mathrm{d}}$ trozos de $S/n_{\mathrm{d}}$ bytes. En el paso $t=1,\dots,n_{\mathrm{d}}-1$, el rango $r$ envía al rango $r+1$ (módulo $n_{\mathrm{d}}$) su suma parcial del trozo $c=r-t+1$, y quien la recibe le suma su propio trozo $c$. Por inducción sobre $t$, tras el paso $t$ el rango $r$ tiene la suma de $t+1$ contribuciones del trozo $r-t$: es cierto para $t=1$ (el rango $r$ recibe el trozo $r-1$ de $r-1$ y le suma el suyo), y el paso $t+1$ añade una contribución más. Tras $n_{\mathrm{d}}-1$ pasos, el rango $r$ tiene la suma completa del trozo $r+1$. Cada paso envía $S/n_{\mathrm{d}}$ bytes por rango.
+
+\emph{All-gather.} Con el mismo esquema, cada rango reenvía en cada paso el último trozo completo que ha recibido; tras $n_{\mathrm{d}}-1$ pasos todos tienen los $n_{\mathrm{d}}$ trozos.
+
+En total hay $2(n_{\mathrm{d}}-1)$ pasos de $S/n_{\mathrm{d}}$ bytes por rango. Como todos los enlaces transmiten en paralelo, cada paso dura $S/(n_{\mathrm{d}}W)$, y se obtiene $t_{\mathrm{AR}}$.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},nodo/.style={draw,thick,circle,minimum size=9mm}]
+  \node[nodo] (g0) at (0,1.4) {$0$};
+  \node[nodo] (g1) at (1.4,0) {$1$};
+  \node[nodo] (g2) at (0,-1.4) {$2$};
+  \node[nodo] (g3) at (-1.4,0) {$3$};
+  \draw[->,thick] (g0) to[bend left=20] node[above right] {$S/4$} (g1);
+  \draw[->,thick] (g1) to[bend left=20] node[below right] {$S/4$} (g2);
+  \draw[->,thick] (g2) to[bend left=20] node[below left] {$S/4$} (g3);
+  \draw[->,thick] (g3) to[bend left=20] node[above left] {$S/4$} (g0);
+  \node[align=left,anchor=west] at (2.6,0) {en cada uno de los $2(n_{\mathrm{d}}-1)=6$ pasos,\\cada rango envía un trozo de $S/n_{\mathrm{d}}$ bytes\\a su vecino; todos los enlaces trabajan a la vez};
+\end{tikzpicture}
+\caption{All-reduce en anillo con $n_{\mathrm{d}}=4$ rangos (\cref{prop:anillo}).}
+\label{fig:anillo}
+\end{figure}
+
+\begin{observacion}
+El volumen $2(n_{\mathrm{d}}-1)S/n_{\mathrm{d}}$ es prácticamente independiente de $n_{\mathrm{d}}$ y tiende a $2S$. Patarasuk y Yuan~\cite{patarasuk} demostraron que, sin compresión de los datos, en todo algoritmo de all-reduce algún rango debe comunicar al menos ese volumen: el anillo es óptimo en ancho de banda. El algoritmo tiene, en cambio, $2(n_{\mathrm{d}}-1)$ pasos, cada uno con su latencia; para tensores pequeños o muchos rangos se prefieren algoritmos en árbol.
+\end{observacion}
+
+\section{La ley de Amdahl}
+
+\begin{teorema}[Ley de Amdahl]\label{teo:amdahl}
+Sea un programa cuyo tiempo en un dispositivo es $t_1$, del que una fracción $f\in[0,1]$ no puede paralelizarse y el resto se reparte perfectamente entre $n_{\mathrm{d}}$ dispositivos. Su aceleración es
+\[
+A(n_{\mathrm{d}})=\frac{t_1}{t_{n_{\mathrm{d}}}}=\frac{1}{f+(1-f)/n_{\mathrm{d}}}\ \le\ \frac{1}{f}.
+\]
+\end{teorema}
+
+\begin{proof}
+La parte serie tarda $ft_1$ con cualquier número de dispositivos, y la parte paralela, $(1-f)t_1/n_{\mathrm{d}}$. Luego $t_{n_{\mathrm{d}}}=t_1\bigl(f+(1-f)/n_{\mathrm{d}}\bigr)$, y dividiendo se obtiene $A(n_{\mathrm{d}})$. Como $(1-f)/n_{\mathrm{d}}\ge 0$, $A(n_{\mathrm{d}})\le 1/f$.
+\end{proof}
+
+En el entrenamiento distribuido, el papel de la fracción serie lo desempeñan la comunicación que no se solapa con el cálculo y las esperas. Una fracción del 5~\% limita la aceleración a~20, sea cual sea el número de GPU (\cref{eje:5-amdahl}).
+
+\section{Paralelismo de datos}
+
+\begin{proposicion}[Equivalencia del paralelismo de datos]\label{prop:datos}
+Sea un lote de $B$ ejemplos con pérdida media $\mathcal{L}(\theta)=B^{-1}\sum_{i=1}^{B}\ell_i(\theta)$, repartido en $n_{\mathrm{d}}$ trozos de $B/n_{\mathrm{d}}$ ejemplos, y sea $g_r$ el gradiente de la pérdida media del trozo $r$. Entonces
+\[
+\nabla\mathcal{L}(\theta)=\frac{1}{n_{\mathrm{d}}}\sum_{r=0}^{n_{\mathrm{d}}-1}g_r.
+\]
+\end{proposicion}
+
+\begin{proof}
+Sea $\mathcal{I}_r$ el conjunto de índices del trozo $r$. Por la linealidad del gradiente, $g_r=(n_{\mathrm{d}}/B)\sum_{i\in\mathcal{I}_r}\nabla\ell_i$. Luego $n_{\mathrm{d}}^{-1}\sum_r g_r=B^{-1}\sum_r\sum_{i\in\mathcal{I}_r}\nabla\ell_i=B^{-1}\sum_{i=1}^{B}\nabla\ell_i=\nabla\mathcal{L}$, porque los trozos forman una partición del lote.
+\end{proof}
+
+En el \emph{paralelismo de datos}, cada rango guarda una copia completa del modelo, procesa su trozo del lote y, antes de actualizar, se hace un all-reduce de los gradientes. Por la \cref{prop:datos}, el resultado es idéntico al de un solo dispositivo con el lote completo. Con $10^{9}$ parámetros en bf16 ($S=2\cdot 10^{9}$~bytes), $n_{\mathrm{d}}=8$ y $W=100$~GB/s, la \cref{prop:anillo} da $t_{\mathrm{AR}}=2\cdot(7/8)\cdot 2\cdot 10^{9}/10^{11}=35$~ms por paso. Las implementaciones reales solapan esa comunicación con la pasada hacia atrás, enviando los gradientes de las últimas capas mientras se calculan los de las primeras.
+
+\section{Paralelismo de tensores}
+
+\begin{proposicion}[Partición del MLP; Shoeybi \emph{et al.}]\label{prop:megatron}
+Sea el MLP $Z=\GELU(XA)\,B$ con $X\in\R^{T\times d}$, $A\in\R^{d\times h}$, $B\in\R^{h\times d}$. Si se parte $A$ por columnas, $A=[A_1\ A_2]$, y $B$ por filas, $B=\bigl[\begin{smallmatrix}B_1\\ B_2\end{smallmatrix}\bigr]$, con bloques compatibles, entonces
+\[
+Z=\GELU(XA_1)\,B_1+\GELU(XA_2)\,B_2.
+\]
+Por tanto, dos rangos que guardan $(A_1,B_1)$ y $(A_2,B_2)$ calculan cada uno un sumando sin comunicarse, y basta un all-reduce de $Z$ al final.
+\end{proposicion}
+
+\begin{proof}
+Por el producto por bloques, $XA=[XA_1\ XA_2]$. Como GELU actúa elemento a elemento, $\GELU(XA)=[\GELU(XA_1)\ \GELU(XA_2)]$. De nuevo por bloques, $[Y_1\ Y_2]\bigl[\begin{smallmatrix}B_1\\ B_2\end{smallmatrix}\bigr]=Y_1B_1+Y_2B_2$.
+\end{proof}
+
+La elección de los cortes no es arbitraria. Si se partiera $A$ por filas (y $X$ por columnas), $XA=X_1A_1+X_2A_2$ y haría falta sumar antes de aplicar GELU, porque en general $\GELU(u+v)\ne\GELU(u)+\GELU(v)$: un punto de sincronización más~\cite[§3]{megatron}. En la atención, las proyecciones $Q$, $K$ y $V$ se parten por columnas, es decir, por cabezas, y la proyección de salida por filas. Cada bloque Transformer requiere así dos all-reduce en la pasada hacia delante y dos en la pasada hacia atrás, sobre tensores de tamaño proporcional a $b\cdot T\cdot d$ (microlote por longitud por dimensión)~\cite[§3.2]{narayanan}. Como esta comunicación ocurre en cada capa, el paralelismo de tensores se usa dentro de un nodo, sobre NVLink.
+
+\section{Paralelismo de etapas}
+
+\begin{definicion}[Pipeline de GPipe]
+En el \emph{paralelismo de etapas} (\emph{pipeline}) se reparten las capas en $p_{\mathrm{e}}$ etapas consecutivas, una por rango, y el lote en $m$ microlotes. En el esquema de GPipe~\cite{gpipe}, la etapa $s$ procesa el microlote $j$ hacia delante en cuanto ha terminado el microlote $j-1$ y la etapa $s-1$ le ha entregado las activaciones del microlote $j$; la pasada hacia atrás se hace después, en orden inverso.
+\end{definicion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=1.15cm,y=0.62cm,font=\small]
+  \foreach \s in {1,2,3,4}{\node[left] at (0,-\s+0.5) {etapa \s};}
+  \foreach \s in {1,2,3,4}{\foreach \j in {1,2,3,4}{
+     \pgfmathtruncatemacro{\t}{\j+\s-2}
+     \draw[fill=black!15] (\t,-\s) rectangle (\t+1,-\s+1);
+     \node at (\t+0.5,-\s+0.5) {$\j$};}}
+  \foreach \s in {2,3,4}{\pgfmathtruncatemacro{\w}{\s-1}
+     \draw[pattern=north east lines,pattern color=regla] (0,-\s) rectangle (\w,-\s+1);}
+  \foreach \s in {1,2,3}{\pgfmathtruncatemacro{\w}{\s+3}
+     \draw[pattern=north east lines,pattern color=regla] (\w,-\s) rectangle (7,-\s+1);}
+  \draw[->] (0,-4.4) -- (7.3,-4.4) node[right] {tiempo};
+  \foreach \t in {0,...,7}{\draw (\t,-4.3)--(\t,-4.5) node[below,font=\scriptsize] {$\t\tau$};}
+\end{tikzpicture}
+\caption{Pasada hacia delante de un pipeline con $p_{\mathrm{e}}=4$ etapas y $m=4$ microlotes. Los rectángulos numerados son el trabajo de cada microlote; las zonas rayadas son la burbuja: $3\cdot 4\tau=12\tau$ de $4\cdot 7\tau=28\tau$, una fracción $3/7$.}
+\label{fig:pipeline}
+\end{figure}
+
+\begin{proposicion}[Burbuja del pipeline]\label{prop:burbuja}
+Si cada microlote tarda $\tau$ en cada etapa (solo pasada hacia delante), el pipeline de GPipe con $p_{\mathrm{e}}$ etapas y $m$ microlotes tarda $(m+p_{\mathrm{e}}-1)\tau$, y la fracción del tiempo en que cada rango está ocioso es
+\[
+\beta_{\mathrm{tot}}=\frac{p_{\mathrm{e}}-1}{m+p_{\mathrm{e}}-1}.
+\]
+\end{proposicion}
+
+La demostración se pide en el \cref{eje:5-burbuja-dem}. Narayanan \emph{et al.}~\cite[§2.2.1]{narayanan} miden la burbuja respecto al tiempo ideal $m\tau$ y no respecto al total: $\beta=(p_{\mathrm{e}}-1)/m$. Ambas medidas se relacionan por $\beta_{\mathrm{tot}}=\beta/(1+\beta)$. Huang \emph{et al.}~\cite[§2.3]{gpipe} observan que la burbuja es despreciable con $m\ge 4p_{\mathrm{e}}$. El esquema 1F1B, que alterna una pasada hacia delante y una hacia atrás, tiene la misma burbuja, pero limita a $p_{\mathrm{e}}$ el número de microlotes cuyas activaciones deben guardarse a la vez, frente a $m$ en GPipe; la variante intercalada, con $v$ trozos de capas por rango, reduce la burbuja a $(p_{\mathrm{e}}-1)/(vm)$ a cambio de multiplicar por $v$ la comunicación~\cite[§2.2.2]{narayanan}.
+
+\section{ZeRO: partición de los estados del entrenamiento}
+
+En el paralelismo de datos, cada rango guarda una copia completa de los 16~bytes por parámetro de la precisión mixta con Adam (\cref{tema:4}): 2 de pesos, 2 de gradientes y $K=12$ de estado del optimizador. ZeRO~\cite{zero} elimina esa redundancia.
+
+\begin{proposicion}[Memoria de ZeRO]\label{prop:zero}
+Sea un modelo de $\Psi$ parámetros entrenado con paralelismo de datos en $n_{\mathrm{d}}$ rangos, con 2~bytes de pesos, 2 de gradientes y $K=12$ de estado del optimizador por parámetro. La memoria de estados por rango es:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Variante & Qué se reparte & Memoria por rango \\
+\midrule
+Sin ZeRO & nada & $16\Psi$ \\
+ZeRO-1 & estado del optimizador & $4\Psi+12\Psi/n_{\mathrm{d}}$ \\
+ZeRO-2 & además, gradientes & $2\Psi+14\Psi/n_{\mathrm{d}}$ \\
+ZeRO-3 & además, pesos & $16\Psi/n_{\mathrm{d}}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{proposicion}
+
+\begin{proof}
+Lo que se reparte ocupa $1/n_{\mathrm{d}}$ en cada rango, y lo que no, la cantidad completa. Sin ZeRO: $2\Psi+2\Psi+12\Psi=16\Psi$. ZeRO-1: $2\Psi+2\Psi+12\Psi/n_{\mathrm{d}}$. ZeRO-2: $2\Psi+(2\Psi+12\Psi)/n_{\mathrm{d}}=2\Psi+14\Psi/n_{\mathrm{d}}$. ZeRO-3: $(2\Psi+2\Psi+12\Psi)/n_{\mathrm{d}}=16\Psi/n_{\mathrm{d}}$.
+\end{proof}
+
+\begin{ejemplo}[Figura~1 de ZeRO]\label{ej:zero}
+Con $\Psi=7{,}5\cdot 10^{9}$ y $n_{\mathrm{d}}=64$: sin ZeRO, $120$~GB; ZeRO-1, $30+1{,}41=31{,}4$~GB; ZeRO-2, $15+1{,}64=16{,}6$~GB; ZeRO-3, $1{,}9$~GB. Son las cifras de la figura~1 de Rajbhandari \emph{et al.}~\cite{zero}. Un modelo de $7\cdot 10^{10}$ parámetros necesita $1120$~GB de estados: sin ZeRO no cabe en ningún dispositivo, y con ZeRO-3 en 64 rangos ocupa $17{,}5$~GB por rango.
+\end{ejemplo}
+
+En ZeRO-3, cada rango reúne con un all-gather los pesos de una capa justo antes de usarla y los descarta después; los gradientes se reducen con un reduce-scatter, de modo que cada rango recibe solo su trozo. El volumen de comunicación por paso es $2\Psi$ en ZeRO-1 y ZeRO-2, igual que en el paralelismo de datos, y $3\Psi$ en ZeRO-3, un 50~\% más~\cite[§7]{zero}. FSDP (\emph{Fully Sharded Data Parallel}) es la implementación de ZeRO-3 en PyTorch.
+
+\section{Recomputación de activaciones}
+
+La tabla de la \cref{prop:zero} no incluye las activaciones que la retropropagación necesita (módulo~10), que crecen con el lote y la longitud de la secuencia.
+
+\begin{proposicion}[Recomputación por segmentos]\label{prop:checkpoint}
+Sea una red de $L$ capas en cadena cuyas activaciones ocupan una unidad de memoria cada una. Si se divide en $k$ segmentos de $L/k$ capas, se guardan solo las activaciones en las fronteras de los segmentos y, durante la pasada hacia atrás, se recalcula cada segmento a partir de su frontera, la memoria máxima de activaciones es $k+L/k$, a cambio de una pasada hacia delante adicional. Con $k=\sqrt{L}$ la memoria es $2\sqrt{L}$, mínima entre todas las elecciones de $k$.
+\end{proposicion}
+
+\begin{proof}
+Durante la pasada hacia delante se guardan las $k$ activaciones de frontera. En la pasada hacia atrás se procesa un segmento cada vez: se recalculan sus $L/k$ activaciones desde su frontera, se retropropaga a través de él y se liberan. En cada momento conviven, como mucho, las $k$ fronteras y las $L/k$ activaciones de un segmento: $k+L/k$. Recalcular todos los segmentos equivale a una pasada hacia delante más. Por la desigualdad entre medias aritmética y geométrica, $k+L/k\ge 2\sqrt{k\cdot L/k}=2\sqrt{L}$, con igualdad si y solo si $k=L/k$, es decir, $k=\sqrt{L}$.
+\end{proof}
+
+El resultado es el de Chen \emph{et al.}~\cite{chen-checkpoint}. Con $L=64$ capas, la memoria de activaciones baja de $64$ a $16$ unidades a cambio de un tercio más de cómputo (una pasada hacia delante adicional sobre las tres equivalentes del \cref{cor:6nd}). La recomputación no cuenta en el MFU (\cref{def:mfu}).
+
+\begin{observacion}[Paralelismo 3D]
+Los entrenamientos grandes combinan las tres formas: $n_{\mathrm{d}}=d_{\mathrm{dp}}\cdot t\cdot p_{\mathrm{e}}$, con $t$ rangos de paralelismo de tensores dentro de cada nodo (comunicación por capa, sobre NVLink), $p_{\mathrm{e}}$ etapas de pipeline entre nodos (comunicación punto a punto de activaciones) y $d_{\mathrm{dp}}$ réplicas de paralelismo de datos, a menudo con ZeRO, en el nivel exterior (comunicación de gradientes una vez por paso). Narayanan \emph{et al.}~\cite[§3]{narayanan} analizan esta composición y recomiendan limitar $t$ al tamaño del nodo.
+\end{observacion}
+
+\begin{lecturas}
+\item CS336~\cite{cs336}, clase~7, «Parallelism» (colectivas, paralelismo de datos, de tensores y de etapas), y tarea~2~\cite{cs336a2}, §8.
+\item Patarasuk y Yuan~\cite{patarasuk}, optimalidad del all-reduce en anillo.
+\item Shoeybi \emph{et al.}~\cite{megatron}, §3 «Model Parallel Transformers».
+\item Huang \emph{et al.}~\cite{gpipe}, §2.3; Narayanan \emph{et al.}~\cite{narayanan}, §2.2 y §3.
+\item Rajbhandari \emph{et al.}~\cite{zero}, §3.1, §5 y §7.
+\item MIT 6.5940~\cite{mit65940}, clases~19 y~20, «Distributed Training».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-vf}
+Justifique si son verdaderas o falsas: (a) FlashAttention aproxima la atención para ir más rápido; (b) ZeRO-3 reduce la memoria de pesos por rango; (c) la burbuja del pipeline crece con el número de microlotes; (d) bf16 tiene el mismo rango que fp32.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-burbuja}
+Pipeline con $p_{\mathrm{e}}=4$ etapas. Calcule la fracción de burbuja $\beta_{\mathrm{tot}}$ con $m=8$, $m=32$ y $m=1$ microlotes, y la medida $\beta$ de Narayanan \emph{et al.} en los dos primeros casos. ¿Cuántos microlotes recomienda GPipe?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-zero}
+Un modelo de $7\cdot 10^{9}$ parámetros se entrena con Adam y precisión mixta. ¿Cuánta memoria de estados hace falta sin ZeRO? Desglósela. ¿Y por rango con ZeRO-1 y con ZeRO-3 en 8 rangos?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-amdahl}
+Un paso de entrenamiento tiene un 5~\% de tiempo que no se paraleliza. (a) Calcule la aceleración máxima con 8, 64 y 1024 GPU, y su límite. (b) ¿Qué eficiencia ($A/n_{\mathrm{d}}$) se obtiene con 64 GPU?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-dp}
+Un MLP de una capa calcula $x_1=xW_1$, $x_2=xW_2$, $z=f(x_1)\odot x_2$, $y=zW_3$, con $x\in\R^{B\times D}$, $W_1,W_2\in\R^{D\times D_{FF}}$ y $W_3\in\R^{D_{FF}\times D}$, todo en fp16. Se entrena con paralelismo de datos en $n_{\mathrm{d}}$ GPU de $C$ FLOP/s, con all-reduce en anillo de coste $2(n_{\mathrm{d}}-1)S/(n_{\mathrm{d}}W)$ para $S$ bytes. (a) Cuente los FLOP de la pasada hacia atrás en cada GPU (solo productos de matrices). (b) Calcule el tiempo de comunicación de los gradientes. (c) ¿Hasta qué $n_{\mathrm{d}}$ no supera la comunicación al cálculo de la pasada hacia atrás? Aplíquelo a $B=10^{6}$ tokens, $C=312$~TFLOP/s y $W=100$~GB/s.
+\fuente{adaptado de CS336~\cite{cs336a2}, tarea~2, §8.2, problema \texttt{data\_parallel\_calcs}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-anillo-malo}
+En lugar de reduce-scatter seguido de all-gather, cada rango envía en cada uno de $n_{\mathrm{d}}-1$ pasos el tensor completo ($S$ bytes) a su vecino, que lo suma a su acumulador y lo reenvía. ¿Cuánto tarda? Compárelo con el anillo estándar para $n_{\mathrm{d}}=8$, $S=2$~GB y $W=100$~GB/s.
+\fuente{adaptado de CS336~\cite{cs336a2}, tarea~2, §8.1, problema \texttt{alternate\_ring\_all\_reduce}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-burbuja-dem}
+Demuestre la \cref{prop:burbuja}: con $p_{\mathrm{e}}$ etapas, $m$ microlotes y tiempo $\tau$ por microlote y etapa (solo pasada hacia delante), el pipeline tarda $(m+p_{\mathrm{e}}-1)\tau$ y cada rango está ocioso una fracción $(p_{\mathrm{e}}-1)/(m+p_{\mathrm{e}}-1)$ del tiempo. Compruebe los casos $p_{\mathrm{e}}=1$ y $m=1$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Coste, energía y límites físicos}
+\label{tema:6}
+% =====================================================================
+
+Los temas anteriores han tratado el rendimiento de un dispositivo y de un conjunto de ellos. Este tema convierte esas magnitudes en las que deciden un proyecto real: duración, coste económico, energía y refrigeración. Después compara la energía de las operaciones con la del movimiento de datos y con el límite físico de Landauer para el borrado de información. Se siguen el §2.1 de Kaplan \emph{et al.}~\cite{kaplan}, el §4.1 y el apéndice~B de Chowdhery \emph{et al.}~\cite{palm}, la tarea~1 de CS336~\cite[§4.3]{cs336a1}, el trabajo de Horowitz~\cite{horowitz}, el capítulo~6 de Hennessy y Patterson~\cite{hp} sobre centros de datos y el artículo de Landauer~\cite{landauer}.
+
+\section{Duración y coste de un entrenamiento}
+
+\begin{proposicion}[Duración de un entrenamiento]\label{prop:duracion}
+Sea un entrenamiento de $C$ FLOP en $n_{\mathrm{d}}$ dispositivos de rendimiento máximo $\Ppico$ con utilización $\MFU$. Su duración es
+\[
+t=\frac{C}{n_{\mathrm{d}}\,\Ppico\,\MFU},
+\]
+y consume $n_{\mathrm{d}}t$ dispositivos-segundo, que no dependen de $n_{\mathrm{d}}$ si el MFU se mantiene.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{def:mfu}, los FLOP útiles por segundo del conjunto son $n_{\mathrm{d}}\Ppico\MFU$; dividiendo $C$ por esa tasa se obtiene $t$. El producto $n_{\mathrm{d}}t=C/(\Ppico\MFU)$ no contiene $n_{\mathrm{d}}$.
+\end{proof}
+
+El coste económico es, en primera aproximación, el número de GPU-hora por el precio de la GPU-hora. Duplicar el número de dispositivos reduce la duración a la mitad sin cambiar el coste, mientras el MFU no caiga; por la ley de Amdahl (\cref{teo:amdahl}) y el coste creciente de la comunicación, en la práctica cae.
+
+\begin{ejemplo}[Un entrenamiento del tamaño de Chinchilla]\label{ej:chinchilla}
+Sea $N=7\cdot 10^{10}$ y $D=1{,}4\cdot 10^{12}$, de modo que $C=6ND=5{,}88\cdot 10^{23}$ FLOP. En 1024 A100 hipotéticas con $\MFU=0{,}4$, el rendimiento útil por GPU es $0{,}4\cdot 312=124{,}8$~TFLOP/s y la duración, $5{,}88\cdot 10^{23}/(1024\cdot 1{,}248\cdot 10^{14})=4{,}60\cdot 10^{6}$~s, unos 53 días. (Chinchilla se entrenó en TPU; el cálculo es ilustrativo.) El \cref{eje:6-chinchilla} completa la energía y el coste.
+\end{ejemplo}
+
+\section{Energía, potencia y refrigeración}
+
+\begin{definicion}[PUE]
+La \emph{eficiencia en el uso de la energía} (PUE, \emph{Power Usage Effectiveness}) de un centro de datos es el cociente entre la energía total que consume y la que consumen los equipos de cómputo. Siempre es $\PUE\ge 1$; el exceso corresponde a refrigeración, conversión eléctrica y otros servicios~\cite[cap.~6]{hp}.
+\end{definicion}
+
+La energía de un entrenamiento es, aproximadamente, $E\approx(\text{GPU-hora})\cdot P_{\mathrm{GPU}}\cdot\PUE$, donde $P_{\mathrm{GPU}}$ es la potencia media por GPU (la máxima de la A100 SXM es de 400~W~\cite{a100}). Esta estimación ignora las CPU, la red y el almacenamiento.
+
+Casi toda la energía eléctrica se disipa como calor, que debe evacuarse. Si un fluido de calor específico $c$ entra a una temperatura y sale $\Delta T$ más caliente, el calor que extrae por unidad de tiempo es
+\[
+\dot{Q}=\dot{m}\,c\,\Delta T,
+\]
+con $\dot{m}$ el caudal másico. Para el agua, $c\approx 4186$~J/(kg$\cdot$K); para el aire, $c\approx 1005$~J/(kg$\cdot$K), con una densidad unas 800 veces menor. Evacuar los $1024\cdot 400=409{,}6$~kW de las GPU del \cref{ej:chinchilla} con agua que se calienta 10~K exige $\dot{m}=409\,600/(4186\cdot 10)\approx 9{,}8$~kg/s, casi diez litros por segundo. Por eso los sistemas actuales de alta densidad pasan de la refrigeración por aire a la refrigeración líquida directa sobre el chip (\cref{eje:6-refrigeracion}).
+
+\section{Operar frente a mover datos}
+
+Horowitz~\cite{horowitz} recopiló la energía de operaciones elementales en una tecnología de 45~nm. Las cifras, de orden de magnitud, muestran que una suma en fp32 cuesta unos $0{,}9$~pJ y una multiplicación en fp32, unos $3{,}7$~pJ, mientras que leer 32~bits de DRAM cuesta unos $640$~pJ: mover el dato cuesta unas $640/3{,}7\approx 170$ veces más que operar con él. Las técnicas de los temas~1 a~3 (matrices sistólicas, \emph{tiling}, fusión, FlashAttention) ahorran energía por la misma razón por la que ahorran tiempo: reducen el tráfico con la memoria lejana.
+
+\begin{ejemplo}[Energía por FLOP de una GPU]\label{ej:pj}
+A potencia máxima y rendimiento máximo en bf16, la A100 gasta $400/(312\cdot 10^{12})=1{,}28\cdot 10^{-12}$~J, es decir, $1{,}28$~pJ por FLOP. La cifra incluye todo el chip y su memoria y es una cota optimista: con un MFU del 40~\% la energía por FLOP útil es $1{,}28/0{,}4=3{,}2$~pJ.
+\end{ejemplo}
+
+\section{El límite de Landauer}
+
+\begin{teorema}[Principio de Landauer]\label{teo:landauer}
+Borrar un bit de información, es decir, llevar un sistema físico que almacena un bit desconocido (0 o 1 con igual probabilidad) a un estado fijo, en contacto con un entorno a temperatura $T$, disipa en ese entorno un calor
+\[
+Q\ \ge\ \kB T\ln 2,
+\]
+donde $\kB=1{,}380649\cdot 10^{-23}$~J/K es la constante de Boltzmann.
+\end{teorema}
+
+\begin{proof}[Argumento]
+Se da el argumento termodinámico de Landauer~\cite{landauer}, no una demostración axiomática. Un bit con dos estados equiprobables tiene entropía de Shannon $H=\ln 2$ nats (módulo~6), que en unidades físicas es $S=\kB\ln 2$ (fórmula de Boltzmann $S=\kB\ln\Omega$ con $\Omega=2$ estados lógicos accesibles). Tras el borrado el estado lógico es conocido ($\Omega=1$, $S=0$): la entropía del sistema ha disminuido en $\kB\ln 2$. Por el segundo principio, la entropía total no puede disminuir, de modo que la del entorno debe aumentar al menos $\kB\ln 2$. Para un entorno a temperatura $T$ constante, un aumento de entropía $\Delta S$ requiere recibir un calor $Q=T\Delta S\ge\kB T\ln 2$.
+\end{proof}
+
+\begin{ejemplo}[Distancia al límite]\label{ej:landauer}
+A $T=300$~K, $\kB T\ln 2=1{,}380649\cdot 10^{-23}\cdot 300\cdot 0{,}6931=2{,}87\cdot 10^{-21}$~J, unos $0{,}018$~eV. La A100 gasta $1{,}28\cdot 10^{-12}$~J por FLOP (\cref{ej:pj}), unas $4{,}5\cdot 10^{8}$ veces el límite por bit. Aunque una operación borre decenas de bits, la distancia sigue siendo de muchos órdenes de magnitud: hoy no frenan la física fundamental sino la ingeniería del transistor y, sobre todo, el movimiento de datos.
+\end{ejemplo}
+
+\begin{observacion}
+El principio solo limita las operaciones \emph{irreversibles}, que destruyen información. Una suma $c=a+b$ que sobrescribe $a$ y $b$ es irreversible; la computación reversible, que conserva la información necesaria para deshacer cada paso, podría en principio operar por debajo de $\kB T\ln 2$ por operación. El vínculo con el módulo~6 es directo: $\kB\ln 2$ es la entropía de un bit expresada en julios por kelvin.
+\end{observacion}
+
+\begin{lecturas}
+\item Kaplan \emph{et al.}~\cite{kaplan}, §2.1; Hoffmann \emph{et al.}~\cite{chinchilla}, sobre la asignación óptima de $N$ y $D$.
+\item Chowdhery \emph{et al.}~\cite{palm}, §4.1 y apéndice~B (MFU, consumo y huella).
+\item CS336~\cite{cs336a1}, tarea~1, §4.3, problema \texttt{adamw\_accounting}.
+\item Hennessy y Patterson~\cite{hp}, cap.~6, «The Warehouse-Scale Computer» (PUE y coste de los centros de datos).
+\item Horowitz~\cite{horowitz}; Landauer~\cite{landauer}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-energia}
+Ordene de menor a mayor energía: una suma en fp32, una multiplicación en fp32, la lectura de 32~bits de DRAM y el límite de Landauer a 300~K. Explique por qué la reutilización de datos ahorra energía además de tiempo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-chinchilla}
+Calcule el coste de entrenar un modelo como Chinchilla ($N=7\cdot 10^{10}$, $D=1{,}4\cdot 10^{12}$) en A100 hipotéticas: 312~TFLOP/s, $\MFU=0{,}4$, 1024 GPU, 400~W por GPU, $\PUE=1{,}2$ y 2 dólares por GPU-hora. Dé los FLOP, las GPU-hora, los días, los MWh y el coste.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-landauer}
+Calcule el límite de Landauer a 300~K y a 77~K (nitrógeno líquido), y el cociente entre $1{,}28$~pJ y el límite a 300~K.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-refrigeracion}
+Un armario de cómputo disipa 120~kW. (a) ¿Qué caudal de agua hace falta si se calienta 12~K? (b) ¿Y de aire (densidad $1{,}2$~kg/m$^{3}$) con el mismo salto térmico? Exprese el segundo en m$^{3}$/s y compare.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-gpt2}
+Sea el modelo GPT-2 \emph{small} del \cref{eje:1-gpt2}, con $1{,}621\cdot 10^{8}$ parámetros y $2{,}916\cdot 10^{11}$ FLOP por secuencia de 1024 tokens en la pasada hacia delante. (a) Si todos los tensores de estado están en fp32 y se usa AdamW (dos momentos por parámetro), ¿cuánta memoria ocupan los pesos, los gradientes y el estado del optimizador? (b) En una H100 con un máximo de 495~TFLOP/s y un MFU del 50~\%, suponiendo que la pasada hacia atrás cuesta el doble que la de delante, ¿cuánto tarda entrenar 20\,000 pasos con lotes de 128 secuencias?
+\fuente{adaptado de CS336~\cite{cs336a1}, tarea~1, §4.3, problema \texttt{adamw\_accounting}, apartados~(a) y~(d) (modelo y número de pasos cambiados).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-presupuesto}
+Se dispone de $10^{5}$ GPU-hora de A100 (312~TFLOP/s, $\MFU=0{,}4$). (a) Demuestre que, con $C=6ND$ y la regla de Chinchilla $D=20N$, el tamaño óptimo es $N=\sqrt{C/120}$. (b) Calcule $N$ y $D$. (c) Demuestre que, si se multiplica el presupuesto de GPU-hora por $\lambda$ con el mismo MFU, $N$ y $D$ quedan multiplicados por $\sqrt{\lambda}$.
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. Salvo que se indique otra cosa, se usan los datos de la A100 SXM del \cref{tema:2}: $\Ppico=312\cdot 10^{12}$~FLOP/s en bf16, $\Bmem=2\cdot 10^{12}$~bytes/s, $\Icrit=156$~FLOP/byte y 400~W. En los pasos intermedios se redondea a cuatro cifras significativas.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-reutilizacion}
+\datos matriz sistólica de $n\times n$; $A,B\in\R^{n\times n}$.
+\planteamiento la celda $(i,j)$ acumula $c_{ij}=\sum_{k}a_{ik}b_{kj}$; cada dato entra por un borde y recorre una fila o una columna.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $c_{ij}$ tiene $n$ sumandos: cada celda realiza $n$ operaciones MAC. En total, $n^{2}\cdot n=n^{3}$ MAC, es decir, $2n^{3}$ FLOP, como en la \cref{prop:flop-matmul}.
+  \item (b) El elemento $a_{ik}$ entra por la izquierda en la fila $i$ y atraviesa las $n$ celdas $(i,1),\dots,(i,n)$; en cada una se usa en un producto. Se lee una vez de memoria y se usa $n$ veces. Lo mismo ocurre con $b_{kj}$ en la columna $j$.
+  \item (c) Pasar un dato a la celda vecina es una transferencia de muy corta distancia dentro del chip. Leerlo de la memoria cuesta mucho más energía que operar con él (\cref{tema:6}); con la rejilla, cada lectura se amortiza entre $n$ operaciones.
+\end{enumerate}
+\resultado \textbf{(a) $n$ MAC por celda; (b) cada elemento se usa $n$ veces; (c) la energía de cada lectura se reparte entre $n$ operaciones.}
+\comprobacion en la TPU v1, con $n=256$, cada operando se reutiliza 256 veces, como dice el \cref{ej:tpu}.
+\end{solucion}
+
+\begin{solucion}{eje:1-flop}
+\datos (a) $(2\times 3)(3\times 4)$. (b) $W\in\R^{4096\times 16\,384}$; $8\cdot 2048=16\,384$ tokens.
+\planteamiento \cref{prop:flop-matmul} y \cref{prop:6nd-capa} con $T=16\,384$, $a=4096$, $b=16\,384$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $2mkn=2\cdot 2\cdot 3\cdot 4=48$ FLOP.
+  \item (b) Parámetros: $ab=4096\cdot 16\,384=67\,108\,864$.
+  \item Hacia delante: $2Tab=2\cdot 16\,384\cdot 67\,108\,864=2{,}199\cdot 10^{12}$ FLOP.
+  \item Hacia atrás: $4Tab=4{,}398\cdot 10^{12}$ FLOP ($GW\T$ y $X\T G$, $2{,}199\cdot 10^{12}$ cada uno).
+  \item Paso completo: $6Tab=6{,}597\cdot 10^{12}$ FLOP.
+  \item Por parámetro y token: $6{,}597\cdot 10^{12}/(67\,108\,864\cdot 16\,384)=6{,}597\cdot 10^{12}/1{,}100\cdot 10^{12}=6{,}00$.
+\end{enumerate}
+\resultado \textbf{(a) 48 FLOP. (b) $2{,}20\cdot 10^{12}$ hacia delante, $4{,}40\cdot 10^{12}$ hacia atrás y $6{,}60\cdot 10^{12}$ en total: 6 FLOP por parámetro y token.}
+\comprobacion la pasada hacia atrás cuesta el doble que la de delante, que es la hipótesis de Kaplan \emph{et al.} y de la tarea~1 de CS336.
+\end{solucion}
+
+\begin{solucion}{eje:1-tpu}
+\datos $256\times 256$ MAC a 700~MHz; producto $4096\times 4096$; A100: 312 y 19{,}5~TFLOP/s.
+\planteamiento cada MAC son 2 operaciones por ciclo; tiempo mínimo $=$ operaciones $/$ rendimiento máximo (\cref{teo:roofline}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $256^{2}=65\,536$ celdas; $65\,536\cdot 2\cdot 7\cdot 10^{8}=9{,}175\cdot 10^{13}$ operaciones/s $\approx 92$~TOPS.
+  \item (b) Operaciones: $2\cdot 4096^{3}=2\cdot 6{,}872\cdot 10^{10}=1{,}374\cdot 10^{11}$.
+  \item Tiempo mínimo: $1{,}374\cdot 10^{11}/9{,}175\cdot 10^{13}=1{,}498\cdot 10^{-3}$~s.
+  \item (c) $312/19{,}5=16$.
+\end{enumerate}
+\resultado \textbf{(a) $9{,}18\cdot 10^{13}$ operaciones/s; (b) unos $1{,}5$~ms; (c) un factor~16.}
+\comprobacion $1{,}5\cdot 10^{-3}\cdot 9{,}175\cdot 10^{13}=1{,}38\cdot 10^{11}$ operaciones, el valor del paso~2.
+\end{solucion}
+
+\begin{solucion}{eje:1-gpt2}
+\datos $V=50\,257$; $T=1024$; $L=12$; $d=768$; $d_{\mathrm{ff}}=2048$.
+\planteamiento sumar los parámetros de cada matriz; para los FLOP, aplicar $2mkn$ a cada producto (\cref{prop:flop-matmul}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Embeddings}: $Vd=50\,257\cdot 768=38\,597\,376$. Cabeza de salida: otros $38\,597\,376$.
+  \item Por bloque: atención $4d^{2}=4\cdot 589\,824=2\,359\,296$ ($W_Q,W_K,W_V,W_O$); MLP $3dd_{\mathrm{ff}}=3\cdot 768\cdot 2048=4\,718\,592$; normas $2d=1536$. Suma: $7\,079\,424$.
+  \item Total: $38\,597\,376+12\cdot 7\,079\,424+768+38\,597\,376=38\,597\,376+84\,953\,088+768+38\,597\,376=162\,148\,608$.
+  \item Memoria fp32: $162\,148\,608\cdot 4=648\,594\,432$~bytes $\approx 649$~MB.
+  \item FLOP por bloque: proyecciones $Q,K,V$: $3\cdot 2Td^{2}=3\,623\,878\,656$; $QK\T$: $2T^{2}d=1\,610\,612\,736$; producto por $V$: $1\,610\,612\,736$; $W_O$: $2Td^{2}=1\,207\,959\,552$; MLP: $3\cdot 2Tdd_{\mathrm{ff}}=9\,663\,676\,416$.
+  \item Suma por bloque: $1{,}772\cdot 10^{10}$; por 12 bloques: $2{,}126\cdot 10^{11}$.
+  \item Cabeza: $2TdV=2\cdot 1024\cdot 768\cdot 50\,257=7{,}905\cdot 10^{10}$.
+  \item Total: $2{,}126\cdot 10^{11}+0{,}7905\cdot 10^{11}=2{,}916\cdot 10^{11}$ FLOP.
+  \item Porcentajes: proyecciones de atención $12\cdot(3{,}624+1{,}208)\cdot 10^{9}/2{,}916\cdot 10^{11}=19{,}9\,\%$; $QK\T$ y $\cdot V$: $12\cdot 3{,}221\cdot 10^{9}/2{,}916\cdot 10^{11}=13{,}3\,\%$; MLP: $12\cdot 9{,}664\cdot 10^{9}/2{,}916\cdot 10^{11}=39{,}8\,\%$; cabeza: $7{,}905/29{,}16=27{,}1\,\%$.
+\end{enumerate}
+\resultado \textbf{(a) $162{,}1$ millones de parámetros, unos 649~MB en fp32. (b) $2{,}92\cdot 10^{11}$ FLOP por secuencia: MLP 39{,}8~\%, cabeza 27{,}1~\%, proyecciones de atención 19{,}9~\%, $QK\T$ y $\cdot V$ 13{,}3~\%.}
+\comprobacion la regla $2NT$ del \cref{cor:6nd}, con $N$ sin los \emph{embeddings} de entrada ($1{,}236\cdot 10^{8}$), da $2\cdot 1{,}236\cdot 10^{8}\cdot 1024=2{,}530\cdot 10^{11}$; sumando la parte de la atención que no multiplica pesos ($12\cdot 3{,}221\cdot 10^{9}=3{,}865\cdot 10^{10}$) se obtiene $2{,}917\cdot 10^{11}$. Los porcentajes suman $100{,}1\,\%$ por redondeo.
+\end{solucion}
+
+\begin{solucion}{eje:1-sistolica}
+\datos $a_{ik}$ entra en $(i,1)$ en el ciclo $k+i-1$ y avanza a la derecha; $b_{kj}$ entra en $(1,j)$ en el ciclo $k+j-1$ y avanza hacia abajo; un salto por ciclo.
+\planteamiento calcular el ciclo de llegada de cada dato a la celda $(i,j)$ y comparar.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item De $(i,1)$ a $(i,j)$ hay $j-1$ saltos: $a_{ik}$ llega a $(i,j)$ en el ciclo $(k+i-1)+(j-1)=k+i+j-2$.
+  \item De $(1,j)$ a $(i,j)$ hay $i-1$ saltos: $b_{kj}$ llega en el ciclo $(k+j-1)+(i-1)=k+i+j-2$. Ambos coinciden.
+  \item En el ciclo $t$, la celda $(i,j)$ recibe por la izquierda el único $a_{ik}$ con $k=t-i-j+2$ y por arriba el único $b_{k'j}$ con $k'=t-i-j+2$: los índices internos coinciden, de modo que siempre multiplica un par correcto $a_{ik}b_{kj}$.
+  \item Al variar $t$, $k=t-i-j+2$ recorre $1,\dots,n$ exactamente una vez (para $t=i+j-1,\dots,i+j+n-2$): la celda recibe los $n$ pares y acumula $c_{ij}=\sum_{k=1}^{n}a_{ik}b_{kj}$.
+  \item El último producto es el de la celda $(n,n)$ con $k=n$: ciclo $n+n+n-2=3n-2$. \qedhere
+\end{enumerate}
+\resultado \textbf{los factores llegan sincronizados en el ciclo $k+i+j-2$; cada celda recibe los $n$ pares; el producto termina en el ciclo $3n-2$.}
+\comprobacion con $n=1$ se termina en el ciclo~1. Con $n=3$ (\cref{fig:sistolica}), $a_{33}$ entra en la celda $(3,1)$ en el ciclo $3+3-1=5$ y, tras 2 saltos, llega a $(3,3)$ en el ciclo~7, el mismo en que llega $b_{33}$: $3n-2=7$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-matvec}
+\datos matriz $n\times n$ con $n=4096$ en bf16 ($s=2$); 1 y 64 vectores.
+\planteamiento $I=F/Q$ con $Q$ la matriz más los vectores de entrada y salida; $P=\min(\Ppico,I\Bmem)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Un vector: $F=2n^{2}=2\cdot 16\,777\,216=3{,}355\cdot 10^{7}$; $Q=2(n^{2}+2n)=3{,}357\cdot 10^{7}$ bytes.
+  \item $I=3{,}355/3{,}357=0{,}9995\approx 1$; $P=\min(312;\ 0{,}9995\cdot 2)=2{,}0$~TFLOP/s, el $2/312=0{,}64\,\%$ del máximo.
+  \item 64 vectores: $F=2n^{2}\cdot 64=2{,}147\cdot 10^{9}$; $Q=2(n^{2}+2\cdot 64\,n)=2(16\,777\,216+524\,288)=3{,}460\cdot 10^{7}$ bytes.
+  \item $I=2{,}147\cdot 10^{9}/3{,}460\cdot 10^{7}=62{,}06$; $P=\min(312;\ 124{,}1)=124{,}1$~TFLOP/s, un $39{,}8\,\%$.
+\end{enumerate}
+\resultado \textbf{con un vector, $I\approx 1$ y solo un $0{,}6\,\%$ del máximo; con 64, $I\approx 62$ y unos 124~TFLOP/s, todavía limitado por la memoria ($62<156$).}
+\comprobacion por el \cref{cor:matvec}, $I\approx b$ para $b$ vectores en bf16; harían falta unos 160 vectores para superar $\Icrit$.
+\end{solucion}
+
+\begin{solucion}{eje:2-matmul}
+\datos $n=2048$; bf16; A100.
+\planteamiento \cref{prop:intensidad-matmul}; tiempos $F/\Ppico$ y $Q/\Bmem$ (\cref{teo:roofline}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $F=2n^{3}=2\cdot 8\,589\,934\,592=1{,}718\cdot 10^{10}$.
+  \item $Q=3n^{2}\cdot 2=3\cdot 4\,194\,304\cdot 2=25\,165\,824$~bytes ($25{,}2$~MB).
+  \item $I=1{,}718\cdot 10^{10}/2{,}517\cdot 10^{7}=682{,}7$~FLOP/byte $=2048/3$.
+  \item $t_c=1{,}718\cdot 10^{10}/3{,}12\cdot 10^{14}=5{,}506\cdot 10^{-5}$~s $=55{,}1$~$\mu$s.
+  \item $t_m=2{,}517\cdot 10^{7}/2\cdot 10^{12}=1{,}258\cdot 10^{-5}$~s $=12{,}6$~$\mu$s.
+\end{enumerate}
+\resultado \textbf{$1{,}72\cdot 10^{10}$ FLOP; 25{,}2~MB; $I\approx 683$; $t_c\approx 55$~$\mu$s frente a $t_m\approx 12{,}6$~$\mu$s: limita el cómputo.}
+\comprobacion $t_c/t_m=55{,}06/12{,}58=4{,}38=I/\Icrit=682{,}7/156$.
+\end{solucion}
+
+\begin{solucion}{eje:2-gelu}
+\datos 4 bytes por elemento (2 leídos y 2 escritos); 10 FLOP por elemento.
+\planteamiento $I=F/Q$ por elemento; $P=\min(\Ppico,I\Bmem)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $I=10/4=2{,}5$~FLOP/byte.
+  \item $I\Bmem=2{,}5\cdot 2\cdot 10^{12}=5\cdot 10^{12}$~FLOP/s.
+  \item $P=\min(312;\ 5)=5$~TFLOP/s, un $5/312=1{,}6\,\%$ del máximo.
+\end{enumerate}
+\resultado \textbf{$I=2{,}5$ y como mucho 5~TFLOP/s. Se evita fusionando la GELU con el producto de matrices anterior (\cref{prop:fusion}), de modo que el dato no vuelve a la HBM.}
+\comprobacion $\Icrit/I=156/2{,}5=62{,}4$: la operación está muy lejos del codo.
+\end{solucion}
+
+\begin{solucion}{eje:2-int8}
+\datos $X\in\R^{B\times D}$ en bf16 (2 bytes), $W\in\R^{D\times F}$ en int8 (1 byte), salida $B\times F$ en bf16; $\Icrit=156$.
+\planteamiento contar FLOP y bytes como en la \cref{prop:intensidad-matmul} con tamaños distintos por matriz; imponer $I\ge\Icrit$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $F=2BDF$; $Q=2BD+DF+2BF$ bytes.
+  \item (b) Si $B\ll D,F$, domina $DF$: $I\approx 2BDF/(DF)=2B$. Limitado por el cómputo si $2B\ge 156$, es decir, $B\ge 78$.
+  \item Con pesos en bf16, $Q\approx 2DF$ e $I\approx B$: hace falta $B\ge 156$, el doble.
+  \item (c) Con $D=F=4096$: $I=2BD^{2}/(4BD+D^{2})=2BD/(4B+D)$. La condición $2BD\ge 156(4B+D)$ da $B(2D-624)\ge 156D$, es decir, $B\ge 156\cdot 4096/7568=84{,}43$.
+  \item Para pesos en bf16: $I=BD/(2B+D)\ge 156$ da $B\ge 156\cdot 4096/(4096-312)=168{,}9$.
+\end{enumerate}
+\resultado \textbf{(a) $2BDF$ FLOP y $2BD+DF+2BF$ bytes. (b) $B\gtrsim 78$ con pesos int8 frente a $B\gtrsim 156$ con pesos bf16. (c) $B\ge 85$ (frente a $B\ge 169$).}
+\comprobacion con $B=85$: $I=2\cdot 85\cdot 4096/(340+4096)=696\,320/4436=157{,}0\ge 156$; con $B=84$: $688\,128/4432=155{,}3<156$.
+\end{solucion}
+
+\begin{solucion}{eje:2-cuadrada}
+\datos $A,B,C\in\R^{n\times n}$ en bf16 ($s=2$); $\Icrit=156$.
+\planteamiento contar FLOP y bytes mínimos; imponer $I\ge\Icrit$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item FLOP: $C$ tiene $n^{2}$ elementos y cada uno es un producto escalar de longitud $n$ ($n$ multiplicaciones y $n$ sumas): $F=2n\cdot n^{2}=2n^{3}$.
+  \item Bytes: leer $A$ y $B$ y escribir $C$ una vez cada una: $3n^{2}$ números de 2 bytes, $Q=6n^{2}$.
+  \item $I=2n^{3}/(6n^{2})=n/3$.
+  \item $n/3\ge 156\iff n\ge 468$. \qedhere
+\end{enumerate}
+\resultado \textbf{$I=n/3$; hace falta $n\ge 468$. En la práctica se usan múltiplos de 64 o 128, es decir, $n\ge 512$.}
+\comprobacion $n=256$ da $I=85{,}3<156$ (memoria) y $n=4096$ da $I=1365>156$ (cómputo), como en la \cref{fig:roofline}.
+\end{solucion}
+
+\begin{solucion}{eje:2-tiling}
+\datos bloques de $C$ de $b_m\times b_n$, trozos de $b_k$ en la dimensión interna; SRAM de 192~KiB; bf16.
+\planteamiento contar las cargas por bloque de $C$ y multiplicar por el número de bloques; minimizar con la desigualdad entre medias.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Hay $n^{2}/(b_mb_n)$ bloques de $C$. Para cada uno se recorren $n/b_k$ pasos; en cada paso se cargan un bloque de $A$ ($b_m\times b_k$) y uno de $B$ ($b_k\times b_n$): $b_k(b_m+b_n)$ números.
+  \item Por bloque de $C$: $(n/b_k)\cdot b_k(b_m+b_n)=n(b_m+b_n)$. Total: $\dfrac{n^{2}}{b_mb_n}\cdot n(b_m+b_n)=\dfrac{n^{3}(b_m+b_n)}{b_mb_n}$, que no depende de $b_k$.
+  \item (b) Con $b_mb_n=\alpha$ fijo, el tráfico es proporcional a $b_m+b_n\ge 2\sqrt{b_mb_n}=2\sqrt{\alpha}$, con igualdad si y solo si $b_m=b_n$.
+  \item (c) $3b^{2}\cdot 2\le 192\cdot 1024=196\,608$ da $b^{2}\le 32\,768$, $b\le 181$. La mayor potencia de 2 es $b=128$: $3\cdot 128^{2}\cdot 2=98\,304$~bytes $=96$~KiB. Con $b=256$ harían falta 384~KiB.
+  \item Intensidad respecto a la SRAM: $I\approx b/s=128/2=64$~FLOP/byte.
+\end{enumerate}
+\resultado \textbf{(a) $n^{3}(b_m+b_n)/(b_mb_n)$ números; (b) bloques cuadrados; (c) $b=128$, con $I\approx 64$~FLOP/byte.}
+\comprobacion con $b_m=b_n=b$, (a) da $2n^{3}/b$, el valor de la \cref{prop:tiling}. Que $64<156$ no implica que el producto esté limitado por la memoria en la GPU: la caché L2 añade otro nivel de reutilización (observación final del \cref{tema:2}).
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-jerarquia}
+\datos HBM, registros, red entre nodos, SRAM, NVLink.
+\planteamiento \cref{tab:jerarquia}: cuanto más cerca de las unidades de cálculo, más rápido y más pequeño.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Dentro de cada SM: registros y, después, SRAM (decenas de TB/s agregados).
+  \item En el encapsulado de la GPU: HBM, unos 2~TB/s.
+  \item Entre GPU de un nodo: NVLink, 600~GB/s.
+  \item Entre nodos: InfiniBand, decenas de GB/s por GPU.
+\end{enumerate}
+\resultado \textbf{registros $>$ SRAM $>$ HBM $>$ NVLink $>$ red entre nodos. FlashAttention gestiona la SRAM: decide qué bloques de $Q$, $K$ y $V$ carga en ella y el tamaño de esos bloques ($B_r$, $B_c$).}
+\comprobacion cada salto reduce el ancho de banda: decenas de TB/s, 2~TB/s, 600~GB/s, decenas de GB/s.
+\end{solucion}
+
+\begin{solucion}{eje:3-online}
+\datos $x=(2,-1,4,1)$; bloques $(2,-1)$ y $(4,1)$.
+\planteamiento estadísticos de cada bloque y \cref{lem:combinacion}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Bloque~1: $m_1=2$; $\ell_1=e^{0}+e^{-3}=1+0{,}0498=1{,}0498$.
+  \item Bloque~2: $m_2=4$; $\ell_2=e^{0}+e^{-3}=1{,}0498$.
+  \item $m=\max(2,4)=4$.
+  \item $\ell=\ell_1e^{2-4}+\ell_2e^{0}=1{,}0498\cdot 0{,}1353+1{,}0498=0{,}1421+1{,}0498=1{,}1919$.
+  \item $\softmax(x)=(e^{-2},e^{-5},e^{0},e^{-3})/1{,}1919=(0{,}1353;\ 0{,}0067;\ 1;\ 0{,}0498)/1{,}1919=(0{,}1135;\ 0{,}0057;\ 0{,}8390;\ 0{,}0418)$.
+\end{enumerate}
+\resultado \textbf{$m_1=2$, $\ell_1=1{,}0498$; $m_2=4$, $\ell_2=1{,}0498$; $\ell=1{,}1919$; $\softmax(x)=(0{,}1135;\ 0{,}0057;\ 0{,}8390;\ 0{,}0418)$.}
+\comprobacion directamente, $\ell=\sum_je^{x_j-4}=0{,}1353+0{,}0067+1+0{,}0498=1{,}1919$, y las probabilidades suman $1{,}0000$.
+\end{solucion}
+
+\begin{solucion}{eje:3-S}
+\datos $n=4096$; $d=128$; bf16 (2 bytes); $\Ppico=312$~TFLOP/s; $\Bmem=2$~TB/s.
+\planteamiento $S$ tiene $n^{2}$ elementos; tiempo de memoria $=$ bytes$/\Bmem$; tiempo de cómputo $=2n^{2}d/\Ppico$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $n^{2}\cdot 2=16\,777\,216\cdot 2=33\,554\,432$~bytes $=32$~MiB.
+  \item 32 cabezas: $32\cdot 32$~MiB $=1024$~MiB $=1$~GiB.
+  \item $n=32\,768$: $32\,768^{2}\cdot 2=2^{31}$~bytes $=2$~GiB por cabeza.
+  \item (b) Escribir y leer $S$: $2\cdot 33\,554\,432/(2\cdot 10^{12})=3{,}355\cdot 10^{-5}$~s $=33{,}6$~$\mu$s.
+  \item $QK\T$: $2n^{2}d=2\cdot 16\,777\,216\cdot 128=4{,}295\cdot 10^{9}$ FLOP; $4{,}295\cdot 10^{9}/3{,}12\cdot 10^{14}=1{,}377\cdot 10^{-5}$~s $=13{,}8$~$\mu$s.
+\end{enumerate}
+\resultado \textbf{(a) 32~MiB por cabeza, 1~GiB con 32 cabezas y 2~GiB por cabeza con $n=32\,768$. (b) Mover $S$ cuesta unos 33{,}6~$\mu$s, $2{,}4$ veces más que calcularla (13{,}8~$\mu$s).}
+\comprobacion multiplicar $n$ por 8 multiplica $S$ por 64: $32\text{ MiB}\cdot 64=2$~GiB.
+\end{solucion}
+
+\begin{solucion}{eje:3-trafico}
+\datos $n=4096$; $d=64$; $M=2^{15}=32\,768$ elementos.
+\planteamiento tamaños de bloque del algoritmo; \cref{prop:atencion-estandar} y \cref{prop:flash-trafico}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $B_c=\lceil 32\,768/256\rceil=128$; $B_r=\min(128,64)=64$; $T_c=4096/128=32$; $T_r=4096/64=64$.
+  \item (b) Estándar: $4n^{2}+4nd=4\cdot 16\,777\,216+4\cdot 262\,144=67\,108\,864+1\,048\,576=68\,157\,440$ elementos.
+  \item FlashAttention: $nd+2n=262\,144+8192=270\,336$; $2nd=524\,288$; $3nd+4n=786\,432+16\,384=802\,816$, por $T_c=32$: $25\,690\,112$.
+  \item Total FlashAttention: $270\,336+524\,288+25\,690\,112=26\,484\,736$ elementos.
+  \item Cociente: $68\,157\,440/26\,484\,736=2{,}573$.
+\end{enumerate}
+\resultado \textbf{(a) $B_c=128$, $B_r=64$, $T_c=32$, $T_r=64$. (b) $6{,}82\cdot 10^{7}$ elementos frente a $2{,}65\cdot 10^{7}$: unas $2{,}6$ veces menos tráfico, y sin la memoria de $n^{2}$ elementos.}
+\comprobacion el término dominante $12n^{2}d^{2}/M=12\cdot 16\,777\,216\cdot 4096/32\,768=2{,}517\cdot 10^{7}$ coincide con $T_c\cdot 3nd=25\,165\,824$, el 95~\% del total. Con una SRAM mayor, $T_c$ y el tráfico disminuyen en proporción.
+\end{solucion}
+
+\begin{solucion}{eje:3-pytorch}
+\datos lote 8; una cabeza; $d=64$; fp32 (4 bytes); $n=4096$ y $16\,384$.
+\planteamiento $P$ tiene $8n^{2}$ elementos; $Q$, $K$ y $V$, $3\cdot 8\cdot nd$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $n=4096$: $8\cdot 16\,777\,216\cdot 4=536\,870\,912$~bytes $=0{,}5$~GiB.
+  \item $n=16\,384$: $8\cdot 268\,435\,456\cdot 4=8\,589\,934\,592$~bytes $=8$~GiB.
+  \item (b) $n=4096$: $3\cdot 8\cdot 4096\cdot 64\cdot 4=25\,165\,824$~bytes $=24$~MiB. $n=16\,384$: 96~MiB.
+  \item (c) Cociente: $8n^{2}\cdot 4/(3\cdot 8\cdot nd\cdot 4)=n/(3d)=n/192$: $21{,}3$ para $n=4096$ y $85{,}3$ para $n=16\,384$.
+\end{enumerate}
+\resultado \textbf{(a) 0{,}5~GiB y 8~GiB. (b) 24~MiB y 96~MiB. (c) El cociente es $n/192$: crece linealmente con $n$. FlashAttention elimina $P$: guarda solo $(m,\ell)$ por fila y recalcula los bloques en la pasada hacia atrás.}
+\comprobacion multiplicar $n$ por 4 multiplica $P$ por 16 ($0{,}5\to 8$~GiB) y $Q,K,V$ por 4 ($24\to 96$~MiB).
+\end{solucion}
+
+\begin{solucion}{eje:3-asociativa}
+\datos $(m_1,\ell_1)\oplus(m_2,\ell_2)=(M,\ \ell_1e^{m_1-M}+\ell_2e^{m_2-M})$, $M=\max(m_1,m_2)$.
+\planteamiento asociar a cada par el número $\varphi(m,\ell)=\ell\,e^{m}$ (con $\varphi(-\infty,0)=0$) y traducir $\oplus$ a operaciones conocidas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El par queda determinado por su primera componente y por $\varphi$: $\ell=\varphi\,e^{-m}$ si $m>-\infty$, y $\ell=0$ si $m=-\infty$.
+  \item La primera componente de $a\oplus b$ es $\max(m_1,m_2)$, y $\varphi(a\oplus b)=e^{M}(\ell_1e^{m_1-M}+\ell_2e^{m_2-M})=\ell_1e^{m_1}+\ell_2e^{m_2}=\varphi(a)+\varphi(b)$.
+  \item Conmutatividad: $\max$ y $+$ son conmutativos, luego $a\oplus b$ y $b\oplus a$ tienen la misma primera componente y el mismo $\varphi$; por el paso~1 son iguales.
+  \item Asociatividad: $(a\oplus b)\oplus c$ y $a\oplus(b\oplus c)$ tienen primera componente $\max(m_1,m_2,m_3)$ y $\varphi=\varphi(a)+\varphi(b)+\varphi(c)$; por el paso~1 son iguales.
+  \item Neutro: $(m,\ell)\oplus(-\infty,0)$ tiene primera componente $\max(m,-\infty)=m$ y $\varphi=\varphi(m,\ell)+0$; es $(m,\ell)$.
+  \item Consecuencia: los estadísticos de $\{1,\dots,n\}$ son la $\oplus$-suma de los de los bloques (\cref{lem:combinacion}), y una operación asociativa y conmutativa da el mismo resultado con cualquier agrupación y orden. Varios hilos pueden calcular los estadísticos de trozos distintos y combinarlos en árbol, en $\lceil\log_2 k\rceil$ niveles para $k$ trozos. \qedhere
+\end{enumerate}
+\resultado \textbf{$\oplus$ es conmutativa y asociativa, con neutro $(-\infty,0)$; la softmax en línea es independiente del orden y de la agrupación y admite una reducción paralela.}
+\comprobacion con el \cref{ej:online}: $\varphi(3;\ 1{,}1353)+\varphi(2;\ 1{,}1353)=1{,}1353(e^{3}+e^{2})=31{,}192$, y $\varphi(3;\ 1{,}5530)=1{,}5530\,e^{3}=31{,}193$. Además, $\varphi$ solo se usa en la demostración: el algoritmo nunca calcula $e^{m}$, que podría desbordarse.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-receta}
+\planteamiento aplicar la receta de Micikevicius \emph{et al.} (§3.1--3.3) con bf16.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{bf16.} Los núcleos tensoriales son 16 veces más rápidos en bf16 que las unidades fp32 en la A100, y los datos ocupan la mitad.
+  \item \textbf{fp32.} Por el \cref{teo:suma}, la cota de error crece con el número de sumandos y es inútil en 16 bits para sumas largas (\cref{eje:4-acumular}).
+  \item \textbf{fp32.} Por el \cref{cor:actualizacion}, en bf16 se perderían las actualizaciones menores que $2^{-8}$ veces el peso.
+  \item \textbf{fp32.} El segundo momento acumula cuadrados de gradientes pequeños y se usa en una raíz y una división: necesita rango y precisión.
+  \item \textbf{fp32.} Es una reducción larga, como en (b).
+\end{enumerate}
+\resultado \textbf{factores en bf16; acumuladores, copia maestra, momentos y reducciones en fp32. No se escala la pérdida porque bf16 tiene el rango de fp32 (8 bits de exponente): los gradientes pequeños no se anulan.}
+\comprobacion en fp16 el menor positivo es $2^{-24}\approx 6\cdot 10^{-8}$; en bf16, el menor normal es $2^{-126}\approx 1{,}2\cdot 10^{-38}$.
+\end{solucion}
+
+\begin{solucion}{eje:4-formatos}
+\datos fp16: $p=10$, sesgo 15; bf16: $p=7$, sesgo 127; E5M2: $p=2$, sesgo 15.
+\planteamiento \cref{prop:rango} con $E_{\max}=b$ y $E_{\min}=1-b$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item fp16: máximo $(2-2^{-10})\cdot 2^{15}=1{,}99902\cdot 32\,768=65\,504$; menor normal $2^{-14}=6{,}104\cdot 10^{-5}$; $\varepsilon=2^{-10}=9{,}766\cdot 10^{-4}$.
+  \item bf16: máximo $(2-2^{-7})\cdot 2^{127}=1{,}99219\cdot 1{,}7014\cdot 10^{38}=3{,}390\cdot 10^{38}$; menor normal $2^{-126}=1{,}175\cdot 10^{-38}$; $\varepsilon=2^{-7}=7{,}813\cdot 10^{-3}$.
+  \item E5M2: máximo $(2-2^{-2})\cdot 2^{15}=1{,}75\cdot 32\,768=57\,344$; menor normal $2^{-14}=6{,}104\cdot 10^{-5}$; $\varepsilon=2^{-2}=0{,}25$.
+\end{enumerate}
+\resultado \textbf{fp16: $65\,504$, $6{,}10\cdot 10^{-5}$, $9{,}77\cdot 10^{-4}$. bf16: $3{,}39\cdot 10^{38}$, $1{,}18\cdot 10^{-38}$, $7{,}81\cdot 10^{-3}$. E5M2: $57\,344$, $6{,}10\cdot 10^{-5}$, $0{,}25$.} Coinciden con la \cref{tab:formatos}.
+\comprobacion E5M2 tiene el mismo exponente que fp16 y, por tanto, el mismo menor normal; solo cambia la mantisa.
+\end{solucion}
+
+\begin{solucion}{eje:4-maestra}
+\datos $w=1$; $\Delta w=0{,}001$ y $0{,}004$; bf16 ($p=7$), fp16 ($p=10$), fp32 ($p=23$).
+\planteamiento junto a 1 la separación es $\varepsilon=2^{-p}$; \cref{lem:estancamiento}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) bf16: $\ulp(1)/2=2^{-8}=0{,}0039>0{,}001$: $\fl(1{,}001)=1$.
+  \item fp16: $\ulp(1)=2^{-10}=0{,}000977$; $1{,}001$ está a $0{,}000023$ de $1+2^{-10}=1{,}0009766$ y a $0{,}001$ de 1: $\fl(1{,}001)=1{,}0009766$.
+  \item fp32: $\ulp(1)=1{,}19\cdot 10^{-7}$: $\fl(1{,}001)=1{,}0010000$, con error menor que $6\cdot 10^{-8}$.
+  \item (b) Por el \cref{lem:estancamiento}, se pierde si $\Delta w<2^{-8}$; si $\Delta w=2^{-8}$ hay empate y se redondea al par, que es 1. La actualización modifica el peso si y solo si $\Delta w>2^{-8}=0{,}0039$.
+  \item (c) $1{,}004$ está entre $1$ y $1+2^{-7}=1{,}0078125$, a $0{,}004$ del primero y a $0{,}0038$ del segundo: $\fl(1{,}004)=1{,}0078125$.
+  \item Error relativo de la actualización aplicada: $(0{,}0078125-0{,}004)/0{,}004=0{,}953$.
+\end{enumerate}
+\resultado \textbf{(a) 1 en bf16, $1{,}0009766$ en fp16 y $1{,}001$ en fp32. (b) Solo si $\Delta w>2^{-8}\approx 0{,}0039$. (c) $1{,}0078125$: la actualización aplicada casi duplica la deseada (error del 95~\%).}
+\comprobacion los tres casos son el mismo fenómeno: en bf16 solo hay 128 representables en $[1,2)$, y cualquier actualización se redondea a un múltiplo de $2^{-7}$.
+\end{solucion}
+
+\begin{solucion}{eje:4-acumular}
+\datos sumando fp16 $a=0{,}0100021$; acumulador $8$ tras 750 sumas; fp16 con $p=10$.
+\planteamiento en $[2^{E},2^{E+1})$ la separación es $2^{E-10}$ (\cref{prop:rango}); cada suma se redondea al más cercano.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) En $[8,16)$, $E=3$: $2^{3-10}=2^{-7}=0{,}0078125$.
+  \item (b) $8+0{,}0100021=8{,}0100021$; candidatos $8{,}0078125$ (a $0{,}0022$) y $8{,}015625$ (a $0{,}0056$): se redondea al primero, y la suma aporta $0{,}0078125$.
+  \item Lo mismo en cada suma mientras el acumulador esté en $[8,16)$. Las 250 sumas restantes aportan $250\cdot 0{,}0078125=1{,}953125$; resultado final $9{,}953125$.
+  \item (c) Con acumulador fp32, la separación cerca de 10 es $2^{3-23}\approx 9{,}5\cdot 10^{-7}$: el redondeo es despreciable y el resultado es $\approx 1000\cdot 0{,}0100021=10{,}0021$.
+\end{enumerate}
+\resultado \textbf{(a) $0{,}0078125$. (b) Cada suma aporta $0{,}0078125$; el total es $9{,}953$ (error del $0{,}47\,\%$). (c) $10{,}002$: el error se debe solo a representar $0{,}01$ en fp16.}
+\comprobacion la simulación en NumPy da $9{,}953125$ con acumulador fp16 y $10{,}002136$ con acumulador fp32.
+\end{solucion}
+
+\begin{solucion}{eje:4-cuantizacion}
+\datos $x=(-1{,}234;\ 0{,}5;\ 0{,}0123;\ 2{,}54)$; $b=8$, luego $2^{b-1}-1=127$.
+\planteamiento \cref{def:cuantizacion}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\Delta=2{,}54/127=0{,}02$.
+  \item $x/\Delta=(-61{,}7;\ 25;\ 0{,}615;\ 127)$; redondeando, $q=(-62;\ 25;\ 1;\ 127)$.
+  \item $\hat x=\Delta q=(-1{,}24;\ 0{,}5;\ 0{,}02;\ 2{,}54)$.
+  \item Errores: $\abs{\hat x-x}=(0{,}006;\ 0;\ 0{,}0077;\ 0)$.
+\end{enumerate}
+\resultado \textbf{$\Delta=0{,}02$; $q=(-62,25,1,127)$; $\hat x=(-1{,}24;\ 0{,}5;\ 0{,}02;\ 2{,}54)$; error máximo $0{,}0077\le\Delta/2=0{,}01$.}
+\comprobacion el error relativo de la componente pequeña es $0{,}0077/0{,}0123=63\,\%$: el paso lo fija el máximo, y los valores pequeños pierden casi toda su precisión, como advierte el texto.
+\end{solucion}
+
+\begin{solucion}{eje:4-estancamiento}
+\datos $a=0{,}0100021$; fp16 ($p=10$); acumulador $8$ tras 750 sumas.
+\planteamiento comparar $a$ con $\ulp$ y $\ulp/2$ en cada intervalo binario; \cref{lem:estancamiento}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $E=3$: $\ulp=2^{-7}=0{,}0078125$. Como $\ulp<a<2\,\ulp$, $s+a$ está entre $s+\ulp$ y $s+2\ulp$; $a-\ulp=0{,}0022<2\ulp-a=0{,}0056$, luego $\fl(s+a)=s+\ulp$.
+  \item $E=4$: $\ulp=2^{-6}=0{,}015625$. Ahora $0<a<\ulp$; $a=0{,}0100>\ulp-a=0{,}0056$, luego $\fl(s+a)=s+\ulp$. En ambos casos cada suma aporta exactamente un $\ulp$.
+  \item (b) En $[32,64)$, $E=5$: $\ulp/2=2^{-6}=0{,}015625>a$. Por el \cref{lem:estancamiento}, $\fl(32+a)=32$: el acumulador se estanca.
+  \item (c) De 8 a 16 con pasos de $2^{-7}$: $8/2^{-7}=1024$ sumas. De 16 a 32 con pasos de $2^{-6}$: $16/2^{-6}=1024$ sumas. Total: $750+1024+1024=2798$. \qedhere
+\end{enumerate}
+\resultado \textbf{cada suma aporta $2^{-7}$ en $[8,16)$ y $2^{-6}$ en $[16,32)$; al llegar a 32 el acumulador no cambia más; se estanca tras 2798 sumas, con valor 32 en lugar de $27{,}99$.}
+\comprobacion la simulación en NumPy alcanza 32 en la suma 2798 y no cambia después; el valor exacto sería $2798\cdot 0{,}0100021=27{,}99$, y el error se debe a que en $[16,32)$ cada suma aporta $0{,}0156$ en lugar de $0{,}0100$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-vf}
+\planteamiento contrastar cada afirmación con los temas~3 a~5.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Falsa.} Por el \cref{teo:flash-exacto}, FlashAttention calcula exactamente $\softmax(QK\T)V$; solo cambia el orden de las operaciones y los accesos a memoria.
+  \item \textbf{Verdadera.} En ZeRO-3 cada rango guarda $1/n_{\mathrm{d}}$ de los pesos (\cref{prop:zero}) y los reúne capa a capa.
+  \item \textbf{Falsa.} En $(p_{\mathrm{e}}-1)/(m+p_{\mathrm{e}}-1)$, $m$ está en el denominador: la burbuja disminuye al crecer $m$.
+  \item \textbf{Verdadera.} El rango lo fija el exponente, de 8 bits en ambos (\cref{tab:formatos}); bf16 solo tiene menos mantisa.
+\end{enumerate}
+\resultado \textbf{(a) F; (b) V; (c) F; (d) V.}
+\comprobacion en (c), cuando $m\to\infty$ la burbuja tiende a~0: el pipeline está siempre lleno.
+\end{solucion}
+
+\begin{solucion}{eje:5-burbuja}
+\datos $p_{\mathrm{e}}=4$; $m=8$, $32$ y $1$.
+\planteamiento $\beta_{\mathrm{tot}}=(p_{\mathrm{e}}-1)/(m+p_{\mathrm{e}}-1)$ y $\beta=(p_{\mathrm{e}}-1)/m$ (\cref{prop:burbuja}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $m=8$: $\beta_{\mathrm{tot}}=3/11=0{,}2727$; $\beta=3/8=0{,}375$.
+  \item $m=32$: $\beta_{\mathrm{tot}}=3/35=0{,}0857$; $\beta=3/32=0{,}0938$.
+  \item $m=1$: $\beta_{\mathrm{tot}}=3/4=0{,}75$.
+  \item GPipe recomienda $m\ge 4p_{\mathrm{e}}=16$.
+\end{enumerate}
+\resultado \textbf{$\beta_{\mathrm{tot}}=27{,}3\,\%$, $8{,}6\,\%$ y $75\,\%$; $\beta=37{,}5\,\%$ y $9{,}4\,\%$; al menos 16 microlotes.}
+\comprobacion $\beta/(1+\beta)=0{,}375/1{,}375=0{,}2727$ y $0{,}09375/1{,}09375=0{,}0857$: las dos medidas son coherentes.
+\end{solucion}
+
+\begin{solucion}{eje:5-zero}
+\datos $\Psi=7\cdot 10^{9}$; 2+2+12 bytes por parámetro; $n_{\mathrm{d}}=8$.
+\planteamiento \cref{prop:zero}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Pesos: $2\cdot 7\cdot 10^{9}=14$~GB; gradientes: 14~GB; optimizador: $12\cdot 7\cdot 10^{9}=84$~GB. Total: $112$~GB.
+  \item ZeRO-1: $4\Psi+12\Psi/8=28+10{,}5=38{,}5$~GB.
+  \item ZeRO-3: $16\Psi/8=112/8=14$~GB.
+\end{enumerate}
+\resultado \textbf{112~GB sin ZeRO (no cabe en una GPU de 80~GB); 38{,}5~GB con ZeRO-1 y 14~GB con ZeRO-3 por rango, más las activaciones.}
+\comprobacion $14\cdot 8=112$: ZeRO-3 no reduce el estado total, solo elimina las copias.
+\end{solucion}
+
+\begin{solucion}{eje:5-amdahl}
+\datos $f=0{,}05$; $n_{\mathrm{d}}=8$, $64$, $1024$.
+\planteamiento \cref{teo:amdahl}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $n_{\mathrm{d}}=8$: $A=1/(0{,}05+0{,}95/8)=1/(0{,}05+0{,}11875)=1/0{,}16875=5{,}926$.
+  \item $n_{\mathrm{d}}=64$: $A=1/(0{,}05+0{,}014844)=1/0{,}064844=15{,}42$.
+  \item $n_{\mathrm{d}}=1024$: $A=1/(0{,}05+0{,}000928)=1/0{,}050928=19{,}64$.
+  \item Límite: $1/f=20$.
+  \item (b) Eficiencia con 64 GPU: $15{,}42/64=0{,}241$.
+\end{enumerate}
+\resultado \textbf{(a) $5{,}93$, $15{,}4$ y $19{,}6$; límite~20. (b) Un 24~\%: tres cuartas partes de las GPU se desaprovechan.}
+\comprobacion $A$ es creciente en $n_{\mathrm{d}}$ y está por debajo de $1/f=20$ en los tres casos.
+\end{solucion}
+
+\begin{solucion}{eje:5-dp}
+\datos $B$, $D$, $D_{FF}$, $n_{\mathrm{d}}$, $C$, $W$; fp16 (2 bytes).
+\planteamiento contar los seis productos de la pasada hacia atrás con $B/n_{\mathrm{d}}$ filas; comunicar los gradientes de $W_1$, $W_2$ y $W_3$; comparar tiempos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Gradientes respecto a las activaciones: $dz=dy\,W_3\T$ cuesta $2(B/n_{\mathrm{d}})DD_{FF}$; $dx=dx_1W_1\T+dx_2W_2\T$, $2\cdot 2(B/n_{\mathrm{d}})DD_{FF}$.
+  \item Gradientes respecto a los pesos: $dW_3=z\T dy$, $dW_1=x\T dx_1$, $dW_2=x\T dx_2$: $3\cdot 2(B/n_{\mathrm{d}})DD_{FF}$.
+  \item (a) Total: $(2+4+6)(B/n_{\mathrm{d}})DD_{FF}=12BDD_{FF}/n_{\mathrm{d}}$ FLOP; $t_c=12BDD_{FF}/(n_{\mathrm{d}}C)$.
+  \item (b) Gradientes: $3DD_{FF}$ elementos de 2 bytes, $S=6DD_{FF}$; $t_{\mathrm{com}}=2(n_{\mathrm{d}}-1)\cdot 6DD_{FF}/(n_{\mathrm{d}}W)=12(n_{\mathrm{d}}-1)DD_{FF}/(n_{\mathrm{d}}W)$.
+  \item (c) $t_{\mathrm{com}}\le t_c\iff 12(n_{\mathrm{d}}-1)DD_{FF}/(n_{\mathrm{d}}W)\le 12BDD_{FF}/(n_{\mathrm{d}}C)\iff(n_{\mathrm{d}}-1)/W\le B/C\iff n_{\mathrm{d}}\le 1+BW/C$.
+  \item $BW/C=10^{6}\cdot 10^{11}/3{,}12\cdot 10^{14}=320{,}5$: $n_{\mathrm{d}}\le 321{,}5$.
+\end{enumerate}
+\resultado \textbf{(a) $12BDD_{FF}/n_{\mathrm{d}}$ FLOP. (b) $12(n_{\mathrm{d}}-1)DD_{FF}/(n_{\mathrm{d}}W)$~s. (c) $n_{\mathrm{d}}\le 1+BW/C$, independiente de $D$ y $D_{FF}$: con los datos, hasta 321 GPU.}
+\comprobacion con $D=4096$, $D_{FF}=16\,384$ y $n_{\mathrm{d}}=321$: $t_c=12\cdot 10^{6}\cdot 4096\cdot 16\,384/(321\cdot 3{,}12\cdot 10^{14})=8{,}04$~ms y $t_{\mathrm{com}}=12\cdot 320\cdot 4096\cdot 16\,384/(321\cdot 10^{11})=8{,}03$~ms: casi iguales en el límite.
+\end{solucion}
+
+\begin{solucion}{eje:5-anillo-malo}
+\datos $n_{\mathrm{d}}=8$; $S=2\cdot 10^{9}$~bytes; $W=10^{11}$~bytes/s.
+\planteamiento en cada paso cada rango envía $S$ bytes (no $S/n_{\mathrm{d}}$); hay $n_{\mathrm{d}}-1$ pasos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Un paso: $S/W$. Total: $(n_{\mathrm{d}}-1)S/W$.
+  \item Anillo estándar (\cref{prop:anillo}): $2(n_{\mathrm{d}}-1)S/(n_{\mathrm{d}}W)$.
+  \item Cociente: $\dfrac{(n_{\mathrm{d}}-1)S/W}{2(n_{\mathrm{d}}-1)S/(n_{\mathrm{d}}W)}=\dfrac{n_{\mathrm{d}}}{2}$.
+  \item Números: $7\cdot 2\cdot 10^{9}/10^{11}=0{,}14$~s; estándar: $2\cdot(7/8)\cdot 2\cdot 10^{9}/10^{11}=0{,}035$~s.
+\end{enumerate}
+\resultado \textbf{$(n_{\mathrm{d}}-1)S/W$, $n_{\mathrm{d}}/2$ veces más lento: 0{,}14~s frente a 0{,}035~s con 8 rangos.}
+\comprobacion con $n_{\mathrm{d}}=2$ el cociente es~1: ambos algoritmos envían $S$ bytes una vez.
+\end{solucion}
+
+\begin{solucion}{eje:5-burbuja-dem}
+\datos $p_{\mathrm{e}}$ etapas; $m$ microlotes; $\tau$ por microlote y etapa.
+\planteamiento calcular cuándo termina el último microlote y compararlo con el tiempo de trabajo de cada rango.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El microlote $j$ empieza en la etapa~1 en $(j-1)\tau$, porque esa etapa los procesa uno tras otro sin pausa.
+  \item Por inducción sobre $s$, el microlote $j$ empieza en la etapa $s$ en $(j+s-2)\tau$: la etapa $s$ necesita que la etapa $s-1$ haya terminado $j$, en $(j+s-3)\tau+\tau$, y haber terminado ella misma $j-1$, en $(j+s-3)\tau+\tau$; ambos instantes coinciden.
+  \item El último microlote ($j=m$) termina la última etapa ($s=p_{\mathrm{e}}$) en $(m+p_{\mathrm{e}}-2)\tau+\tau=(m+p_{\mathrm{e}}-1)\tau$, que es la duración total.
+  \item Cada rango procesa $m$ microlotes: trabaja $m\tau$.
+  \item Fracción ociosa: $\dfrac{(m+p_{\mathrm{e}}-1)\tau-m\tau}{(m+p_{\mathrm{e}}-1)\tau}=\dfrac{p_{\mathrm{e}}-1}{m+p_{\mathrm{e}}-1}$. \qedhere
+\end{enumerate}
+\resultado \textbf{duración $(m+p_{\mathrm{e}}-1)\tau$ y fracción ociosa $(p_{\mathrm{e}}-1)/(m+p_{\mathrm{e}}-1)$.}
+\comprobacion $p_{\mathrm{e}}=1$ da $0$ (sin pipeline no hay burbuja); $m=1$ da $(p_{\mathrm{e}}-1)/p_{\mathrm{e}}$ (solo trabaja una etapa cada vez). Con $p_{\mathrm{e}}=m=4$ da $3/7$, como en la \cref{fig:pipeline}.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-energia}
+\datos Horowitz (45~nm): suma fp32 $\approx 0{,}9$~pJ, multiplicación fp32 $\approx 3{,}7$~pJ, lectura DRAM de 32~bits $\approx 640$~pJ; Landauer a 300~K: $2{,}87\cdot 10^{-21}$~J.
+\planteamiento pasar todo a julios y comparar.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Landauer: $2{,}87\cdot 10^{-21}$~J $=2{,}87\cdot 10^{-9}$~pJ.
+  \item Suma: $0{,}9\cdot 10^{-12}$~J; multiplicación: $3{,}7\cdot 10^{-12}$~J; DRAM: $6{,}4\cdot 10^{-10}$~J.
+  \item Cociente DRAM/multiplicación: $640/3{,}7=173$.
+\end{enumerate}
+\resultado \textbf{Landauer $\ll$ suma $<$ multiplicación $\ll$ lectura de DRAM. Reutilizar un dato leído (matriz sistólica, \emph{tiling}, fusión) reparte el coste de una lectura cara entre muchas operaciones baratas.}
+\comprobacion la lectura de DRAM cuesta unas $2\cdot 10^{11}$ veces el límite de Landauer: el margen de mejora está sobre todo en el movimiento de datos.
+\end{solucion}
+
+\begin{solucion}{eje:6-chinchilla}
+\datos $N=7\cdot 10^{10}$; $D=1{,}4\cdot 10^{12}$; 312~TFLOP/s; $\MFU=0{,}4$; 1024 GPU; 400~W; $\PUE=1{,}2$; 2~\$ por GPU-hora.
+\planteamiento $C=6ND$; \cref{prop:duracion}; $E=\text{GPU-h}\cdot P\cdot\PUE$; coste $=\text{GPU-h}\cdot$ precio.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $C=6\cdot 7\cdot 10^{10}\cdot 1{,}4\cdot 10^{12}=5{,}88\cdot 10^{23}$ FLOP.
+  \item Rendimiento útil por GPU: $0{,}4\cdot 312=124{,}8$~TFLOP/s $=1{,}248\cdot 10^{14}$~FLOP/s.
+  \item GPU-segundos: $5{,}88\cdot 10^{23}/1{,}248\cdot 10^{14}=4{,}712\cdot 10^{9}$~s; GPU-hora: $4{,}712\cdot 10^{9}/3600=1{,}309\cdot 10^{6}$.
+  \item Horas de reloj: $1{,}309\cdot 10^{6}/1024=1278$~h; días: $1278/24=53{,}25$.
+  \item Energía: $1{,}309\cdot 10^{6}\cdot 0{,}4$~kW $=5{,}236\cdot 10^{5}$~kWh; por $\PUE$: $6{,}283\cdot 10^{5}$~kWh $=628$~MWh.
+  \item Coste: $1{,}309\cdot 10^{6}\cdot 2=2{,}618\cdot 10^{6}$ dólares.
+\end{enumerate}
+\resultado \textbf{$5{,}88\cdot 10^{23}$ FLOP; $1{,}31$ millones de GPU-hora; unos 53 días; unos 628~MWh; unos $2{,}6$ millones de dólares.}
+\comprobacion potencia del conjunto: $1024\cdot 0{,}4\cdot 1{,}2=491{,}5$~kW; por 1278~h, $6{,}28\cdot 10^{5}$~kWh, igual que en el paso~5.
+\end{solucion}
+
+\begin{solucion}{eje:6-landauer}
+\datos $\kB=1{,}380649\cdot 10^{-23}$~J/K; $\ln 2=0{,}6931$; $T=300$ y $77$~K; $1{,}28$~pJ por FLOP.
+\planteamiento \cref{teo:landauer}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item 300~K: $\kB T=4{,}142\cdot 10^{-21}$~J; por $\ln 2$: $2{,}871\cdot 10^{-21}$~J.
+  \item 77~K: $\kB T=1{,}063\cdot 10^{-21}$~J; por $\ln 2$: $7{,}369\cdot 10^{-22}$~J.
+  \item Cociente: $1{,}28\cdot 10^{-12}/2{,}871\cdot 10^{-21}=4{,}458\cdot 10^{8}$.
+\end{enumerate}
+\resultado \textbf{$2{,}87\cdot 10^{-21}$~J a 300~K y $7{,}37\cdot 10^{-22}$~J a 77~K; la A100 gasta unas $4{,}5\cdot 10^{8}$ veces el límite por FLOP.}
+\comprobacion el límite es proporcional a $T$: $2{,}871/0{,}7369=3{,}896=300/77$.
+\end{solucion}
+
+\begin{solucion}{eje:6-refrigeracion}
+\datos $\dot Q=1{,}2\cdot 10^{5}$~W; $\Delta T=12$~K; agua $c=4186$~J/(kg$\cdot$K); aire $c=1005$~J/(kg$\cdot$K) y $\rho=1{,}2$~kg/m$^{3}$.
+\planteamiento $\dot m=\dot Q/(c\,\Delta T)$; caudal volumétrico $=\dot m/\rho$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Agua: $\dot m=1{,}2\cdot 10^{5}/(4186\cdot 12)=1{,}2\cdot 10^{5}/50\,232=2{,}389$~kg/s, unos $2{,}39$~L/s.
+  \item (b) Aire: $\dot m=1{,}2\cdot 10^{5}/(1005\cdot 12)=1{,}2\cdot 10^{5}/12\,060=9{,}950$~kg/s.
+  \item Volumen de aire: $9{,}950/1{,}2=8{,}292$~m$^{3}$/s.
+  \item Comparación de volúmenes: $8{,}292/0{,}002389=3471$.
+\end{enumerate}
+\resultado \textbf{(a) unos $2{,}4$~kg/s de agua ($2{,}4$~L/s). (b) unos $9{,}95$~kg/s de aire, es decir, $8{,}3$~m$^{3}$/s: unas 3500 veces más volumen que el agua.}
+\comprobacion la masa de aire es $4186/1005=4{,}17$ veces la de agua, por el cociente de calores específicos: $9{,}950/2{,}389=4{,}17$.
+\end{solucion}
+
+\begin{solucion}{eje:6-gpt2}
+\datos $N=1{,}621\cdot 10^{8}$ (exactamente $162\,148\,608$); $F=2{,}916\cdot 10^{11}$ FLOP por secuencia hacia delante; fp32; H100 a 495~TFLOP/s con $\MFU=0{,}5$; $20\,000$ pasos de 128 secuencias.
+\planteamiento (a) 4 bytes por número: pesos, gradientes y dos momentos. (b) Paso $=3F$ por secuencia (1 hacia delante y 2 hacia atrás); \cref{prop:duracion}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Pesos: $4N=648\,594\,432$~bytes $=0{,}649$~GB. Gradientes: $0{,}649$~GB. Optimizador: $8N=1{,}297$~GB.
+  \item Total: $16N=2{,}594$~GB, sin contar las activaciones.
+  \item (b) FLOP por paso: $3\cdot 2{,}916\cdot 10^{11}\cdot 128=1{,}120\cdot 10^{14}$. Total: $1{,}120\cdot 10^{14}\cdot 2\cdot 10^{4}=2{,}240\cdot 10^{18}$.
+  \item Rendimiento útil: $0{,}5\cdot 495\cdot 10^{12}=2{,}475\cdot 10^{14}$~FLOP/s.
+  \item Tiempo: $2{,}240\cdot 10^{18}/2{,}475\cdot 10^{14}=9050$~s $=2{,}51$~h.
+\end{enumerate}
+\resultado \textbf{(a) 0{,}65~GB de pesos, 0{,}65~GB de gradientes y 1{,}30~GB de estado del optimizador: 2{,}59~GB. (b) Unas 2{,}5 horas.}
+\comprobacion en fp32 con AdamW son también 16 bytes por parámetro, como en la precisión mixta, pero repartidos de otro modo ($4+4+8$ frente a $2+2+12$). La regla $6ND$ con $N=1{,}236\cdot 10^{8}$ y $D=128\cdot 1024\cdot 2\cdot 10^{4}=2{,}621\cdot 10^{9}$ da $1{,}944\cdot 10^{18}$ FLOP, un 13~\% menos, porque ignora los productos $QK\T$ y por $V$ de la atención ($3\cdot 3{,}865\cdot 10^{10}\cdot 128\cdot 2\cdot 10^{4}=2{,}97\cdot 10^{17}$ FLOP), que en un modelo pequeño con contexto largo no son despreciables.
+\end{solucion}
+
+\begin{solucion}{eje:6-presupuesto}
+\datos $10^{5}$ GPU-hora; $\Ppico=3{,}12\cdot 10^{14}$; $\MFU=0{,}4$; $C=6ND$; $D=20N$.
+\planteamiento convertir el presupuesto en FLOP útiles; sustituir $D=20N$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con $D=20N$, $C=6N\cdot 20N=120N^{2}$, luego $N=\sqrt{C/120}$ (la raíz positiva).
+  \item (b) GPU-segundos: $10^{5}\cdot 3600=3{,}6\cdot 10^{8}$. FLOP útiles por GPU y segundo: $0{,}4\cdot 3{,}12\cdot 10^{14}=1{,}248\cdot 10^{14}$.
+  \item $C=3{,}6\cdot 10^{8}\cdot 1{,}248\cdot 10^{14}=4{,}493\cdot 10^{22}$.
+  \item $N=\sqrt{4{,}493\cdot 10^{22}/120}=\sqrt{3{,}744\cdot 10^{20}}=1{,}935\cdot 10^{10}$; $D=20N=3{,}870\cdot 10^{11}$.
+  \item (c) Con el mismo MFU, $C$ es proporcional al presupuesto: $C'=\lambda C$. Entonces $N'=\sqrt{\lambda C/120}=\sqrt{\lambda}\,N$ y $D'=20N'=\sqrt{\lambda}\,D$. \qedhere
+\end{enumerate}
+\resultado \textbf{$N\approx 1{,}93\cdot 10^{10}$ parámetros y $D\approx 3{,}87\cdot 10^{11}$ tokens; multiplicar el presupuesto por $\lambda$ multiplica $N$ y $D$ por $\sqrt{\lambda}$.}
+\comprobacion $6\cdot 1{,}935\cdot 10^{10}\cdot 3{,}870\cdot 10^{11}=4{,}493\cdot 10^{22}$, el $C$ del paso~3. Con $\lambda=4$, $N$ y $D$ se duplican.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{scaling}
+J.~Austin, S.~Douglas, R.~Frostig, A.~Levskaya, C.~Chen, S.~Vikram, F.~Lebron, P.~Choy, V.~Ramasesh, A.~Webson y R.~Pope.
+\newblock \emph{How to Scale Your Model}.
+\newblock Google DeepMind, 2025. Parte~1, capítulo «All About Rooflines».
+\newblock \url{https://jax-ml.github.io/scaling-book/}
+
+\bibitem{chen-checkpoint}
+T.~Chen, B.~Xu, C.~Zhang y C.~Guestrin.
+\newblock Training deep nets with sublinear memory cost.
+\newblock Prepublicación, 2016.
+\newblock \url{https://arxiv.org/abs/1604.06174}
+
+\bibitem{palm}
+A.~Chowdhery, S.~Narang, J.~Devlin \emph{et al.}
+\newblock PaLM: Scaling language modeling with Pathways.
+\newblock Prepublicación, 2022. Publicado en \emph{Journal of Machine Learning Research}, 24, 2023.
+\newblock \url{https://arxiv.org/abs/2204.02311}
+
+\bibitem{cmu418}
+Carnegie Mellon University.
+\newblock 15-418/15-618: Parallel Computer Architecture and Programming.
+\newblock Primavera de 2026. Clases «Modern multicore processors», «Locality, communication, and contention», «Graphic processing units and CUDA» e «Interconnection networks».
+\newblock \url{https://www.cs.cmu.edu/afs/cs/academic/class/15418-s26/www/schedule.html}
+
+\bibitem{cs336a1}
+Equipo docente de CS336.
+\newblock CS336: Language Modeling from Scratch. Tarea~1, «Basics», versión 26.0.3.
+\newblock Stanford University, primavera de 2026. §3.5 (\emph{Resource accounting}) y §4.3 (AdamW).
+\newblock \url{https://github.com/stanford-cs336/assignment1-basics}
+
+\bibitem{cs336a2}
+Equipo docente de CS336.
+\newblock CS336: Language Modeling from Scratch. Tarea~2, «Systems», versión 26.1.3.
+\newblock Stanford University, primavera de 2026.
+\newblock \url{https://github.com/stanford-cs336/assignment2-systems}
+
+\bibitem{flash}
+T.~Dao, D.~Y. Fu, S.~Ermon, A.~Rudra y C.~Ré.
+\newblock FlashAttention: Fast and memory-efficient exact attention with IO-awareness.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2022.
+\newblock \url{https://arxiv.org/abs/2205.14135}
+
+\bibitem{mit65940}
+S.~Han.
+\newblock 6.5940: TinyML and Efficient Deep Learning Computing.
+\newblock Massachusetts Institute of Technology, otoño de 2024. Clases~5 y~6 («Quantization») y~19 y~20 («Distributed Training»).
+\newblock \url{https://hanlab.mit.edu/courses/2024-fall-65940}
+
+\bibitem{cs336}
+T.~Hashimoto y P.~Liang.
+\newblock CS336: Language Modeling from Scratch.
+\newblock Stanford University, primavera de 2026. Clases sobre GPU y TPU, clase~6 (\emph{kernels} y Triton) y clase~7 («Parallelism»).
+\newblock \url{https://github.com/stanford-cs336/lectures}
+
+\bibitem{hp}
+J.~L. Hennessy y D.~A. Patterson.
+\newblock \emph{Computer Architecture: A Quantitative Approach}, 6.ª ed.
+\newblock Morgan Kaufmann, 2019.
+\newblock Cap.~4, «Data-Level Parallelism in Vector, SIMD, and GPU Architectures»; cap.~6, «The Warehouse-Scale Computer»; cap.~7, «Domain-Specific Architectures».
+
+\bibitem{higham}
+N.~J. Higham.
+\newblock \emph{Accuracy and Stability of Numerical Algorithms}, 2.ª ed.
+\newblock SIAM, 2002.
+\newblock Caps.~2 a~4.
+
+\bibitem{chinchilla}
+J.~Hoffmann, S.~Borgeaud, A.~Mensch \emph{et al.}
+\newblock Training compute-optimal large language models.
+\newblock Prepublicación, 2022.
+\newblock \url{https://arxiv.org/abs/2203.15556}
+
+\bibitem{hongkung}
+J.-W. Hong y H.~T. Kung.
+\newblock I/O complexity: The red-blue pebble game.
+\newblock En \emph{Proceedings of the 13th Annual ACM Symposium on Theory of Computing (STOC)}, 1981.
+
+\bibitem{horowitz}
+M.~Horowitz.
+\newblock Computing's energy problem (and what we can do about it).
+\newblock En \emph{IEEE International Solid-State Circuits Conference (ISSCC)}, págs.~10--14, 2014.
+
+\bibitem{gpipe}
+Y.~Huang, Y.~Cheng, A.~Bapna, O.~Firat, M.~X. Chen, D.~Chen, H.~Lee, J.~Ngiam, Q.~V. Le, Y.~Wu y Z.~Chen.
+\newblock GPipe: Efficient training of giant neural networks using pipeline parallelism.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2019.
+\newblock \url{https://arxiv.org/abs/1811.06965}
+
+\bibitem{jouppi}
+N.~P. Jouppi, C.~Young, N.~Patil, D.~Patterson \emph{et al.}
+\newblock In-datacenter performance analysis of a tensor processing unit.
+\newblock En \emph{Proceedings of the 44th Annual International Symposium on Computer Architecture (ISCA)}, 2017.
+\newblock \url{https://arxiv.org/abs/1704.04760}
+
+\bibitem{kaplan}
+J.~Kaplan, S.~McCandlish, T.~Henighan, T.~B. Brown, B.~Chess, R.~Child, S.~Gray, A.~Radford, J.~Wu y D.~Amodei.
+\newblock Scaling laws for neural language models.
+\newblock Prepublicación, 2020.
+\newblock \url{https://arxiv.org/abs/2001.08361}
+
+\bibitem{landauer}
+R.~Landauer.
+\newblock Irreversibility and heat generation in the computing process.
+\newblock \emph{IBM Journal of Research and Development}, 5(3):183--191, 1961.
+
+\bibitem{micikevicius}
+P.~Micikevicius, S.~Narang, J.~Alben, G.~Diamos, E.~Elsen, D.~Garcia, B.~Ginsburg, M.~Houston, O.~Kuchaiev, G.~Venkatesh y H.~Wu.
+\newblock Mixed precision training.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2018.
+\newblock \url{https://arxiv.org/abs/1710.03740}
+
+\bibitem{fp8}
+P.~Micikevicius, D.~Stosic, N.~Burgess \emph{et al.}
+\newblock FP8 formats for deep learning.
+\newblock Prepublicación, 2022.
+\newblock \url{https://arxiv.org/abs/2209.05433}
+
+\bibitem{milakov}
+M.~Milakov y N.~Gimelshein.
+\newblock Online normalizer calculation for softmax.
+\newblock Prepublicación, 2018.
+\newblock \url{https://arxiv.org/abs/1805.02867}
+
+\bibitem{narayanan}
+D.~Narayanan, M.~Shoeybi, J.~Casper, P.~LeGresley, M.~Patwary, V.~Korthikanti, D.~Vainbrand, P.~Kashinkunti, J.~Bernauer, B.~Catanzaro, A.~Phanishayee y M.~Zaharia.
+\newblock Efficient large-scale language model training on GPU clusters using Megatron-LM.
+\newblock En \emph{Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC '21)}, 2021.
+\newblock \url{https://arxiv.org/abs/2104.04473}
+
+\bibitem{a100}
+NVIDIA.
+\newblock NVIDIA A100 Tensor Core GPU, hoja de especificaciones; y \emph{Tuning CUDA Applications for NVIDIA Ampere GPU Architecture}.
+\newblock \url{https://www.nvidia.com/en-us/data-center/a100/}
+
+\bibitem{patarasuk}
+P.~Patarasuk y X.~Yuan.
+\newblock Bandwidth optimal all-reduce algorithms for clusters of workstations.
+\newblock \emph{Journal of Parallel and Distributed Computing}, 69(2), 2009.
+
+\bibitem{zero}
+S.~Rajbhandari, J.~Rasley, O.~Ruwase e Y.~He.
+\newblock ZeRO: Memory optimizations toward training trillion parameter models.
+\newblock En \emph{Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis (SC20)}, 2020.
+\newblock \url{https://arxiv.org/abs/1910.02054}
+
+\bibitem{megatron}
+M.~Shoeybi, M.~Patwary, R.~Puri, P.~LeGresley, J.~Casper y B.~Catanzaro.
+\newblock Megatron-LM: Training multi-billion parameter language models using model parallelism.
+\newblock Prepublicación, 2019.
+\newblock \url{https://arxiv.org/abs/1909.08053}
+
+\bibitem{roofline}
+S.~Williams, A.~Waterman y D.~Patterson.
+\newblock Roofline: An insightful visual performance model for multicore architectures.
+\newblock \emph{Communications of the ACM}, 52(4):65--76, 2009.
+
+\end{thebibliography}
+
+
+\end{document}

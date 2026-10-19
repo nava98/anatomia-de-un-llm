@@ -1,0 +1,140 @@
+% =====================================================================
+\chapter{La máscara causal}
+\label{tema:3}
+% =====================================================================
+
+Un modelo de lenguaje autorregresivo factoriza la probabilidad de una secuencia con la regla de la cadena (módulo~1, tema~2): la distribución del token $t+1$ solo puede depender de los tokens $1,\dots,t$. Este tema define las máscaras aditivas, demuestra que sumar $-\infty$ antes de la softmax equivale a restringir la softmax al conjunto de posiciones permitidas, prueba que la máscara causal hace que cada salida dependa solo de su pasado y deduce de ello que una única pasada produce las $n$ predicciones de una secuencia. Se siguen la §3.2.3 de~\cite{vaswani}, la §7.3 de~\cite{jm3}, las §3.4.4 y §3.4.5 de la tarea~1 de CS336~\cite{cs336} y la §11.3.2.1 de~\cite{d2l}.
+
+\section{Máscaras aditivas}
+
+\begin{definicion}[Máscara aditiva]\label{def:mascara}
+Sea $\mathcal{P}\subseteq\{1,\dots,n\}\times\{1,\dots,m\}$ el conjunto de pares $(i,j)$ \emph{permitidos}, con la condición de que cada fila $i$ contenga al menos un par permitido. La \emph{máscara aditiva} asociada es la matriz $M\in\{0,-\infty\}^{n\times m}$ con $M_{ij}=0$ si $(i,j)\in\mathcal{P}$ y $M_{ij}=-\infty$ en otro caso. La \emph{atención enmascarada} es
+\[
+\Att_M(Q,K,V)=\softmax\!\Bigl(\frac{QK\T}{\sqrt{d_k}}+M\Bigr)V,
+\]
+con el convenio $e^{-\infty}=0$.
+\end{definicion}
+
+\begin{definicion}[Máscara causal]\label{def:causal}
+En la autoatención ($m=n$), la \emph{máscara causal} es la asociada a $\mathcal{P}=\{(i,j):j\le i\}$:
+\[
+M_{ij}=\begin{cases}0,& j\le i,\\-\infty,& j>i.\end{cases}
+\]
+Es triangular estrictamente superior en sus entradas $-\infty$; la diagonal siempre está permitida.
+\end{definicion}
+
+Vaswani \emph{et al.} la describen como el bloqueo de las conexiones «ilegales» de la autoatención del decodificador, fijando a $-\infty$ las entradas correspondientes de la softmax~\cite[§3.2.3]{vaswani}; Jurafsky y Martin la presentan en la §7.3 de~\cite{jm3}, y la tarea~1 de CS336 la implementa con una máscara booleana en la que \texttt{True} indica «puede atender»~\cite[§3.4.4]{cs336}. La \cref{fig:causal} muestra su estructura.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,x=8mm,y=8mm]
+  \foreach \i in {1,...,5}{
+    \foreach \j in {1,...,5}{
+      \ifnum\j>\i
+        \fill[black!12] (\j-1,-\i+1) rectangle (\j,-\i);
+        \node at (\j-0.5,-\i+0.5) {$-\infty$};
+      \else
+        \node at (\j-0.5,-\i+0.5) {$0$};
+      \fi
+      \draw[regla] (\j-1,-\i+1) rectangle (\j,-\i);
+    }
+    \node[left] at (0,-\i+0.5) {$i=\i$};
+    \node[above] at (\i-0.5,0) {$\i$};
+  }
+  \node[above] at (2.5,0.5) {posición atendida $j$};
+\end{tikzpicture}
+\caption{Máscara causal para $n=5$. La fila $i$ solo permite las posiciones $j\le i$; las celdas sombreadas reciben peso exactamente nulo.}
+\label{fig:causal}
+\end{figure}
+
+\begin{proposicion}[Softmax restringida]\label{prop:restringida}
+Sea $z\in\R^{m}$ y sea $\mathcal{P}_i\subseteq\{1,\dots,m\}$ no vacío. Si $\mu_j=0$ para $j\in\mathcal{P}_i$ y $\mu_j=-\infty$ en otro caso, entonces
+\[
+\softmax(z+\mu)_j=\begin{cases}\dfrac{e^{z_j}}{\sum_{l\in\mathcal{P}_i}e^{z_l}},& j\in\mathcal{P}_i,\\[2ex] 0,& j\notin\mathcal{P}_i.\end{cases}
+\]
+En particular, los pesos permitidos suman~1 y no dependen de las puntuaciones $z_j$ con $j\notin\mathcal{P}_i$.
+\end{proposicion}
+
+\begin{proof}
+Por el convenio $e^{-\infty}=0$, el numerador $e^{z_j+\mu_j}$ vale $e^{z_j}$ si $j\in\mathcal{P}_i$ y $0$ en otro caso, y el denominador $\sum_le^{z_l+\mu_l}$ se reduce a $\sum_{l\in\mathcal{P}_i}e^{z_l}$, que es positivo porque $\mathcal{P}_i\ne\varnothing$. Ninguna de las dos expresiones contiene $z_j$ con $j\notin\mathcal{P}_i$.
+\end{proof}
+
+La condición $\mathcal{P}_i\ne\varnothing$ es necesaria: una fila enteramente enmascarada daría $0/0$, que en coma flotante produce \texttt{NaN} (módulo~11). En la máscara causal no puede ocurrir, porque $(i,i)$ siempre está permitido.
+
+\begin{observacion}[Por qué $-\infty$ antes de la softmax]
+Sumar~0 antes de la softmax no anula nada, porque $e^{0}=1$. Poner a~0 los pesos \emph{después} de la softmax deja filas que suman menos de~1 y pesos del pasado más pequeños de lo debido; hay que renormalizar, y el resultado coincide entonces con el de la \cref{prop:restringida} (\cref{eje:3-renorm}). En la práctica se usa \texttt{-inf} o un número negativo grande; el \cref{eje:3-finito} cuantifica cuánto debe valer.
+\end{observacion}
+
+\begin{ejemplo}\label{ej:mascara}
+Con el \cref{ej:tres} y la máscara causal,
+\[
+\frac{S}{\sqrt{d_k}}+M=\begin{pmatrix}2&-\infty&-\infty\\0&4&-\infty\\2&2&2\end{pmatrix}
+\quad\Longrightarrow\quad
+A=\begin{pmatrix}1&0&0\\0{,}018&0{,}982&0\\0{,}333&0{,}333&0{,}333\end{pmatrix}.
+\]
+En la fila~2, $e^{0}=1$ y $e^{4}=54{,}60$, de modo que los pesos son $1/55{,}60=0{,}018$ y $0{,}982$. La primera posición solo puede atenderse a sí misma. La salida es $O=AV$, con filas $(1,0)$, $(0{,}018;\allowbreak\ 0{,}982)$ y $(0{,}667;\allowbreak\ 0{,}667)$.
+\end{ejemplo}
+
+\section{Causalidad}
+
+\begin{teorema}[Causalidad de la atención enmascarada]\label{teo:causal}
+Sean $q_i=x_i\WQ$, $k_j=x_j\WK$, $v_j=x_j\WV$ y sea $o_i$ la fila $i$ de la autoatención con máscara causal. Entonces, para cada $i$, $o_i$ es función únicamente de $x_1,\dots,x_i$.
+\end{teorema}
+
+\begin{proof}
+Por la \cref{prop:restringida} con $\mathcal{P}_i=\{1,\dots,i\}$,
+\[
+o_i=\sum_{j=1}^{i}\alpha_{ij}v_j,\qquad
+\alpha_{ij}=\frac{\exp\bigl(q_i\cdot k_j/\sqrt{d_k}\bigr)}{\sum_{l=1}^{i}\exp\bigl(q_i\cdot k_l/\sqrt{d_k}\bigr)} .
+\]
+En esta expresión solo intervienen $q_i$, que depende únicamente de $x_i$, y $k_l$ y $v_l$ con $l\le i$, que dependen únicamente de $x_l$. Luego $o_i$ no depende de $x_j$ para $j>i$.
+\end{proof}
+
+\begin{corolario}[Entrenamiento en paralelo]\label{cor:paralelo}
+Sea $f$ la autoatención con máscara causal y, para cada $t\le n$, sea $f_t$ la misma operación aplicada solo al prefijo $x_{1:t}$. Entonces la fila $t$ de $f(x_{1:n})$ coincide con la última fila de $f_t(x_{1:t})$. En consecuencia, una sola evaluación sobre la secuencia completa proporciona las $n$ representaciones que una red usa para predecir $x_2,\dots,x_{n+1}$, cada una calculada solo con su prefijo.
+\end{corolario}
+
+\begin{proof}
+Por el \cref{teo:causal}, la fila $t$ de $f(x_{1:n})$ es la expresión de su demostración con $i=t$, que solo usa $x_1,\dots,x_t$. La última fila de $f_t(x_{1:t})$ se obtiene con la misma fórmula, pues en el prefijo también están permitidas las posiciones $1,\dots,t$. Ambas coinciden.
+\end{proof}
+
+La tarea~1 de CS336 describe la alternativa ingenua, ejecutar la atención $n$ veces, una por prefijo, y la descarta en favor de la máscara~\cite[§3.4.5]{cs336}. Una red recurrente necesita, en cambio, $n$ pasos secuenciales, porque el estado en $t$ depende del estado en $t-1$ (módulo~12). Esta diferencia, que Vaswani \emph{et al.} cuantifican como $O(1)$ operaciones secuenciales frente a $O(n)$~\cite[§4, tabla~1]{vaswani}, es la razón práctica principal por la que los Transformer desplazaron a las redes recurrentes en el preentrenamiento de modelos de lenguaje.
+
+\begin{observacion}[Otras máscaras]
+La \cref{def:mascara} admite otros conjuntos $\mathcal{P}$. La máscara de relleno (\emph{padding}) prohíbe las posiciones añadidas para igualar la longitud de las secuencias de un lote~\cite[§11.3.2.1]{d2l}; la de ventana deslizante permite solo $i-w<j\le i$, lo que reduce el coste a $O(nw)$ (\cref{tema:4}). La combinación de varias máscaras es la intersección de sus conjuntos permitidos, es decir, la suma de sus matrices.
+\end{observacion}
+
+\begin{lecturas}
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.2.3 «Applications of Attention in our Model» y §4 «Why Self-Attention».
+\item Jurafsky y Martin~\cite{jm3}, §7.3, apartado «Masking out the future».
+\item CS336~\cite{cs336}, tarea~1, §3.4.4 «Scaled Dot-Product Attention» y §3.4.5 «Causal Multi-Head Self-Attention».
+\item Zhang \emph{et al.}~\cite{d2l}, §11.3.2.1 «Masked Softmax Operation».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-despues}
+Un estudiante implementa la máscara causal de dos formas erróneas: (a) pone a~0 los pesos futuros \emph{después} de la softmax; (b) pone a~0 las puntuaciones futuras \emph{antes} de la softmax. Con la fila~2 del \cref{ej:tres}, de puntuaciones escaladas $(0,4,2)$, calcule el resultado de cada versión y explique qué falla.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:3-jm}
+¿Por qué la máscara causal usa $-\infty$ y no~0 en las posiciones prohibidas? Calcule la fila de pesos correspondiente a las puntuaciones $(0,4,2)$, con el tercer token prohibido, en ambos casos.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.2 (datos numéricos añadidos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-calculo}
+Una matriz de puntuaciones ya escaladas es
+\[
+S=\begin{pmatrix}1&5&5\\0&\ln 3&5\\0&0&\ln 2\end{pmatrix}.
+\]
+Aplique la máscara causal, calcule $A$ y las salidas si los valores son los escalares $4$, $8$ y $12$. ¿Cambia algo si los cincos se sustituyen por cienes?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-finito}
+En lugar de $-\infty$, una implementación suma $-c$, con $c>0$ finito, a las puntuaciones prohibidas. Para la fila $(0,4,2)$ con el tercer token prohibido, halle el menor entero $c$ para el que el peso que se filtra al futuro es menor que $10^{-6}$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-renorm}
+Sea $p=\softmax(z)$ y $\mathcal{P}_i$ un conjunto no vacío de índices. Se define $\tilde p_j=p_j\,\mathbb{1}[j\in\mathcal{P}_i]/\sum_{l\in\mathcal{P}_i}p_l$, es decir, se anulan los pesos prohibidos después de la softmax y se renormaliza. Demuestre que $\tilde p=\softmax(z+\mu)$, con $\mu$ como en la \cref{prop:restringida}. ¿Por qué se prefiere, aun así, sumar la máscara antes?
+\end{ejercicio}

@@ -1,0 +1,2186 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase V — Módulo 23
+%  Interpretabilidad y seguridad
+%  Compilar: latexmk -r ../latexmkrc M23-interpretabilidad.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 23}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\WU}{W_{U}}
+\newcommand{\WE}{W_{E}}
+\newcommand{\WOV}{W_{OV}}
+\newcommand{\WQK}{W_{QK}}
+\newcommand{\relu}{\operatorname{ReLU}}
+\newcommand{\RMS}{\operatorname{RMS}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+\newcommand{\rango}{\operatorname{rango}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\signo}{\operatorname{signo}}
+\newcommand{\ECE}{\operatorname{ECE}}
+\newcommand{\MCE}{\operatorname{MCE}}
+\newcommand{\IG}{\operatorname{IG}}
+\newcommand{\FVU}{\operatorname{FVU}}
+\newcommand{\passk}[1]{\operatorname{pass@}#1}
+\newcommand{\Bin}{\operatorname{Bin}}
+\newcommand{\Unif}{\operatorname{Unif}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+% Anclas de hyperref únicas en todo el documento (los contadores se reinician en cada tema)
+\providecommand{\theHdefinicion}{}\renewcommand{\theHdefinicion}{\thechapter.\arabic{definicion}}
+\providecommand{\theHteorema}{}\renewcommand{\theHteorema}{\thechapter.\arabic{definicion}}
+\providecommand{\theHproposicion}{}\renewcommand{\theHproposicion}{\thechapter.\arabic{definicion}}
+\providecommand{\theHlema}{}\renewcommand{\theHlema}{\thechapter.\arabic{definicion}}
+\providecommand{\theHcorolario}{}\renewcommand{\theHcorolario}{\thechapter.\arabic{definicion}}
+\providecommand{\theHejemplo}{}\renewcommand{\theHejemplo}{\thechapter.\arabic{definicion}}
+\providecommand{\theHobservacion}{}\renewcommand{\theHobservacion}{\thechapter.\arabic{definicion}}
+
+\hypersetup{pdftitle={Módulo 23. Interpretabilidad y seguridad},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase V \textperiodcentered\ Alineamiento, aprendizaje por refuerzo, agentes e interpretabilidad}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 23\par}\vspace{0.3cm}
+{\LARGE Interpretabilidad y seguridad\par}
+\vspace{0.2cm}
+{\large Circuitos, superposición, atribución, evaluación y ataques adversarios\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Los módulos anteriores han construido un modelo de lenguaje pieza a pieza y lo han ajustado para que siga instrucciones y preferencias. Este último módulo invierte la dirección del análisis: dado un modelo ya entrenado, se pregunta qué ha aprendido, cómo lo calcula y cómo puede comprobarse que se comporta de forma segura. La \emph{interpretabilidad mecanicista} intenta explicar el cálculo de una red en términos de piezas comprensibles (direcciones del espacio de activaciones, cabezas de atención, circuitos), de forma parecida a la ingeniería inversa de un programa del que solo se dispone del binario. La \emph{evaluación} mide la conducta desde fuera, con conjuntos de pruebas, medidas de calibración y ataques deliberados. Ambas son complementarias: una evaluación de conducta no distingue un acierto por las razones correctas de un acierto por razones equivocadas, y la interpretabilidad, sin evaluaciones, no dice qué conductas importan.
+
+El módulo empieza por la estructura lineal del Transformer, que permite repartir los logits entre sus componentes; sigue con las sondas y los métodos de atribución; estudia la superposición, que explica por qué las neuronas individuales son difíciles de interpretar, y los autoencoders dispersos que intentan deshacerla; analiza circuitos concretos y las intervenciones causales que los validan, y termina con la evaluación estadística de modelos, la calibración, las alucinaciones y la seguridad frente a ataques. Sobre Claude, Gemini y Grok solo se usa información pública: Anthropic ha publicado trabajos de interpretabilidad sobre Claude~3 Sonnet y Claude~3.5 Haiku, Google DeepMind ha publicado autoencoders dispersos para los modelos abiertos Gemma~2, y no constan, en la información pública consultada, trabajos equivalentes sobre Grok.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item demostrar que los logits de un Transformer sin normalización final se descomponen como suma de aportaciones de cada componente, definir los circuitos QK y OV, obtener la expansión en caminos de un Transformer de una capa y explicar la \emph{logit lens} y el efecto de RMSNorm sobre la atribución;
+  \item definir una sonda lineal, demostrar la convexidad de su entrenamiento, interpretar sus resultados con tareas de control y distinguir decodificabilidad de uso causal;
+  \item definir los gradientes integrados y los valores de Shapley, enunciar sus axiomas y demostrar la propiedad de completitud;
+  \item demostrar los resultados de casi ortogonalidad en alta dimensión, analizar el modelo de juguete de superposición y calcular la dimensión por característica;
+  \item formular la pérdida de un autoencoder disperso, deducir el umbral suave que produce la penalización $L^{1}$ y evaluar un diccionario con sus métricas habituales;
+  \item describir las cabezas de inducción, el circuito de identificación del objeto indirecto y el algoritmo de Fourier del \emph{grokking}, y deducir la actualización de rango uno de ROME;
+  \item calcular e interpretar pass@$k$ con su estimador insesgado, intervalos de confianza de exactitud y el error de calibración esperado, y relacionar las reglas de puntuación con las alucinaciones;
+  \item formular un ataque adversario por optimización, estimar tasas de fallo a partir de pocos datos y describir los marcos públicos de evaluación de seguridad.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1 se usan la entropía cruzada y la softmax; de los módulos~2 y~3, el producto escalar, las proyecciones, el rango y la SVD; del módulo~4, los gradientes y la regla de la cadena; del módulo~5, la esperanza, la varianza, la distribución binomial y el teorema central del límite; del módulo~7, la convexidad; del módulo~8, la regresión logística y la regularización $L^{1}$; de los módulos~13 a~15, la atención, el flujo residual y el mini-GPT; del módulo~18, RMSNorm, y de los módulos~21 y~22, el aprendizaje por preferencias, la contaminación de evaluaciones y el aprendizaje en contexto.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & El flujo residual y la descomposición lineal & \cite{elhage21}, \cite{nostalgebraist}, \cite{belrose}, \cite{jm3} \\
+2 & Sondas y métodos de atribución & \cite{alain}, \cite{hewitt-liang}, \cite{hewitt-manning}, \cite{sundararajan}, \cite{lundberg} \\
+3 & Superposición & \cite{elhage22}, \cite{bhk}, \cite{ball} \\
+4 & Autoencoders dispersos & \cite{bricken}, \cite{templeton}, \cite{gemmascope}, \cite{d2l} \\
+5 & Circuitos e intervenciones causales & \cite{olsson}, \cite{wang-ioi}, \cite{meng}, \cite{nanda}, \cite{turner} \\
+6 & Evaluación, calibración y seguridad & \cite{hendrycks}, \cite{helm}, \cite{chen}, \cite{guo}, \cite{kalai25}, \cite{zou} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La selección de temas sigue la clase invitada de interpretabilidad (Been Kim) y la clase~11, «Benchmarking and Evaluation», del curso CS224N de Stanford~\cite{cs224n}, y la semana dedicada a robustez adversaria del curso CS~2881r de Harvard~\cite{cs2881}. La parte de interpretabilidad mecanicista se apoya en las publicaciones de Anthropic en \emph{Transformer Circuits}: el marco matemático de Elhage \emph{et al.}~\cite{elhage21}, las cabezas de inducción de Olsson \emph{et al.}~\cite{olsson}, los modelos de juguete de superposición~\cite{elhage22} y los autoencoders dispersos de Bricken \emph{et al.}~\cite{bricken} y Templeton \emph{et al.}~\cite{templeton}; también en el programa de circuitos de Olah \emph{et al.}~\cite{olah-zoom}. Las sondas siguen a Alain y Bengio~\cite{alain}, Hewitt y Manning~\cite{hewitt-manning} y Hewitt y Liang~\cite{hewitt-liang}; la atribución, a Sundararajan, Taly y Yan~\cite{sundararajan} y a Lundberg y Lee~\cite{lundberg}; las intervenciones, a Meng \emph{et al.}~\cite{meng}, Wang \emph{et al.}~\cite{wang-ioi} y Nanda \emph{et al.}~\cite{nanda}. La evaluación se basa en MMLU~\cite{hendrycks}, HELM~\cite{helm}, HumanEval~\cite{chen}, el estudio de calibración de Guo \emph{et al.}~\cite{guo} y el análisis de las alucinaciones de Kalai \emph{et al.}~\cite{kalai25}; la seguridad, en Zou \emph{et al.}~\cite{zou}, Ganguli \emph{et al.}~\cite{ganguli} y Hubinger \emph{et al.}~\cite{hubinger}. Los resultados de geometría en alta dimensión remiten a Blum, Hopcroft y Kannan~\cite{bhk}, libro del curso CS~4850 de Cornell, y los de estadística, al curso 18.05 del MIT~\cite{mit1805}. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$d$, $d_h$, $L$ & dimensión del flujo residual, dimensión de cada cabeza y número de capas \\
+$x_0$, $x_\ell$, $x_{\mathrm{fin}}$ & embedding, flujo residual tras la capa $\ell$ y flujo final \\
+$a_\ell$, $m_\ell$ & salidas de la atención y del MLP de la capa $\ell$ \\
+$\WE\in\R^{d\times K}$, $\WU\in\R^{K\times d}$ & matrices de embedding y de desembedding; $K=\abs{\V}$ \\
+$\WQK=W_Q\T W_K$, $\WOV=W_OW_V$ & circuitos QK y OV de una cabeza \\
+$\sigma(z)=1/(1+e^{-z})$ & función logística \\
+$\IG_i(x;x')$, $\phi_i$ & gradiente integrado y valor de Shapley de la entrada $i$ \\
+$n$, $m$, $S$, $I_i$ & número de características, dimensión oculta, dispersión e importancia (modelo de juguete) \\
+$W_i$, $\hat W_i=W_i/\norm{W_i}$, $D_i$ & dirección de la característica $i$ y dimensión por característica \\
+$f\in\R^{F}$, $d_j$, $\lambda$ & código del autoencoder disperso, dirección del latente $j$ y coeficiente de dispersión \\
+$\passk{k}$, $n$, $c$ & probabilidad de éxito con $k$ intentos; muestras generadas y correctas por problema (tema~6) \\
+$\mathrm{conf}_b$, $\mathrm{acc}_b$ & confianza media y exactitud del intervalo $b$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{El flujo residual y la descomposición lineal}
+\label{tema:1}
+% =====================================================================
+
+Este tema expone la observación estructural en la que se basa casi toda la interpretabilidad mecanicista de los Transformers: cada componente lee del flujo residual mediante una proyección lineal y escribe en él sumando su salida, de modo que todo lo que se aplica linealmente al final se reparte sobre esa suma. La presentación sigue el marco matemático de Elhage \emph{et al.}~\cite{elhage21} (secciones «Transformer Overview», «Zero-Layer Transformers» y «One-Layer Attention-Only Transformers»), la vista del flujo residual del §7.2 de Jurafsky y Martin~\cite{jm3} y el §10.3 del mismo libro para la \emph{logit lens}, propuesta por nostalgebraist~\cite{nostalgebraist} y corregida por Belrose \emph{et al.}~\cite{belrose}. La arquitectura y la notación son las de los módulos~13 a~15.
+
+\section{El flujo residual como suma de aportaciones}
+
+Sea un Transformer decoder-only de $L$ capas y dimensión $d$. Para simplificar, en este tema se prescinde de las normalizaciones (salvo en la \cref{sec:1-norm}), como hacen Elhage \emph{et al.} en su apartado «Model Simplifications»~\cite{elhage21}; según ese trabajo, la normalización puede absorberse, salvo un factor escalar, en los pesos adyacentes.
+
+\begin{definicion}[Flujo residual]\label{def:flujo}
+Sea $x_0\in\R^{d}$ el embedding del token (y de su posición) en una posición fija. Para $\ell=1,\dots,L$, la capa $\ell$ calcula
+\[
+x_{\ell-1/2}=x_{\ell-1}+a_\ell,\qquad x_\ell=x_{\ell-1/2}+m_\ell,
+\]
+donde $a_\ell$ es la suma de las salidas de las cabezas de atención de la capa, que depende de los flujos $x_{\ell-1}$ de todas las posiciones anteriores, y $m_\ell$ es la salida del MLP, que depende de $x_{\ell-1/2}$ en la misma posición. La sucesión $x_0,x_{1/2},x_1,\dots,x_L$ se llama \emph{flujo residual} y $x_{\mathrm{fin}}=x_L$ es el \emph{flujo final}. Los logits del token siguiente son $z=\WU\,x_{\mathrm{fin}}\in\R^{K}$.
+\end{definicion}
+
+\begin{proposicion}[Descomposición del flujo y de los logits]\label{prop:descomposicion}
+Con la notación de la \cref{def:flujo},
+\[
+x_{\mathrm{fin}}=x_0+\sum_{\ell=1}^{L}\bigl(a_\ell+m_\ell\bigr),\qquad
+z=\WU x_0+\sum_{\ell=1}^{L}\bigl(\WU a_\ell+\WU m_\ell\bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+Por inducción sobre $L$ se prueba que $x_L=x_0+\sum_{\ell=1}^{L}(a_\ell+m_\ell)$. Para $L=0$ es trivial. Si se cumple para $L-1$, la definición da $x_L=x_{L-1}+a_L+m_L$, y basta sustituir la hipótesis de inducción. La segunda igualdad se obtiene aplicando la aplicación lineal $\WU$ a la primera: $\WU(u+v)=\WU u+\WU v$.
+\end{proof}
+
+\begin{definicion}[Atribución directa a los logits]\label{def:dla}
+Sea $c$ cualquiera de los sumandos $x_0$, $a_\ell$, $m_\ell$ (o la salida de una sola cabeza, ya que $a_\ell$ es suma de las salidas de sus cabezas). Su \emph{atribución directa a los logits} es el vector $\WU c\in\R^{K}$. Para comparar dos tokens $t$ y $t'$ se usa la \emph{diferencia de logits} $(\WU c)_t-(\WU c)_{t'}$.
+\end{definicion}
+
+La palabra \emph{directa} es importante. La salida $a_1$ influye en los logits por dos vías: directamente, a través del sumando $\WU a_1$, e indirectamente, porque modifica la entrada de todas las capas posteriores y, con ello, $a_2,m_2,\dots$. La \cref{prop:descomposicion} solo reparte el primer tipo de efecto; el segundo exige intervenciones (\cref{tema:5}).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  suma/.style={circle,draw,inner sep=1pt,minimum size=5mm},
+  caja/.style={draw,rounded corners=2pt,minimum width=18mm,minimum height=7mm,align=center}]
+  \node[caja] (e) at (0,0) {embedding\\$x_0$};
+  \node[suma] (s1) at (2.2,0) {$+$};
+  \node[suma] (s2) at (4.6,0) {$+$};
+  \node (dots) at (6.4,0) {$\cdots$};
+  \node[caja] (u) at (8.6,0) {$\WU$\\logits};
+  \node[caja] (a1) at (2.2,1.5) {atención 1};
+  \node[caja] (m1) at (4.6,1.5) {MLP 1};
+  \draw[->,thick] (e) -- (s1);
+  \draw[->,thick] (s1) -- (s2);
+  \draw[->,thick] (s2) -- (dots);
+  \draw[->,thick] (dots) -- (u);
+  \draw[->,dashed] (1.2,0) |- (a1.west) node[pos=0.25,left] {lee};
+  \draw[->] (a1) -- node[right] {$a_1$} (s1);
+  \draw[->,dashed] (3.5,0) |- (m1.west) node[pos=0.25,left] {lee};
+  \draw[->] (m1) -- node[right] {$m_1$} (s2);
+\end{tikzpicture}
+\caption{El flujo residual. Cada componente lee el flujo con una proyección lineal (línea discontinua) y escribe sumando su salida. Los logits son $\WU$ aplicado a la suma de todas las escrituras.}
+\label{fig:flujo}
+\end{figure}
+
+\begin{ejemplo}[Atribución en un modelo de dimensión~2]\label{ej:atribucion}
+Sean $d=2$, $K=3$ tokens $t_0,t_1,t_2$ y
+\[
+\WU=\begin{pmatrix}1&0\\0&1\\-1&1\end{pmatrix},\qquad x_0=(1,0),\quad a_1=(0{,}5;\allowbreak\ 1),\quad m_1=(-0{,}5;\allowbreak\ 0{,}5).
+\]
+Las atribuciones directas son $\WU x_0=(1,0,-1)$, $\WU a_1=(0{,}5;\allowbreak\ 1;\allowbreak\ 0{,}5)$ y $\WU m_1=(-0{,}5;\allowbreak\ 0{,}5;\allowbreak\ 1)$, que suman $(1;\allowbreak\ 1{,}5;\allowbreak\ 0{,}5)=\WU(1;\allowbreak\ 1{,}5)=\WU x_{\mathrm{fin}}$. La diferencia de logits entre $t_1$ y $t_0$ es $0{,}5$ en total: el embedding aporta $-1$, la atención $+0{,}5$ y el MLP $+1$.
+\end{ejemplo}
+
+\section{Pesos virtuales y subespacios}
+
+Como el flujo residual no realiza ningún cálculo propio, dos componentes separados por varias capas se comunican a través de él como si estuvieran conectados directamente.
+
+\begin{definicion}[Pesos virtuales]\label{def:virtuales}
+Sea $W_{\mathrm{out}}^{(1)}\in\R^{d\times p}$ la matriz con la que un componente escribe en el flujo y $W_{\mathrm{in}}^{(2)}\in\R^{q\times d}$ la matriz con la que un componente posterior lo lee. El producto $W_{\mathrm{in}}^{(2)}W_{\mathrm{out}}^{(1)}\in\R^{q\times p}$ se llama \emph{matriz de pesos virtuales} entre ambos~\cite[«Virtual Weights and the Residual Stream as a Communication Channel»]{elhage21}.
+\end{definicion}
+
+Por la \cref{prop:descomposicion}, la parte de la entrada del segundo componente que procede del primero es exactamente $W_{\mathrm{in}}^{(2)}W_{\mathrm{out}}^{(1)}h$, donde $h$ es la activación interna del primero, sea cual sea el número de capas intermedias. Como cada cabeza escribe en un subespacio de dimensión a lo sumo $d_h\ll d$, componentes distintos pueden usar subespacios casi disjuntos del flujo; Elhage \emph{et al.} describen el flujo como un canal de comunicación de ancho de banda limitado, en el que las dimensiones son un recurso escaso.
+
+\section{Circuitos QK y OV}
+
+Sea una cabeza de atención con matrices $W_Q,W_K,W_V\in\R^{d_h\times d}$ y $W_O\in\R^{d\times d_h}$ (módulo~13). En la posición $i$, con flujos $x_1,\dots,x_i$ en las posiciones visibles, la cabeza calcula
+\[
+s_{ij}=\frac{(W_Qx_i)\T(W_Kx_j)}{\sqrt{d_h}},\qquad A_{ij}=\frac{e^{s_{ij}}}{\sum_{j'\le i}e^{s_{ij'}}},\qquad h_i=W_O\sum_{j\le i}A_{ij}\,W_Vx_j.
+\]
+
+\begin{definicion}[Circuitos QK y OV]\label{def:qkov}
+Se llaman \emph{circuito QK} y \emph{circuito OV} de la cabeza a las matrices $d\times d$
+\[
+\WQK=W_Q\T W_K,\qquad \WOV=W_OW_V.
+\]
+\end{definicion}
+
+\begin{proposicion}[Factorización de una cabeza]\label{prop:qkov}
+Con la notación anterior:
+\begin{enumerate}
+  \item las puntuaciones son la forma bilineal $s_{ij}=x_i\T\WQK\,x_j/\sqrt{d_h}$, de modo que el patrón de atención solo depende de $W_Q$ y $W_K$ a través de $\WQK$;
+  \item la salida es $h_i=\sum_{j\le i}A_{ij}\,\WOV x_j$, de modo que, fijado el patrón, la cabeza es lineal en los flujos de origen y solo depende de $W_O$ y $W_V$ a través de $\WOV$;
+  \item $\rango\WQK\le d_h$ y $\rango\WOV\le d_h$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $(W_Qx_i)\T(W_Kx_j)=x_i\T W_Q\T W_Kx_j=x_i\T\WQK x_j$. (ii) $W_O$ es lineal y puede entrar en el sumatorio: $W_O\sum_jA_{ij}W_Vx_j=\sum_jA_{ij}W_OW_Vx_j$. (iii) Para matrices cualesquiera, $\rango(AB)\le\min(\rango A,\rango B)$, porque las columnas de $AB$ son combinaciones de las de $A$ y las filas de $AB$ son combinaciones de las de $B$. Como $W_Q\T\in\R^{d\times d_h}$ y $W_O\in\R^{d\times d_h}$ tienen $d_h$ columnas, su rango es a lo sumo $d_h$.
+\end{proof}
+
+El circuito QK decide \emph{a dónde mira} la cabeza y el circuito OV, \emph{qué copia} de la posición atendida y cómo lo escribe. Solo el patrón $A$ es no lineal; Elhage \emph{et al.} subrayan que, fijado $A$, la cabeza es una aplicación lineal~\cite[«Splitting Attention Head terms into Query-Key and Output-Value Circuits»]{elhage21}. Con $d=512$ y $d_h=64$, $\WOV$ es una matriz de $512\times 512=262\,144$ entradas, pero está determinada por los $2\cdot 512\cdot 64=65\,536$ parámetros de $W_O$ y $W_V$.
+
+\section{Transformers de cero y una capa}
+
+Sea $\WE\in\R^{d\times K}$ la matriz de embedding, cuya columna $t$ es el embedding del token $t$, y sea $e_t\in\R^{K}$ el vector canónico del token actual.
+
+\begin{proposicion}[Transformer de cero capas]\label{prop:cero}
+Si $L=0$ y se omiten los embeddings de posición, los logits son $z=\WU\WE\,e_t$, es decir, la columna $t$ de la matriz $\WU\WE\in\R^{K\times K}$. La distribución del token siguiente depende solo del token actual: el modelo es un modelo de bigramas (módulo~1) con matriz de logits $\WU\WE$.
+\end{proposicion}
+
+\begin{proof}
+Sin capas, $x_{\mathrm{fin}}=x_0=\WE e_t$ y $z=\WU\WE e_t$. Como $z$ depende de la posición solo a través de $t$, la softmax de $z$ es una distribución $P(\cdot\mid t)$, que es la definición de un modelo de bigramas.
+\end{proof}
+
+Si se entrena con la entropía cruzada, la matriz $\WU\WE$, de rango a lo sumo $d$, aproxima los logaritmos de las probabilidades de bigramas del corpus~\cite[«Zero-Layer Transformers»]{elhage21}.
+
+\begin{teorema}[Expansión en caminos de una capa de atención]\label{teo:caminos}
+Sea un Transformer de una capa, solo de atención, con cabezas $h\in\mathcal{H}$, patrones $A^{h}$ y circuitos $\WOV^{h}$, sin embeddings de posición y sin normalización. Sea $t_j$ el token de la posición $j$. Los logits en la posición $i$ son
+\[
+z_i=\underbrace{\WU\WE e_{t_i}}_{\text{camino directo}}+\sum_{h\in\mathcal{H}}\sum_{j\le i}A^{h}_{ij}\;\underbrace{\WU\WOV^{h}\WE}_{K\times K}\,e_{t_j},
+\]
+y las puntuaciones de la cabeza $h$ son $s^{h}_{ij}=e_{t_i}\T\bigl(\WE\T\WQK^{h}\WE\bigr)e_{t_j}/\sqrt{d_h}$.
+\end{teorema}
+
+\begin{proof}
+Por la \cref{def:flujo} con $L=1$ y sin MLP, $x_{\mathrm{fin},i}=x_{0,i}+\sum_hh^{h}_i$, con $x_{0,j}=\WE e_{t_j}$. Por la \cref{prop:qkov}(ii), $h^{h}_i=\sum_{j\le i}A^{h}_{ij}\WOV^{h}\WE e_{t_j}$. Aplicando $\WU$ y usando la linealidad, $z_i=\WU\WE e_{t_i}+\sum_h\sum_jA^{h}_{ij}\WU\WOV^{h}\WE e_{t_j}$. La fórmula de las puntuaciones se obtiene sustituyendo $x_{0,i}=\WE e_{t_i}$ y $x_{0,j}=\WE e_{t_j}$ en la \cref{prop:qkov}(i).
+\end{proof}
+
+El teorema muestra que un modelo de una capa es una suma de un término de bigramas y de un término por cabeza que relaciona tres tokens: el token de origen $t_j$ (que el circuito OV copia o transforma), el de destino $t_i$ (que, con $t_j$, determina la atención a través del circuito QK) y el token predicho. Elhage \emph{et al.} llaman \emph{skip-trigramas} a estas reglas de la forma «$A\ldots B\to C$»~\cite[«Interpretation as Skip-Trigrams»]{elhage21}. Una cabeza cuyo circuito $\WU\WOV\WE$ tiene una diagonal grande y positiva \emph{copia}: si atiende a una aparición previa del token $A$, aumenta el logit de $A$.
+
+\section{La \emph{logit lens} y la normalización final}
+\label{sec:1-norm}
+
+\begin{definicion}[\emph{Logit lens}]\label{def:lens}
+Sea $x_\ell$ el flujo residual tras la capa $\ell$ (o tras cualquier subcapa). La \emph{logit lens} es la distribución $\softmax(\WU x_\ell)$: la predicción que daría el modelo si las capas restantes no añadieran nada~\cite{nostalgebraist}, \cite[§10.3]{jm3}.
+\end{definicion}
+
+\begin{ejemplo}[\emph{Logit lens} del \cref{ej:atribucion}]\label{ej:lens}
+Aplicando $\WU$ y la softmax al flujo parcial se obtiene la tabla siguiente.
+\begin{center}\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Etapa & Flujo & Logits & $P(t_0)$, $P(t_1)$, $P(t_2)$ \\
+\midrule
+Embedding & $(1,0)$ & $(1,0,-1)$ & $0{,}665$; $0{,}245$; $0{,}090$ \\
+Tras la atención & $(1{,}5;\allowbreak\ 1)$ & $(1{,}5;\allowbreak\ 1;\allowbreak\ -0{,}5)$ & $0{,}574$; $0{,}348$; $0{,}078$ \\
+Final & $(1;\allowbreak\ 1{,}5)$ & $(1;\allowbreak\ 1{,}5;\allowbreak\ 0{,}5)$ & $0{,}307$; $0{,}507$; $0{,}186$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+El MLP cambia la predicción de $t_0$ a $t_1$.
+\end{ejemplo}
+
+En modelos reales, la \emph{logit lens} es poco fiable en las primeras capas: el flujo todavía no está expresado en la base que lee $\WU$. La \emph{tuned lens} de Belrose \emph{et al.}~\cite{belrose} sustituye $\WU x_\ell$ por $\WU(A_\ell x_\ell+b_\ell)$, con una transformación afín por capa entrenada para que su predicción se parezca a la del modelo completo.
+
+Los modelos actuales aplican una normalización antes de $\WU$, de modo que $z=\WU\,\gamma\odot\RMSNorm(x_{\mathrm{fin}})$, con $\RMSNorm(v)=v/\RMS(v)$ y $\RMS(v)=\bigl(\tfrac1d\sum_kv_k^{2}\bigr)^{1/2}$ (módulo~18).
+
+\begin{proposicion}[La normalización rompe la aditividad]\label{prop:rmsnorm}
+Para $v\neq 0$ y $c\neq 0$, $\RMSNorm(cv)=\signo(c)\,\RMSNorm(v)$. En consecuencia, $\RMSNorm$ no es aditiva: en general $\RMSNorm(u+v)\neq\RMSNorm(u)+\RMSNorm(v)$. Sin embargo, si se fija $s=\RMS(x_{\mathrm{fin}})$, se cumple
+\[
+z=\sum_{c}\WU\,\gamma\odot\frac{c}{s},
+\]
+donde la suma recorre las aportaciones de la \cref{prop:descomposicion}.
+\end{proposicion}
+
+\begin{proof}
+Como $\RMS(cv)=\abs{c}\RMS(v)$, se tiene $\RMSNorm(cv)=cv/(\abs{c}\RMS(v))$, que es igual a $\signo(c)\RMSNorm(v)$. Si $\RMSNorm$ fuera aditiva, sería $\RMSNorm(2v)=2\RMSNorm(v)$, en contradicción con la igualdad anterior para $c=2$. Para la última igualdad,
+\[
+\RMSNorm(x_{\mathrm{fin}})=\frac{x_{\mathrm{fin}}}{s}=\sum_c\frac{c}{s},
+\]
+y la aplicación $v\mapsto\WU(\gamma\odot v)$ es lineal.
+\end{proof}
+
+La proposición justifica la práctica habitual de «congelar» la escala: se calcula $s$ en la pasada hacia delante y se trata como una constante, con lo que la atribución directa vuelve a sumar exactamente los logits. El precio es que la atribución deja de reflejar que un componente que escribe mucho también reduce, a través de $s$, la contribución relativa de todos los demás.
+
+\begin{lecturas}
+\item Elhage \emph{et al.}~\cite{elhage21}, secciones «Transformer Overview», «Zero-Layer Transformers» y «One-Layer Attention-Only Transformers».
+\item Jurafsky y Martin~\cite{jm3}, §7.2 (vista del flujo residual) y §10.3 «The Logit Lens».
+\item Belrose \emph{et al.}~\cite{belrose}, la \emph{tuned lens}.
+\item Stanford CS224N~\cite{cs224n}, clase invitada «Interpretability».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-canal}
+¿Por qué se dice que el flujo residual es un «canal de comunicación»? ¿Qué propiedad matemática permite atribuir los logits a cada capa? ¿Qué efecto de una capa sobre los logits no recoge la atribución directa?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-lens}
+Con el $\WU$ del \cref{ej:atribucion}, $x_0=(0,1)$, $a_1=(1,0)$ y $m_1=(1,-1)$, calcule la atribución directa de cada pieza a los logits y la tabla de la \emph{logit lens}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-ov}
+Un modelo tiene $d=768$ y 12 cabezas por capa con $d_h=64$. (a) ¿Cuántas entradas tiene $\WOV$ y cuántos parámetros la determinan? (b) ¿Cuál es su rango máximo? (c) ¿Cuántos parámetros tienen los circuitos OV de las 12 cabezas de una capa? Exprese el resultado en función de $d$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-cero}
+Un Transformer de cero capas tiene $K=3$, $d=2$, el $\WU$ del \cref{ej:atribucion} y $\WE=\begin{pmatrix}1&0&1\\0&1&1\end{pmatrix}$. (a) Calcule la matriz $\WU\WE$. (b) Para cada token actual, dé la distribución del token siguiente y el token más probable. (c) ¿Puede este modelo asignar a $t_2$ la máxima probabilidad tras algún token? Justifíquelo con la \cref{prop:cero}.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-dos-cabezas}
+Sea un Transformer solo de atención con \emph{dos} capas de una cabeza cada una, sin normalización ni embeddings de posición. Demuestre que los logits en la posición $i$ se escriben como
+\begin{multline*}
+z_i=\WU\WE e_{t_i}+\sum_{j}A^{1}_{ij}\WU\WOV^{1}\WE e_{t_j}+\sum_{j}A^{2}_{ij}\WU\WOV^{2}\WE e_{t_j}\\
++\sum_{j,k}A^{2}_{ij}A^{1}_{jk}\WU\WOV^{2}\WOV^{1}\WE e_{t_k},
+\end{multline*}
+e interprete el último término (Elhage \emph{et al.} lo llaman \emph{cabeza virtual}). ¿Cuál es el rango máximo de $\WOV^{2}\WOV^{1}$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-rms}
+Sean $\RMSNorm(v)=v/\RMS(v)$ sin ganancia, $x_0=(1,0)$, $a_1=(0{,}5;\allowbreak\ 1)$ y el $\WU$ del \cref{ej:atribucion}. (a) Muestre que normalizar cada aportación por separado no da lo mismo que normalizar la suma. (b) Calcule la atribución directa con la escala congelada de la \cref{prop:rmsnorm} y compruebe que suma los logits. (c) Demuestre que $\RMSNorm$ es invariante frente a un cambio de escala positivo de la entrada y explique por qué esa propiedad impide repartir los logits sin fijar la escala.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, primavera de 2026, práctica~1 (\emph{basics}), §3.4.1, problema \texttt{rmsnorm} (se sustituye la implementación por el análisis de la operación).}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Sondas y métodos de atribución}
+\label{tema:2}
+% =====================================================================
+
+Este tema estudia dos familias de herramientas que interrogan a un modelo sin modificarlo. Las \emph{sondas} preguntan si una propiedad está codificada en las activaciones de una capa; los \emph{métodos de atribución} preguntan qué partes de la entrada son responsables de una salida. Las sondas lineales siguen a Alain y Bengio~\cite{alain} y al §10.2 de Jurafsky y Martin~\cite{jm3}; las tareas de control, a Hewitt y Liang~\cite{hewitt-liang}, y la sonda estructural, a Hewitt y Manning~\cite{hewitt-manning}. Los gradientes integrados y sus axiomas proceden de Sundararajan, Taly y Yan~\cite{sundararajan}, y los valores de Shapley aplicados a la explicación de modelos, de Lundberg y Lee~\cite{lundberg}. La regresión logística y su relación con los modelos generativos gaussianos remiten al módulo~8 y al §4.2 de Bishop~\cite{bishop}.
+
+\section{Sondas lineales}
+
+\begin{definicion}[Sonda lineal]\label{def:sonda}
+Sea $h_\ell(u)\in\R^{d}$ la activación de la capa $\ell$ de un modelo congelado para la entrada $u$, y sea $y(u)\in\{0,1\}$ una propiedad de la entrada. Una \emph{sonda lineal} es un clasificador logístico
+\[
+p(y=1\mid h)=\sigma\bigl(w\T h+w_0\bigr),\qquad \sigma(z)=\frac{1}{1+e^{-z}},
+\]
+entrenado con la entropía cruzada sobre pares $(h_\ell(u_i),y_i)$ sin propagar gradientes al modelo. Si la sonda alcanza una exactitud alta en datos de prueba, se dice que la propiedad es \emph{linealmente decodificable} en la capa $\ell$~\cite{alain}.
+\end{definicion}
+
+Alain y Bengio entrenaron sondas en cada capa de redes de visión y observaron que la separabilidad lineal de las clases aumenta de forma monótona con la profundidad, aunque el entrenamiento solo la exige en la última capa~\cite{alain}.
+
+\begin{proposicion}[El entrenamiento de una sonda es convexo]\label{prop:sonda-convexa}
+Sea $\tilde y_i=2y_i-1\in\{-1,1\}$. La pérdida media
+\[
+J(w,w_0)=\frac1n\sum_{i=1}^{n}\ln\bigl(1+e^{-\tilde y_i(w\T h_i+w_0)}\bigr)
+\]
+coincide con la entropía cruzada de la sonda y es una función convexa de $(w,w_0)$.
+\end{proposicion}
+
+\begin{proof}
+Si $y_i=1$, el término es $-\ln\sigma(z_i)=\ln(1+e^{-z_i})$; si $y_i=0$, es $-\ln(1-\sigma(z_i))=-\ln\sigma(-z_i)=\ln(1+e^{z_i})$, con $z_i=w\T h_i+w_0$. En ambos casos vale $g(-\tilde y_iz_i)$ con $g(t)=\ln(1+e^{t})$. La función $g$ es convexa, porque $g''(t)=\sigma(t)(1-\sigma(t))>0$. Como $(w,w_0)\mapsto-\tilde y_iz_i$ es lineal y la composición de una función convexa con una aplicación afín es convexa, cada sumando es convexo, y también lo es su media.
+\end{proof}
+
+La convexidad garantiza que el resultado de la sonda no depende de la inicialización: si la sonda falla, no es por un mal mínimo local, sino porque la propiedad no es linealmente separable en esa capa (o porque faltan datos).
+
+\begin{ejemplo}[Una sonda a lo largo del flujo]\label{ej:sonda}
+Sea la sonda $w=(2,-1)$, $w_0=0$, aplicada a los flujos del \cref{ej:atribucion}. En $(1,0)$ y en $(1{,}5;\allowbreak\ 1)$ se obtiene $z=2$ y $\sigma(2)=0{,}881$; en el flujo final $(1;\allowbreak\ 1{,}5)$, $z=0{,}5$ y $\sigma=0{,}622$. Por la linealidad de $z$, la aportación de cada componente a la puntuación de la sonda es $w\T c$: la atención no modifica la propiedad ($w\T a_1=0$) y el MLP la debilita ($w\T m_1=-1{,}5$).
+\end{ejemplo}
+
+\section{Qué demuestra una sonda}
+\label{sec:2-control}
+
+Que una sonda acierte no implica que el modelo use la propiedad. Pueden fallar dos cosas: que la sonda sea tan expresiva que aprenda la tarea por sí misma, y que la información esté presente pero el modelo no la lea.
+
+\begin{definicion}[Tarea de control y selectividad]\label{def:control}
+Sea una tarea lingüística que asigna a cada aparición de una palabra una etiqueta de un conjunto $\mathcal{Y}$. Su \emph{tarea de control} asigna a cada \emph{tipo} de palabra una etiqueta de $\mathcal{Y}$ elegida al azar una vez y la usa para todas sus apariciones. La \emph{selectividad} de una sonda es la diferencia entre su exactitud en la tarea lingüística y en la tarea de control~\cite[§2]{hewitt-liang}.
+\end{definicion}
+
+La tarea de control solo puede resolverse memorizando la correspondencia entre tipos de palabra y etiquetas, sin usar el contexto. Una sonda selectiva acierta la tarea real y falla la de control. Hewitt y Liang observan, para el etiquetado gramatical con la capa~1 de ELMo, que una sonda lineal alcanza el $97{,}2\,\%$ en la tarea y el $71{,}2\,\%$ en la de control, mientras que un perceptrón de una capa oculta alcanza el $97{,}3\,\%$ y el $92{,}8\,\%$~\cite[§3.5]{hewitt-liang}: la sonda más potente apenas gana exactitud y pierde casi toda la selectividad.
+
+\begin{observacion}\label{obs:usado}
+Decodificable no es lo mismo que usado. Para afirmar que el modelo \emph{usa} una dirección hay que intervenir sobre ella y observar el cambio de conducta (\cref{tema:5}); Jurafsky y Martin~\cite[§10.2]{jm3} hacen la misma advertencia.
+\end{observacion}
+
+Una sonda tampoco identifica de forma única la dirección de un concepto. La proposición siguiente muestra que el vector $w$ de la regresión logística no coincide en general con la diferencia de medias de las dos clases.
+
+\begin{proposicion}[Clases gaussianas con covarianza común]\label{prop:lda}
+Sean $h\mid y=k\sim\mathcal{N}(\mu_k,\Sigma)$ para $k\in\{0,1\}$, con $\Sigma$ definida positiva y $P(y=1)=\pi$. Entonces
+\[
+P(y=1\mid h)=\sigma\bigl(w\T h+w_0\bigr),\qquad w=\Sigma^{-1}(\mu_1-\mu_0).
+\]
+\end{proposicion}
+
+\begin{proof}
+Por el teorema de Bayes, $P(y=1\mid h)=\sigma(a)$ con $a=\ln\frac{\pi\,\mathcal{N}(h;\mu_1,\Sigma)}{(1-\pi)\,\mathcal{N}(h;\mu_0,\Sigma)}$~\cite[§4.2]{bishop}. Las constantes de normalización de las dos densidades coinciden, y
+\[
+a=-\tfrac12(h-\mu_1)\T\Sigma^{-1}(h-\mu_1)+\tfrac12(h-\mu_0)\T\Sigma^{-1}(h-\mu_0)+\ln\tfrac{\pi}{1-\pi}.
+\]
+Al desarrollar, los términos $h\T\Sigma^{-1}h$ se cancelan y queda $a=(\mu_1-\mu_0)\T\Sigma^{-1}h+w_0$, con $w_0$ independiente de $h$. Como $\Sigma^{-1}$ es simétrica, $(\mu_1-\mu_0)\T\Sigma^{-1}h=w\T h$.
+\end{proof}
+
+\begin{ejemplo}[La sonda corrige el ruido correlacionado]\label{ej:lda}
+Sean $\mu_1-\mu_0=(1,0)$ y $\Sigma=\begin{pmatrix}1&0{,}8\\0{,}8&1\end{pmatrix}$. Como $\det\Sigma=0{,}36$, $w=\Sigma^{-1}(1,0)=\frac{1}{0{,}36}(1,-0{,}8)=(2{,}778;\allowbreak\ -2{,}222)$. La segunda coordenada no distingue las clases, pero está correlacionada con el ruido de la primera, y el clasificador óptimo la resta para cancelarlo. La diferencia de medias $(1,0)$ indica en qué dirección se \emph{mueven} las activaciones cuando cambia el concepto; $w$ indica cómo \emph{leerlo} mejor. Para intervenir sobre el concepto (\cref{tema:5}) se usa con frecuencia la primera.
+\end{ejemplo}
+
+\section{La sonda estructural}
+
+Las sondas de clasificación preguntan por propiedades de una palabra. Hewitt y Manning preguntan por una estructura completa: el árbol de dependencias de la frase.
+
+\begin{definicion}[Sonda estructural]\label{def:estructural}
+Sean $h_1,\dots,h_T$ las representaciones de las palabras de una frase y $B\in\R^{r\times d}$. La \emph{sonda estructural de distancia} define
+\[
+d_B(h_i,h_j)^{2}=\bigl(B(h_i-h_j)\bigr)\T\bigl(B(h_i-h_j)\bigr)=\norm{B(h_i-h_j)}^{2}
+\]
+y entrena $B$ para que $d_B(h_i,h_j)^2$ aproxime la distancia entre las palabras $i$ y $j$ en el árbol sintáctico. La \emph{sonda de profundidad} entrena $\norm{Bh_i}^{2}$ para que aproxime la profundidad de la palabra $i$ en el árbol~\cite{hewitt-manning}.
+\end{definicion}
+
+Como $d_B(h_i,h_j)^2=(h_i-h_j)\T B\T B(h_i-h_j)$ y $B\T B$ es semidefinida positiva, la sonda busca una métrica lineal en el espacio de representaciones. Hewitt y Manning encuentran transformaciones de este tipo para ELMo y BERT, y no para las representaciones de control, lo que sugiere que los árboles sintácticos están codificados en la geometría de esos modelos~\cite{hewitt-manning}.
+
+\section{La hipótesis de representación lineal}
+
+Las sondas lineales, las analogías de palabras del módulo~2 ($\text{rey}-\text{hombre}+\text{mujer}\approx\text{reina}$) y los vectores de dirección del \cref{tema:5} apuntan a una misma conjetura.
+
+\begin{definicion}[Hipótesis de representación lineal]\label{def:hrl}
+La \emph{hipótesis de representación lineal} afirma que muchos conceptos de alto nivel están representados en el espacio de activaciones como \emph{direcciones}: existe un vector $v$ tal que la presencia o la intensidad del concepto se lee mediante la proyección $v\T h$ y se modifica sumando múltiplos de $v$.
+\end{definicion}
+
+Park, Choe y Veitch~\cite{park} formalizan esta idea para los modelos de lenguaje y distinguen la versión «de lectura» (sondas) de la versión «de escritura» (intervenciones). El \cref{tema:3} explica por qué las direcciones, y no las neuronas individuales, son la unidad natural de análisis.
+
+\section{Atribución por gradientes y gradientes integrados}
+
+Sea $F:\R^{n}\to\R$ una función diferenciable a trozos, por ejemplo la probabilidad o el logit de un token en función de los embeddings de entrada. Un \emph{método de atribución} asigna a cada entrada $x$ un vector $(A_1(x),\dots,A_n(x))$ que mide la responsabilidad de cada coordenada en el valor $F(x)$. Muchos métodos lo hacen respecto de una \emph{base} $x'$ que representa la ausencia de información (por ejemplo, el embedding nulo).
+
+\begin{definicion}[Axiomas de sensibilidad y completitud]\label{def:axiomas}
+Un método de atribución con base $x'$ cumple:
+\begin{enumerate}
+  \item \emph{sensibilidad}~(a) si, para toda $x$ que difiere de $x'$ en una sola coordenada $i$ con $F(x)\neq F(x')$, se tiene $A_i(x)\neq 0$;
+  \item \emph{invariancia ante la implementación} si da las mismas atribuciones a dos redes que calculan la misma función;
+  \item \emph{completitud} si $\sum_{i=1}^{n}A_i(x)=F(x)-F(x')$.
+\end{enumerate}
+\end{definicion}
+
+\begin{ejemplo}[El gradiente no es sensible]\label{ej:saturacion}
+Sea $F(x)=1-\relu(1-x)$ en $\R$, con base $x'=0$. Entonces $F(0)=0$ y $F(2)=1$, pero $F'(2)=0$, porque $F$ es constante e igual a~1 en $[1,\infty)$. La atribución por gradiente, $A(x)=F'(x)$, y la de gradiente por entrada, $A(x)=x\,F'(x)$, valen~0 en $x=2$, aunque la entrada es la única responsable del cambio de~0 a~1. Es el ejemplo de saturación de Sundararajan \emph{et al.}~\cite[§2.1]{sundararajan}.
+\end{ejemplo}
+
+\begin{definicion}[Gradientes integrados]\label{def:ig}
+El \emph{gradiente integrado} de la coordenada $i$ en $x$, con base $x'$, es
+\[
+\IG_i(x;x')=(x_i-x'_i)\int_{0}^{1}\frac{\partial F}{\partial x_i}\bigl(x'+\alpha(x-x')\bigr)\,d\alpha,
+\]
+la integral del gradiente a lo largo del segmento que va de $x'$ a $x$~\cite[§3, ec.~(1)]{sundararajan}.
+\end{definicion}
+
+\begin{proposicion}[Completitud de los gradientes integrados]\label{prop:completitud}
+Si $F$ es continua en el segmento $[x',x]$ y diferenciable en él salvo en un número finito de puntos, entonces
+\[
+\sum_{i=1}^{n}\IG_i(x;x')=F(x)-F(x').
+\]
+En particular, los gradientes integrados cumplen la sensibilidad~(a).
+\end{proposicion}
+
+\begin{proof}
+Sea $\gamma(\alpha)=x'+\alpha(x-x')$ y $g(\alpha)=F(\gamma(\alpha))$ para $\alpha\in[0,1]$. Por la regla de la cadena (módulo~4), allí donde $F$ es diferenciable,
+\[
+g'(\alpha)=\sum_{i=1}^{n}\frac{\partial F}{\partial x_i}(\gamma(\alpha))\,\gamma_i'(\alpha)=\sum_{i=1}^{n}\frac{\partial F}{\partial x_i}(\gamma(\alpha))\,(x_i-x'_i).
+\]
+La función $g$ es continua y derivable salvo en un número finito de puntos, de modo que el teorema fundamental del cálculo, aplicado en cada subintervalo, da $\int_0^1g'(\alpha)\,d\alpha=g(1)-g(0)=F(x)-F(x')$. Intercambiando la suma finita y la integral, el miembro izquierdo es $\sum_i\IG_i(x;x')$. Para la sensibilidad, si $x$ y $x'$ difieren solo en la coordenada $i$, los demás factores $x_j-x'_j$ son nulos, $\IG_j=0$ para $j\neq i$, y la completitud da $\IG_i=F(x)-F(x')\neq 0$.
+\end{proof}
+
+En el \cref{ej:saturacion}, $\IG(2;0)=2\int_0^1F'(2\alpha)\,d\alpha=2\int_0^{1/2}1\,d\alpha=1=F(2)-F(0)$. Los gradientes integrados dependen solo de las derivadas de la función, no de cómo se implementa, y por eso cumplen también la invariancia ante la implementación. Sundararajan \emph{et al.} demuestran además que son el único método de «camino» que respeta la simetría entre variables~\cite[§4.2, teorema~1]{sundararajan}. En la práctica, la integral se aproxima con una suma de Riemann de entre 20 y 300 pasos, y se comprueba que las atribuciones suman aproximadamente $F(x)-F(x')$~\cite[§5]{sundararajan}.
+
+\section{Valores de Shapley y SHAP}
+
+Los gradientes integrados reparten un cambio continuo. Los valores de Shapley, de la teoría de juegos cooperativos, reparten el valor de un conjunto de «jugadores» que pueden estar presentes o ausentes.
+
+\begin{definicion}[Valor de Shapley]\label{def:shapley}
+Sea $N=\{1,\dots,M\}$ y sea $v:2^{N}\to\R$ con $v(\varnothing)=0$, un \emph{juego cooperativo}. El \emph{valor de Shapley} del jugador $i$ es
+\[
+\phi_i(v)=\sum_{S\subseteq N\setminus\{i\}}\frac{\abs{S}!\,(M-\abs{S}-1)!}{M!}\,\bigl(v(S\cup\{i\})-v(S)\bigr).
+\]
+\end{definicion}
+
+\begin{proposicion}[Forma por permutaciones y eficiencia]\label{prop:shapley}
+Sea $\Pi$ el conjunto de las $M!$ ordenaciones de $N$ y, para $\pi\in\Pi$, sea $P_i^{\pi}$ el conjunto de jugadores que preceden a $i$ en $\pi$. Entonces
+\[
+\phi_i(v)=\frac{1}{M!}\sum_{\pi\in\Pi}\bigl(v(P_i^{\pi}\cup\{i\})-v(P_i^{\pi})\bigr),\qquad \sum_{i=1}^{M}\phi_i(v)=v(N).
+\]
+\end{proposicion}
+
+\begin{proof}
+Fijado $S\subseteq N\setminus\{i\}$, las ordenaciones en las que los predecesores de $i$ son exactamente $S$ se obtienen colocando primero los $\abs{S}$ elementos de $S$ en cualquier orden, después $i$ y después los $M-\abs{S}-1$ restantes en cualquier orden: hay $\abs{S}!\,(M-\abs{S}-1)!$. Agrupando las ordenaciones según $P_i^{\pi}$ se obtiene la \cref{def:shapley}. Para la eficiencia, se fija $\pi=(\pi_1,\dots,\pi_M)$ y se suman las contribuciones marginales de todos los jugadores: la suma es telescópica, $\sum_{k=1}^{M}\bigl(v(\{\pi_1,\dots,\pi_k\})-v(\{\pi_1,\dots,\pi_{k-1}\})\bigr)=v(N)-v(\varnothing)=v(N)$. Promediando sobre las $M!$ ordenaciones se obtiene $\sum_i\phi_i=v(N)$.
+\end{proof}
+
+Los valores de Shapley cumplen además la \emph{simetría} (dos jugadores intercambiables reciben lo mismo), el \emph{jugador nulo} (quien no cambia ninguna coalición recibe~0) y la \emph{linealidad} en $v$; el teorema de Shapley afirma que son la única asignación con estas cuatro propiedades.
+
+\begin{ejemplo}[Un juego de tres jugadores]\label{ej:shapley}
+Sea $v(\{1\})=1$, $v(\{2\})=2$, $v(\{3\})=0$, $v(\{1,2\})=4$, $v(\{1,3\})=1$, $v(\{2,3\})=3$ y $v(\{1,2,3\})=5$. Para el jugador~1, con pesos $\tfrac13$ para $S=\varnothing$ y $S=\{2,3\}$ y $\tfrac16$ para $S=\{2\}$ y $S=\{3\}$:
+\[
+\phi_1=\tfrac13(1-0)+\tfrac16(4-2)+\tfrac16(1-0)+\tfrac13(5-3)=\tfrac13+\tfrac13+\tfrac16+\tfrac23=1{,}5.
+\]
+Del mismo modo, $\phi_2=3$ y $\phi_3=0{,}5$, y $1{,}5+3+0{,}5=5=v(N)$, como exige la \cref{prop:shapley}.
+\end{ejemplo}
+
+\begin{definicion}[SHAP]\label{def:shap}
+Sea $f$ un modelo, $x$ una entrada con $M$ características y, para $S\subseteq N$, sea $f_x(S)$ el valor esperado de $f$ cuando se fijan las características de $S$ a sus valores en $x$ y las demás se toman de una distribución de referencia. Los \emph{valores SHAP} de $x$ son los valores de Shapley del juego $v(S)=f_x(S)-f_x(\varnothing)$~\cite[§2 y teorema~1]{lundberg}.
+\end{definicion}
+
+Lundberg y Lee demuestran que, entre las explicaciones aditivas $g(z')=\phi_0+\sum_i\phi_iz'_i$, los valores SHAP son la única que cumple sus propiedades de precisión local, ausencia y consistencia~\cite[teorema~1]{lundberg}. En un modelo de lenguaje, los jugadores pueden ser los tokens del contexto y «ausente» puede significar sustituirlos por un token neutro. El coste exacto crece como $2^{M}$, por lo que se usan aproximaciones por muestreo o el método \emph{Kernel SHAP}.
+
+\begin{proposicion}[SHAP de un modelo lineal]\label{prop:shap-lineal}
+Si $f(x)=w_0+\sum_iw_ix_i$ y la distribución de referencia tiene características independientes con medias $\E[X_i]$, entonces $\phi_i=w_i\bigl(x_i-\E[X_i]\bigr)$.
+\end{proposicion}
+
+\begin{proof}
+Por la linealidad de la esperanza, $f_x(S)=w_0+\sum_{i\in S}w_ix_i+\sum_{i\notin S}w_i\E[X_i]$. La contribución marginal de $i$ a cualquier coalición $S\not\ni i$ es $f_x(S\cup\{i\})-f_x(S)=w_i(x_i-\E[X_i])$, que no depende de $S$. Como los pesos de la \cref{def:shapley} suman~1 (son las probabilidades de los posibles conjuntos de predecesores), $\phi_i=w_i(x_i-\E[X_i])$.
+\end{proof}
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, §10.2 «Probing».
+\item Alain y Bengio~\cite{alain}; Hewitt y Liang~\cite{hewitt-liang}, §2 y §3.5; Hewitt y Manning~\cite{hewitt-manning}.
+\item Sundararajan, Taly y Yan~\cite{sundararajan}, §2 a §5.
+\item Lundberg y Lee~\cite{lundberg}, §2 a §4.
+\item Bishop~\cite{bishop}, §4.2, para los modelos generativos con covarianza común.
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-selectividad}
+Con los datos de Hewitt y Liang citados en la \cref{sec:2-control}, calcule la selectividad de la sonda lineal y del perceptrón. ¿Cuál de las dos permite concluir más sobre la representación? ¿Qué conclusión sería errónea si solo se mirara la exactitud en la tarea lingüística?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-sonda}
+Sobre los flujos del \cref{eje:1-lens}, aplique la sonda $w=(1,1)$, $w_0=-1$ tras cada etapa. ¿Qué componente escribe la propiedad y cuál la deja igual? Explique por qué el MLP, que cambia mucho los logits, no altera la puntuación de la sonda.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-ig}
+Sea $F(x_1,x_2)=x_1x_2$, con base $x'=(0,0)$ y entrada $x=(2,3)$. (a) Calcule los gradientes integrados y compruebe la completitud. (b) Calcule la atribución de gradiente por entrada, $x_i\,\partial F/\partial x_i(x)$, y compruebe que no es completa.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-shap}
+Sea $f(x)=x_1x_2+x_3$, la entrada $x=(1,2,3)$ y la referencia $(0,0,0)$, de modo que $v(S)$ es el valor de $f$ con las coordenadas de $S$ tomadas de $x$ y las demás nulas. (a) Escriba $v(S)$ para los ocho subconjuntos. (b) Calcule los valores de Shapley y compruebe la eficiencia. (c) Calcule los gradientes integrados con base~0 y compárelos.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cuadratica}
+Sea $F(x)=\sum_iw_ix_i+\sum_{i<j}b_{ij}x_ix_j$, con base $x'=0$, y sea $b_{ji}=b_{ij}$. (a) Demuestre que $\IG_i(x;0)=w_ix_i+\tfrac12\sum_{j\neq i}b_{ij}x_ix_j$. (b) Demuestre que el valor de Shapley de la coordenada $i$ en el juego $v(S)=F(x_S)$, donde $x_S$ conserva las coordenadas de $S$ y anula las demás, es el mismo. (c) Interprete el factor $\tfrac12$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cs229}
+(a) Demuestre que el hessiano de la entropía cruzada media de una sonda logística, con $\theta=(w_0,w)$ y $\tilde h_i=(1,h_i)$, es $H=\frac1n\sum_i\sigma_i(1-\sigma_i)\tilde h_i\tilde h_i\T$, y que $z\T Hz\ge 0$ para todo $z$. (b) Con dos activaciones de dimensión~1, $h_1=2$ con $y_1=1$ y $h_2=0$ con $y_2=0$, calcule en $\theta_0=0$ el gradiente, el hessiano y un paso de Newton. (c) Compare la pérdida antes y después del paso.
+\fuente{adaptado de Stanford CS229~\cite{cs229ps}, verano de 2019, \emph{Problem Set}~1, problema~1, apartados (a) y (b) (datos nuevos, interpretados como activaciones de un modelo congelado).}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Superposición}
+\label{tema:3}
+% =====================================================================
+
+Las neuronas de los modelos de lenguaje responden a menudo a varias cosas sin relación aparente. Este tema explica el fenómeno mediante la \emph{hipótesis de superposición}: una red puede representar más características que dimensiones si las coloca en direcciones casi ortogonales y las características rara vez aparecen a la vez. Los resultados geométricos siguen el capítulo~2 de Blum, Hopcroft y Kannan~\cite{bhk}, libro del curso CS~4850 de Cornell, y el lema del casquete esférico de Ball~\cite{ball}. El modelo de juguete, la dimensión por característica y la transición de fase proceden de Elhage \emph{et al.}~\cite{elhage22}, secciones «Definitions and Motivation», «Demonstrating Superposition» y «The Geometry of Superposition».
+
+\section{Características, polisemanticidad y bases privilegiadas}
+
+\begin{definicion}[Característica y polisemanticidad]\label{def:caracteristica}
+Se llama \emph{característica} a una propiedad de la entrada que la red representa mediante una dirección $W_i\in\R^{m}$ de su espacio de activaciones: la activación es aproximadamente $h=\sum_ix_iW_i$, donde $x_i\ge 0$ es la intensidad de la característica $i$. Una neurona (una coordenada de $h$) es \emph{monosemántica} si responde a una sola característica y \emph{polisemántica} si responde a varias~\cite[«What are Features?» y «Features as Directions»]{elhage22}.
+\end{definicion}
+
+Que las coordenadas de un espacio tengan o no un significado especial depende de las operaciones que se aplican sobre él.
+
+\begin{proposicion}[El flujo residual no tiene base privilegiada]\label{prop:rotacion}
+Sea un Transformer sin normalizaciones en el que el flujo residual solo se usa mediante productos por matrices (lecturas $W_{\mathrm{in}}x$, escrituras $x\leftarrow x+W_{\mathrm{out}}h$, embedding $\WE$ y desembedding $\WU$). Sea $R\in\R^{d\times d}$ ortogonal. Si se sustituyen $\WE$ por $R\WE$, cada $W_{\mathrm{out}}$ por $RW_{\mathrm{out}}$, cada $W_{\mathrm{in}}$ por $W_{\mathrm{in}}R\T$ y $\WU$ por $\WU R\T$, la función que calcula el modelo no cambia y el nuevo flujo es $Rx_\ell$ en cada capa.
+\end{proposicion}
+
+\begin{proof}
+Por inducción sobre las operaciones del modelo. El nuevo embedding es $R\WE e_t=Rx_0$. Si el flujo nuevo es $Rx$, cada lectura da $W_{\mathrm{in}}R\T Rx=W_{\mathrm{in}}x$, porque $R\T R=I$; por tanto, todas las activaciones internas $h$ (incluidos los patrones de atención y las no linealidades del MLP, que actúan sobre $W_{\mathrm{in}}x$) son las del modelo original. Cada escritura da $Rx+RW_{\mathrm{out}}h=R(x+W_{\mathrm{out}}h)$, y la hipótesis se conserva. Al final, $\WU R\T Rx_{\mathrm{fin}}=\WU x_{\mathrm{fin}}$.
+\end{proof}
+
+Las coordenadas del flujo residual son, por tanto, arbitrarias: cualquier rotación da un modelo equivalente. En cambio, la capa oculta de un MLP aplica una no linealidad coordenada a coordenada, y $\relu(Rv)\neq R\,\relu(v)$ en general: con $R$ la rotación de $90^\circ$ en $\R^{2}$ y $v=(0,1)$, $\relu(Rv)=\relu(-1,0)=(0,0)$, mientras que $R\,\relu(v)=Rv=(-1,0)$. Esa capa tiene una \emph{base privilegiada}, y en ella tiene sentido preguntar si una neurona es monosemántica~\cite[«Privileged vs Non-privileged Bases»]{elhage22}. En el flujo residual, la unidad de análisis natural es la dirección.
+
+\section{Casi ortogonalidad en alta dimensión}
+
+En $\R^{m}$ caben a lo sumo $m$ direcciones exactamente ortogonales. Si se admite una pequeña interferencia, caben muchas más.
+
+\begin{teorema}[Coseno de un vector aleatorio]\label{teo:coseno}
+Sea $u$ un vector aleatorio con distribución uniforme en la esfera unidad $\mathbb{S}^{d-1}\subset\R^{d}$ y sea $v\in\mathbb{S}^{d-1}$ fijo. Entonces $\E[u\T v]=0$ y $\E[(u\T v)^{2}]=1/d$.
+\end{teorema}
+
+\begin{proof}
+La distribución uniforme en la esfera es invariante por transformaciones ortogonales. Sea $Q$ ortogonal con $Qv=e_1$; entonces $u\T v=(Qu)\T(Qv)=(Qu)_1$, y $Qu$ tiene la misma distribución que $u$, de modo que $u\T v$ tiene la distribución de $u_1$. La reflexión $u_1\mapsto -u_1$ conserva la distribución, luego $\E[u_1]=0$. Las permutaciones de coordenadas son ortogonales, así que $u_1^{2},\dots,u_d^{2}$ tienen la misma distribución y la misma esperanza. Como $\sum_ku_k^{2}=1$ con probabilidad~1, por la linealidad de la esperanza $\sum_k\E[u_k^{2}]=1$, y cada sumando vale $1/d$.
+\end{proof}
+
+La desviación típica del coseno es, por tanto, $1/\sqrt{d}$: con $d=4096$ vale $1/64=0{,}016$. El resultado siguiente, que se enuncia sin demostración, cuantifica la concentración.
+
+\begin{lema}[Casquete esférico]\label{lem:casquete}
+Con la notación del \cref{teo:coseno}, para $0\le\varepsilon<1$,
+\[
+P\bigl(\abs{u\T v}\ge\varepsilon\bigr)\le 2\,e^{-d\varepsilon^{2}/2}.
+\]
+\end{lema}
+
+La cota de un solo lado, $P(u\T v\ge\varepsilon)\le e^{-d\varepsilon^{2}/2}$, es la estimación del área de un casquete esférico de Ball~\cite{ball}; la de dos lados se obtiene sumando la del lado opuesto, que es igual por simetría. Blum, Hopcroft y Kannan obtienen resultados del mismo tipo para la bola unidad~\cite[cap.~2]{bhk}.
+
+\begin{corolario}[Muchas direcciones casi ortogonales]\label{cor:casi-ortogonales}
+Sean $d\ge 1$, $0<\varepsilon<1$ y $N\ge 2$ con $N<e^{d\varepsilon^{2}/4}$. Existen $N$ vectores unitarios de $\R^{d}$ con $\abs{u_i\T u_j}<\varepsilon$ para todo $i\neq j$.
+\end{corolario}
+
+\begin{proof}
+Se eligen $u_1,\dots,u_N$ independientes y uniformes en la esfera. Para un par fijo $i\neq j$, condicionando en $u_j$ y aplicando el \cref{lem:casquete}, $P(\abs{u_i\T u_j}\ge\varepsilon)\le 2e^{-d\varepsilon^{2}/2}$. Hay $\binom N2<N^{2}/2$ pares, y por la cota de la unión,
+\[
+P\bigl(\exists\, i\neq j:\ \abs{u_i\T u_j}\ge\varepsilon\bigr)<\frac{N^{2}}{2}\cdot 2e^{-d\varepsilon^{2}/2}=N^{2}e^{-d\varepsilon^{2}/2}.
+\]
+Si $N<e^{d\varepsilon^{2}/4}$, entonces $N^{2}<e^{d\varepsilon^{2}/2}$ y la probabilidad es menor que~1. Por tanto, con probabilidad positiva ningún par supera $\varepsilon$, y existe al menos una configuración con la propiedad pedida.
+\end{proof}
+
+Con $d=4096$ y $\varepsilon=0{,}1$, el corolario garantiza $e^{10{,}24}\approx 2{,}8\cdot 10^{4}$ direcciones; con $\varepsilon=0{,}2$, $e^{40{,}96}\approx 6\cdot 10^{17}$. El número de direcciones casi ortogonales crece exponencialmente con la dimensión. La cota es pesimista, pero basta para mostrar que la geometría no limita el número de características a $d$.
+
+\section{El modelo de juguete}
+
+\begin{definicion}[Modelo de juguete de superposición]\label{def:juguete}
+Sean $n>m$. Cada característica $x_i$, $i=1,\dots,n$, vale~0 con probabilidad $S$ (la \emph{dispersión}) y, en caso contrario, sigue una distribución uniforme en $[0,1]$, independientemente de las demás. Sean $W\in\R^{m\times n}$, con columnas $W_1,\dots,W_n$, y $b\in\R^{n}$. El modelo comprime y reconstruye:
+\[
+h=Wx\in\R^{m},\qquad \hat x=\relu\bigl(W\T h+b\bigr)=\relu\bigl(W\T Wx+b\bigr),
+\]
+y se entrena con la pérdida $\mathcal{L}=\E\bigl[\sum_iI_i(x_i-\hat x_i)^{2}\bigr]$, donde $I_i>0$ es la \emph{importancia} de la característica~$i$~\cite[«Experiment Setup»]{elhage22}.
+\end{definicion}
+
+La columna $W_i$ es la dirección asignada a la característica $i$, y la entrada $(W\T W)_{ij}=W_i\T W_j$ mide la \emph{interferencia} entre las características $i$ y $j$. Sin la $\relu$, el modelo es lineal, $W\T W$ tiene rango a lo sumo $m$ y, según Elhage \emph{et al.}, el modelo lineal aprende siempre las $m$ características más importantes, de forma análoga al análisis de componentes principales; la superposición no le ofrece ninguna ventaja. La $\relu$ con sesgo negativo cambia esa conclusión: anula las interferencias pequeñas y negativas.
+
+\begin{ejemplo}[El pentágono]\label{ej:pentagono}
+Sean $n=5$, $m=2$, $W_k=(\cos 72^\circ(k-1),\ \sin 72^\circ(k-1))$ y $b_i=-0{,}31$ para todo $i$. Entonces $(W\T W)_{ij}$ vale~1 en la diagonal, $\cos 72^\circ=0{,}309$ entre vecinos y $\cos 144^\circ=-0{,}809$ entre no vecinos.
+\begin{itemize}[leftmargin=1.4em]
+  \item Con $x=e_1$: $W\T Wx=(1;\allowbreak\ 0{,}309;\allowbreak\ -0{,}809;\allowbreak\ -0{,}809;\allowbreak\ 0{,}309)$; al sumar $b$ y aplicar la $\relu$, $\hat x=(0{,}69;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$. La $\relu$ elimina la interferencia; el precio es encoger la característica activa.
+  \item Con $x=e_1+e_2$ (vecinas): $\hat x\approx(0{,}999;\allowbreak\ 0{,}999;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$, casi exacto.
+  \item Con $x=e_1+e_3$ (no vecinas): $\hat x=(0;\allowbreak\ 0{,}308;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$, con error cuadrático $2{,}095$. El modelo «ve» la característica~2, cuya dirección está entre las dos activas.
+\end{itemize}
+\end{ejemplo}
+
+El ejemplo muestra el compromiso. Si las características son dispersas, casi siempre hay a lo sumo una activa, la interferencia se paga rara vez y guardar cinco características en dos dimensiones compensa. Si suelen activarse juntas, el error del tercer caso domina y conviene guardar solo dos. En la práctica del módulo, con $n=5$, $m=2$ e $I_i=0{,}9^{i}$, el modelo entrenado guarda dos características ortogonales con $S=0$, cuatro (dos pares antipodales perpendiculares) con $S=0{,}7$ y las cinco en un pentágono con $S=0{,}95$.
+
+\section{Dimensión por característica}
+
+\begin{definicion}[Dimensión por característica]\label{def:dimension}
+Para $W_i\neq 0$ y $\hat W_i=W_i/\norm{W_i}$, la \emph{dimensión de la característica $i$} es
+\[
+D_i=\frac{\norm{W_i}^{2}}{\sum_{j=1}^{n}(\hat W_i\T W_j)^{2}},
+\]
+y se toma $D_i=0$ si $W_i=0$~\cite[«Feature Dimensionality»]{elhage22}. La cantidad $m/\norm{W}_F^{2}$ se llama \emph{dimensiones por característica} del modelo.
+\end{definicion}
+
+El numerador mide cuánto se representa la característica y el denominador, cuántas características comparten su dirección. Una característica con dirección propia, ortogonal a las demás, tiene $D_i=1$; dos características antipodales ($W_2=-W_1$) tienen $D_i=1/2$; en el pentágono, $D_i=1/(1+2\cdot 0{,}309^{2}+2\cdot 0{,}809^{2})=1/2{,}5=0{,}4$. Elhage \emph{et al.} observan que, en los modelos entrenados, los valores de $D_i$ se agrupan en fracciones como $3/4$ (tetraedro), $2/3$ (triángulo), $1/2$ (par antipodal), $2/5$ (pentágono) y $3/8$ (antiprisma cuadrado).
+
+\begin{proposicion}[Las dimensiones suman a lo sumo $m$]\label{prop:suma-dim}
+Sea $W\in\R^{m\times n}$. Entonces $\sum_{i=1}^{n}D_i\le\rango W\le m$.
+\end{proposicion}
+
+\begin{proof}
+Sea $G=W\T W\in\R^{n\times n}$, simétrica y semidefinida positiva, con $\rango G=\rango W=r$. Si $W_i\neq 0$, se tiene $\norm{W_i}^{2}=G_{ii}$ y $(\hat W_i\T W_j)^{2}=G_{ij}^{2}/G_{ii}$, de modo que
+\[
+D_i=\frac{G_{ii}^{2}}{\sum_jG_{ij}^{2}}=\frac{G_{ii}^{2}}{(G^{2})_{ii}}.
+\]
+Sea $P$ la proyección ortogonal sobre el espacio columna de $G$. Como las columnas de $G$ están en ese espacio y $G$ es simétrica, $PG=G$ y $GP=G$. Entonces $G_{ii}=e_i\T GPe_i=(Ge_i)\T(Pe_i)$ y, por la desigualdad de Cauchy--Schwarz,
+\[
+G_{ii}^{2}\le\norm{Ge_i}^{2}\norm{Pe_i}^{2}=(G^{2})_{ii}\,P_{ii},
+\]
+donde se ha usado $\norm{Ge_i}^{2}=e_i\T G^{2}e_i$ y $\norm{Pe_i}^{2}=e_i\T P\T Pe_i=e_i\T Pe_i$. Por tanto, $D_i\le P_{ii}$, desigualdad que también se cumple si $W_i=0$, porque $P_{ii}\ge 0$. Sumando, $\sum_iD_i\le\tr P=r$, ya que la traza de una proyección ortogonal es la dimensión de su imagen.
+\end{proof}
+
+\begin{ejemplo}[Tres direcciones en el plano]\label{ej:tres}
+Sean $W_1=(1,0)$, $W_2=(0,1)$ y $W_3=(\tfrac{1}{\sqrt2},\tfrac{1}{\sqrt2})$. Entonces $D_1=1/(1+0+0{,}5)=2/3$, $D_2=2/3$ y $D_3=1/(0{,}5+0{,}5+1)=1/2$. La suma es $11/6<2$: la configuración no aprovecha todo el espacio, a diferencia del pentágono, en el que la suma es exactamente~2.
+\end{ejemplo}
+
+\section{Superposición como transición de fase}
+
+Elhage \emph{et al.} estudian el caso mínimo, con dos características y una sola dimensión oculta, y lo representan en un diagrama de fases en función de la dispersión y de la importancia relativa~\cite[«Superposition as a Phase Change»]{elhage22}. Con importancias iguales hay dos candidatas naturales: guardar una sola característica y aproximar la otra por su media, o guardar las dos en direcciones opuestas ($w=(1,-1)$). La pérdida de cada solución es un polinomio sencillo en $q=1-S$, y las dos curvas se cortan en un valor crítico de la dispersión (\cref{eje:3-fase}). Como el óptimo salta de una solución a otra cuando las curvas se cruzan, el cambio de geometría es abrupto, del tipo de una transición de fase de primer orden.
+
+\begin{observacion}\label{obs:superposicion-llm}
+Si los modelos de lenguaje representan en superposición muchas más características que dimensiones, las neuronas serán polisemánticas y las proyecciones sobre direcciones arbitrarias mezclarán características. Elhage \emph{et al.} señalan además una relación con la vulnerabilidad a perturbaciones adversarias: la interferencia permite que pequeñas perturbaciones en muchas direcciones se sumen~\cite[«Relationship to Adversarial Robustness»]{elhage22}. Encontrar una base sobrecompleta de características es el objetivo de los autoencoders dispersos del \cref{tema:4}.
+\end{observacion}
+
+\begin{lecturas}
+\item Elhage \emph{et al.}~\cite{elhage22}, secciones «Definitions and Motivation», «Demonstrating Superposition» y «The Geometry of Superposition».
+\item Blum, Hopcroft y Kannan~\cite{bhk}, cap.~2 «High-Dimensional Space».
+\item Ball~\cite{ball}, estimación del área de los casquetes esféricos.
+\item Olah \emph{et al.}~\cite{olah-zoom}, sobre características y neuronas polisemánticas en redes de visión.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-conceptos}
+(a) ¿Por qué la superposición solo compensa cuando las características son dispersas? (b) ¿Qué papel desempeña la $\relu$ con sesgo negativo en el modelo de juguete? (c) ¿Por qué tiene sentido preguntar si una neurona del MLP es polisemántica, pero no si lo es una coordenada del flujo residual?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-pentagono}
+En el pentágono del \cref{ej:pentagono}, escriba la matriz $W\T W$ y calcule $\hat x$ y el error cuadrático para $x=e_1+e_3$. Explique geométricamente el resultado calculando $W_1+W_3$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-bhk1}
+Sea $u$ un punto uniforme en la esfera unidad de $\R^{d}$. Sin calcular ninguna integral, halle la varianza de $u_1$. Evalúela para $d=3$ y $d=4096$ y dé la desviación típica.
+\fuente{adaptado de Blum, Hopcroft y Kannan~\cite{bhk}, cap.~2, ejercicio~2.9.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-bhk2}
+Sean $x,y\in\R^{d}$ con componentes independientes $\mathcal{N}(0,1)$. (a) Calcule $\E[x\T y]$ y $\Var(x\T y)$. (b) Use que $\norm{x}\approx\sqrt d$ para estimar la desviación típica del coseno entre $x$ e $y$. (c) Con $d=400$, estime con la aproximación normal la probabilidad de que $\abs{\cos(x,y)}>0{,}15$.
+\fuente{adaptado de Blum, Hopcroft y Kannan~\cite{bhk}, cap.~2, ejercicio~2.28.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-casi}
+Demuestre el \cref{teo:coseno} con detalle, justificando cada uso de la simetría. Después, ¿cuántas direcciones con $\abs{\cos}<0{,}25$ entre cada par garantiza el \cref{cor:casi-ortogonales} en $d=512$? ¿Cuántas veces la dimensión es esa cantidad?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-bhk3}
+Se admite el resultado siguiente: si se eligen $n$ puntos al azar en la bola unidad de $\R^{d}$, con probabilidad $1-O(1/n)$ todos tienen norma al menos $1-2\ln n/d$ y todo par cumple $\abs{x_i\T x_j}\le\sqrt{6\ln n/(d-1)}$. Demuestre que, con alta probabilidad y para $d$ suficientemente grande, todos los ángulos entre pares superan $45^\circ$, y calcule la cota del ángulo para $n=d=1000$.
+\fuente{adaptado de Blum, Hopcroft y Kannan~\cite{bhk}, cap.~2, ejercicio~2.29 (basado en su teorema~2.8).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-fase}
+Sea el modelo de juguete con $n=2$, $m=1$ e importancias iguales a~1, y sea $q=1-S$. Compare la solución~A ($W=(1,0)$, $b=(0,b_2)$ con $b_2=\E[x_2]$) con la solución antipodal~B ($W=(1,-1)$, $b=0$). (a) Calcule la pérdida de cada una en función de $q$. (b) Halle la dispersión a partir de la cual B es mejor. (c) Evalúe ambas pérdidas en $S=0{,}7$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Autoencoders dispersos}
+\label{tema:4}
+% =====================================================================
+
+Si las activaciones de un modelo son superposiciones de muchas características dispersas (\cref{tema:3}), cabe intentar recuperarlas aprendiendo un diccionario sobrecompleto de direcciones tal que cada activación se escriba como combinación de unas pocas. Este tema formula ese problema, estudia el efecto de la penalización $L^{1}$ y describe los resultados publicados. El autoencoder disperso y sus métricas siguen a Bricken \emph{et al.}~\cite{bricken} y a Templeton \emph{et al.}~\cite{templeton}, de Anthropic; la variante JumpReLU, a Lieberum \emph{et al.}~\cite{gemmascope}, de Google DeepMind. El umbral suave y la interpretación bayesiana de la penalización $L^{1}$ remiten al módulo~8, al §3.7 de Zhang \emph{et al.}~\cite{d2l} y al curso CS229 de Stanford~\cite{cs229ps2}.
+
+\section{Aprendizaje de diccionarios}
+
+\begin{definicion}[Diccionario y código disperso]\label{def:diccionario}
+Sea $x\in\R^{d}$ una activación. Un \emph{diccionario} es una familia de $F$ direcciones $d_1,\dots,d_F\in\R^{d}$, con $F\ge d$ (diccionario \emph{sobrecompleto} si $F>d$). Un \emph{código} es un vector $f\in\R^{F}_{\ge 0}$ con $x\approx\sum_jf_jd_j$. Se definen $\norm{f}_0=\abs{\{j:f_j\neq 0\}}$, el número de latentes activos, y $\norm{f}_1=\sum_jf_j$.
+\end{definicion}
+
+Con $F>d$, la ecuación $x=\sum_jf_jd_j$ tiene en general infinitas soluciones. Se busca la más dispersa, con pocos $f_j$ no nulos. Minimizar $\norm{f}_0$ es un problema combinatorio; la penalización $\norm{f}_1$ es su relajación convexa habitual, ya usada en la regresión LASSO del módulo~8.
+
+\section{El autoencoder disperso}
+
+\begin{definicion}[Autoencoder disperso]\label{def:sae}
+Sean $W_e\in\R^{d\times F}$, $b_e\in\R^{F}$, $W_d\in\R^{F\times d}$ con filas $d_1\T,\dots,d_F\T$, y $b_d\in\R^{d}$. El \emph{autoencoder disperso} (SAE) calcula
+\[
+f(x)=\relu\bigl(W_e\T(x-b_d)+b_e\bigr)\in\R^{F},\qquad \hat x=W_d\T f(x)+b_d=\sum_{j=1}^{F}f_j(x)\,d_j+b_d,
+\]
+y se entrena sobre activaciones del modelo con la pérdida
+\[
+\mathcal{L}(x)=\norm{x-\hat x}_2^{2}+\lambda\sum_{j=1}^{F}f_j(x)\,\norm{d_j}_2,
+\]
+donde $\lambda>0$ es el \emph{coeficiente de dispersión}. La fila $d_j$ es la dirección que escribe el latente $j$~\cite{bricken,templeton}.
+\end{definicion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,rounded corners=2pt,minimum height=8mm,align=center}]
+  \node[caja,minimum width=18mm] (x) at (0,0) {$x\in\R^{d}$};
+  \node[caja,minimum width=24mm] (enc) at (3.2,0) {codificador\\$\relu(W_e\T(x-b_d)+b_e)$};
+  \node[caja,minimum width=20mm] (f) at (6.6,0) {$f\in\R^{F}$\\casi todo ceros};
+  \node[caja,minimum width=22mm] (dec) at (9.8,0) {decodificador\\$\sum_jf_jd_j+b_d$};
+  \node (xh) at (9.8,-1.4) {$\hat x\approx x$};
+  \node[align=center] (ins) at (6.6,-1.5) {inspección: ¿qué textos\\activan $f_j$?};
+  \draw[->] (x) -- (enc); \draw[->] (enc) -- (f); \draw[->] (f) -- (dec); \draw[->] (dec) -- (xh);
+  \draw[->,dashed] (f) -- (ins);
+\end{tikzpicture}
+\caption{Un autoencoder disperso. El código $f$ tiene $F\gg d$ coordenadas, de las que solo unas pocas son positivas para cada entrada.}
+\label{fig:sae}
+\end{figure}
+
+\begin{proposicion}[El factor $\norm{d_j}$ evita una trampa de escala]\label{prop:escala}
+Sea $c>0$ y considérese la transformación $W_e\mapsto W_e/c$, $b_e\mapsto b_e/c$, $d_j\mapsto c\,d_j$ para todo $j$, que deja $b_d$ fijo.
+\begin{enumerate}
+  \item La transformación no cambia la reconstrucción $\hat x$ y multiplica cada $f_j$ por $1/c$.
+  \item Si la penalización fuera $\lambda\sum_jf_j$, el valor de la penalización se dividiría por $c$; tomando $c\to\infty$, el ínfimo de la pérdida sería el de la reconstrucción sola y la penalización no tendría efecto.
+  \item Con la penalización $\lambda\sum_jf_j\norm{d_j}$ de la \cref{def:sae}, la pérdida es invariante frente a la transformación.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) La $\relu$ es positivamente homogénea: $\relu(z/c)=\relu(z)/c$ para $c>0$. Por tanto, el nuevo código es $f'=f/c$, y la nueva reconstrucción es $\sum_j(f_j/c)(c\,d_j)+b_d=\hat x$. (ii) La penalización pasa a $\lambda\sum_jf_j/c$, que tiende a~0 cuando $c\to\infty$ sin que cambie el término de reconstrucción. (iii) $f'_j\norm{c\,d_j}=(f_j/c)\,c\norm{d_j}=f_j\norm{d_j}$.
+\end{proof}
+
+Una alternativa equivalente, usada por Bricken \emph{et al.}, es imponer $\norm{d_j}=1$ durante el entrenamiento.
+
+\begin{ejemplo}[La penalización prefiere un solo latente]\label{ej:sae}
+Sean $d_1=(1,0)$, $d_2=(0,1)$, $d_3=(0{,}6;\allowbreak\ 0{,}8)$, todos unitarios, y $x=(0{,}6;\allowbreak\ 0{,}8)$. Los códigos $f=(0{,}6;\allowbreak\ 0{,}8;\allowbreak\ 0)$ y $f=(0,0,1)$ reconstruyen $x$ sin error, con $\norm{f}_1=1{,}4$ y $\norm{f}_1=1$ respectivamente. Con $\lambda=0{,}1$, sus pérdidas son $0{,}14$ y $0{,}10$: la penalización elige el código con un solo latente, alineado con $x$.
+\end{ejemplo}
+
+\section{La penalización \texorpdfstring{$L^{1}$}{L1}: umbral suave y encogimiento}
+
+\begin{proposicion}[Umbral suave]\label{prop:umbral}
+Sean $a\in\R$ y $\lambda>0$. El problema $\min_{f\ge 0}\,g(f)$, con $g(f)=(a-f)^{2}+\lambda f$, tiene solución única
+\[
+f^{*}=\max\bigl(a-\tfrac{\lambda}{2},\ 0\bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+$g$ es una parábola con $g''=2>0$, estrictamente convexa. Su derivada es $g'(f)=-2(a-f)+\lambda$, que se anula en $f_0=a-\lambda/2$. Si $f_0\ge 0$, $f_0$ es el mínimo global y pertenece a la región admisible. Si $f_0<0$, $g'(f)=2(f-f_0)>0$ para todo $f\ge 0$, de modo que $g$ es creciente en $[0,\infty)$ y el mínimo está en $f=0$. Ambos casos se resumen en $f^{*}=\max(a-\lambda/2,0)$; la unicidad se sigue de la convexidad estricta.
+\end{proof}
+
+La penalización $L^{1}$ tiene dos efectos: anula las activaciones menores que $\lambda/2$, lo que produce la dispersión, y \emph{encoge} en $\lambda/2$ las que sobreviven. El encogimiento es un sesgo sistemático: el SAE subestima la intensidad de las características activas. La forma $\max(a-\lambda/2,0)=\relu(a-\lambda/2)$ coincide con la de un codificador con sesgo negativo, lo que explica la elección del codificador de la \cref{def:sae} (\cref{eje:4-ortonormal}). Para reducir el encogimiento se han propuesto otras activaciones; Gemma Scope usa \emph{JumpReLU}, que pone a cero las preactivaciones por debajo de un umbral aprendido y deja pasar las demás sin restarles nada~\cite{gemmascope}.
+
+La penalización tiene también una interpretación bayesiana: minimizar el error cuadrático más $\lambda\norm{f}_1$ equivale a buscar el código más probable \emph{a posteriori} con ruido gaussiano en la reconstrucción y una distribución \emph{a priori} de Laplace (exponencial, si $f\ge 0$) para cada latente (\cref{eje:4-map}). Suponer que las características son dispersas es elegir esa distribución \emph{a priori}.
+
+\section{Métricas de un diccionario}
+
+\begin{definicion}[Métricas de un SAE]\label{def:metricas}
+Sean $x^{(1)},\dots,x^{(N)}$ activaciones con media $\bar x$, y sean $\hat x^{(k)}$ y $f^{(k)}$ sus reconstrucciones y códigos.
+\begin{enumerate}
+  \item La \emph{fracción de varianza no explicada} es $\FVU=\sum_k\norm{x^{(k)}-\hat x^{(k)}}^{2}\big/\sum_k\norm{x^{(k)}-\bar x}^{2}$.
+  \item El \emph{L0 medio} es $\frac1N\sum_k\norm{f^{(k)}}_0$, el número medio de latentes activos.
+  \item Un latente $j$ está \emph{muerto} si $f^{(k)}_j=0$ para todo $k$ en un conjunto amplio de datos.
+  \item La \emph{pérdida recuperada} compara la entropía cruzada del modelo cuando se sustituye $x$ por $\hat x$ con la del modelo original y con la del modelo con la activación anulada.
+\end{enumerate}
+\end{definicion}
+
+Ninguna métrica basta sola. Un FVU bajo con un L0 alto indica que el SAE reconstruye bien pero no descompone; un L0 bajo con un FVU alto indica que descompone pero pierde información. La pérdida recuperada mide lo que importa para el modelo: un error de reconstrucción pequeño en una dirección que el modelo lee puede ser más dañino que uno grande en una dirección que ignora.
+
+\begin{ejemplo}[El compromiso de $\lambda$]\label{ej:lambda}
+En la práctica del módulo se generan datos sintéticos con 16 características conocidas en $d=8$, con una media de $0{,}96$ características activas por ejemplo, y se entrena un SAE para varios valores de $\lambda$:
+\begin{center}\small
+\begin{tabular}{@{}cccc@{}}
+\toprule
+$\lambda$ & FVU & L0 medio & Recuperadas ($\cos>0{,}9$) \\
+\midrule
+$0{,}03$ & $0{,}006$ & $9{,}3$ & 15/16 \\
+$0{,}3$ & $0{,}059$ & $2{,}7$ & 15/16 \\
+$1$ & $0{,}215$ & $1{,}5$ & 16/16 \\
+\bottomrule
+\end{tabular}
+\end{center}
+Con $\lambda$ pequeño la reconstrucción es casi perfecta, pero se usan nueve latentes donde bastaría uno; con $\lambda$ grande el código se acerca a la dispersión real a costa de un FVU mayor.
+\end{ejemplo}
+
+\section{Resultados publicados}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \emph{Towards Monosemanticity} (Bricken \emph{et al.}, 2023)~\cite{bricken} entrena SAE sobre las 512 neuronas del MLP de un Transformer de una capa, con diccionarios de hasta $131\,072$ latentes. Los latentes son mucho más interpretables que las neuronas: aparecen características para texto en árabe, secuencias de ADN o codificación base64. El trabajo documenta los latentes muertos y el fenómeno de \emph{división de características}: al aumentar $F$, una característica se parte en varias más específicas.
+  \item \emph{Scaling Monosemanticity} (Templeton \emph{et al.}, 2024)~\cite{templeton} entrena SAE sobre el flujo residual de una capa intermedia de Claude~3 Sonnet, con 1, 4 y 34 millones de latentes. Encuentra características abstractas, multilingües y multimodales (el puente Golden Gate en texto y en imágenes) y otras relevantes para la seguridad, como el engaño, la adulación o el código inseguro. Fijar una característica en un valor alto cambia la conducta: con la del puente activada, el modelo lo menciona en casi cualquier respuesta, demostración pública conocida como \emph{Golden Gate Claude} (mayo de 2024).
+  \item \emph{Gemma Scope} (Lieberum \emph{et al.}, 2024)~\cite{gemmascope} publica SAE JumpReLU abiertos para todas las capas y subcapas de Gemma~2 2B y 9B y para algunas capas de Gemma~2 27B.
+\end{itemize}
+
+\begin{observacion}[Límites]\label{obs:limites-sae}
+Siempre queda varianza sin explicar; el diccionario obtenido depende de $\lambda$ y de $F$, y un latente interpretable no es necesariamente una variable que el modelo use. Como en las sondas (\cref{obs:usado}), la prueba de que una característica es causal exige intervenir sobre ella (\cref{tema:5}).
+\end{observacion}
+
+\begin{lecturas}
+\item Bricken \emph{et al.}~\cite{bricken}, \emph{Towards Monosemanticity}.
+\item Templeton \emph{et al.}~\cite{templeton}, \emph{Scaling Monosemanticity}.
+\item Lieberum \emph{et al.}~\cite{gemmascope}, Gemma Scope y la activación JumpReLU.
+\item Zhang \emph{et al.}~\cite{d2l}, §3.7 «Weight Decay», para la comparación entre penalizaciones $L^{1}$ y $L^{2}$.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-vf}
+Justifique si son verdaderas o falsas: (a) sin la $\relu$ de salida, el modelo de juguete del \cref{tema:3} no gana nada con la superposición; (b) cada latente de un SAE corresponde, por construcción, a un concepto; (c) si una sonda lineal acierta el $99\,\%$, el modelo usa esa propiedad; (d) la \emph{logit lens} suele ser más fiable en las últimas capas.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-sae}
+Sean $d_1=(1,0)$, $d_2=(0,1)$, $d_3=(1/\sqrt2,\ 1/\sqrt2)$ y $x=(1,1)$. Compare la pérdida del SAE con $\lambda=0{,}2$ para los códigos $f=(1,1,0)$ y $f=(0,0,\sqrt2)$. Relacione el resultado con una desigualdad entre normas.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-umbral}
+Con $g(f)=(a-f)^{2}+\lambda f$, $f\ge 0$ y $\lambda=0{,}6$, calcule $f^{*}$ para $a=0{,}8$ y $a=0{,}2$, y compruebe el primer caso evaluando $g$ en $f^{*}$, en $f=a$ y en $f=0$. ¿Qué dos efectos tiene la penalización sobre las activaciones?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-metricas}
+Un SAE con $F=4$ latentes procesa tres activaciones $x^{(1)}=(1,0)$, $x^{(2)}=(0,2)$ y $x^{(3)}=(1,1)$, con reconstrucciones $(0{,}9;\allowbreak\ 0)$, $(0;\allowbreak\ 1{,}8)$ y $(0{,}8;\allowbreak\ 0{,}8)$ y códigos $f^{(1)}=(0{,}9;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$, $f^{(2)}=(0;\allowbreak\ 1{,}8;\allowbreak\ 0;\allowbreak\ 0)$ y $f^{(3)}=(0{,}4;\allowbreak\ 0;\allowbreak\ 0{,}57;\allowbreak\ 0)$. Calcule el FVU, el L0 medio y la fracción de latentes muertos en esta muestra.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-d2l}
+Se sustituye la penalización $\tfrac{\lambda}{2}\norm{w}^{2}$ por $\lambda\norm{w}_1$. (a) Escriba la regla de actualización por subgradiente. (b) Con $\eta=0{,}1$ y $\lambda=0{,}5$, aplíquela a $w=0{,}3$ con gradiente de la pérdida $g=0{,}2$ y a $w=0{,}02$ con $g=-0{,}1$. (c) Compare el segundo caso con la regla proximal $w\leftarrow\signo(z)\max(\abs{z}-\eta\lambda,0)$, con $z=w-\eta g$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §3.7 «Weight Decay», ejercicio~3.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-ortonormal}
+Sea un SAE con $F=d$, $b_d=0$ y filas de $W_d$ ortonormales ($W_dW_d\T=I$). (a) Demuestre que $\norm{x-W_d\T f}^{2}=\norm{W_dx-f}^{2}$. (b) Deduzca que el problema $\min_{f\ge 0}\norm{x-W_d\T f}^{2}+\lambda\norm{f}_1$ se separa en $F$ problemas escalares y que su solución es $f_j^{*}=\relu(d_j\T x-\lambda/2)$. (c) Concluya que el codificador de la \cref{def:sae} con $W_e=W_d\T$ y $b_e=-\tfrac{\lambda}{2}\mathbf{1}$ calcula el código óptimo. (d) Explique por qué el argumento falla si $F>d$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-map}
+Sea la regresión $y=\theta\T x+\varepsilon$ con $\varepsilon\sim\mathcal{N}(0,\sigma^{2})$ independiente y una distribución \emph{a priori} de Laplace independiente para cada $\theta_i$, de densidad $\frac{1}{2b}e^{-\abs{\theta_i}/b}$. (a) Demuestre que el estimador MAP minimiza $\norm{X\theta-y}^{2}+\gamma\norm{\theta}_1$ y halle $\gamma$. (b) Calcule $\gamma$ para $\sigma=0{,}5$ y $b=0{,}1$. (c) Relacione el resultado con la penalización de un SAE.
+\fuente{adaptado de Stanford CS229~\cite{cs229ps2}, verano de 2020, \emph{Problem Set}~2, problema~6(d) «Bayesian Interpretation of Regularization».}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Circuitos e intervenciones causales}
+\label{tema:5}
+% =====================================================================
+
+Las sondas y los diccionarios dicen qué información hay en las activaciones; este tema estudia cómo se procesa y cómo se demuestra que un mecanismo es causal. Un \emph{circuito} es un subgrafo de componentes y pesos que implementa un algoritmo identificable~\cite{olah-zoom}. Se estudian cuatro casos publicados: las cabezas de inducción de Elhage \emph{et al.}~\cite[«Two-Layer Attention-Only Transformers»]{elhage21} y Olsson \emph{et al.}~\cite{olsson}, también tratadas en el §10.6 de Jurafsky y Martin~\cite{jm3}; el circuito de identificación del objeto indirecto de Wang \emph{et al.}~\cite{wang-ioi}; la localización y edición de hechos de Meng \emph{et al.}~\cite{meng}, y el algoritmo de Fourier del \emph{grokking} de Nanda \emph{et al.}~\cite{nanda}. El tema termina con los vectores de dirección~\cite{turner,arditi} y el trazado de circuitos en Claude~3.5 Haiku~\cite{lindsey}. La deducción de la actualización de ROME usa el problema de mínimos cuadrados con restricciones de la clase~16 del curso ENGR108 de Stanford~\cite{engr108}.
+
+\section{Composición de cabezas y cabezas de inducción}
+
+En un Transformer de dos capas, la cabeza de la segunda capa lee un flujo que ya contiene la salida de la primera. Con $x_j=x_{0,j}+h^{1}_j$, sus puntuaciones son
+\[
+\sqrt{d_h}\,s^{2}_{ij}=x_{0,i}\T\WQK^{2}x_{0,j}+\underbrace{x_{0,i}\T\WQK^{2}h^{1}_j}_{\text{composición K}}+\underbrace{(h^{1}_i)\T\WQK^{2}x_{0,j}}_{\text{composición Q}}+(h^{1}_i)\T\WQK^{2}h^{1}_j,
+\]
+y su salida contiene el término $\WOV^{2}h^{1}_j$ (\emph{composición V}; \cref{eje:1-dos-cabezas}). Elhage \emph{et al.} llaman a estas tres vías las tres clases de composición~\cite[«Three Kinds of Composition»]{elhage21}. La composición Q y K permite patrones de atención que dependen de algo más que de los tokens de origen y destino.
+
+\begin{definicion}[Cabeza de inducción]\label{def:induccion}
+Una \emph{cabeza de inducción} es una cabeza de atención que, sobre secuencias de la forma $\ldots[A][B]\ldots[A]$, atiende desde la última $[A]$ a la posición de $[B]$ (\emph{coincidencia de prefijo}) y aumenta el logit de $[B]$ (\emph{copia})~\cite{olsson}.
+\end{definicion}
+
+\begin{proposicion}[Un circuito de inducción explícito]\label{prop:induccion}
+Sean $u_t=\WE e_t$ los embeddings de los tokens, ortonormales, y sean $u'_t$ otros vectores ortonormales, ortogonales a todos los $u_t$. Sea $\Pi=\sum_tu'_tu_t\T$, de modo que $\Pi u_t=u'_t$. Supóngase:
+\begin{enumerate}
+  \item la cabeza~1 atiende siempre a la posición anterior ($A^{1}_{j,j-1}=1$) y tiene $\WOV^{1}=\Pi$, de modo que $h^{1}_j=u'_{t_{j-1}}$ y el flujo tras la capa~1 es $x_j=u_{t_j}+u'_{t_{j-1}}$;
+  \item la cabeza~2 tiene $\WQK^{2}=\beta\sqrt{d_h}\,\Pi\T$, con $\beta>0$, y su circuito OV copia: $\WU\WOV^{2}u_t=\gamma\,e_t$ con $\gamma>0$ y $\WOV^{2}u'_t=0$.
+\end{enumerate}
+Entonces la puntuación de la cabeza~2 desde la posición $i$ hacia la posición $j$ es $s^{2}_{ij}=\beta\,[t_{j-1}=t_i]$, y su aportación a los logits en la posición $i$ es $\gamma\sum_jA^{2}_{ij}e_{t_j}$. Cuando $\beta\to\infty$, la atención se reparte por igual entre las posiciones $j$ con $t_{j-1}=t_i$; en particular, si $t_i$ ha aparecido antes una sola vez, seguido del token $t_j$, el logit de $t_j$ aumenta en $\gamma$.
+\end{proposicion}
+
+\begin{proof}
+Como $\Pi x_i=\Pi u_{t_i}+\Pi u'_{t_{i-1}}=u'_{t_i}$ (porque $u_t\T u'_{t'}=0$ para todo $t,t'$),
+\[
+s^{2}_{ij}=\frac{x_i\T\WQK^{2}x_j}{\sqrt{d_h}}=\beta\,(\Pi x_i)\T x_j=\beta\,(u'_{t_i})\T\bigl(u_{t_j}+u'_{t_{j-1}}\bigr)=\beta\,[t_{j-1}=t_i],
+\]
+por la ortonormalidad de los $u'_t$ y su ortogonalidad con los $u_t$. Por la \cref{prop:qkov}(ii), la aportación a los logits es $\sum_jA^{2}_{ij}\WU\WOV^{2}(u_{t_j}+u'_{t_{j-1}})=\gamma\sum_jA^{2}_{ij}e_{t_j}$. Si $\beta\to\infty$, la softmax concentra la masa por igual en las posiciones con puntuación máxima, que son las $j$ con $t_{j-1}=t_i$ cuando existen; si solo hay una, recibe peso~1 y el logit de $t_j$ aumenta en $\gamma$.
+\end{proof}
+
+La proposición muestra por qué hace falta una cabeza previa: la clave de una posición contiene, de entrada, solo su propio token, y alguien debe escribir en ella cuál era el token anterior. La cabeza~2 lee esa información a través de la composición~K.
+
+Las cabezas de inducción reducen drásticamente la pérdida en texto repetido. Sobre una secuencia aleatoria de tokens de un vocabulario de $K=50\,000$ que se repite, sin inducción la mejor predicción es la uniforme, con pérdida $\ln 50\,000=10{,}82$ nats por token; si en la repetición se copia el token correcto con probabilidad $0{,}9$, la pérdida en esa parte baja a $-\ln 0{,}9=0{,}105$ nats.
+
+Olsson \emph{et al.} definen la \emph{puntuación de aprendizaje en contexto} como la pérdida en el token~500 del contexto menos la pérdida media en el token~50, y observan que, en un intervalo corto del entrenamiento, esta puntuación cae bruscamente al mismo tiempo que se forman las cabezas de inducción y aparece un pequeño saliente en la curva de pérdida~\cite{olsson}. Los modelos de una sola capa no presentan ni las cabezas ni el salto. El trabajo reúne seis argumentos para sostener que las cabezas de inducción son responsables de buena parte del aprendizaje en contexto (módulo~22); los propios autores advierten que, para los modelos grandes, la evidencia es indirecta.
+
+\section{Intervenciones: ablación y parcheo de activaciones}
+
+\begin{definicion}[Ablación y parcheo]\label{def:parcheo}
+Sea $M$ un modelo, $c$ un componente (una cabeza, un MLP o una activación concreta) y $\mu$ una métrica de la salida, por ejemplo la diferencia de logits entre la respuesta correcta y una alternativa.
+\begin{enumerate}
+  \item La \emph{ablación} de $c$ sustituye su salida por cero (\emph{ablación nula}) o por su media sobre un conjunto de datos (\emph{ablación por la media}).
+  \item Dadas una entrada \emph{limpia} $u$ y una entrada \emph{corrupta} $u'$ que solo difiere en la información relevante, el \emph{parcheo de activaciones} ejecuta el modelo sobre $u'$ sustituyendo la salida de $c$ por la que tenía sobre $u$, y mide $\mu$.
+  \item La \emph{fracción recuperada} es $\bigl(\mu_{\mathrm{parcheo}}-\mu_{\mathrm{corrupta}}\bigr)/\bigl(\mu_{\mathrm{limpia}}-\mu_{\mathrm{corrupta}}\bigr)$.
+\end{enumerate}
+\end{definicion}
+
+Meng \emph{et al.} llaman \emph{efecto total} a $\mu_{\mathrm{limpia}}-\mu_{\mathrm{corrupta}}$ y \emph{efecto indirecto} de un estado oculto a la mejora que se obtiene restaurándolo~\cite[§2.1]{meng}. El parcheo distingue lo necesario de lo suficiente: si restaurar $c$ recupera la conducta, $c$ transporta la información decisiva. El \emph{parcheo de caminos} de Wang \emph{et al.} restaura solo el efecto de $c$ a través de ciertos caminos (por ejemplo, el camino directo a los logits) y deja los demás corruptos~\cite[§3.1]{wang-ioi}.
+
+\begin{ejemplo}[El circuito IOI]\label{ej:ioi}
+En la tarea de identificación del objeto indirecto (IOI), GPT-2 \emph{small} debe completar «When Mary and John went to the store, John gave a drink to» con «Mary», y no con el sujeto repetido, «John». La métrica es la diferencia de logits entre ambos nombres, que vale de media $3{,}56$. Wang \emph{et al.} identifican mediante parcheo de caminos un circuito de 26 cabezas agrupadas en siete clases: cabezas de token duplicado, de inhibición del sujeto y de movimiento de nombres, además de cabezas de movimiento negativo, de token previo, de inducción y de movimiento de reserva~\cite[§3]{wang-ioi}. Proponen tres criterios para validar un circuito: \emph{fidelidad} (el circuito solo reproduce el rendimiento del modelo), \emph{completitud} y \emph{minimalidad}. Su circuito recupera el $87\,\%$ del rendimiento, pero no supera todas las pruebas de completitud~\cite[§4]{wang-ioi}.
+\end{ejemplo}
+
+\section{Localización y edición de hechos: ROME}
+
+Meng \emph{et al.} aplican el parcheo a enunciados de hechos («La Torre Eiffel está en…») corrompiendo con ruido gaussiano los embeddings del sujeto. En GPT-2 XL, el efecto indirecto medio es máximo en los MLP de las capas intermedias, en el último token del sujeto~\cite[§2.2]{meng}. Proponen entonces que esos MLP funcionan como una \emph{memoria asociativa} lineal: la matriz de salida $W$ del MLP asocia una \emph{clave} $k$ (la activación oculta, que codifica el sujeto) con un \emph{valor} $v=Wk$ (que codifica la relación y el objeto).
+
+\begin{teorema}[Actualización de rango uno]\label{teo:rome}
+Sean $K\in\R^{p\times N}$ y $V\in\R^{q\times N}$ matrices de claves y valores, con $C=KK\T$ definida positiva, y sea $W$ la solución de mínimos cuadrados $\min_W\norm{WK-V}_F^{2}$. Dada una nueva asociación $(k_*,v_*)$, la solución de
+\[
+\min_{\hat W}\ \norm{\hat WK-V}_F^{2}\quad\text{sujeto a}\quad \hat Wk_*=v_*
+\]
+es
+\[
+\hat W=W+\Lambda\,(C^{-1}k_*)\T,\qquad \Lambda=\frac{v_*-Wk_*}{(C^{-1}k_*)\T k_*}.
+\]
+\end{teorema}
+
+\begin{proof}
+Las ecuaciones normales del problema sin restricciones son $(WK-V)K\T=0$. Sea $\hat W=W+\Delta$. Desarrollando el cuadrado de la norma de Frobenius,
+\[
+\norm{\hat WK-V}_F^{2}=\norm{WK-V}_F^{2}+2\tr\bigl(\Delta K(WK-V)\T\bigr)+\tr\bigl(\Delta KK\T\Delta\T\bigr).
+\]
+El término central es $2\tr\bigl(\Delta\,[(WK-V)K\T]\T\bigr)=0$. El problema se reduce a minimizar $\tr(\Delta C\Delta\T)=\sum_i\delta_i\T C\delta_i$, donde $\delta_i\T$ es la fila $i$ de $\Delta$, sujeto a $\Delta k_*=r$ con $r=v_*-Wk_*$, es decir, a $\delta_i\T k_*=r_i$ para cada $i$. Las filas se desacoplan. Para cada una, el lagrangiano $\delta_i\T C\delta_i-2\nu_i(\delta_i\T k_*-r_i)$ tiene gradiente nulo cuando $C\delta_i=\nu_ik_*$, es decir, $\delta_i=\nu_iC^{-1}k_*$; la restricción da $\nu_i\,k_*\T C^{-1}k_*=r_i$. Como $C^{-1}$ es definida positiva y $k_*\neq 0$, el denominador es positivo y $\delta_i=r_iC^{-1}k_*/(k_*\T C^{-1}k_*)$. Este punto es el mínimo, porque el objetivo es estrictamente convexo y la restricción es afín. Reuniendo las filas, $\Delta=r\,(C^{-1}k_*)\T/(k_*\T C^{-1}k_*)$, y como $C$ es simétrica, $k_*\T C^{-1}k_*=(C^{-1}k_*)\T k_*$.
+\end{proof}
+
+Es la ecuación~(2) de Meng \emph{et al.}~\cite[§3.1]{meng}, que estiman $C$ con una muestra de texto de Wikipedia. El cambio tiene rango uno y es mínimo en la métrica que define $C$: no altera las claves $k$ con $k\T C^{-1}k_*=0$ (\cref{eje:5-rome}). Meng \emph{et al.} evalúan las ediciones con su conjunto CounterFact, que mide a la vez si la edición generaliza a paráfrasis y si es específica del sujeto~\cite[§3.3]{meng}.
+
+\begin{ejemplo}[Una edición en dimensión~2]\label{ej:rome}
+Sean $W=I_2$, $C=\diag(4,1)$, $k_*=(1,1)$ y $v_*=(2,0)$. Entonces $C^{-1}k_*=(0{,}25;\allowbreak\ 1)$, $(C^{-1}k_*)\T k_*=1{,}25$, $Wk_*=(1,1)$ y $\Lambda=(1,-1)/1{,}25=(0{,}8;\allowbreak\ -0{,}8)$. Por tanto,
+\[
+\hat W=I_2+\begin{pmatrix}0{,}8\\-0{,}8\end{pmatrix}(0{,}25\ \ 1)=\begin{pmatrix}1{,}2&0{,}8\\-0{,}2&0{,}2\end{pmatrix},\qquad \hat Wk_*=(2,0)=v_*.
+\]
+\end{ejemplo}
+
+\section{\emph{Grokking} y el algoritmo de Fourier}
+
+Nanda \emph{et al.} entrenan un Transformer de una capa para la suma modular: dados $a,b\in\{0,\dots,p-1\}$ con $p=113$, predecir $c=(a+b)\bmod p$. Con el $30\,\%$ de los pares como entrenamiento y decaimiento de pesos, la red memoriza primero y generaliza mucho después (\emph{grokking}). La ingeniería inversa muestra que implementa el algoritmo siguiente~\cite[§3.1 y §4]{nanda}: los embeddings representan cada entrada mediante $\cos(\omega_ka)$ y $\sin(\omega_ka)$ para unas pocas frecuencias $\omega_k=2\pi k/p$; la atención y el MLP calculan $\cos(\omega_k(a+b))$ y $\sin(\omega_k(a+b))$ con las identidades trigonométricas
+\[
+\cos(\omega(a+b))=\cos\omega a\cos\omega b-\sin\omega a\sin\omega b,\qquad \sin(\omega(a+b))=\sin\omega a\cos\omega b+\cos\omega a\sin\omega b;
+\]
+y la matriz de salida produce el logit
+\[
+\ell(c)=\sum_k\cos(\omega_k(a+b-c))=\sum_k\bigl[\cos(\omega_k(a+b))\cos(\omega_kc)+\sin(\omega_k(a+b))\sin(\omega_kc)\bigr],
+\]
+que es lineal en las cantidades anteriores. El modelo estudiado usa cinco frecuencias clave, $k\in\{14,35,41,42,52\}$.
+
+\begin{proposicion}[Interferencia constructiva]\label{prop:fourier}
+Sea $p$ primo y sea $\mathcal{K}\subseteq\{1,\dots,p-1\}$ no vacío. La función $\ell(c)=\sum_{k\in\mathcal{K}}\cos\bigl(2\pi k(a+b-c)/p\bigr)$, para $c\in\{0,\dots,p-1\}$, alcanza su máximo, igual a $\abs{\mathcal{K}}$, únicamente en $c\equiv a+b\pmod p$.
+\end{proposicion}
+
+\begin{proof}
+Sea $s=a+b-c$. Cada sumando es a lo sumo~1, con igualdad si y solo si $ks/p\in\mathbb{Z}$, es decir, si $p$ divide a $ks$. Como $p$ es primo y no divide a $k$ (porque $1\le k\le p-1$), $p$ divide a $ks$ si y solo si divide a $s$. Si $c\equiv a+b$, todos los sumandos valen~1 y $\ell(c)=\abs{\mathcal{K}}$. Si $c\not\equiv a+b$, ningún sumando vale~1 y $\ell(c)<\abs{\mathcal{K}}$. Como $c$ recorre un sistema completo de restos, hay exactamente un maximizador.
+\end{proof}
+
+Nanda \emph{et al.} definen además medidas de progreso que evolucionan de forma continua antes del salto en la exactitud de prueba, y distinguen tres fases: memorización, formación del circuito y limpieza, en la que el decaimiento de pesos elimina los componentes que memorizan~\cite[§5]{nanda}. El \emph{grokking} no es, por tanto, un cambio súbito del mecanismo, sino la culminación de un proceso gradual.
+
+\section{Vectores de dirección}
+
+\begin{definicion}[Dirección por adición de activaciones]\label{def:steering}
+Sean $P$ y $N$ conjuntos de entradas con y sin un concepto, y $x_\ell(u)$ el flujo de la capa $\ell$. El \emph{vector de dirección} es la diferencia de medias
+\[
+v=\frac{1}{\abs{P}}\sum_{u\in P}x_\ell(u)-\frac{1}{\abs{N}}\sum_{u\in N}x_\ell(u),
+\]
+y \emph{dirigir} el modelo consiste en sustituir $x_\ell\leftarrow x_\ell+\alpha v$ durante la generación~\cite{turner}.
+\end{definicion}
+
+Si la dirección se suma justo antes de $\WU$ y no hay normalización, los logits cambian en $\alpha\WU v$, de modo que la log-probabilidad de cada token se desplaza en $\alpha(\WU v)_t$ menos una constante común. En capas anteriores el efecto pasa por las capas posteriores y solo puede medirse experimentalmente. Con $\alpha$ excesivo, el flujo sale de la distribución que el modelo ha visto en el entrenamiento y la generación degenera.
+
+\begin{ejemplo}[Dirección en el modelo del \cref{ej:atribucion}]\label{ej:steering}
+Con activaciones positivas $(2,1)$ y $(3,1)$ y negativas $(0,1)$ y $(1,1)$, $v=(2{,}5;\allowbreak\ 1)-(0{,}5;\allowbreak\ 1)=(2,0)$. Sumar $0{,}5\,v$ al flujo final $(1;\allowbreak\ 1{,}5)$ da $(2;\allowbreak\ 1{,}5)$; los logits cambian en $0{,}5\,\WU v=(1,0,-1)$ y las probabilidades pasan de $(0{,}307;\allowbreak\ 0{,}507;\allowbreak\ 0{,}186)$ a $(0{,}592;\allowbreak\ 0{,}359;\allowbreak\ 0{,}049)$.
+\end{ejemplo}
+
+La operación inversa, la \emph{ablación de una dirección}, sustituye $x\leftarrow x-(\hat v\T x)\hat v$ con $\hat v=v/\norm v$, y elimina del flujo la componente según $\hat v$. Arditi \emph{et al.} muestran que en varios modelos abiertos con ajuste de seguridad la negativa a responder peticiones dañinas está mediada por una sola dirección: al eliminarla, el modelo deja de negarse, y al sumarla, se niega incluso ante peticiones inocuas~\cite{arditi}. El resultado ilustra a la vez la potencia de las intervenciones y la fragilidad de algunas salvaguardas. Li \emph{et al.} usan intervenciones de este tipo en cabezas de atención para aumentar la veracidad de las respuestas~\cite{li-iti}, y \emph{Golden Gate Claude} (\cref{tema:4}) es una intervención sobre una característica de un SAE.
+
+\section{Trazado de circuitos en un modelo comercial}
+
+En 2025, Anthropic publicó el análisis de Claude~3.5 Haiku mediante \emph{grafos de atribución}~\cite{lindsey}. Se sustituyen los MLP por un \emph{transcodificador} entre capas, con unos 30 millones de características interpretables, que forma un modelo de reemplazo; se calcula qué características influyen en cuáles para una entrada concreta, y las hipótesis se validan con intervenciones sobre el modelo original. Entre los casos documentados figuran el razonamiento en varios pasos (de «Dallas» a «Texas» y de ahí a «Austin»), la elección de la palabra que rimará antes de escribir un verso, circuitos compartidos entre idiomas y un circuito de «no puedo responder» que se inhibe al reconocer una entidad conocida y cuyo fallo produce alucinaciones. Es información pública de Anthropic; sobre los mecanismos internos de Gemini o de Grok no constan, en la información pública consultada, análisis equivalentes.
+
+\begin{lecturas}
+\item Elhage \emph{et al.}~\cite{elhage21}, «Two-Layer Attention-Only Transformers», y Olsson \emph{et al.}~\cite{olsson}.
+\item Jurafsky y Martin~\cite{jm3}, §10.6 «In-Context Learning and Induction Heads».
+\item Wang \emph{et al.}~\cite{wang-ioi}, §2 a §4; Meng \emph{et al.}~\cite{meng}, §2 y §3; Nanda \emph{et al.}~\cite{nanda}, §3 a §5.
+\item Turner \emph{et al.}~\cite{turner} y Arditi \emph{et al.}~\cite{arditi}, sobre vectores de dirección.
+\item Lindsey \emph{et al.}~\cite{lindsey}, \emph{On the Biology of a Large Language Model}.
+\item Stanford ENGR108~\cite{engr108}, clase~16 «Constrained least squares».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-induccion}
+Describa paso a paso cómo un circuito de inducción predice «Potter» en «\ldots{} Harry Potter \ldots{} Harry». ¿Qué tipo de composición usa? ¿Qué predeciría una única cabeza que buscara el mismo token que el actual?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-perdida}
+Una secuencia de $T$ tokens aleatorios uniformes sobre un vocabulario de $K=32\,000$ se repite una vez, de modo que el contexto tiene $2T$ tokens. (a) Calcule la pérdida media por token de un modelo sin inducción. (b) Calcule la de un modelo que, en la segunda mitad, asigna probabilidad $0{,}8$ al token correcto y predice de forma uniforme en la primera. (c) ¿Qué signo tiene la puntuación de aprendizaje en contexto del segundo modelo si el token~50 está en la primera mitad y el token~500 en la segunda?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-parcheo}
+En un modelo lineal de juguete, la primera capa escribe $a\in\R^{2}$, la segunda escribe $m=Ma$ con $M=\begin{pmatrix}1&0\\0&0\end{pmatrix}$, y la métrica es $\mu=u\T(a+m)$ con $u=(1,1)$. En la entrada limpia $a=(2,1)$ y en la corrupta $a'=(0,1)$. (a) Calcule $\mu$ limpia y corrupta. (b) Calcule la fracción recuperada al parchear $a$ (recalculando $m$), al parchear solo $m$ y al parchear $a$ solo en su camino directo a la métrica. (c) Compruebe que las dos últimas fracciones suman la primera y explique por qué.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-ablacion}
+Con el $\WU$ del \cref{ej:atribucion}, el flujo final $x=(2,1)$ y la dirección unitaria $\hat v=(0{,}6;\allowbreak\ 0{,}8)$: (a) calcule la componente de $x$ según $\hat v$ y el flujo tras la ablación; (b) compruebe que el nuevo flujo es ortogonal a $\hat v$; (c) calcule las probabilidades antes y después de la ablación; (d) ¿qué valor de $\alpha$ en $x+\alpha\hat v$ reproduce la ablación para este $x$? ¿Sirve el mismo $\alpha$ para cualquier flujo?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-rome}
+(a) El problema de norma mínima $\min\norm{\delta}^{2}$ sujeto a $A\delta=r$, con $A$ de filas linealmente independientes, tiene solución $\hat\delta=A\T(AA\T)^{-1}r$. Deduzca de esta fórmula que, para una sola restricción $k\T\delta=r$, $\hat\delta=r\,k/\norm{k}^{2}$. (b) Con el cambio de variable $\eta=C^{1/2}\delta$, deduzca que la solución de $\min\delta\T C\delta$ sujeto a $k\T\delta=r$ es $\delta=r\,C^{-1}k/(k\T C^{-1}k)$, y relaciónelo con el \cref{teo:rome}. (c) Calcule $\hat W$ con $W=I_2$, $C=\diag(1,4)$, $k_*=(2,1)$ y $v_*=(1,1)$, y compruebe $\hat Wk_*=v_*$. (d) Demuestre que $\hat Wk=Wk$ para toda clave $k$ con $k\T C^{-1}k_*=0$ y compruébelo con $k=(1,-8)$.
+\fuente{adaptado de Stanford ENGR108~\cite{engr108}, clase~16 «Constrained least squares», problema de norma mínima y su solución (se añade la métrica de $C$ y la aplicación a ROME).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-fourier}
+Sea $p=5$, $a=2$ y $b=4$. (a) Con una sola frecuencia, $\mathcal{K}=\{1\}$, calcule $\ell(c)=\cos(2\pi(a+b-c)/5)$ para $c=0,\dots,4$ y compruebe la \cref{prop:fourier}. (b) Repita el cálculo con $\mathcal{K}=\{1,2\}$. (c) Demuestre que, con $\mathcal{K}=\{1,\dots,p-1\}$, $\ell(c)=p-1$ si $c\equiv a+b$ y $\ell(c)=-1$ en otro caso. Indicación: use $\sum_{k=0}^{p-1}e^{2\pi\mathrm{i}ks/p}=0$ si $p\nmid s$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Evaluación, calibración y seguridad}
+\label{tema:6}
+% =====================================================================
+
+Este tema estudia la conducta de un modelo desde fuera: cómo medir su rendimiento con conjuntos de pruebas, cómo cuantificar la incertidumbre de esas medidas, cuándo su confianza es fiable, por qué alucina y cómo se buscan y se miden sus fallos de seguridad. La organización sigue la clase~11, «Benchmarking and Evaluation», de CS224N~\cite{cs224n} y la semana de robustez adversaria de CS~2881r de Harvard~\cite{cs2881}. Los conjuntos de evaluación proceden de Hendrycks \emph{et al.}~\cite{hendrycks}, Liang \emph{et al.}~\cite{helm} y Chen \emph{et al.}~\cite{chen}; la calibración, de Guo \emph{et al.}~\cite{guo} y Kadavath \emph{et al.}~\cite{kadavath}; las alucinaciones, de Kalai \emph{et al.}~\cite{kalai25}, y los ataques, de Zou \emph{et al.}~\cite{zou} y Ganguli \emph{et al.}~\cite{ganguli}. Los intervalos de confianza siguen la clase~23 del curso 18.05 del MIT~\cite{mit1805}.
+
+\section{Conjuntos de evaluación y su incertidumbre}
+
+Un conjunto de evaluación (\emph{benchmark}) es una colección fija de tareas con un criterio automático de acierto.
+\begin{itemize}[leftmargin=1.4em]
+  \item \emph{MMLU}~\cite{hendrycks} reúne preguntas de opción múltiple de 57 materias, desde matemáticas elementales hasta derecho; en su publicación, el mayor GPT-3 superaba el azar en casi 20 puntos porcentuales de media.
+  \item \emph{HELM}~\cite{helm} evalúa 30 modelos en 16 escenarios básicos con siete métricas (exactitud, calibración, robustez, equidad, sesgo, toxicidad y eficiencia), además de 26 escenarios específicos, y eleva la fracción de combinaciones de modelo y escenario evaluadas del $17{,}9\,\%$ al $96{,}0\,\%$.
+  \item \emph{HumanEval}~\cite{chen} contiene 164 problemas de programación escritos a mano, cada uno con su firma, su descripción y pruebas unitarias; una solución es correcta si supera todas las pruebas.
+\end{itemize}
+
+\begin{definicion}[Exactitud empírica]\label{def:exactitud}
+Sea un modelo con probabilidad de acierto $\theta$ en una población de tareas, y sean $n$ tareas extraídas de forma independiente. Sea $X_k\in\{0,1\}$ el acierto en la tarea $k$. La \emph{exactitud empírica} es $\bar X=\frac1n\sum_kX_k$.
+\end{definicion}
+
+\begin{proposicion}[Intervalo conservador]\label{prop:ic}
+Con la notación de la \cref{def:exactitud}, $\E[\bar X]=\theta$ y $\Var(\bar X)=\theta(1-\theta)/n\le 1/(4n)$. En consecuencia, por la aproximación normal, $\bar X\pm z_{\alpha/2}/(2\sqrt n)$ es un intervalo de confianza aproximado de nivel al menos $1-\alpha$ para $\theta$; con $z_{0{,}025}\approx 2$, el intervalo al $95\,\%$ es $\bar X\pm 1/\sqrt n$.
+\end{proposicion}
+
+\begin{proof}
+Las $X_k$ son variables de Bernoulli independientes de parámetro $\theta$, con media $\theta$ y varianza $\theta(1-\theta)$; por la linealidad de la esperanza y la independencia, $\E[\bar X]=\theta$ y $\Var(\bar X)=n\,\theta(1-\theta)/n^{2}$. La función $\theta(1-\theta)$ es una parábola con máximo $1/4$ en $\theta=1/2$. Por el teorema central del límite (módulo~5), $(\bar X-\theta)/\sqrt{\theta(1-\theta)/n}$ es aproximadamente normal estándar, y sustituir la desviación por su cota superior $1/(2\sqrt n)$ solo ensancha el intervalo~\cite[clase~23, §3]{mit1805}.
+\end{proof}
+
+Con $n=1000$ preguntas, el margen al $95\,\%$ es $1{,}96/(2\sqrt{1000})=0{,}031$: dos modelos con exactitudes del $70\,\%$ y del $72\,\%$ no se distinguen con esa muestra (\cref{eje:6-mit}). Las diferencias de uno o dos puntos que se publican a menudo exigen conjuntos de varios miles de preguntas, o comparaciones emparejadas sobre las mismas preguntas. A la incertidumbre estadística se suma la \emph{contaminación} (módulo~22): si las preguntas aparecieron en los datos de entrenamiento, la exactitud mide memoria y no capacidad.
+
+\section{pass@\texorpdfstring{$k$}{k} y su estimador insesgado}
+
+\begin{definicion}[pass@$k$]\label{def:passk}
+Sea un problema que el modelo resuelve en cada intento, de forma independiente, con probabilidad $p$. Su \emph{pass@$k$} es la probabilidad de que al menos una de $k$ muestras sea correcta, $1-(1-p)^{k}$. El pass@$k$ de un conjunto de problemas es la media de los pass@$k$ de sus problemas~\cite[§2.1]{chen}.
+\end{definicion}
+
+Calcular $1-(1-\hat p)^{k}$ con una estimación $\hat p$ de $p$ da un valor sesgado (\cref{eje:6-sesgo}). Chen \emph{et al.} generan $n\ge k$ muestras por problema, cuentan las $c$ correctas y usan otro estimador.
+
+\begin{proposicion}[Estimador insesgado de pass@$k$]\label{prop:passk}
+Sean $n\ge k$ muestras independientes, cada una correcta con probabilidad $p$, y sea $c$ el número de correctas. Entonces
+\[
+\widehat{\mathrm{pass}}_k=1-\frac{\binom{n-c}{k}}{\binom nk}
+\]
+cumple $\E\bigl[\widehat{\mathrm{pass}}_k\bigr]=1-(1-p)^{k}$, con el convenio $\binom{n-c}{k}=0$ si $n-c<k$. Además, si $n-c\ge k$,
+\[
+\frac{\binom{n-c}{k}}{\binom nk}=\prod_{i=n-c+1}^{n}\Bigl(1-\frac ki\Bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+Fijadas las $n$ muestras, se elige al azar un subconjunto $J$ de $k$ de ellas, uniformemente entre los $\binom nk$ posibles. Hay $\binom{n-c}{k}$ subconjuntos sin ninguna muestra correcta, luego $\binom{n-c}{k}/\binom nk$ es la probabilidad, condicionada a las muestras, de que $J$ no contenga ninguna correcta. Promediando sobre las muestras, la esperanza de este cociente es la probabilidad incondicional de que las $k$ muestras de $J$ sean todas incorrectas. Como $J$ se elige con independencia de los resultados y las muestras son independientes e idénticamente distribuidas, las $k$ muestras de $J$ son $k$ muestras independientes con probabilidad de error $1-p$, y esa probabilidad es $(1-p)^{k}$. Para la segunda igualdad,
+\[
+\frac{\binom{n-c}{k}}{\binom nk}=\frac{(n-c)!\,(n-k)!}{n!\,(n-c-k)!}=\frac{\prod_{i=n-c+1}^{n}(i-k)}{\prod_{i=n-c+1}^{n}i},
+\]
+porque $(n-k)!/(n-c-k)!$ es el producto de los $c$ enteros $i-k$ con $i=n-c+1,\dots,n$, y $n!/(n-c)!$ es el producto de los $c$ enteros $i$ del mismo intervalo.
+\end{proof}
+
+La forma de producto evita calcular números combinatorios enormes y es la implementación que proponen Chen \emph{et al.}~\cite[§2.1, fig.~3]{chen}, que usan $n=200$ y $k\le 100$.
+
+\begin{ejemplo}[pass@$k$ con diez muestras]\label{ej:passk}
+Con $n=10$ y $c=3$: $\widehat{\mathrm{pass}}_1=1-7/10=0{,}3$; $\widehat{\mathrm{pass}}_3=1-\binom73/\binom{10}3=1-35/120=0{,}708$, y $\widehat{\mathrm{pass}}_5=1-\binom75/\binom{10}5=1-21/252=0{,}917$. El estimador ingenuo $1-(1-0{,}3)^{5}$ daría $0{,}832$.
+\end{ejemplo}
+
+\section{Calibración}
+
+\begin{definicion}[Calibración, ECE y MCE]\label{def:ece}
+Sea un clasificador que devuelve una predicción $\hat Y$ y una confianza $\hat P\in[0,1]$. Está \emph{perfectamente calibrado} si $P(\hat Y=Y\mid\hat P=q)=q$ para todo $q\in[0,1]$. Dadas $n$ predicciones agrupadas en $M$ intervalos de confianza $B_1,\dots,B_M$, sean $\mathrm{acc}_b$ la exactitud y $\mathrm{conf}_b$ la confianza media en $B_b$. El \emph{error de calibración esperado} y el \emph{error de calibración máximo} son
+\[
+\ECE=\sum_{b=1}^{M}\frac{\abs{B_b}}{n}\,\abs{\mathrm{acc}_b-\mathrm{conf}_b},\qquad \MCE=\max_b\abs{\mathrm{acc}_b-\mathrm{conf}_b}
+\]
+\cite[§2, ecs.~(1), (3) y~(5)]{guo}.
+\end{definicion}
+
+\begin{ejemplo}[Un modelo sobreconfiado]\label{ej:ece}
+De 100 respuestas, 50 tienen confianza $0{,}9$ y aciertan el $70\,\%$; 30 tienen confianza $0{,}6$ y aciertan el $60\,\%$, y 20 tienen confianza $0{,}3$ y aciertan el $40\,\%$. Entonces
+\[
+\ECE=0{,}5\cdot 0{,}2+0{,}3\cdot 0+0{,}2\cdot 0{,}1=0{,}12,
+\]
+y el MCE es $0{,}2$. La confianza media es $0{,}69$ y la exactitud media, $0{,}61$: el modelo está sobreconfiado.
+\end{ejemplo}
+
+El diagrama de fiabilidad representa $\mathrm{acc}_b$ frente a $\mathrm{conf}_b$; un modelo perfectamente calibrado sigue la diagonal. Guo \emph{et al.} observan que las redes profundas modernas están peor calibradas que las antiguas y proponen, entre otros métodos, el \emph{escalado de temperatura}.
+
+\begin{definicion}[Escalado de temperatura]\label{def:temp}
+Dados los logits $z$ de un clasificador, el escalado de temperatura devuelve $\softmax(z/T)$, con un único parámetro $T>0$ ajustado minimizando la log-verosimilitud negativa en un conjunto de validación~\cite[§4]{guo}.
+\end{definicion}
+
+\begin{proposicion}[El escalado de temperatura no cambia la exactitud]\label{prop:temp}
+Para todo $T>0$, $\arg\max_k\softmax(z/T)_k=\arg\max_kz_k$.
+\end{proposicion}
+
+\begin{proof}
+La exponencial es estrictamente creciente y el denominador de la softmax es común a todas las clases, de modo que $\softmax(z/T)_k>\softmax(z/T)_j$ si y solo si $z_k/T>z_j/T$, que, por ser $T>0$, equivale a $z_k>z_j$.
+\end{proof}
+
+El escalado solo cambia la confianza, no la predicción: $T>1$ suaviza las probabilidades y corrige la sobreconfianza. Kadavath \emph{et al.} muestran que los modelos de lenguaje grandes preentrenados están razonablemente bien calibrados en preguntas de opción múltiple con el formato adecuado y que pueden estimar la probabilidad de conocer la respuesta~\cite{kadavath}; el informe técnico de GPT-4 muestra que el posentrenamiento empeoró la calibración de su modelo preentrenado~\cite{gpt4}.
+
+\section{Alucinaciones y reglas de puntuación}
+
+Una \emph{alucinación} es una afirmación falsa formulada con fluidez y seguridad. Kalai \emph{et al.}~\cite{kalai25} sostienen que no es un fallo misterioso, sino una consecuencia estadística del entrenamiento y de la evaluación.
+\begin{itemize}[leftmargin=1.4em]
+  \item \emph{Preentrenamiento.} Reducen la generación de respuestas válidas a un problema de clasificación binaria («¿es válida esta respuesta?») y prueban que la tasa de error generativo es al menos, aproximadamente, el doble de la tasa de error de esa clasificación~\cite[§3.1, corolario~1]{kalai25}. Para hechos arbitrarios, como la fecha de cumpleaños de una persona poco conocida, la tasa de alucinación de un modelo base está acotada inferiormente por la fracción de hechos que aparecen una sola vez en los datos de entrenamiento~\cite[§3.3.1, teorema~2]{kalai25}, resultado anticipado por Kalai y Vempala~\cite{kalai-vempala}.
+  \item \emph{Evaluación.} La mayoría de los conjuntos de evaluación puntúan 1 el acierto y 0 tanto el error como la abstención, de modo que adivinar nunca resta. Un modelo optimizado para esas puntuaciones aprende a no decir nunca «no lo sé».
+\end{itemize}
+
+\begin{proposicion}[Umbral de confianza explícito]\label{prop:umbral-t}
+Sea $t\in[0,1)$ y una regla de puntuación que da 1 punto por acierto, 0 por abstención y $-t/(1-t)$ por error. Si el modelo acierta con probabilidad $p$, responder tiene mayor puntuación esperada que abstenerse si y solo si $p>t$.
+\end{proposicion}
+
+\begin{proof}
+La puntuación esperada al responder es $E=p-(1-p)\,t/(1-t)$. Multiplicando por $1-t>0$, $E>0$ si y solo si $p(1-t)-(1-p)t>0$, es decir, $p-pt-t+pt>0$, o sea, $p>t$. La abstención vale~0.
+\end{proof}
+
+Kalai \emph{et al.} proponen incluir el umbral en las instrucciones de la evaluación, con valores como $t=0{,}5$, $0{,}75$ o $0{,}9$; la puntuación binaria habitual corresponde a $t=0$~\cite[§4.2]{kalai25}.
+
+\section{\emph{Red teaming} y ataques adversarios}
+
+Una \emph{evaluación de seguridad} mide, antes del despliegue, si un modelo tiene una capacidad peligrosa o si produce conductas dañinas cuando se le pide. El \emph{red teaming} busca activamente entradas que provoquen fallos. Ganguli \emph{et al.} reunieron y analizaron unos $39\,000$ ataques escritos por personas contra modelos de Anthropic~\cite{ganguli}; Perez \emph{et al.} usan un modelo de lenguaje para generar los ataques de forma automática~\cite{perez}.
+
+\begin{definicion}[Ataque por sufijo adversario]\label{def:gcg}
+Sea $u$ una petición dañina, $y^{*}=(y^{*}_1,\dots,y^{*}_T)$ el comienzo de una respuesta afirmativa (por ejemplo, «Claro, aquí tienes…») y $s$ un sufijo de tokens. El ataque busca
+\[
+s^{*}=\arg\min_{s}\ \mathcal{L}(s),\qquad \mathcal{L}(s)=-\sum_{t=1}^{T}\ln p\bigl(y^{*}_t\mid u\oplus s\oplus y^{*}_{<t}\bigr),
+\]
+donde $\oplus$ denota concatenación~\cite[§2.1]{zou}.
+\end{definicion}
+
+El problema es discreto. El algoritmo \emph{Greedy Coordinate Gradient} (GCG) de Zou \emph{et al.} calcula el gradiente de $\mathcal{L}$ respecto de la codificación \emph{one-hot} de cada token del sufijo, toma para cada posición los $k$ tokens con gradiente más negativo como candidatos, evalúa exactamente la pérdida de un lote de sustituciones aleatorias entre esos candidatos y conserva la mejor~\cite[§2.2]{zou}. Optimizado sobre varias peticiones y varios modelos abiertos a la vez, el sufijo resultante se transfiere a modelos cerrados: en su evaluación, la tasa de éxito fue del $86{,}6\,\%$ en GPT-3.5, del $46{,}9\,\%$ en GPT-4, del $47{,}9\,\%$ en Claude~1, del $2{,}1\,\%$ en Claude~2 y del $66{,}0\,\%$ en PaLM-2~\cite[§3.2]{zou}. Son cifras de 2023 sobre versiones ya retiradas; los proveedores corrigen estos ataques una vez publicados.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,rounded corners=2pt,minimum height=8mm,align=center,minimum width=20mm}]
+  \node[caja] (a) at (0,0) {atacante\\(persona o LLM)};
+  \node[caja] (m) at (4.1,0) {modelo\\evaluado};
+  \node[caja] (j) at (8.2,0) {juez\\(persona o LLM)};
+  \node[caja] (d) at (11.9,0.9) {datos de\\entrenamiento};
+  \node[caja] (r) at (11.9,-0.9) {tasa de fallo\\e informe};
+  \draw[->] (a) -- node[above] {entradas} (m);
+  \draw[->] (m) -- node[above] {respuestas} (j);
+  \draw[->] (j) -- (d); \draw[->] (j) -- (r);
+  \draw[->] (d.north) -- ++(0,0.4) -| (m.north);
+\end{tikzpicture}
+\caption{Ciclo de \emph{red teaming}. Los fallos encontrados alimentan el entrenamiento de seguridad y la tasa de fallo informa la decisión de despliegue.}
+\label{fig:redteam}
+\end{figure}
+
+\section{Estadística de los sucesos raros}
+
+Las conductas peligrosas son, por diseño, raras, y su medida requiere un cuidado estadístico particular.
+
+\begin{proposicion}[Intentos repetidos]\label{prop:intentos}
+Si un ataque tiene éxito en cada intento, de forma independiente, con probabilidad $p$, la probabilidad de al menos un éxito en $k$ intentos es $1-(1-p)^{k}$, que es mayor o igual que $1-e^{-kp}$.
+\end{proposicion}
+
+\begin{proof}
+El suceso complementario es que fallen los $k$ intentos, de probabilidad $(1-p)^{k}$ por la independencia. La desigualdad se sigue de $1-p\le e^{-p}$, consecuencia de la convexidad de la exponencial (su gráfica queda por encima de la recta tangente en~0), elevando ambos miembros, no negativos, a la potencia $k$.
+\end{proof}
+
+Con $p=0{,}02$, el ataque triunfa al menos una vez en 100 intentos con probabilidad $1-0{,}98^{100}=0{,}867$. Un ataque que parece raro en una prueba es casi seguro para un atacante persistente.
+
+\begin{proposicion}[Regla del 3]\label{prop:regla3}
+Sean $n$ pruebas independientes sin ningún fallo, cada una con probabilidad de fallo $p$ desconocida. La cota superior exacta de confianza $1-\alpha$ para $p$, es decir, el valor $p_u$ con $(1-p_u)^{n}=\alpha$, cumple $p_u\le\ln(1/\alpha)/n$. Para $\alpha=0{,}05$, $\ln 20=2{,}996$ y $p_u\le 3/n$.
+\end{proposicion}
+
+\begin{proof}
+La probabilidad de no observar ningún fallo es $(1-p)^{n}$, decreciente en $p$; los valores de $p$ incompatibles al nivel $\alpha$ con la observación son los que hacen esa probabilidad menor que $\alpha$, es decir, $p>p_u$. Por la desigualdad $1-p\le e^{-p}$, $\alpha=(1-p_u)^{n}\le e^{-np_u}$; tomando logaritmos, $\ln\alpha\le -np_u$, y por tanto $p_u\le\ln(1/\alpha)/n$.
+\end{proof}
+
+Con 300 pruebas sin fallos, la tasa de fallo es menor que $3/300=1\,\%$ con confianza del $95\,\%$; la cota exacta es $1-0{,}05^{1/300}=0{,}99\,\%$. Cero fallos no significa tasa cero.
+
+\section{Marcos de seguridad y conductas ocultas}
+
+Las evaluaciones de seguridad suelen agruparse en cuatro preguntas: si el modelo \emph{puede} hacer algo peligroso (capacidades, como la ayuda en ciberataques o en armas biológicas), si \emph{lo hará} cuando se le pida (salvaguardas, como la tasa de éxito de los ataques), si \emph{persigue} lo que se le pidió (alineamiento: adulación, engaño, sabotaje de tareas) y si \emph{dice lo que representa internamente} (honestidad: calibración y alucinaciones). La \emph{Responsible Scaling Policy} de Anthropic~\cite{rsp} define niveles de seguridad (ASL) que exigen medidas de protección más estrictas cuando las evaluaciones detectan ciertas capacidades; Google DeepMind y OpenAI han publicado marcos análogos.
+
+Hay dos límites conocidos de las evaluaciones de conducta. El primero es que pueden no reflejar el despliegue: contaminación, jueces automáticos sesgados y modelos que distinguen cuándo se les evalúa. El segundo es más profundo: Hubinger \emph{et al.} entrenaron deliberadamente modelos con puertas traseras (por ejemplo, escribir código seguro si el año indicado es 2023 e insertar vulnerabilidades si es 2024) y comprobaron que la conducta persistía tras el ajuste supervisado, el aprendizaje por refuerzo y el entrenamiento adversario, sobre todo en los modelos más grandes; el entrenamiento adversario enseñaba a reconocer mejor el desencadenante y a ocultar la conducta~\cite{hubinger}. Una evaluación de conducta solo ve entradas y salidas; por eso se combina con las herramientas de interpretabilidad de los temas~1 a~5, que miran dentro.
+
+\begin{lecturas}
+\item Stanford CS224N~\cite{cs224n}, clase~11 «Benchmarking and Evaluation»; Harvard CS~2881r~\cite{cs2881}, semana~3.
+\item Chen \emph{et al.}~\cite{chen}, §2.1 «Functional Correctness».
+\item Guo \emph{et al.}~\cite{guo}, §2 y §4; Kadavath \emph{et al.}~\cite{kadavath}.
+\item Kalai \emph{et al.}~\cite{kalai25}, §3 y §4.
+\item Zou \emph{et al.}~\cite{zou}, §2 y §3; Hubinger \emph{et al.}~\cite{hubinger}.
+\item MIT 18.05~\cite{mit1805}, clase~23 «Confidence Intervals for the Mean of Non-normal Data», §3.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-binaria}
+Explique por qué un conjunto de evaluación que puntúa 1 el acierto y 0 tanto el error como la abstención incentiva las alucinaciones. Compare la puntuación media de un modelo que adivina con probabilidad de acierto $0{,}1$ con la de uno que se abstiene.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-ece}
+(a) Calcule el ECE de 100 respuestas: 40 con confianza $0{,}95$ y exactitud $0{,}8$; 40 con $0{,}75$ y $0{,}7$; 20 con $0{,}55$ y $0{,}6$. ¿Está el modelo sobreconfiado? (b) Con la regla de la \cref{prop:umbral-t}, ¿le conviene responder a un modelo con $p=0{,}6$ si $t=0{,}5$? ¿Y si $t=0{,}75$? Calcule la puntuación esperada en cada caso.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-intentos}
+Un ataque funciona con probabilidad $0{,}02$ por intento. (a) Calcule la probabilidad de al menos un éxito en 10 y en 100 intentos, y compárela con la aproximación lineal $kp$. (b) En 300 pruebas no hubo ningún éxito: dé la cota superior exacta al $95\,\%$ de la tasa de éxito y la de la regla del~3.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-passk}
+Para un problema se generan $n=20$ soluciones, de las que $c=4$ superan las pruebas. (a) Calcule $\widehat{\mathrm{pass}}_k$ para $k=1$, $5$ y $10$. (b) Calcule $\widehat{\mathrm{pass}}_5$ con la forma de producto de la \cref{prop:passk}. (c) Compare con el estimador ingenuo $1-(1-c/n)^{k}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-mit}
+Se mide la exactitud de un modelo en un conjunto de $n$ preguntas con el intervalo conservador de la \cref{prop:ic}. (a) ¿Cuántas preguntas hacen falta para un margen de $0{,}01$ al $95\,\%$? Hágalo primero con $z=2$ y después con $z=1{,}96$. (b) ¿Y al $80\,\%$ ($z_{0{,}1}=1{,}2816$)? (c) Con $n=900$ y una exactitud del $70\,\%$, dé los intervalos al $95\,\%$ y al $80\,\%$. (d) Dos modelos obtienen el $70{,}0\,\%$ y el $72{,}0\,\%$ en $1000$ preguntas distintas cada uno. Estime la desviación típica de la diferencia y decida si es significativa al $95\,\%$.
+\fuente{adaptado de MIT 18.05~\cite{mit1805}, primavera de 2022, clase~23, \emph{Board Problem}~1 «Confidence intervals for a binomial» (sondeo electoral sustituido por la exactitud de un modelo; se añade el apartado~(d)).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-sesgo}
+Sea $c\sim\Bin(n,p)$ y $\hat p=c/n$. (a) Demuestre que $\E\bigl[(1-\hat p)^{2}\bigr]=(1-p)^{2}+p(1-p)/n$ y deduzca que el estimador ingenuo $1-(1-\hat p)^{2}$ subestima pass@2. (b) Con $n=2$, compruebe directamente que el estimador de la \cref{prop:passk} es insesgado para $k=2$. (c) Con $p=0{,}5$ y $n=2$, calcule el valor verdadero de pass@2 y la esperanza del estimador ingenuo.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-cota-ece}
+(a) Demuestre que $\ECE\ge\abs{\overline{\mathrm{conf}}-\overline{\mathrm{acc}}}$, donde $\overline{\mathrm{conf}}$ y $\overline{\mathrm{acc}}$ son la confianza media y la exactitud media de las $n$ predicciones, y dé una condición necesaria y suficiente para la igualdad. (b) Compruebe la desigualdad en el \cref{ej:ece} y en el \cref{eje:6-ece}. (c) Construya un ejemplo con dos intervalos en el que $\overline{\mathrm{conf}}=\overline{\mathrm{acc}}$ y, sin embargo, $\ECE>0$.
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los resultados exactos se dan como fracción cuando existe. Todas las cifras se han comprobado con un cálculo independiente.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-canal}
+\datos flujo $x_{\mathrm{fin}}=x_0+\sum_\ell(a_\ell+m_\ell)$ y logits $z=\WU x_{\mathrm{fin}}$.
+\planteamiento describir cómo leen y escriben los componentes (\cref{def:flujo}) e identificar la propiedad que permite repartir los logits (\cref{prop:descomposicion}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Cada componente lee el flujo con proyecciones lineales ($W_Q$, $W_K$, $W_V$, entrada del MLP) y escribe sumando su salida, sin borrar lo anterior.
+  \item Lo que escribe la capa~2 sigue en el flujo en la capa~20: componentes lejanos se comunican a través de él, cada uno en su subespacio, como mensajes en un bus compartido (pesos virtuales, \cref{def:virtuales}).
+  \item La propiedad es la linealidad de $\WU$: $\WU(x_0+\sum_kc_k)=\WU x_0+\sum_k\WU c_k$, y cada término es la aportación de una pieza.
+  \item La atribución directa no recoge el efecto \emph{indirecto}: una salida $a_1$ modifica también la entrada de las capas posteriores y, con ello, sus salidas.
+\end{enumerate}
+\resultado \textbf{el flujo es un canal aditivo compartido; la linealidad de $\WU$ permite la atribución directa, que omite los efectos a través de capas posteriores.}
+\comprobacion en el \cref{ej:atribucion}, $(1,0,-1)+(0{,}5;\allowbreak\ 1;\allowbreak\ 0{,}5)+(-0{,}5;\allowbreak\ 0{,}5;\allowbreak\ 1)=(1;\allowbreak\ 1{,}5;\allowbreak\ 0{,}5)=\WU(1;\allowbreak\ 1{,}5)$.
+\end{solucion}
+
+\begin{solucion}{eje:1-lens}
+\datos $\WU=\begin{pmatrix}1&0\\0&1\\-1&1\end{pmatrix}$, $x_0=(0,1)$, $a_1=(1,0)$, $m_1=(1,-1)$.
+\planteamiento aportaciones $\WU c$ para cada pieza; \emph{logit lens} $=\softmax(\WU\cdot\text{flujo parcial})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\WU x_0=(0;\allowbreak\ 1;\allowbreak\ -0+1)=(0,1,1)$; $\WU a_1=(1;\allowbreak\ 0;\allowbreak\ -1)$; $\WU m_1=(1;\allowbreak\ -1;\allowbreak\ -1-1)=(1,-1,-2)$. Suma: $(2,0,-2)$.
+  \item Embedding: logits $(0,1,1)$; $e^{0}=1$, $e^{1}=2{,}7183$; suma $1+2\cdot 2{,}7183=6{,}4366$; $P=(0{,}1554;\allowbreak\ 0{,}4223;\allowbreak\ 0{,}4223)$.
+  \item Tras la atención: flujo $(1,1)$, logits $(1,1,0)$; misma suma $6{,}4366$; $P=(0{,}4223;\allowbreak\ 0{,}4223;\allowbreak\ 0{,}1554)$.
+  \item Final: flujo $(2,0)$, logits $(2,0,-2)$; $e^{2}=7{,}389$, $e^{0}=1$, $e^{-2}=0{,}1353$; suma $8{,}5244$; $P=(0{,}8668;\allowbreak\ 0{,}1173;\allowbreak\ 0{,}0159)$.
+\end{enumerate}
+\resultado \textbf{aportaciones $(0,1,1)$, $(1,0,-1)$ y $(1,-1,-2)$; la predicción final es $t_0$ con probabilidad $0{,}867$.}
+\comprobacion $\WU(2,0)=(2,0,-2)$ coincide con la suma de aportaciones, y $0{,}8668+0{,}1173+0{,}0159=1{,}000$.
+\end{solucion}
+
+\begin{solucion}{eje:1-ov}
+\datos $d=768$, $d_h=64$, 12 cabezas.
+\planteamiento $\WOV=W_OW_V$ con $W_O\in\R^{d\times d_h}$ y $W_V\in\R^{d_h\times d}$ (\cref{prop:qkov}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Entradas: $768^{2}=589\,824$. Parámetros: $768\cdot 64+64\cdot 768=98\,304$, seis veces menos.
+  \item (b) $\rango\WOV\le\min(\rango W_O,\rango W_V)\le d_h=64$.
+  \item (c) $12\cdot 98\,304=1\,179\,648$. Como $12\cdot 64=768=d$, el total es $2\cdot d_h\cdot d\cdot 12=2d^{2}$.
+\end{enumerate}
+\resultado \textbf{(a) $589\,824$ entradas determinadas por $98\,304$ parámetros; (b) rango a lo sumo~64; (c) $1\,179\,648=2d^{2}$.}
+\comprobacion $2\cdot 768^{2}=2\cdot 589\,824=1\,179\,648$.
+\end{solucion}
+
+\begin{solucion}{eje:1-cero}
+\datos $\WU$ del \cref{ej:atribucion}, $\WE=\begin{pmatrix}1&0&1\\0&1&1\end{pmatrix}$.
+\planteamiento por la \cref{prop:cero}, la columna $t$ de $\WU\WE$ da los logits tras el token $t$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\WU\WE=\begin{pmatrix}1&0&1\\0&1&1\\-1&1&0\end{pmatrix}$ (fila $i$, columna $t$: logit de $t_i$ tras $t$).
+  \item (b) Tras $t_0$: logits $(1,0,-1)$, $P=(0{,}665;\allowbreak\ 0{,}245;\allowbreak\ 0{,}090)$, más probable $t_0$. Tras $t_1$: $(0,1,1)$, $P=(0{,}155;\allowbreak\ 0{,}422;\allowbreak\ 0{,}422)$, empate entre $t_1$ y $t_2$. Tras $t_2$: $(1,1,0)$, $P=(0{,}422;\allowbreak\ 0{,}422;\allowbreak\ 0{,}155)$, empate entre $t_0$ y $t_1$.
+  \item (c) Solo empatado: tras $t_1$, $t_2$ comparte la probabilidad máxima con $t_1$. La fila de $t_2$ es la de $t_1$ menos la de $t_0$, de modo que $z_2=z_1-z_0$; para que $t_2$ fuera el único máximo haría falta $z_0<0$ (para superar a $t_1$) y $z_1>2z_0$, y ninguna de las tres columnas tiene $z_0<0$. El modelo solo puede predecir lo que permiten las tres columnas de $\WU\WE$, una por token actual.
+\end{enumerate}
+\resultado \textbf{$t_2$ alcanza la máxima probabilidad, empatada con $t_1$, solo tras $t_1$}; el modelo es un modelo de bigramas cuya matriz de logits tiene rango a lo sumo $d=2$.
+\comprobacion $\det(\WU\WE)=1\cdot(0-1)-0+1\cdot(0+1)=0$, coherente con $\rango\le d=2$.
+\end{solucion}
+
+\begin{solucion}{eje:1-dos-cabezas}
+\datos dos capas con una cabeza cada una, patrones $A^{1},A^{2}$, sin normalización ni posiciones.
+\planteamiento aplicar la \cref{prop:qkov}(ii) a cada cabeza y la linealidad de $\WU$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Tras la capa~1: $x_{1,j}=\WE e_{t_j}+\sum_kA^{1}_{jk}\WOV^{1}\WE e_{t_k}$.
+  \item La cabeza~2 da
+  \[
+  h^{2}_i=\sum_jA^{2}_{ij}\WOV^{2}x_{1,j}=\sum_jA^{2}_{ij}\WOV^{2}\WE e_{t_j}+\sum_{j,k}A^{2}_{ij}A^{1}_{jk}\WOV^{2}\WOV^{1}\WE e_{t_k}.
+  \]
+  \item El flujo final es $x_{1,i}+h^{2}_i$; aplicando $\WU$ se obtienen los cuatro términos del enunciado.
+  \item El último término actúa como una cabeza con patrón $(A^{2}A^{1})_{ik}=\sum_jA^{2}_{ij}A^{1}_{jk}$ y circuito OV $\WOV^{2}\WOV^{1}$: es la composición~V o \emph{cabeza virtual}.
+  \item $\rango(\WOV^{2}\WOV^{1})\le\min(\rango\WOV^{2},\rango\WOV^{1})\le d_h$.
+\end{enumerate}
+\resultado \textbf{se obtiene la expansión pedida; el término final es una cabeza virtual de rango a lo sumo $d_h$.}
+\comprobacion si $\WOV^{1}=0$, desaparecen los términos segundo y cuarto y se recupera el \cref{teo:caminos} para la cabeza~2.
+\end{solucion}
+
+\begin{solucion}{eje:1-rms}
+\datos $\RMSNorm(v)=v/\RMS(v)$, $x_0=(1,0)$, $a_1=(0{,}5;\allowbreak\ 1)$, $\WU$ del \cref{ej:atribucion}.
+\planteamiento comparar $\RMSNorm(x_0)+\RMSNorm(a_1)$ con $\RMSNorm(x_0+a_1)$ y aplicar la \cref{prop:rmsnorm}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\RMS(x_0)=\sqrt{1/2}=0{,}7071$, $\RMSNorm(x_0)=(1{,}414;\allowbreak\ 0)$. $\RMS(a_1)=\sqrt{1{,}25/2}=0{,}7906$, $\RMSNorm(a_1)=(0{,}6325;\allowbreak\ 1{,}2649)$. Suma: $(2{,}047;\allowbreak\ 1{,}265)$.
+  \item $x_0+a_1=(1{,}5;\allowbreak\ 1)$, $\RMS=\sqrt{3{,}25/2}=1{,}2748$, $\RMSNorm=(1{,}1767;\allowbreak\ 0{,}7845)\neq(2{,}047;\allowbreak\ 1{,}265)$.
+  \item (b) Con $s=1{,}2748$ fija: $\WU x_0/s=(0{,}7845;\allowbreak\ 0;\allowbreak\ -0{,}7845)$ y $\WU a_1/s=(0{,}3922;\allowbreak\ 0{,}7845;\allowbreak\ 0{,}3922)$. Suma: $(1{,}1767;\allowbreak\ 0{,}7845;\allowbreak\ -0{,}3922)$.
+  \item (c) Para $c>0$, $\RMS(cv)=c\RMS(v)$ y $\RMSNorm(cv)=\RMSNorm(v)$. Si $\RMSNorm$ fuera aditiva, sería también homogénea de grado~1 sobre los racionales positivos ($\RMSNorm(2v)=2\RMSNorm(v)$), lo que contradice la invariancia salvo para $v=0$. Cualquier reparto aditivo exige, por tanto, fijar la escala.
+\end{enumerate}
+\resultado \textbf{normalizar por separado da $(2{,}047;\allowbreak\ 1{,}265)$ y no $(1{,}177;\allowbreak\ 0{,}785)$; con la escala congelada $s=1{,}275$ las atribuciones suman exactamente los logits.}
+\comprobacion $\WU(1{,}1767;\allowbreak\ 0{,}7845)=(1{,}1767;\allowbreak\ 0{,}7845;\allowbreak\ -0{,}3922)$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-selectividad}
+\datos sonda lineal: $97{,}2\,\%$ (tarea) y $71{,}2\,\%$ (control); perceptrón: $97{,}3\,\%$ y $92{,}8\,\%$.
+\planteamiento selectividad $=$ exactitud en la tarea $-$ exactitud en el control (\cref{def:control}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Lineal: $97{,}2-71{,}2=26{,}0$ puntos. Perceptrón: $97{,}3-92{,}8=4{,}5$ puntos.
+  \item El perceptrón resuelve casi igual de bien una tarea que solo se aprende memorizando: su exactitud dice poco de la representación.
+  \item La conclusión errónea sería preferir el perceptrón por su $0{,}1$ de exactitud adicional y atribuir esa mejora a la representación, cuando puede deberse a la capacidad de memorizar de la sonda.
+\end{enumerate}
+\resultado \textbf{selectividades de 26{,}0 y 4{,}5 puntos; la sonda lineal es la que informa sobre la representación.}
+\comprobacion las dos sondas casi empatan en la tarea ($97{,}2$ frente a $97{,}3$), de modo que toda la diferencia de selectividad procede del control.
+\end{solucion}
+
+\begin{solucion}{eje:2-sonda}
+\datos $w=(1,1)$, $w_0=-1$; flujos del \cref{eje:1-lens}: $(0,1)$, $(1,1)$, $(2,0)$; $a_1=(1,0)$, $m_1=(1,-1)$.
+\planteamiento $z=w\T x+w_0$, $p=\sigma(z)$; la aportación de cada pieza a $z$ es $w\T c$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Embedding: $z=0+1-1=0$, $\sigma(0)=0{,}5$.
+  \item Tras la atención: $z=1+1-1=1$, $\sigma(1)=1/(1+e^{-1})=1/1{,}3679=0{,}7311$.
+  \item Final: $z=2+0-1=1$, $\sigma=0{,}7311$.
+  \item Aportaciones: $w\T a_1=1$ y $w\T m_1=1-1=0$.
+\end{enumerate}
+\resultado \textbf{$p=0{,}5\to 0{,}731\to 0{,}731$: la atención escribe la propiedad y el MLP la deja igual.}
+\comprobacion $m_1=(1,-1)$ es ortogonal a $w=(1,1)$: el MLP cambia mucho los logits (\cref{eje:1-lens}), pero en una dirección que la sonda no ve.
+\end{solucion}
+
+\begin{solucion}{eje:2-ig}
+\datos $F(x)=x_1x_2$, $x'=(0,0)$, $x=(2,3)$.
+\planteamiento \cref{def:ig} con el camino $\gamma(\alpha)=\alpha x$; $\partial F/\partial x_1=x_2$ y $\partial F/\partial x_2=x_1$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sobre el camino, $\partial_1F(\alpha x)=3\alpha$ y $\partial_2F(\alpha x)=2\alpha$.
+  \item $\IG_1=2\int_0^13\alpha\,d\alpha=2\cdot\tfrac32=3$; $\IG_2=3\int_0^12\alpha\,d\alpha=3\cdot 1=3$.
+  \item Completitud: $3+3=6=F(2,3)-F(0,0)$.
+  \item Gradiente por entrada: $x_1\partial_1F(x)=2\cdot 3=6$ y $x_2\partial_2F(x)=3\cdot 2=6$; suma $12\neq 6$.
+\end{enumerate}
+\resultado \textbf{$\IG=(3,3)$, completo; gradiente por entrada $(6,6)$, que suma el doble de $F(x)$.}
+\comprobacion para $F$ homogénea de grado~2, el teorema de Euler da $\sum_ix_i\partial_iF=2F$, lo que explica el factor~2.
+\end{solucion}
+
+\begin{solucion}{eje:2-shap}
+\datos $f(x)=x_1x_2+x_3$, $x=(1,2,3)$, referencia nula.
+\planteamiento evaluar $v(S)$, aplicar la \cref{def:shapley} con pesos $\tfrac13$ ($\abs S=0$ o $2$) y $\tfrac16$ ($\abs S=1$), y la \cref{def:ig}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $v(\varnothing)=0$, $v(\{1\})=0$, $v(\{2\})=0$, $v(\{3\})=3$, $v(\{1,2\})=2$, $v(\{1,3\})=3$, $v(\{2,3\})=3$, $v(\{1,2,3\})=5$.
+  \item (b) $\phi_1=\tfrac13(0-0)+\tfrac16(2-0)+\tfrac16(3-3)+\tfrac13(5-3)=\tfrac13+\tfrac23=1$. Por simetría entre 1 y 2, $\phi_2=1$.
+  \item $\phi_3=\tfrac13(3-0)+\tfrac16(3-0)+\tfrac16(3-0)+\tfrac13(5-2)=1+\tfrac12+\tfrac12+1=3$.
+  \item Eficiencia: $1+1+3=5=v(N)$.
+  \item (c) $\IG_1=1\int_0^1(2\alpha)\,d\alpha=1$, $\IG_2=2\int_0^1(1\cdot\alpha)\,d\alpha=1$, $\IG_3=3\int_0^11\,d\alpha=3$.
+\end{enumerate}
+\resultado \textbf{$\phi=(1,1,3)$ y $\IG=(1,1,3)$: coinciden.} El término aditivo se atribuye entero a $x_3$ y la interacción $x_1x_2=2$ se reparte a partes iguales.
+\comprobacion es un caso particular del \cref{eje:2-cuadratica}, con $w=(0,0,1)$ y $b_{12}=1$: $\IG_1=\tfrac12\cdot 1\cdot 1\cdot 2=1$.
+\end{solucion}
+
+\begin{solucion}{eje:2-cuadratica}
+\datos $F(x)=\sum_iw_ix_i+\sum_{i<j}b_{ij}x_ix_j$, base~0.
+\planteamiento (a) integrar la derivada parcial a lo largo de $\alpha x$; (b) usar la forma por permutaciones de la \cref{prop:shapley}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\partial_iF(x)=w_i+\sum_{j\neq i}b_{ij}x_j$. En $\alpha x$: $w_i+\alpha\sum_{j\neq i}b_{ij}x_j$.
+  \item $\IG_i=x_i\int_0^1\bigl(w_i+\alpha\sum_{j\neq i}b_{ij}x_j\bigr)d\alpha=x_i\bigl(w_i+\tfrac12\sum_{j\neq i}b_{ij}x_j\bigr)$.
+  \item (b) Para $S\not\ni i$: $v(S\cup\{i\})-v(S)=w_ix_i+\sum_{j\in S}b_{ij}x_ix_j$, porque los términos que no contienen $i$ se cancelan.
+  \item En una ordenación aleatoria uniforme, cada $j\neq i$ precede a $i$ con probabilidad $\tfrac12$. Por la linealidad de la esperanza, $\phi_i=\E\bigl[w_ix_i+\sum_{j\neq i}[j\prec i]\,b_{ij}x_ix_j\bigr]=w_ix_i+\tfrac12\sum_{j\neq i}b_{ij}x_ix_j$.
+  \item (c) Cada interacción $b_{ij}x_ix_j$ se reparte a partes iguales entre sus dos variables: ambos métodos tratan de forma simétrica a los dos factores de un producto.
+\end{enumerate}
+\resultado \textbf{$\IG_i=\phi_i=w_ix_i+\tfrac12\sum_{j\neq i}b_{ij}x_ix_j$.}
+\comprobacion completitud:
+\[
+\sum_i\IG_i=\sum_iw_ix_i+\tfrac12\sum_i\sum_{j\neq i}b_{ij}x_ix_j=\sum_iw_ix_i+\sum_{i<j}b_{ij}x_ix_j=F(x),
+\]
+porque cada par aparece dos veces en la doble suma.
+\end{solucion}
+
+\begin{solucion}{eje:2-cs229}
+\datos $\tilde h_1=(1,2)$, $y_1=1$; $\tilde h_2=(1,0)$, $y_2=0$; $\theta_0=0$.
+\planteamiento $\nabla J=\frac1n\sum_i(\sigma_i-y_i)\tilde h_i$ y $H=\frac1n\sum_i\sigma_i(1-\sigma_i)\tilde h_i\tilde h_i\T$, con $\sigma_i=\sigma(\theta\T\tilde h_i)$; paso de Newton $\theta_1=\theta_0-H^{-1}\nabla J$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con $J_i=-y_i\ln\sigma_i-(1-y_i)\ln(1-\sigma_i)$ y $\sigma'=\sigma(1-\sigma)$, se obtiene $\nabla J_i=(\sigma_i-y_i)\tilde h_i$. Derivando otra vez, $\nabla^{2}J_i=\sigma_i(1-\sigma_i)\tilde h_i\tilde h_i\T$. Para todo $z$, $z\T Hz=\frac1n\sum_i\sigma_i(1-\sigma_i)(z\T\tilde h_i)^{2}\ge 0$, porque $\sigma_i(1-\sigma_i)>0$.
+  \item (b) En $\theta_0=0$, $\sigma_1=\sigma_2=0{,}5$. Gradiente: $\tfrac12[(0{,}5-1)(1,2)+(0{,}5-0)(1,0)]=\tfrac12(0,-1)=(0;\allowbreak\ -0{,}5)$.
+  \item Hessiano: $\tfrac12\cdot 0{,}25\,[(1,2)(1,2)\T+(1,0)(1,0)\T]=0{,}125\begin{pmatrix}2&2\\2&4\end{pmatrix}=\begin{pmatrix}0{,}25&0{,}25\\0{,}25&0{,}5\end{pmatrix}$.
+  \item $\det H=0{,}125-0{,}0625=0{,}0625$; $H^{-1}=16\begin{pmatrix}0{,}5&-0{,}25\\-0{,}25&0{,}25\end{pmatrix}=\begin{pmatrix}8&-4\\-4&4\end{pmatrix}$.
+  \item $H^{-1}\nabla J=(8\cdot 0-4\cdot(-0{,}5);\allowbreak\ -4\cdot 0+4\cdot(-0{,}5))=(2,-2)$; $\theta_1=(-2,2)$.
+  \item (c) $J(\theta_0)=\ln 2=0{,}6931$. Con $\theta_1$: $\theta_1\T\tilde h_1=2$, $\sigma=0{,}8808$; $\theta_1\T\tilde h_2=-2$, $\sigma=0{,}1192$. $J(\theta_1)=-\tfrac12[\ln 0{,}8808+\ln(1-0{,}1192)]=-\ln 0{,}8808=0{,}1269$.
+\end{enumerate}
+\resultado \textbf{$\nabla J=(0;\allowbreak\ -0{,}5)$, $H=\begin{pmatrix}0{,}25&0{,}25\\0{,}25&0{,}5\end{pmatrix}$, $\theta_1=(-2,2)$; la pérdida baja de $0{,}693$ a $0{,}127$.}
+\comprobacion $H\,(2,-2)=(0{,}5-0{,}5;\allowbreak\ 0{,}5-1)=(0;\allowbreak\ -0{,}5)=\nabla J$. Los datos son separables, de modo que la pérdida puede seguir bajando hacia~0 en pasos posteriores.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-conceptos}
+\planteamiento contrastar con el \cref{ej:pentagono} y la \cref{prop:rotacion}.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item La superposición tiene un coste, la interferencia, que solo se paga cuando varias características están activas a la vez. Con dispersión $S$ alta, la probabilidad de que dos lo estén es del orden de $(1-S)^{2}$, mucho menor que la de que lo esté una, $(1-S)$: el beneficio de representar más características supera el coste.
+  \item La $\relu$ con sesgo negativo anula las interferencias pequeñas: si solo está activa la característica~$i$, las salidas de las demás son $\relu(W_j\T W_i+b_j)$, que valen~0 cuando $W_j\T W_i<-b_j$. Sin ella, el modelo es lineal y la superposición no aporta nada.
+  \item La $\relu$ del MLP actúa coordenada a coordenada y privilegia la base de las neuronas. El flujo residual solo se usa mediante productos por matrices, y cualquier rotación da un modelo equivalente (\cref{prop:rotacion}): sus coordenadas no tienen significado propio.
+\end{enumerate}
+\resultado \textbf{(a) la interferencia es rara si las características son dispersas; (b) la $\relu$ filtra la interferencia; (c) solo las capas con no linealidades coordenada a coordenada tienen base privilegiada.}
+\comprobacion en el pentágono con $x=e_1$, las interferencias $0{,}309$ y $-0{,}809$ quedan por debajo de $0{,}31$ y la $\relu$ las anula.
+\end{solucion}
+
+\begin{solucion}{eje:3-pentagono}
+\datos $W_k$ a $72^\circ(k-1)$, $b=-0{,}31$, $x=e_1+e_3$.
+\planteamiento $(W\T W)_{ij}=\cos(\text{ángulo entre }W_i\text{ y }W_j)$; $\hat x=\relu(W\T Wx+b)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\cos 72^\circ=0{,}309$ (vecinos, $\abs{i-j}\in\{1,4\}$) y $\cos 144^\circ=-0{,}809$ (no vecinos):
+  \[
+  W\T W=\begin{pmatrix}1&0{,}309&-0{,}809&-0{,}809&0{,}309\\0{,}309&1&0{,}309&-0{,}809&-0{,}809\\-0{,}809&0{,}309&1&0{,}309&-0{,}809\\-0{,}809&-0{,}809&0{,}309&1&0{,}309\\0{,}309&-0{,}809&-0{,}809&0{,}309&1\end{pmatrix}.
+  \]
+  \item $W\T Wx=$ columna~1 $+$ columna~3 $=(0{,}191;\allowbreak\ 0{,}618;\allowbreak\ 0{,}191;\allowbreak\ -0{,}5;\allowbreak\ -0{,}5)$.
+  \item Sumando $b$: $(-0{,}119;\allowbreak\ 0{,}308;\allowbreak\ -0{,}119;\allowbreak\ -0{,}81;\allowbreak\ -0{,}81)$; tras la $\relu$: $\hat x=(0;\allowbreak\ 0{,}308;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$.
+  \item Error: $(1-0)^{2}+(0-0{,}308)^{2}+(1-0)^{2}=2{,}095$.
+  \item $W_1+W_3=(1+\cos 144^\circ;\allowbreak\ \sin 144^\circ)=(0{,}191;\allowbreak\ 0{,}588)$, de norma $0{,}618$ y ángulo $72^\circ$: apunta en la dirección de $W_2$.
+\end{enumerate}
+\resultado \textbf{$\hat x=(0;\allowbreak\ 0{,}308;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$ con error $2{,}095$: el modelo ve la característica intermedia y pierde las dos activas.}
+\comprobacion $\hat x_2=0{,}618-0{,}31=0{,}308$ y $0{,}618=2\cos 72^\circ$.
+\end{solucion}
+
+\begin{solucion}{eje:3-bhk1}
+\datos $u$ uniforme en $\mathbb{S}^{d-1}$; $d=3$ y $d=4096$.
+\planteamiento por el \cref{teo:coseno} con $v=e_1$, $\E[u_1]=0$ y $\E[u_1^{2}]=1/d$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\Var(u_1)=\E[u_1^{2}]-\E[u_1]^{2}=1/d$.
+  \item $d=3$: $\Var=1/3=0{,}3333$; desviación $\sqrt{1/3}=0{,}5774$.
+  \item $d=4096$: $\Var=1/4096=2{,}441\cdot 10^{-4}$; desviación $1/64=0{,}01563$.
+\end{enumerate}
+\resultado \textbf{$\Var(u_1)=1/d$: $1/3$ en $d=3$ y $1/4096$, con desviación $0{,}0156$, en $d=4096$.}
+\comprobacion en $d=1$ la esfera es $\{-1,1\}$ y $\Var(u_1)=1=1/d$.
+\end{solucion}
+
+\begin{solucion}{eje:3-bhk2}
+\datos $x,y\in\R^{d}$ con componentes $\mathcal{N}(0,1)$ independientes; $d=400$; umbral $0{,}15$.
+\planteamiento $x\T y=\sum_kx_ky_k$ es suma de $d$ términos independientes; se aplica el teorema central del límite.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\E[x_ky_k]=\E[x_k]\E[y_k]=0$; luego $\E[x\T y]=0$.
+  \item $\Var(x_ky_k)=\E[x_k^{2}]\E[y_k^{2}]-0=1$; por independencia, $\Var(x\T y)=d$.
+  \item (b) $\cos=x\T y/(\norm x\norm y)\approx x\T y/d$, con desviación $\sqrt d/d=1/\sqrt d$.
+  \item (c) $1/\sqrt{400}=0{,}05$; $0{,}15/0{,}05=3$ desviaciones; $P(\abs Z>3)=0{,}0027$.
+\end{enumerate}
+\resultado \textbf{$\E[x\T y]=0$, $\Var(x\T y)=d$, desviación del coseno $\approx 1/\sqrt d=0{,}05$ y $P(\abs{\cos}>0{,}15)\approx 0{,}003$.}
+\comprobacion coincide con el \cref{teo:coseno}: la dirección de un vector gaussiano es uniforme en la esfera.
+\end{solucion}
+
+\begin{solucion}{eje:3-casi}
+\datos $u$ uniforme en $\mathbb{S}^{d-1}$, $v$ unitario fijo; $d=512$, $\varepsilon=0{,}25$.
+\planteamiento simetría por transformaciones ortogonales más $\sum_ku_k^{2}=1$; después, sustituir en $N<e^{d\varepsilon^{2}/4}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La medida uniforme en la esfera es invariante por transformaciones ortogonales, porque estas conservan las distancias y llevan la esfera en sí misma. Sea $Q$ ortogonal con $Qv=e_1$ (existe: se completa $v$ a una base ortonormal y $Q\T$ es la matriz que la tiene por columnas). Entonces $u\T v=(Qu)\T e_1$ y $Qu\sim u$, luego $u\T v\sim u_1$.
+  \item Una permutación de coordenadas es una matriz ortogonal, de modo que $(u_1,\dots,u_d)$ y $(u_{\sigma(1)},\dots,u_{\sigma(d)})$ tienen la misma distribución: $\E[u_1^{2}]=\dots=\E[u_d^{2}]$.
+  \item $\sum_ku_k^{2}=1$; tomando esperanzas, $\sum_k\E[u_k^{2}]=1$, y cada término vale $1/d$.
+  \item Cota: $d\varepsilon^{2}/4=512\cdot 0{,}0625/4=8$; $N<e^{8}=2981$.
+  \item $2981/512=5{,}82$.
+\end{enumerate}
+\resultado \textbf{$\E[(u\T v)^{2}]=1/d$; en $d=512$ la cota garantiza unas 2981 direcciones, $5{,}8$ veces la dimensión.}
+\comprobacion la desviación del coseno en $d=512$ es $1/\sqrt{512}=0{,}044$, y $0{,}25$ son $5{,}7$ desviaciones: la cota es pesimista.
+\end{solucion}
+
+\begin{solucion}{eje:3-bhk3}
+\datos con probabilidad $1-O(1/n)$, $\norm{x_i}\ge 1-2\ln n/d$ y $\abs{x_i\T x_j}\le\sqrt{6\ln n/(d-1)}$; $n=d=1000$.
+\planteamiento $\cos\theta_{ij}=x_i\T x_j/(\norm{x_i}\norm{x_j})$; se acota el numerador por arriba y el denominador por abajo.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item En el suceso del enunciado, $\abs{\cos\theta_{ij}}\le\sqrt{6\ln n/(d-1)}\,/\,(1-2\ln n/d)^{2}$.
+  \item Si $\ln n=o(d)$, el numerador tiende a~0 y el denominador a~1; para $d$ grande, la cota es menor que $\cos 45^\circ=0{,}7071$, y entonces $45^\circ<\theta_{ij}<135^\circ$ para todo par, con probabilidad $1-O(1/n)$.
+  \item $\ln 1000=6{,}908$; numerador $\sqrt{6\cdot 6{,}908/999}=\sqrt{0{,}04149}=0{,}2037$.
+  \item Norma mínima $1-2\cdot 6{,}908/1000=0{,}9862$; al cuadrado, $0{,}9726$.
+  \item Cota: $0{,}2037/0{,}9726=0{,}2094$; ángulo $\ge\arccos 0{,}2094=77{,}9^\circ$.
+\end{enumerate}
+\resultado \textbf{con alta probabilidad todos los ángulos superan $45^\circ$; con $n=d=1000$, superan $77{,}9^\circ$.}
+\comprobacion la desviación del coseno es $\approx 1/\sqrt{1000}=0{,}032$ (\cref{eje:3-bhk2}), y $0{,}21$ son unas $6{,}6$ desviaciones, margen holgado para mil puntos.
+\end{solucion}
+
+\begin{solucion}{eje:3-fase}
+\datos $n=2$, $m=1$, $I_i=1$; $x_i=0$ con probabilidad $S$ y uniforme en $[0,1]$ si no; $q=1-S$.
+\planteamiento calcular la pérdida esperada de cada solución por casos según el número de características activas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Momentos: $\E[x_i]=q/2$ y $\E[x_i^{2}]=q/3$, porque $\E[U^{2}]=1/3$ para $U$ uniforme en $[0,1]$.
+  \item A: $\hat x_1=\relu(x_1)=x_1$ (error nulo) y $\hat x_2=\relu(b_2)=q/2$. $L_A=\Var(x_2)=q/3-q^{2}/4$.
+  \item B: $h=x_1-x_2$ y $\hat x=(\relu(x_1-x_2),\relu(x_2-x_1))$. Con a lo sumo una activa, $\hat x=x$ y el error es nulo.
+  \item B con las dos activas (probabilidad $q^{2}$): si $x_1>x_2$, $\hat x=(x_1-x_2,0)$ y el error es $x_2^{2}+x_2^{2}=2\min(x_1,x_2)^{2}$; por simetría, lo mismo si $x_2>x_1$.
+  \item El mínimo de dos uniformes independientes tiene densidad $2(1-t)$ en $[0,1]$: $\E[\min^{2}]=\int_0^12t^{2}(1-t)\,dt=2(\tfrac13-\tfrac14)=\tfrac16$. Error condicionado: $\tfrac13$. $L_B=q^{2}/3$.
+  \item B mejor $\iff q^{2}/3<q/3-q^{2}/4\iff\tfrac{7q}{12}<\tfrac13\iff q<\tfrac47\iff S>\tfrac37=0{,}4286$.
+  \item (c) $S=0{,}7$, $q=0{,}3$: $L_A=0{,}1-0{,}0225=0{,}0775$ y $L_B=0{,}09/3=0{,}03$.
+\end{enumerate}
+\resultado \textbf{$L_A=q/3-q^{2}/4$ y $L_B=q^{2}/3$; la solución antipodal es mejor si $S>3/7\approx 0{,}43$; en $S=0{,}7$, $L_A=0{,}0775$ y $L_B=0{,}03$.}
+\comprobacion en $S=3/7$ ($q=4/7$), $L_A=0{,}1905-0{,}0816=0{,}1088$ y $L_B=0{,}3265/3=0{,}1088$: las curvas se cortan.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-vf}
+\planteamiento contrastar cada afirmación con los temas~1 a~4.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Verdadera.} Sin $\relu$, $\hat x=W\T Wx+b$ es afín con $\rango W\T W\le m$, y el óptimo guarda las $m$ características más importantes, como el análisis de componentes principales (\cref{tema:3}).
+  \item \textbf{Falsa.} La penalización empuja hacia la monosemanticidad, pero no la garantiza: hay latentes polisemánticos, latentes muertos y características que se dividen al aumentar $F$ (\cref{obs:limites-sae}).
+  \item \textbf{Falsa.} Decodificable no es usado; hace falta intervenir (\cref{obs:usado}).
+  \item \textbf{Verdadera.} En las últimas capas el flujo está casi en la base que lee $\WU$; en las primeras, no (\cref{sec:1-norm}).
+\end{enumerate}
+\resultado \textbf{(a) V; (b) F; (c) F; (d) V.}
+\comprobacion en la práctica, con $S=0$ (sin ventaja para la superposición) el modelo de juguete guarda solo dos características, como predice~(a).
+\end{solucion}
+
+\begin{solucion}{eje:4-sae}
+\datos $d_1=(1,0)$, $d_2=(0,1)$, $d_3=(1/\sqrt2,1/\sqrt2)$, $x=(1,1)$, $\lambda=0{,}2$.
+\planteamiento pérdida $=\norm{x-\sum_jf_jd_j}^{2}+\lambda\sum_jf_j\norm{d_j}$, con $\norm{d_j}=1$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $f=(1,1,0)$: reconstrucción $(1,1)$, error~0; $\norm f_1=2$; pérdida $0{,}2\cdot 2=0{,}4$.
+  \item $f=(0,0,\sqrt2)$: reconstrucción $\sqrt2(1/\sqrt2,1/\sqrt2)=(1,1)$, error~0; $\norm f_1=\sqrt2=1{,}414$; pérdida $0{,}2828$.
+\end{enumerate}
+\resultado \textbf{$0{,}4$ frente a $0{,}283$: gana el código de un solo latente.}
+\comprobacion es la desigualdad $\abs a+\abs b\ge\sqrt{a^{2}+b^{2}}$ con $a=b=1$: $2\ge 1{,}414$.
+\end{solucion}
+
+\begin{solucion}{eje:4-umbral}
+\datos $g(f)=(a-f)^{2}+\lambda f$, $f\ge 0$, $\lambda=0{,}6$; $a=0{,}8$ y $a=0{,}2$.
+\planteamiento \cref{prop:umbral}: $f^{*}=\max(a-\lambda/2,0)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\lambda/2=0{,}3$. Con $a=0{,}8$: $f^{*}=0{,}5$. Con $a=0{,}2$: $0{,}2-0{,}3<0$, luego $f^{*}=0$.
+  \item $g(0{,}5)=0{,}09+0{,}30=0{,}39$; $g(0{,}8)=0+0{,}48=0{,}48$; $g(0)=0{,}64$.
+\end{enumerate}
+\resultado \textbf{$f^{*}=0{,}5$ y $f^{*}=0$.} La penalización anula las activaciones menores que $\lambda/2$ (dispersión) y encoge en $\lambda/2$ las demás (sesgo).
+\comprobacion $g'(0{,}5)=-2(0{,}3)+0{,}6=0$.
+\end{solucion}
+
+\begin{solucion}{eje:4-metricas}
+\datos tres activaciones, sus reconstrucciones y sus códigos con $F=4$.
+\planteamiento \cref{def:metricas}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Errores: $\norm{(0{,}1;\allowbreak\ 0)}^{2}=0{,}01$; $\norm{(0;\allowbreak\ 0{,}2)}^{2}=0{,}04$; $\norm{(0{,}2;\allowbreak\ 0{,}2)}^{2}=0{,}08$. Suma: $0{,}13$.
+  \item Media $\bar x=(2/3,\ 1)$. Desviaciones: $(1/3,-1)$, $(-2/3,1)$, $(1/3,0)$, con normas al cuadrado $10/9$, $13/9$ y $1/9$. Suma: $24/9=2{,}667$.
+  \item $\FVU=0{,}13/2{,}667=0{,}0488$.
+  \item L0: $1$, $1$ y $2$ latentes activos; media $4/3=1{,}333$.
+  \item El latente~4 no se activa nunca: 1 de 4, el $25\,\%$, está muerto en esta muestra.
+\end{enumerate}
+\resultado \textbf{FVU $=0{,}049$, L0 medio $=1{,}33$ y un $25\,\%$ de latentes muertos.}
+\comprobacion $1-\FVU=0{,}951$: el diccionario explica el $95\,\%$ de la varianza.
+\end{solucion}
+
+\begin{solucion}{eje:4-d2l}
+\datos pérdida $\mathcal{L}(w)+\lambda\abs w$; $\eta=0{,}1$, $\lambda=0{,}5$; casos $(w,g)=(0{,}3;\allowbreak\ 0{,}2)$ y $(0{,}02;\allowbreak\ -0{,}1)$.
+\planteamiento el subgradiente de $\abs w$ es $\signo(w)$ si $w\neq 0$; la regla proximal aplica el umbral suave.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $w\leftarrow w-\eta\bigl(g+\lambda\,\signo(w)\bigr)$.
+  \item (b) Caso~1: $0{,}3-0{,}1\cdot(0{,}2+0{,}5)=0{,}3-0{,}07=0{,}23$.
+  \item Caso~2: $0{,}02-0{,}1\cdot(-0{,}1+0{,}5)=0{,}02-0{,}04=-0{,}02$. El peso cruza el cero y, en el paso siguiente, el signo cambia: oscila sin llegar a~0.
+  \item (c) Proximal, caso~2: $z=0{,}02+0{,}01=0{,}03$; $\eta\lambda=0{,}05$; $\abs z-0{,}05<0$, luego $w=0$ exactamente.
+  \item Proximal, caso~1: $z=0{,}3-0{,}02=0{,}28$; $0{,}28-0{,}05=0{,}23$, igual que con el subgradiente.
+\end{enumerate}
+\resultado \textbf{subgradiente: $0{,}23$ y $-0{,}02$ (oscila); proximal: $0{,}23$ y $0$.}
+\comprobacion la regla proximal es la \cref{prop:umbral} con otra escala: anula de verdad los pesos pequeños, como pretende un SAE.
+\end{solucion}
+
+\begin{solucion}{eje:4-ortonormal}
+\datos $F=d$, $b_d=0$, $W_dW_d\T=I$.
+\planteamiento usar que una matriz cuadrada con filas ortonormales es ortogonal y conserva la norma; después, aplicar la \cref{prop:umbral} coordenada a coordenada.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Si $W_d$ es cuadrada y $W_dW_d\T=I$, entonces $W_d\T W_d=I$. Por tanto, $\norm{x-W_d\T f}^{2}=\norm{W_d(x-W_d\T f)}^{2}=\norm{W_dx-f}^{2}$.
+  \item (b) $\norm{W_dx-f}^{2}+\lambda\sum_jf_j=\sum_j\bigl[(d_j\T x-f_j)^{2}+\lambda f_j\bigr]$: cada sumando depende de una sola $f_j$ y las restricciones $f_j\ge 0$ son independientes. Por la \cref{prop:umbral} con $a=d_j\T x$, $f_j^{*}=\max(d_j\T x-\lambda/2,0)=\relu(d_j\T x-\lambda/2)$.
+  \item (c) Con $W_e=W_d\T$, $W_e\T x=W_dx=(d_j\T x)_j$, y con $b_e=-\tfrac\lambda2\mathbf{1}$ el codificador da $\relu(d_j\T x-\lambda/2)=f_j^{*}$.
+  \item (d) Si $F>d$, $W_d\T W_d$ tiene rango $d<F$ y no es la identidad: el paso~1 falla y los latentes quedan acoplados. En el \cref{eje:4-sae} con $\lambda=0{,}2$, el umbral coordenada a coordenada daría $f=(0{,}9;\allowbreak\ 0{,}9;\allowbreak\ 1{,}314)$, que reconstruye $(1{,}829;\allowbreak\ 1{,}829)$, lejos de $x=(1,1)$.
+\end{enumerate}
+\resultado \textbf{con un diccionario ortonormal, el código óptimo es $\relu(W_dx-\lambda/2)$, exactamente un codificador de SAE con pesos atados; con $F>d$ el codificador solo puede aproximarlo.}
+\comprobacion con $x=(0{,}8;\allowbreak\ 0{,}2)$, la base canónica y $\lambda=0{,}6$ se obtiene $f^{*}=(0{,}5;\allowbreak\ 0)$, como en el \cref{eje:4-umbral}.
+\end{solucion}
+
+\begin{solucion}{eje:4-map}
+\datos $y^{(i)}=\theta\T x^{(i)}+\varepsilon_i$, $\varepsilon_i\sim\mathcal{N}(0,\sigma^{2})$; $\theta_j\sim$ Laplace$(0,b)$; $\sigma=0{,}5$, $b=0{,}1$.
+\planteamiento $\theta_{\mathrm{MAP}}=\arg\min\bigl[-\ln p(y\mid X,\theta)-\ln p(\theta)\bigr]$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $-\ln p(y\mid X,\theta)=\frac{1}{2\sigma^{2}}\norm{X\theta-y}^{2}+\text{cte}$.
+  \item $-\ln p(\theta)=\frac1b\sum_j\abs{\theta_j}+\text{cte}=\frac1b\norm\theta_1+\text{cte}$.
+  \item Las constantes no cambian el $\arg\min$, y multiplicar por $2\sigma^{2}>0$ tampoco: $\theta_{\mathrm{MAP}}=\arg\min\bigl[\norm{X\theta-y}^{2}+\frac{2\sigma^{2}}{b}\norm\theta_1\bigr]$.
+  \item (b) $\gamma=2\sigma^{2}/b=2\cdot 0{,}25/0{,}1=5$.
+  \item (c) La pérdida de un SAE, $\norm{x-\hat x}^{2}+\lambda\sum_jf_j$, es del mismo modo el MAP con ruido gaussiano en la reconstrucción y una distribución \emph{a priori} exponencial (Laplace restringida a $f\ge 0$) para cada latente.
+\end{enumerate}
+\resultado \textbf{$\gamma=2\sigma^{2}/b=5$.}
+\comprobacion si $b\to\infty$ (\emph{a priori} plana) o $\sigma\to 0$ (datos sin ruido), $\gamma\to 0$ y se recuperan los mínimos cuadrados.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-induccion}
+\datos contexto «\ldots{} Harry Potter \ldots{} Harry».
+\planteamiento seguir el circuito de la \cref{prop:induccion}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Capa~1, cabeza de token previo: cada posición atiende a la anterior y copia su identidad; en la posición de «Potter» escribe «el token anterior era Harry».
+  \item Capa~2, cabeza de inducción: en el último «Harry», su consulta busca claves que digan «el anterior era Harry». La clave de «Potter» la contiene, porque se forma con lo que escribió la capa~1: composición~K.
+  \item La cabeza atiende sobre todo a «Potter» y su circuito OV copia ese token a los logits.
+  \item Una cabeza que buscara el mismo token que el actual atendería al primer «Harry» y copiaría «Harry».
+\end{enumerate}
+\resultado \textbf{token previo (capa~1) más composición~K más copia OV (capa~2) predicen «Potter».}
+\comprobacion es la regla $[A][B]\ldots[A]\to[B]$ de la \cref{def:induccion} con $A=$ «Harry» y $B=$ «Potter».
+\end{solucion}
+
+\begin{solucion}{eje:5-perdida}
+\datos $K=32\,000$; secuencia de $T$ tokens repetida; probabilidad de copia $0{,}8$.
+\planteamiento pérdida uniforme $\ln K$; pérdida al copiar $-\ln 0{,}8$; media sobre las dos mitades.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\ln 32\,000=10{,}373$ nats por token en ambas mitades.
+  \item (b) Segunda mitad: $-\ln 0{,}8=0{,}223$. Media: $(10{,}373+0{,}223)/2=5{,}298$ nats.
+  \item (c) Si $250\le T<500$, el token~50 está en la primera mitad y el~500 en la segunda: puntuación $0{,}223-10{,}373=-10{,}15<0$.
+\end{enumerate}
+\resultado \textbf{(a) $10{,}37$; (b) $5{,}30$ nats por token; (c) negativa, $-10{,}15$: el modelo mejora con el contexto.}
+\comprobacion sin inducción, la puntuación del modelo uniforme es $10{,}373-10{,}373=0$.
+\end{solucion}
+
+\begin{solucion}{eje:5-parcheo}
+\datos $M=\begin{pmatrix}1&0\\0&0\end{pmatrix}$, $u=(1,1)$, $a=(2,1)$, $a'=(0,1)$, $\mu=u\T(a+m)$, $m=Ma$.
+\planteamiento evaluar $\mu$ en cada ejecución y aplicar la \cref{def:parcheo}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Limpia: $m=(2,0)$, $a+m=(4,1)$, $\mu=5$. Corrupta: $m'=(0,0)$, $a'+m'=(0,1)$, $\mu=1$.
+  \item (b) Parchear $a$ y recalcular $m$: se reproduce la ejecución limpia, $\mu=5$; fracción $(5-1)/(5-1)=1$.
+  \item Parchear solo $m$: $a'+Ma=(0,1)+(2,0)=(2,1)$, $\mu=3$; fracción $(3-1)/4=0{,}5$.
+  \item Parchear $a$ solo en su camino directo: $a+Ma'=(2,1)+(0,0)=(2,1)$, $\mu=3$; fracción $0{,}5$.
+  \item (c) $0{,}5+0{,}5=1$. Como $\mu=u\T a+u\T Ma$ es lineal, el efecto total $u\T(a-a')+u\T M(a-a')=2+2=4$ se descompone exactamente en efecto directo y efecto a través de $m$.
+\end{enumerate}
+\resultado \textbf{$\mu$ limpia $5$ y corrupta $1$; fracciones recuperadas $1$, $0{,}5$ y $0{,}5$.}
+\comprobacion en un modelo no lineal la suma de efectos directo e indirecto puede no coincidir con el total; aquí coincide por la linealidad.
+\end{solucion}
+
+\begin{solucion}{eje:5-ablacion}
+\datos $x=(2,1)$, $\hat v=(0{,}6;\allowbreak\ 0{,}8)$, $\WU$ del \cref{ej:atribucion}.
+\planteamiento $x\leftarrow x-(\hat v\T x)\hat v$; logits $\WU x$ y softmax.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\hat v\T x=1{,}2+0{,}8=2$; $x'=(2,1)-2(0{,}6;\allowbreak\ 0{,}8)=(0{,}8;\allowbreak\ -0{,}6)$.
+  \item (b) $\hat v\T x'=0{,}48-0{,}48=0$.
+  \item (c) Antes: logits $(2,1,-1)$; $e^{2}=7{,}389$, $e^{1}=2{,}718$, $e^{-1}=0{,}368$; suma $10{,}475$; $P=(0{,}705;\allowbreak\ 0{,}259;\allowbreak\ 0{,}035)$.
+  \item Después: logits $(0{,}8;\allowbreak\ -0{,}6;\allowbreak\ -1{,}4)$; $e^{0{,}8}=2{,}226$, $e^{-0{,}6}=0{,}549$, $e^{-1{,}4}=0{,}247$; suma $3{,}021$; $P=(0{,}737;\allowbreak\ 0{,}182;\allowbreak\ 0{,}082)$.
+  \item (d) $x+\alpha\hat v=x'$ exige $\alpha=-\hat v\T x=-2$. El valor depende de $x$: la ablación es una proyección, no una traslación fija.
+\end{enumerate}
+\resultado \textbf{$x'=(0{,}8;\allowbreak\ -0{,}6)$; probabilidades de $(0{,}705;\allowbreak\ 0{,}259;\allowbreak\ 0{,}035)$ a $(0{,}737;\allowbreak\ 0{,}182;\allowbreak\ 0{,}082)$; $\alpha=-2$, solo para este flujo.}
+\comprobacion $\norm{x'}^{2}=0{,}64+0{,}36=1=\norm x^{2}-(\hat v\T x)^{2}=5-4$.
+\end{solucion}
+
+\begin{solucion}{eje:5-rome}
+\datos $W=I_2$, $C=\diag(1,4)$, $k_*=(2,1)$, $v_*=(1,1)$; clave de prueba $k=(1,-8)$.
+\planteamiento (a)--(b) particularizar la solución de norma mínima; (c)--(d) aplicar el \cref{teo:rome}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con $A=k\T$ (una fila), $AA\T=\norm k^{2}$ y $\hat\delta=k\,r/\norm k^{2}$.
+  \item (b) Con $\eta=C^{1/2}\delta$, $\delta\T C\delta=\norm\eta^{2}$ y la restricción es $(C^{-1/2}k)\T\eta=r$. Por~(a), $\eta=r\,C^{-1/2}k/(k\T C^{-1}k)$ y $\delta=C^{-1/2}\eta=r\,C^{-1}k/(k\T C^{-1}k)$. Es la fila $\delta_i$ de la demostración del \cref{teo:rome}.
+  \item (c) $C^{-1}k_*=(2;\allowbreak\ 0{,}25)$; $(C^{-1}k_*)\T k_*=4+0{,}25=4{,}25$; $r=v_*-Wk_*=(-1,0)$; $\Lambda=(-4/17,\ 0)$.
+  \item $\hat W=I_2+\begin{pmatrix}-4/17\\0\end{pmatrix}(2\ \ 1/4)=\begin{pmatrix}9/17&-1/17\\0&1\end{pmatrix}$; $\hat Wk_*=(18/17-1/17;\allowbreak\ 1)=(1,1)$.
+  \item (d) $\hat Wk=Wk+\Lambda\,(C^{-1}k_*)\T k=Wk+\Lambda\,(k\T C^{-1}k_*)$, por la simetría de $C^{-1}$; si $k\T C^{-1}k_*=0$, $\hat Wk=Wk$.
+  \item Con $k=(1,-8)$: $k\T C^{-1}k_*=2-2=0$ y $\hat Wk=(9/17+8/17;\allowbreak\ -8)=(1,-8)=Wk$.
+\end{enumerate}
+\resultado \textbf{$\hat W=\begin{pmatrix}9/17&-1/17\\0&1\end{pmatrix}$; las claves $C^{-1}$-ortogonales a $k_*$ no cambian.}
+\comprobacion $\hat W-W$ tiene rango~1: su segunda fila es nula.
+\end{solucion}
+
+\begin{solucion}{eje:5-fourier}
+\datos $p=5$, $a=2$, $b=4$, $a+b=6\equiv 1$.
+\planteamiento evaluar $\ell(c)$ y usar la suma de una progresión geométrica de raíces de la unidad.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $s=6-c$: $\ell(0)=\cos 432^\circ=0{,}309$, $\ell(1)=\cos 360^\circ=1$, $\ell(2)=\cos 288^\circ=0{,}309$, $\ell(3)=\cos 216^\circ=-0{,}809$, $\ell(4)=\cos 144^\circ=-0{,}809$. Máximo único en $c=1$.
+  \item (b) Con $k=2$ se añade $\cos(144^\circ s)$: $\ell(1)=2$ y $\ell(c)=0{,}309-0{,}809=-0{,}5$ para $c\neq 1$.
+  \item (c) Sea $\omega=e^{2\pi\mathrm{i}s/p}$. Si $p\mid s$, $\omega=1$ y $\sum_{k=0}^{p-1}\omega^{k}=p$. Si $p\nmid s$, $\omega\neq 1$ y $\sum_{k=0}^{p-1}\omega^{k}=(\omega^{p}-1)/(\omega-1)=0$. Tomando partes reales y restando el término $k=0$, $\sum_{k=1}^{p-1}\cos(2\pi ks/p)$ vale $p-1$ si $c\equiv a+b$ y $-1$ en otro caso.
+\end{enumerate}
+\resultado \textbf{(a) máximo $1$ en $c=1$; (b) $2$ frente a $-0{,}5$; (c) $p-1$ frente a $-1$.} Cuantas más frecuencias, mayor el margen.
+\comprobacion con $p=5$ y todas las frecuencias, $\ell(1)=4$ y $\ell(c)=-1$ en los demás; la suma sobre $c$ es $4-4=0$, como la de cualquier coseno no constante sobre un periodo completo.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-binaria}
+\datos puntuación 1 por acierto y 0 por error o abstención; probabilidad de acierto $p$.
+\planteamiento comparar la puntuación esperada de responder y de abstenerse.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Responder: $p\cdot 1+(1-p)\cdot 0=p$. Abstenerse: $0$.
+  \item Para todo $p>0$ responder domina: es la \cref{prop:umbral-t} con $t=0$.
+  \item Un modelo optimizado para esta puntuación aprende a no abstenerse nunca: adivinar con seguridad es la estrategia óptima.
+  \item Con $p=0{,}1$: $0{,}1$ de media frente a $0$.
+\end{enumerate}
+\resultado \textbf{la puntuación binaria nunca penaliza adivinar y premia al modelo que inventa.}
+\comprobacion con la penalización de $t=0{,}5$ (un punto por error), adivinar con $p=0{,}1$ daría $0{,}1-0{,}9=-0{,}8<0$.
+\end{solucion}
+
+\begin{solucion}{eje:6-ece}
+\datos (a) grupos $(n_b,\mathrm{conf}_b,\mathrm{acc}_b)=(40;\allowbreak\ 0{,}95;\allowbreak\ 0{,}8)$, $(40;\allowbreak\ 0{,}75;\allowbreak\ 0{,}7)$, $(20;\allowbreak\ 0{,}55;\allowbreak\ 0{,}6)$; (b) $p=0{,}6$, $t=0{,}5$ y $t=0{,}75$.
+\planteamiento \cref{def:ece}; \cref{prop:umbral-t}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\ECE=0{,}4\cdot 0{,}15+0{,}4\cdot 0{,}05+0{,}2\cdot 0{,}05=0{,}06+0{,}02+0{,}01=0{,}09$.
+  \item Confianza media $0{,}38+0{,}30+0{,}11=0{,}79$; exactitud media $0{,}32+0{,}28+0{,}12=0{,}72$: sobreconfiado.
+  \item (b) $t=0{,}5$: penalización $1$; $E=0{,}6-0{,}4=0{,}2>0$: responde.
+  \item $t=0{,}75$: penalización $3$; $E=0{,}6-1{,}2=-0{,}6<0$: se abstiene.
+\end{enumerate}
+\resultado \textbf{$\ECE=0{,}09$; con $t=0{,}5$ responde ($+0{,}2$) y con $t=0{,}75$ se abstiene ($-0{,}6$).}
+\comprobacion la regla $p>t$ da lo mismo: $0{,}6>0{,}5$ y $0{,}6<0{,}75$.
+\end{solucion}
+
+\begin{solucion}{eje:6-intentos}
+\datos $p=0{,}02$; 10 y 100 intentos; 0 éxitos en 300 pruebas.
+\planteamiento \cref{prop:intentos} y \cref{prop:regla3}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $0{,}98^{10}=0{,}8171$, probabilidad $0{,}1829$ (aproximación lineal $0{,}2$).
+  \item $0{,}98^{100}=e^{100\ln 0{,}98}=e^{-2{,}020}=0{,}1326$, probabilidad $0{,}8674$ (aproximación lineal $2$, absurda).
+  \item (b) $(1-p_u)^{300}=0{,}05$: $\ln(1-p_u)=\ln 0{,}05/300=-0{,}009986$, $p_u=1-e^{-0{,}009986}=0{,}00994$.
+  \item Regla del~3: $3/300=0{,}01$.
+\end{enumerate}
+\resultado \textbf{(a) $0{,}183$ y $0{,}867$; (b) $p_u=0{,}99\,\%$, frente al $1\,\%$ de la regla del~3.}
+\comprobacion $p_u\le\ln 20/300=0{,}00999$, como garantiza la \cref{prop:regla3}.
+\end{solucion}
+
+\begin{solucion}{eje:6-passk}
+\datos $n=20$, $c=4$; $k=1,5,10$.
+\planteamiento \cref{prop:passk}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $k=1$: $1-\binom{16}{1}/\binom{20}{1}=1-16/20=0{,}2$.
+  \item $k=5$: $\binom{16}{5}=4368$, $\binom{20}{5}=15\,504$; $1-4368/15\,504=1-0{,}2817=0{,}7183$.
+  \item $k=10$: $\binom{16}{10}=8008$, $\binom{20}{10}=184\,756$; $1-0{,}04334=0{,}9567$.
+  \item (b) $\prod_{i=17}^{20}(1-5/i)=\tfrac{12}{17}\cdot\tfrac{13}{18}\cdot\tfrac{14}{19}\cdot\tfrac{15}{20}=0{,}7059\cdot 0{,}7222\cdot 0{,}7368\cdot 0{,}75=0{,}2817$.
+  \item (c) Ingenuo, con $\hat p=0{,}2$: $1-0{,}8^{k}$ da $0{,}2$, $0{,}6723$ y $0{,}8926$.
+\end{enumerate}
+\resultado \textbf{$\widehat{\mathrm{pass}}_k=0{,}200$; $0{,}718$; $0{,}957$, frente a $0{,}200$; $0{,}672$; $0{,}893$ del estimador ingenuo.}
+\comprobacion para $k=1$ ambos coinciden con $c/n$; para $k>1$ el ingenuo queda por debajo, como predice el \cref{eje:6-sesgo}.
+\end{solucion}
+
+\begin{solucion}{eje:6-mit}
+\datos margen $z_{\alpha/2}/(2\sqrt n)$; $z_{0{,}025}=1{,}96$ (o $2$) y $z_{0{,}1}=1{,}2816$.
+\planteamiento despejar $n$ del margen (\cref{prop:ic}); para la diferencia de dos exactitudes independientes, sumar varianzas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con $z=2$: $1/\sqrt n=0{,}01$, $n=10\,000$. Con $z=1{,}96$: $\sqrt n=1{,}96/0{,}02=98$, $n=9604$.
+  \item (b) $\sqrt n=1{,}2816/0{,}02=64{,}08$, $n=4105{,}9$; hacen falta $4106$ preguntas.
+  \item (c) $\sqrt{900}=30$. Al $95\,\%$: $0{,}70\pm 1{,}96/60=0{,}70\pm 0{,}0327$, es decir, $[0{,}667;\allowbreak\ 0{,}733]$. Al $80\,\%$: $0{,}70\pm 1{,}2816/60=0{,}70\pm 0{,}0214$, es decir, $[0{,}679;\allowbreak\ 0{,}721]$.
+  \item (d) $\sqrt{0{,}7\cdot 0{,}3/1000+0{,}72\cdot 0{,}28/1000}=\sqrt{0{,}0004116}=0{,}0203$. $z=0{,}02/0{,}0203=0{,}99<1{,}96$: no significativa.
+\end{enumerate}
+\resultado \textbf{(a) $10\,000$ (o $9604$); (b) $4106$; (c) $[0{,}667;\allowbreak\ 0{,}733]$ y $[0{,}679;\allowbreak\ 0{,}721]$; (d) desviación $0{,}020$, diferencia no significativa.}
+\comprobacion la versión conservadora de~(d) da $\sqrt{2/(4\cdot 1000)}=0{,}0224$, algo mayor, como corresponde a usar $\theta(1-\theta)\le 1/4$.
+\end{solucion}
+
+\begin{solucion}{eje:6-sesgo}
+\datos $c\sim\Bin(n,p)$, $\hat p=c/n$.
+\planteamiento $\E[\hat p]=p$ y $\Var(\hat p)=p(1-p)/n$; desarrollar el cuadrado.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\E[(1-\hat p)^{2}]=1-2\E[\hat p]+\E[\hat p^{2}]=1-2p+p^{2}+\Var(\hat p)=(1-p)^{2}+p(1-p)/n$.
+  \item Por tanto, $\E[1-(1-\hat p)^{2}]=\bigl(1-(1-p)^{2}\bigr)-p(1-p)/n$, menor que pass@2 si $0<p<1$.
+  \item (b) Con $n=k=2$: $\binom{2-c}{2}/\binom22$ vale~1 si $c=0$ y~0 si no. El estimador es $1-[c=0]$ y su esperanza, $1-P(c=0)=1-(1-p)^{2}$.
+  \item (c) $p=0{,}5$: pass@2 $=1-0{,}25=0{,}75$; esperanza del ingenuo $0{,}75-0{,}25/2=0{,}625$.
+\end{enumerate}
+\resultado \textbf{el estimador ingenuo subestima pass@2 en $p(1-p)/n$; con $p=0{,}5$ y $n=2$, $0{,}625$ frente a $0{,}75$.}
+\comprobacion directa: con $c=0,1,2$ y probabilidades $\tfrac14,\tfrac12,\tfrac14$, el ingenuo vale $0$, $0{,}75$ y $1$; esperanza $0{,}375+0{,}25=0{,}625$.
+\end{solucion}
+
+\begin{solucion}{eje:6-cota-ece}
+\datos pesos $w_b=\abs{B_b}/n$, que suman~1.
+\planteamiento escribir las medias globales como medias ponderadas de las de cada intervalo y aplicar la desigualdad triangular.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Cada predicción está en un único intervalo, luego $\overline{\mathrm{conf}}=\sum_bw_b\mathrm{conf}_b$ y $\overline{\mathrm{acc}}=\sum_bw_b\mathrm{acc}_b$.
+  \item $\abs{\overline{\mathrm{conf}}-\overline{\mathrm{acc}}}=\bigl\lvert\sum_bw_b(\mathrm{conf}_b-\mathrm{acc}_b)\bigr\rvert\le\sum_bw_b\abs{\mathrm{conf}_b-\mathrm{acc}_b}=\ECE$.
+  \item Hay igualdad si y solo si todas las diferencias $\mathrm{conf}_b-\mathrm{acc}_b$ de los intervalos con $w_b>0$ tienen el mismo signo (o son nulas).
+  \item (b) \cref{ej:ece}: $0{,}12\ge\abs{0{,}69-0{,}61}=0{,}08$. \cref{eje:6-ece}: $0{,}09\ge\abs{0{,}79-0{,}72}=0{,}07$. En ambos la desigualdad es estricta porque hay intervalos sobreconfiados e infraconfiados.
+  \item (c) 50 predicciones con confianza $0{,}9$ y exactitud $0{,}7$, y 50 con confianza $0{,}5$ y exactitud $0{,}7$: $\overline{\mathrm{conf}}=0{,}7=\overline{\mathrm{acc}}$, pero $\ECE=0{,}5\cdot 0{,}2+0{,}5\cdot 0{,}2=0{,}2$.
+\end{enumerate}
+\resultado \textbf{$\ECE\ge\abs{\overline{\mathrm{conf}}-\overline{\mathrm{acc}}}$, con igualdad si todos los desajustes tienen el mismo signo; el ejemplo de~(c) tiene medias iguales y $\ECE=0{,}2$.}
+\comprobacion en~(c) los dos desajustes, $+0{,}2$ y $-0{,}2$, se cancelan en la media pero no en el ECE.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{alain}
+G.~Alain e Y.~Bengio.
+\newblock Understanding intermediate layers using linear classifier probes.
+\newblock arXiv:1610.01644, 2016.
+\newblock \url{https://arxiv.org/abs/1610.01644}
+
+\bibitem{arditi}
+A.~Arditi, O.~Obeso, A.~Syed, D.~Paleka, N.~Panickssery, W.~Gurnee y N.~Nanda.
+\newblock Refusal in language models is mediated by a single direction.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2024.
+\newblock \url{https://arxiv.org/abs/2406.11717}
+
+\bibitem{ball}
+K.~Ball.
+\newblock An elementary introduction to modern convex geometry.
+\newblock En S.~Levy (ed.), \emph{Flavors of Geometry}, MSRI Publications~31. Cambridge University Press, 1997.
+
+\bibitem{belrose}
+N.~Belrose, Z.~Furman, L.~Smith, D.~Halawi, I.~Ostrovsky, L.~McKinney, S.~Biderman y J.~Steinhardt.
+\newblock Eliciting latent predictions from transformers with the tuned lens.
+\newblock arXiv:2303.08112, 2023.
+\newblock \url{https://arxiv.org/abs/2303.08112}
+
+\bibitem{bishop}
+C.~M. Bishop.
+\newblock \emph{Pattern Recognition and Machine Learning}.
+\newblock Springer, 2006.
+\newblock §4.2 «Probabilistic Generative Models».
+
+\bibitem{bhk}
+A.~Blum, J.~Hopcroft y R.~Kannan.
+\newblock \emph{Foundations of Data Science}.
+\newblock Cambridge University Press, 2020.
+\newblock Cap.~2, «High-Dimensional Space». Texto del curso CS~4850 de Cornell.
+\newblock \url{https://www.cs.cornell.edu/jeh/book.pdf}
+
+\bibitem{bricken}
+T.~Bricken, A.~Templeton, J.~Batson, B.~Chen, A.~Jermyn, T.~Conerly \emph{et al.}
+\newblock Towards monosemanticity: decomposing language models with dictionary learning.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 2023.
+\newblock \url{https://transformer-circuits.pub/2023/monosemantic-features/index.html}
+
+\bibitem{cs224n}
+D.~Yang y Y.~Choi.
+\newblock CS224N: Natural Language Processing with Deep Learning.
+\newblock Stanford University, invierno de 2026. Clase~11, «Benchmarking and Evaluation»; clase invitada de B.~Kim, «Interpretability».
+\newblock \url{https://web.stanford.edu/class/cs224n/}
+
+\bibitem{cs229ps}
+Stanford CS229: Machine Learning.
+\newblock \emph{Problem Set}~1.
+\newblock Stanford University, verano de 2019.
+\newblock \url{https://cs229.stanford.edu/summer2019/ps1.pdf}
+
+\bibitem{cs229ps2}
+Stanford CS229: Machine Learning.
+\newblock \emph{Problem Set}~2.
+\newblock Stanford University, verano de 2020. Problema~6, «Bayesian Interpretation of Regularization».
+\newblock \url{https://cs229.stanford.edu/summer2020/ps2.pdf}
+
+\bibitem{cs2881}
+B.~Barak.
+\newblock CS~2881r: AI Safety.
+\newblock Harvard University, otoño de 2025. Semana~3, «Adversarial Robustness, Jailbreaks, Prompt Injection, Security».
+\newblock \url{https://windowsontheory.org/2025/09/10/cs-2881-ai-safety/}
+
+\bibitem{cs336}
+T.~Hashimoto y P.~Liang.
+\newblock CS336: Language Modeling from Scratch.
+\newblock Stanford University, primavera de 2026. Práctica~1, «Basics», versión~26.0.3.
+\newblock \url{https://github.com/stanford-cs336/assignment1-basics}
+
+\bibitem{chen}
+M.~Chen, J.~Tworek, H.~Jun, Q.~Yuan, H.~P. de~Oliveira~Pinto, J.~Kaplan \emph{et al.}
+\newblock Evaluating large language models trained on code.
+\newblock arXiv:2107.03374, 2021.
+\newblock \url{https://arxiv.org/abs/2107.03374}
+
+\bibitem{elhage21}
+N.~Elhage, N.~Nanda, C.~Olsson, T.~Henighan, N.~Joseph, B.~Mann \emph{et al.}
+\newblock A mathematical framework for transformer circuits.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 2021.
+\newblock \url{https://transformer-circuits.pub/2021/framework/index.html}
+
+\bibitem{elhage22}
+N.~Elhage, T.~Hume, C.~Olsson, N.~Schiefer, T.~Henighan \emph{et al.}
+\newblock Toy models of superposition.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 2022. También arXiv:2209.10652.
+\newblock \url{https://transformer-circuits.pub/2022/toy_model/index.html}
+
+\bibitem{engr108}
+S.~Boyd.
+\newblock ENGR108: Introduction to Matrix Methods.
+\newblock Stanford University. Clase~16, «Constrained least squares». Texto: S.~Boyd y L.~Vandenberghe, \emph{Introduction to Applied Linear Algebra}, Cambridge University Press, 2018.
+\newblock \url{https://web.stanford.edu/class/engr108/lectures/16-cls.pdf}
+
+\bibitem{ganguli}
+D.~Ganguli, L.~Lovitt, J.~Kernion, A.~Askell, Y.~Bai \emph{et al.}
+\newblock Red teaming language models to reduce harms: methods, scaling behaviors, and lessons learned.
+\newblock arXiv:2209.07858, 2022.
+\newblock \url{https://arxiv.org/abs/2209.07858}
+
+\bibitem{gpt4}
+OpenAI.
+\newblock GPT-4 technical report.
+\newblock arXiv:2303.08774, 2023.
+\newblock \url{https://arxiv.org/abs/2303.08774}
+
+\bibitem{guo}
+C.~Guo, G.~Pleiss, Y.~Sun y K.~Q. Weinberger.
+\newblock On calibration of modern neural networks.
+\newblock En \emph{Proceedings of the 34th International Conference on Machine Learning (ICML)}, PMLR~70, 2017.
+\newblock \url{https://arxiv.org/abs/1706.04599}
+
+\bibitem{helm}
+P.~Liang, R.~Bommasani, T.~Lee, D.~Tsipras, D.~Soylu \emph{et al.}
+\newblock Holistic evaluation of language models.
+\newblock \emph{Transactions on Machine Learning Research}, 2023.
+\newblock \url{https://arxiv.org/abs/2211.09110}
+
+\bibitem{hendrycks}
+D.~Hendrycks, C.~Burns, S.~Basart, A.~Zou, M.~Mazeika, D.~Song y J.~Steinhardt.
+\newblock Measuring massive multitask language understanding.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2021.
+\newblock \url{https://arxiv.org/abs/2009.03300}
+
+\bibitem{hewitt-liang}
+J.~Hewitt y P.~Liang.
+\newblock Designing and interpreting probes with control tasks.
+\newblock En \emph{Proceedings of EMNLP-IJCNLP}, 2019.
+\newblock \url{https://arxiv.org/abs/1909.03368}
+
+\bibitem{hewitt-manning}
+J.~Hewitt y C.~D. Manning.
+\newblock A structural probe for finding syntax in word representations.
+\newblock En \emph{Proceedings of NAACL-HLT}, págs.~4129--4138, 2019.
+\newblock \url{https://aclanthology.org/N19-1419/}
+
+\bibitem{hubinger}
+E.~Hubinger, C.~Denison, J.~Mu, M.~Lambert, M.~Tong \emph{et al.}
+\newblock Sleeper agents: training deceptive LLMs that persist through safety training.
+\newblock arXiv:2401.05566, 2024.
+\newblock \url{https://arxiv.org/abs/2401.05566}
+
+\bibitem{jm3}
+D.~Jurafsky y J.~H. Martin.
+\newblock \emph{Speech and Language Processing}, 3.ª ed., borrador del 19 de agosto de 2026.
+\newblock Cap.~7, «Transformers and Pretraining»; cap.~10, «Interpretability».
+\newblock \url{https://web.stanford.edu/~jurafsky/slp3/}
+
+\bibitem{kadavath}
+S.~Kadavath, T.~Conerly, A.~Askell, T.~Henighan, D.~Drain \emph{et al.}
+\newblock Language models (mostly) know what they know.
+\newblock arXiv:2207.05221, 2022.
+\newblock \url{https://arxiv.org/abs/2207.05221}
+
+\bibitem{kalai-vempala}
+A.~T. Kalai y S.~S. Vempala.
+\newblock Calibrated language models must hallucinate.
+\newblock arXiv:2311.14648, 2023.
+\newblock \url{https://arxiv.org/abs/2311.14648}
+
+\bibitem{kalai25}
+A.~T. Kalai, O.~Nachum, S.~S. Vempala y E.~Zhang.
+\newblock Why language models hallucinate.
+\newblock arXiv:2509.04664, 2025.
+\newblock \url{https://arxiv.org/abs/2509.04664}
+
+\bibitem{li-iti}
+K.~Li, O.~Patel, F.~Viégas, H.~Pfister y M.~Wattenberg.
+\newblock Inference-time intervention: eliciting truthful answers from a language model.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2023.
+\newblock \url{https://arxiv.org/abs/2306.03341}
+
+\bibitem{gemmascope}
+T.~Lieberum, S.~Rajamanoharan, A.~Conmy, L.~Smith, N.~Sonnerat, V.~Varma, J.~Kramár, A.~Dragan, R.~Shah y N.~Nanda.
+\newblock Gemma Scope: open sparse autoencoders everywhere all at once on Gemma~2.
+\newblock arXiv:2408.05147, 2024.
+\newblock \url{https://arxiv.org/abs/2408.05147}
+
+\bibitem{lindsey}
+J.~Lindsey, W.~Gurnee, E.~Ameisen, B.~Chen, A.~Pearce \emph{et al.}
+\newblock On the biology of a large language model.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 27 de marzo de 2025.
+\newblock \url{https://transformer-circuits.pub/2025/attribution-graphs/biology.html}
+
+\bibitem{lundberg}
+S.~M. Lundberg y S.-I. Lee.
+\newblock A unified approach to interpreting model predictions.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2017.
+\newblock \url{https://arxiv.org/abs/1705.07874}
+
+\bibitem{meng}
+K.~Meng, D.~Bau, A.~Andonian e Y.~Belinkov.
+\newblock Locating and editing factual associations in GPT.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2022.
+\newblock \url{https://arxiv.org/abs/2202.05262}
+
+\bibitem{mit1805}
+J.~Orloff y J.~Bloom.
+\newblock 18.05: Introduction to Probability and Statistics.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, primavera de 2022. Clase~23, «Confidence Intervals for the Mean of Non-normal Data», y sus \emph{in-class problems}.
+\newblock \url{https://ocw.mit.edu/courses/18-05-introduction-to-probability-and-statistics-spring-2022/}
+
+\bibitem{nanda}
+N.~Nanda, L.~Chan, T.~Lieberum, J.~Smith y J.~Steinhardt.
+\newblock Progress measures for grokking via mechanistic interpretability.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2023.
+\newblock \url{https://arxiv.org/abs/2301.05217}
+
+\bibitem{nostalgebraist}
+nostalgebraist.
+\newblock Interpreting GPT: the logit lens.
+\newblock \emph{LessWrong}, 2020.
+
+\bibitem{olah-zoom}
+C.~Olah, N.~Cammarata, L.~Schubert, G.~Goh, M.~Petrov y S.~Carter.
+\newblock Zoom in: an introduction to circuits.
+\newblock \emph{Distill}, 2020.
+\newblock \url{https://distill.pub/2020/circuits/zoom-in/}
+
+\bibitem{olsson}
+C.~Olsson, N.~Elhage, N.~Nanda, N.~Joseph, N.~DasSarma, T.~Henighan \emph{et al.}
+\newblock In-context learning and induction heads.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 2022.
+\newblock \url{https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html}
+
+\bibitem{park}
+K.~Park, Y.~J. Choe y V.~Veitch.
+\newblock The linear representation hypothesis and the geometry of large language models.
+\newblock arXiv:2311.03658, 2023.
+\newblock \url{https://arxiv.org/abs/2311.03658}
+
+\bibitem{perez}
+E.~Perez, S.~Huang, F.~Song, T.~Cai, R.~Ring, J.~Aslanides, A.~Glaese, N.~McAleese y G.~Irving.
+\newblock Red teaming language models with language models.
+\newblock En \emph{Proceedings of EMNLP}, 2022.
+\newblock \url{https://arxiv.org/abs/2202.03286}
+
+\bibitem{rsp}
+Anthropic.
+\newblock Anthropic's Responsible Scaling Policy.
+\newblock Septiembre de 2023, con revisiones posteriores.
+\newblock \url{https://www.anthropic.com/news/anthropics-responsible-scaling-policy}
+
+\bibitem{sundararajan}
+M.~Sundararajan, A.~Taly y Q.~Yan.
+\newblock Axiomatic attribution for deep networks.
+\newblock En \emph{Proceedings of the 34th International Conference on Machine Learning (ICML)}, PMLR~70, 2017.
+\newblock \url{https://arxiv.org/abs/1703.01365}
+
+\bibitem{templeton}
+A.~Templeton, T.~Conerly, J.~Marcus, J.~Lindsey, T.~Bricken \emph{et al.}
+\newblock Scaling monosemanticity: extracting interpretable features from Claude~3 Sonnet.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 2024.
+\newblock \url{https://transformer-circuits.pub/2024/scaling-monosemanticity/index.html}
+
+\bibitem{turner}
+A.~M. Turner, L.~Thiergart, G.~Leech, D.~Udell, J.~J. Vazquez, U.~Mini y M.~MacDiarmid.
+\newblock Steering language models with activation engineering.
+\newblock arXiv:2308.10248, 2023.
+\newblock \url{https://arxiv.org/abs/2308.10248}
+
+\bibitem{wang-ioi}
+K.~Wang, A.~Variengien, A.~Conmy, B.~Shlegeris y J.~Steinhardt.
+\newblock Interpretability in the wild: a circuit for indirect object identification in GPT-2 small.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2023.
+\newblock \url{https://arxiv.org/abs/2211.00593}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock §3.7, «Weight Decay».
+\newblock \url{https://d2l.ai/}
+
+\bibitem{zou}
+A.~Zou, Z.~Wang, N.~Carlini, M.~Nasr, J.~Z. Kolter y M.~Fredrikson.
+\newblock Universal and transferable adversarial attacks on aligned language models.
+\newblock arXiv:2307.15043, 2023.
+\newblock \url{https://arxiv.org/abs/2307.15043}
+
+\end{thebibliography}
+
+
+\end{document}

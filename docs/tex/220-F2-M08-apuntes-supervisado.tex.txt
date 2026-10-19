@@ -1,0 +1,1841 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase II — Módulo 8
+%  Aprendizaje supervisado
+%  Compilar: latexmk -r ../latexmkrc M08-supervisado.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 8}
+
+% Anclas de hiperenlace únicas por tema para los enunciados
+\makeatletter
+\@for\nombre:=definicion,teorema,proposicion,lema,corolario,ejemplo,observacion\do{%
+  \expandafter\xdef\csname theH\nombre\endcsname{\noexpand\thechapter.\noexpand\arabic{definicion}}}
+\makeatother
+
+% Notación propia del módulo
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\Cov}{Cov}
+\DeclareMathOperator{\Ber}{Ber}
+\DeclareMathOperator{\Cat}{Cat}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\tr}{tr}
+\DeclareMathOperator{\rg}{rg}
+\DeclareMathOperator{\sign}{sign}
+\DeclareMathOperator{\SSE}{SSE}
+\DeclareMathOperator{\ECM}{ECM}
+\DeclareMathOperator{\BCE}{BCE}
+\newcommand{\N}{\mathcal{N}}
+\newcommand{\D}{\mathcal{D}}
+\newcommand{\Hc}{\mathcal{H}}
+\newcommand{\X}{\mathcal{X}}
+\newcommand{\Y}{\mathcal{Y}}
+\newcommand{\ind}{\mathbb{I}}
+\newcommand{\Remp}{\widehat{R}_n}
+
+\hypersetup{pdftitle={Módulo 8. Aprendizaje supervisado},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase II \textperiodcentered\ Aprendizaje automático y redes neuronales}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 8\par}\vspace{0.3cm}
+{\LARGE Aprendizaje supervisado\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+La última capa de un gran modelo de lenguaje es un clasificador lineal: recibe un vector de dimensión $d_{\text{model}}$ y devuelve una distribución de probabilidad sobre el vocabulario. Ese clasificador es una regresión softmax, y el preentrenamiento minimiza su entropía cruzada token a token. Este módulo estudia el aprendizaje supervisado en el marco de los modelos lineales, donde cada resultado puede demostrarse y cada cálculo hacerse a mano: la regresión lineal por mínimos cuadrados, la regresión logística, la regresión softmax y los mecanismos que gobiernan la generalización (sesgo, varianza, regularización y validación cruzada). Todo lo que se aprende aquí sobre pérdidas, gradientes y sobreajuste se aplica sin cambios a las redes neuronales de los módulos siguientes.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item formular un problema supervisado en términos de distribución de los datos, clase de hipótesis, pérdida y riesgo, e identificar el predictor óptimo para las pérdidas cuadrática, 0-1 y logarítmica;
+  \item deducir y resolver a mano las ecuaciones normales de la regresión lineal, interpretarlas como una proyección ortogonal y justificar los mínimos cuadrados como máxima verosimilitud con ruido gaussiano;
+  \item obtener la entropía cruzada binaria como verosimilitud de Bernoulli, calcular el gradiente y el hessiano de la regresión logística, demostrar su convexidad y aplicar el método de Newton;
+  \item demostrar que el gradiente de la entropía cruzada de la regresión softmax respecto a los logits es $p-e_y$, calcular su hessiano e identificar la regresión softmax en la capa de salida de un LLM;
+  \item demostrar la descomposición sesgo-varianza y usarla para diagnosticar infraajuste y sobreajuste;
+  \item resolver la regresión ridge, interpretarla como estimación MAP, compararla con el lasso y el \emph{weight decay}, y elegir hiperparámetros con validación cruzada.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1: softmax, log-suma-exp y entropía cruzada. De los módulos~2 y~3: producto matricial, rango, inversa, matrices simétricas definidas positivas y descomposición en valores singulares. Del módulo~4: gradiente, hessiano, regla de la cadena y convexidad. Del módulo~5: esperanza, varianza, distribuciones de Bernoulli, categórica y normal, y máxima verosimilitud. Del módulo~6: divergencia de Kullback-Leibler y desigualdad de Gibbs. Del módulo~7: descenso de gradiente estocástico.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & El problema del aprendizaje supervisado & \cite{cs229}, \cite{esl}, \cite{mit6390}, \cite{bishop} \\
+2 & Regresión lineal y mínimos cuadrados & \cite{cs229}, \cite{strang}, \cite{mit1806}, \cite{bishop}, \cite{d2l} \\
+3 & Regresión logística & \cite{cs229}, \cite{bishop}, \cite{esl}, \cite{mit6390} \\
+4 & Regresión softmax y la capa de salida de un LLM & \cite{cs229}, \cite{d2l}, \cite{bishop}, \cite{llama2} \\
+5 & Generalización: sesgo y varianza & \cite{cs229}, \cite{esl}, \cite{bishop}, \cite{d2l} \\
+6 & Regularización y selección de modelos & \cite{cs229}, \cite{esl}, \cite{mit6390}, \cite{d2l} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La estructura sigue los apuntes principales del curso CS229 de Stanford, de Ng y Ma~\cite{cs229}: capítulo~1 (regresión lineal) para el tema~2, capítulo~2 (clasificación y regresión logística) para los temas~3 y~4, capítulo~8 (generalización) para el tema~5 y capítulo~9 (regularización y selección de modelos) para el tema~6. El planteamiento del tema~1 procede de la teoría de la decisión estadística de Hastie, Tibshirani y Friedman~\cite[§2.4]{esl}; la geometría de los mínimos cuadrados, de Strang~\cite[§4.2--4.3]{strang} y su curso 18.06SC del MIT~\cite{mit1806}; la parte probabilística, de los capítulos~3 y~4 de Bishop~\cite{bishop}, y la regresión softmax, de Zhang \emph{et al.}~\cite[§4.1]{d2l}. Los temas~5 y~6 siguen además los capítulos~3 y~7 de~\cite{esl} y las notas del curso 6.390 del MIT~\cite{mit6390}. Los datos de modelos comerciales proceden solo de publicaciones de sus autores.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$(x_i,y_i)$, $i=1,\dots,n$ & ejemplos de entrenamiento; $x_i\in\R^{d}$ \\
+$\D$ & distribución conjunta de $(x,y)$ \\
+$X\in\R^{n\times(d+1)}$, $y\in\R^{n}$ & matriz de diseño y vector de respuestas \\
+$\theta$, $w$, $b$ & parámetros, pesos y término independiente \\
+$\ell(\hat y,y)$, $R(f)$, $\Remp(f)$ & pérdida, riesgo y riesgo empírico \\
+$\sigma(z)=1/(1+e^{-z})$ & función sigmoide (logística) \\
+$z\in\R^{K}$, $p=\softmax(z)$ & logits y probabilidades de las $K$ clases \\
+$e_k$ & vector canónico (\emph{one-hot}) de la clase $k$ \\
+$\ind[A]$ & indicador: vale 1 si $A$ es cierto y 0 si no \\
+$\lambda$ & coeficiente de regularización \\
+$\N(\mu,\sigma^{2})$ & distribución normal \\
+$\ln$ & logaritmo natural; las pérdidas se miden en nats \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{El problema del aprendizaje supervisado}
+\label{tema:1}
+% =====================================================================
+
+Este tema fija el marco común a todo el módulo: los datos se suponen extraídos de una distribución desconocida, un modelo es una función elegida dentro de una clase de hipótesis y su calidad se mide con el riesgo, la pérdida esperada sobre datos nuevos. La presentación sigue la introducción de la parte~I de los apuntes de CS229~\cite{cs229}, la teoría de la decisión estadística de Hastie, Tibshirani y Friedman~\cite[§2.4]{esl}, la formulación del capítulo~2 de las notas de MIT~6.390~\cite{mit6390} y el análisis de las pérdidas de Bishop~\cite[§1.5.5]{bishop}.
+
+\section{Datos, hipótesis y pérdida}
+
+\begin{definicion}[Problema supervisado]\label{def:supervisado}
+Sean $\X$ un \emph{espacio de entradas} y $\Y$ un \emph{espacio de salidas}. Un \emph{problema de aprendizaje supervisado} consta de una distribución de probabilidad $\D$ sobre $\X\times\Y$, desconocida, y de un \emph{conjunto de entrenamiento} $S=\{(x_1,y_1),\dots,(x_n,y_n)\}$ formado por $n$ pares independientes con distribución $\D$. El problema se llama de \emph{regresión} si $\Y=\R$ y de \emph{clasificación} si $\Y$ es finito; en este caso sus elementos se llaman \emph{clases}.
+\end{definicion}
+
+En casi todo el módulo $\X=\R^{d}$: cada entrada es un vector de $d$ \emph{características}. Un modelo de lenguaje preentrenado resuelve un problema de clasificación en el que $x$ es el contexto, $y$ es el token siguiente y $\Y=\V$ es el vocabulario, con $K=\abs{\V}$ clases.
+
+\begin{definicion}[Hipótesis y clase de hipótesis]
+Una \emph{hipótesis} es una función $f\colon\X\to\widehat{\Y}$, donde $\widehat{\Y}$ es el espacio de predicciones ($\widehat{\Y}=\R$ en regresión; $\widehat{\Y}=\Y$ o el símplex de distribuciones sobre $\Y$ en clasificación). Una \emph{clase de hipótesis} es un conjunto $\Hc=\{f_\theta:\theta\in\Theta\}$ de hipótesis indexadas por un vector de \emph{parámetros} $\theta$.
+\end{definicion}
+
+\begin{definicion}[Pérdida, riesgo y riesgo empírico]\label{def:riesgo}
+Una \emph{función de pérdida} es una aplicación $\ell\colon\widehat{\Y}\times\Y\to[0,\infty)$; $\ell(\hat y,y)$ mide el coste de predecir $\hat y$ cuando la respuesta es $y$. Las tres pérdidas de este módulo son:
+\begin{enumerate}
+  \item la \emph{cuadrática}, $\ell(\hat y,y)=(\hat y-y)^{2}$, para regresión;
+  \item la \emph{0-1}, $\ell(\hat y,y)=\ind[\hat y\ne y]$, para clasificación con predicción de una clase;
+  \item la \emph{logarítmica}, $\ell(q,y)=-\ln q_y$, para clasificación con predicción de una distribución $q$ sobre $\Y$.
+\end{enumerate}
+El \emph{riesgo} o \emph{error de generalización} de $f$ es $R(f)=\E_{(x,y)\sim\D}\bigl[\ell(f(x),y)\bigr]$, y su \emph{riesgo empírico} sobre $S$ es
+\[
+\Remp(f)=\frac{1}{n}\sum_{i=1}^{n}\ell\bigl(f(x_i),y_i\bigr).
+\]
+El principio de \emph{minimización del riesgo empírico} elige $\hat f=\argmin_{f\in\Hc}\Remp(f)$.
+\end{definicion}
+
+El objetivo es un riesgo pequeño, pero $\D$ es desconocida y solo $\Remp$ puede calcularse. Toda la teoría de la generalización (temas~5 y~6) estudia la diferencia entre ambos.
+
+\section{El predictor óptimo}
+
+Antes de restringirse a una clase $\Hc$, conviene saber cuál es la mejor predicción posible si $\D$ fuese conocida~\cite[§2.4]{esl}.
+
+\begin{teorema}[Función de regresión]\label{teo:regresion}
+Sea $\Y=\R$ con $\E[y^{2}]<\infty$, y sea $f^{*}(x)=\E[y\mid x]$. Para toda $f$ con $\E[f(x)^{2}]<\infty$, el riesgo cuadrático cumple
+\[
+R(f)=\E\bigl[(y-f(x))^{2}\bigr]=\E\bigl[(y-f^{*}(x))^{2}\bigr]+\E\bigl[(f^{*}(x)-f(x))^{2}\bigr].
+\]
+En consecuencia, $f^{*}$ minimiza el riesgo cuadrático, y el riesgo mínimo es $\E\bigl[\Var(y\mid x)\bigr]$.
+\end{teorema}
+
+\begin{proof}
+Se escribe $y-f(x)=\bigl(y-f^{*}(x)\bigr)+\bigl(f^{*}(x)-f(x)\bigr)$ y se desarrolla el cuadrado. El término cruzado es $2\,\E\bigl[(y-f^{*}(x))(f^{*}(x)-f(x))\bigr]$. Condicionando a $x$, el segundo factor es constante y $\E[y-f^{*}(x)\mid x]=\E[y\mid x]-f^{*}(x)=0$; por la ley de la esperanza total, el término cruzado es nulo. El segundo sumando es no negativo y se anula si $f=f^{*}$. Por último, $\E[(y-f^{*}(x))^{2}\mid x]=\Var(y\mid x)$.
+\end{proof}
+
+\begin{proposicion}[Clasificador de Bayes]\label{prop:bayes}
+Sea $\Y$ finito y $\ell$ la pérdida 0-1. El clasificador $f^{*}(x)=\argmax_{k\in\Y}P(y=k\mid x)$ minimiza el riesgo, y su riesgo es $R(f^{*})=1-\E\bigl[\max_k P(y=k\mid x)\bigr]$.
+\end{proposicion}
+
+\begin{proof}
+Para $x$ fijo, la pérdida esperada de predecir la clase $k$ es $\E[\ind[y\ne k]\mid x]=1-P(y=k\mid x)$, que es mínima cuando $P(y=k\mid x)$ es máxima. Como el riesgo es la esperanza en $x$ de esta cantidad, minimizarla para cada $x$ minimiza el riesgo.
+\end{proof}
+
+\begin{proposicion}[La pérdida logarítmica premia la probabilidad verdadera]\label{prop:logloss}
+Sea $\Y$ finito, $p(\cdot\mid x)$ la distribución condicional verdadera y $q$ cualquier distribución sobre $\Y$. Entonces
+\[
+\E\bigl[-\ln q_y\mid x\bigr]=H\bigl(p(\cdot\mid x)\bigr)+D_{\mathrm{KL}}\bigl(p(\cdot\mid x)\,\Vert\,q\bigr),
+\]
+de modo que el riesgo logarítmico se minimiza, para cada $x$, con $q=p(\cdot\mid x)$.
+\end{proposicion}
+
+\begin{proof}
+$\E[-\ln q_y\mid x]=-\sum_k p_k\ln q_k=-\sum_k p_k\ln p_k+\sum_k p_k\ln(p_k/q_k)$, con $p_k=p(k\mid x)$. El primer sumando es la entropía y el segundo la divergencia de Kullback-Leibler, que es no negativa y solo se anula si $q=p$ (desigualdad de Gibbs, módulo~6).
+\end{proof}
+
+\begin{observacion}[Conexión con los LLM]
+La \cref{prop:logloss} justifica el preentrenamiento: al minimizar la entropía cruzada del token siguiente, el modelo óptimo es la distribución condicional verdadera $P(x_t\mid x_{1:t-1})$, y el exceso de pérdida sobre la entropía del texto es una divergencia KL. La pérdida 0-1, en cambio, solo premiaría acertar el token más probable y no enseñaría al modelo a repartir la probabilidad.
+\end{observacion}
+
+\begin{ejemplo}\label{ej:bayes}
+Sea $x\in\{0,1\}$ e $y\in\{0,1,2\}$ con la distribución conjunta del \cref{tab:conjunta}. Entonces $P(x=0)=0{,}4$, $\E[y\mid x=0]=(0{,}1+0{,}2)/0{,}4=0{,}75$ y $\E[y\mid x=1]=(0{,}2+0{,}6)/0{,}6=4/3$. El clasificador de Bayes predice la clase~0 si $x=0$ y la clase~2 si $x=1$, y su riesgo 0-1 es $1-(0{,}2+0{,}3)=0{,}5$.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Distribución conjunta $P(x,y)$ del \cref{ej:bayes}.}\label{tab:conjunta}
+\begin{tabular}{@{}lccc|c@{}}
+\toprule
+ & $y=0$ & $y=1$ & $y=2$ & $P(x)$ \\
+\midrule
+$x=0$ & $0{,}2$ & $0{,}1$ & $0{,}1$ & $0{,}4$ \\
+$x=1$ & $0{,}1$ & $0{,}2$ & $0{,}3$ & $0{,}6$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Riesgo empírico y optimismo}
+
+\begin{proposicion}\label{prop:insesgado}
+Sea $f$ una hipótesis fija, elegida sin mirar $S$, con $\Var(\ell(f(x),y))=v<\infty$. Entonces $\E_S[\Remp(f)]=R(f)$ y $\Var_S(\Remp(f))=v/n$.
+\end{proposicion}
+
+\begin{proof}
+$\Remp(f)$ es la media de $n$ variables independientes con esperanza $R(f)$ y varianza $v$. Por linealidad de la esperanza y aditividad de la varianza de variables independientes (módulo~5), $\E[\Remp(f)]=R(f)$ y $\Var(\Remp(f))=n v/n^{2}=v/n$.
+\end{proof}
+
+\begin{proposicion}[Optimismo del error de entrenamiento]\label{prop:optimismo}
+Sea $\Hc$ una clase de hipótesis y supóngase que $\hat f\in\argmin_{f\in\Hc}\Remp(f)$ existe. Entonces
+\[
+\E_S\bigl[\Remp(\hat f)\bigr]\le\inf_{f\in\Hc}R(f)\le\E_S\bigl[R(\hat f)\bigr].
+\]
+\end{proposicion}
+
+\begin{proof}
+Para cada $f\in\Hc$ fija, $\Remp(\hat f)\le\Remp(f)$; tomando esperanzas y usando la \cref{prop:insesgado}, $\E[\Remp(\hat f)]\le R(f)$. Como vale para toda $f$, se cumple también para el ínfimo. La segunda desigualdad se debe a que $\hat f\in\Hc$, luego $R(\hat f)\ge\inf_{f\in\Hc}R(f)$ para cada $S$.
+\end{proof}
+
+La \cref{prop:optimismo} explica por qué el error de entrenamiento no sirve para evaluar un modelo: en media, subestima el riesgo del modelo ajustado. Hace falta un conjunto de datos que no haya intervenido en el ajuste.
+
+\section{Entrenamiento, validación y prueba}
+
+\begin{definicion}[Partición de los datos]
+Los datos etiquetados disponibles se dividen al azar en tres subconjuntos disjuntos: el de \emph{entrenamiento}, con el que se ajustan los parámetros $\theta$; el de \emph{validación}, con el que se eligen los \emph{hiperparámetros} (grado de un polinomio, coeficiente de regularización, número de épocas), y el de \emph{prueba}, con el que se estima una sola vez el riesgo del modelo final~\cite[§2.8]{mit6390}.
+\end{definicion}
+
+Si se elige un hiperparámetro mirando el conjunto de prueba, ese conjunto pasa a formar parte del ajuste y, por la \cref{prop:optimismo}, la estimación final resulta optimista. La \cref{fig:particion} resume el protocolo; la validación cruzada (\cref{tema:6}) lo refina cuando hay pocos datos.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,node distance=6mm and 9mm,
+  caja/.style={draw,thick,rounded corners=2pt,align=center,minimum height=8mm,inner sep=4pt},
+  flecha/.style={-{Stealth[length=2mm]},thick}]
+  \node[caja] (d) {Datos\\etiquetados};
+  \node[caja,right=of d,yshift=16mm] (tr) {Entrenamiento\\(60\,\%)};
+  \node[caja,right=of d] (va) {Validación\\(20\,\%)};
+  \node[caja,right=of d,yshift=-16mm] (te) {Prueba\\(20\,\%)};
+  \node[caja,right=of tr] (aj) {Ajustar $\theta$};
+  \node[caja,right=of va] (hp) {Elegir\\hiperparámetros};
+  \node[caja,right=of te] (ev) {Estimar $R(\hat f)$\\una sola vez};
+  \draw[flecha] (d) -- (tr.west);
+  \draw[flecha] (d) -- (va.west);
+  \draw[flecha] (d) -- (te.west);
+  \draw[flecha] (tr) -- (aj);
+  \draw[flecha] (va) -- (hp);
+  \draw[flecha] (te) -- (ev);
+  \draw[flecha] (aj) -- (hp);
+  \draw[flecha,dashed] (hp.east) -- ++(7mm,0) |- node[pos=0.25,right] {reajustar} (aj.east);
+  \draw[flecha] (hp) -- (ev);
+\end{tikzpicture}
+\caption{Protocolo de entrenamiento, validación y prueba. Las proporciones son las de la práctica del módulo.}
+\label{fig:particion}
+\end{figure}
+
+\begin{observacion}[Conexión con los LLM]
+Los laboratorios reservan textos de validación para vigilar la pérdida durante el preentrenamiento y usan bancos de pruebas (\emph{benchmarks}) independientes como conjunto de prueba. Si un banco de pruebas aparece en los datos de entrenamiento, se habla de \emph{contaminación}, y la estimación deja de ser fiable (módulo~22).
+\end{observacion}
+
+\begin{lecturas}
+\item Ng y Ma~\cite{cs229}, introducción de la parte~I «Supervised learning».
+\item Hastie, Tibshirani y Friedman~\cite{esl}, §2.4 «Statistical Decision Theory».
+\item Bishop~\cite{bishop}, §1.5.5 «Loss functions for regression».
+\item MIT 6.390~\cite{mit6390}, cap.~2, §2.1 «Problem formulation», §2.2 «Regression as an optimization problem» y §2.8 «Evaluating learning algorithms».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-tipos}
+Indique si cada problema es de regresión o de clasificación y, en el segundo caso, cuántas clases tiene: (a) predecir el precio de una vivienda; (b) reconocer un dígito manuscrito; (c) predecir el token siguiente con un vocabulario de $128\,256$ tokens; (d) decidir si un correo es deseado o no deseado. ¿Qué pérdida de la \cref{def:riesgo} usaría en cada caso si el modelo debe devolver probabilidades?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-particion}
+Un conjunto de $1797$ imágenes de dígitos se divide en un 20\,\% de prueba, un 20\,\% de validación y el resto de entrenamiento, redondeando al entero más próximo. ¿Cuántos ejemplos tiene cada parte? Explique por qué no debe elegirse el coeficiente de regularización con la exactitud en prueba.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-bayes}
+Con la distribución del \cref{tab:conjunta}: (a) calcule el riesgo cuadrático mínimo $\E[\Var(y\mid x)]$; (b) calcule el riesgo cuadrático del mejor predictor constante $f(x)=c$; (c) compruebe que la diferencia entre ambos es $\E\bigl[(f^{*}(x)-c)^{2}\bigr]$, como afirma el \cref{teo:regresion}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-constante}
+Dados los números $x=(1,2,4,9,14)$: (a) halle la constante $b$ que minimiza $\sum_i(x_i-b)^{2}$; (b) halle la que minimiza $\sum_i\abs{x_i-b}$; (c) evalúe ambas sumas en ambas constantes y explique cuál de las dos es menos sensible al valor~14.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §3.1, ejercicio~1, apartados (a) y (c).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-logloss}
+Sea $p=(p_1,\dots,p_K)$ una distribución con todas sus componentes positivas. (a) Demuestre, con multiplicadores de Lagrange, que $q\mapsto-\sum_k p_k\ln q_k$ alcanza su mínimo en el símplex exactamente en $q=p$. (b) Demuestre que el riesgo cuadrático o de Brier, $\sum_k p_k\norm{q-e_k}^{2}$, es igual a $\norm{q-p}^{2}+1-\norm{p}^{2}$ y, por tanto, también se minimiza en $q=p$. (c) Calcule el valor de ambos riesgos en $q=p$ para $p=(0{,}5;\,0{,}25;\,0{,}25)$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Regresión lineal y mínimos cuadrados}
+\label{tema:2}
+% =====================================================================
+
+Este tema estudia el modelo más sencillo de aprendizaje supervisado, la regresión lineal ajustada por mínimos cuadrados. Se deducen las ecuaciones normales, se interpretan como una proyección ortogonal y se justifica la pérdida cuadrática como máxima verosimilitud con ruido gaussiano. La exposición sigue el capítulo~1 de los apuntes de CS229~\cite{cs229}, las secciones~4.2 y~4.3 de Strang~\cite{strang} y el curso 18.06SC del MIT~\cite{mit1806}, la sección~3.1 de Bishop~\cite{bishop} y la sección~3.1 de Zhang \emph{et al.}~\cite{d2l}.
+
+\section{El modelo lineal y la matriz de diseño}
+
+\begin{definicion}[Regresión lineal]
+Un \emph{modelo de regresión lineal} predice $\hat y=w^{\top}x+b$, con \emph{pesos} $w\in\R^{d}$ y \emph{término independiente} $b\in\R$. Añadiendo a cada entrada una componente constante, $\tilde x=(1,x)\in\R^{d+1}$, y escribiendo $\theta=(b,w)$, el modelo queda $\hat y=\theta^{\top}\tilde x$. En lo sucesivo se omite la tilde.
+\end{definicion}
+
+\begin{definicion}[Matriz de diseño y suma de cuadrados]
+Dados $n$ ejemplos, la \emph{matriz de diseño} $X\in\R^{n\times(d+1)}$ tiene por fila $i$ el vector $x_i^{\top}$ (con su primera componente igual a~1), y $y=(y_1,\dots,y_n)^{\top}$. El vector de predicciones es $\hat y=X\theta$, y la \emph{suma de cuadrados de los residuos} es
+\[
+J(\theta)=\norm{y-X\theta}^{2}=\sum_{i=1}^{n}\bigl(y_i-\theta^{\top}x_i\bigr)^{2}.
+\]
+El estimador de \emph{mínimos cuadrados} es cualquier $\hat\theta$ que minimice $J$; se escribe $\SSE=J(\hat\theta)$.
+\end{definicion}
+
+\begin{observacion}[Funciones base]
+El modelo es lineal en $\theta$, no necesariamente en $x$. Si se sustituye $x$ por un vector de \emph{funciones base} $\phi(x)$, por ejemplo $\phi(x)=(1,x,x^{2},\dots,x^{p})$, todo lo que sigue se aplica sin cambios con $X_{ij}=\phi_j(x_i)$~\cite[§3.1]{bishop}. Así se ajustan los polinomios del \cref{tema:5}.
+\end{observacion}
+
+\section{Las ecuaciones normales}
+
+\begin{lema}[Gradientes de formas lineales y cuadráticas]\label{lem:gradientes}
+Sean $a\in\R^{m}$ y $A\in\R^{m\times m}$. Entonces $\nabla_\theta(a^{\top}\theta)=a$ y $\nabla_\theta(\theta^{\top}A\theta)=(A+A^{\top})\theta$, que vale $2A\theta$ si $A$ es simétrica.
+\end{lema}
+
+\begin{proof}
+$\partial(\sum_j a_j\theta_j)/\partial\theta_k=a_k$. Para la forma cuadrática, $\partial(\sum_{i,j}\theta_iA_{ij}\theta_j)/\partial\theta_k=\sum_j A_{kj}\theta_j+\sum_i\theta_iA_{ik}=(A\theta)_k+(A^{\top}\theta)_k$ (módulo~4).
+\end{proof}
+
+\begin{teorema}[Ecuaciones normales]\label{teo:normales}
+Un vector $\hat\theta$ minimiza $J(\theta)=\norm{y-X\theta}^{2}$ si y solo si cumple las \emph{ecuaciones normales}
+\[
+X^{\top}X\,\hat\theta=X^{\top}y.
+\]
+Además, para cualquier solución $\hat\theta$ y cualquier $\theta$, se verifica $J(\theta)=J(\hat\theta)+\norm{X(\theta-\hat\theta)}^{2}$.
+\end{teorema}
+
+\begin{proof}
+Desarrollando, $J(\theta)=y^{\top}y-2\theta^{\top}X^{\top}y+\theta^{\top}X^{\top}X\theta$. Por el \cref{lem:gradientes}, con $A=X^{\top}X$ simétrica, $\nabla J(\theta)=-2X^{\top}y+2X^{\top}X\theta$, que se anula exactamente en las soluciones de las ecuaciones normales. Para ver que son mínimos globales, sea $\hat\theta$ una solución y $r=y-X\hat\theta$, que cumple $X^{\top}r=0$. Para cualquier $\theta$,
+\[
+y-X\theta=r-X(\theta-\hat\theta),\qquad
+J(\theta)=\norm{r}^{2}-2(\theta-\hat\theta)^{\top}X^{\top}r+\norm{X(\theta-\hat\theta)}^{2}=J(\hat\theta)+\norm{X(\theta-\hat\theta)}^{2}.
+\]
+Luego $J(\theta)\ge J(\hat\theta)$. Recíprocamente, si $\theta$ es un minimizador, $\nabla J(\theta)=0$ y $\theta$ cumple las ecuaciones normales.
+\end{proof}
+
+\begin{lema}\label{lem:rango}
+$X^{\top}X$ es simétrica y semidefinida positiva. Es definida positiva, y por tanto invertible, si y solo si las columnas de $X$ son linealmente independientes, es decir, si $\rg(X)=d+1$.
+\end{lema}
+
+\begin{proof}
+$(X^{\top}X)^{\top}=X^{\top}X$ y $v^{\top}X^{\top}Xv=\norm{Xv}^{2}\ge 0$. Esta cantidad es nula si y solo si $Xv=0$, y existe $v\ne 0$ con $Xv=0$ si y solo si las columnas son dependientes.
+\end{proof}
+
+\begin{corolario}[Unicidad]\label{cor:unicidad}
+Si $\rg(X)=d+1$, el estimador de mínimos cuadrados es único y vale $\hat\theta=(X^{\top}X)^{-1}X^{\top}y$. Si $\rg(X)<d+1$, hay infinitos minimizadores, todos con las mismas predicciones $X\hat\theta$, y el de norma mínima es $X^{+}y$, donde $X^{+}$ es la pseudoinversa (módulo~3).
+\end{corolario}
+
+\begin{proof}
+El primer caso es el \cref{lem:rango}. En el segundo, por el \cref{teo:normales}, $\theta$ y $\hat\theta$ son ambos minimizadores si y solo si $\norm{X(\theta-\hat\theta)}^{2}=0$, es decir, si $\theta-\hat\theta\in\ker X$, que es un subespacio no trivial; las predicciones coinciden. La caracterización de la solución de norma mínima mediante la descomposición en valores singulares se demostró en el módulo~3.
+\end{proof}
+
+\begin{ejemplo}[Ajuste de una recta]\label{ej:recta}
+Sean $x=(0,1,2,3)$ e $y=(1,2,4,5)$. La matriz de diseño tiene filas $(1,x_i)$, y
+\[
+X^{\top}X=\begin{pmatrix} n & \sum x_i\\ \sum x_i & \sum x_i^{2}\end{pmatrix}=\begin{pmatrix}4&6\\6&14\end{pmatrix},\qquad
+X^{\top}y=\begin{pmatrix}\sum y_i\\ \sum x_iy_i\end{pmatrix}=\begin{pmatrix}12\\25\end{pmatrix}.
+\]
+El determinante es $4\cdot 14-6^{2}=20$ y, por la regla de Cramer, $b=(12\cdot 14-6\cdot 25)/20=0{,}9$ y $w=(4\cdot 25-6\cdot 12)/20=1{,}4$. Las predicciones son $(0{,}9;\,2{,}3;\,3{,}7;\,5{,}1)$, los residuos $r=(0{,}1;\,-0{,}3;\,0{,}3;\,-0{,}1)$ y $\SSE=0{,}2$. Se comprueba que $\sum_i r_i=0$ y $\sum_i x_ir_i=-0{,}3+0{,}6-0{,}3=0$, es decir, $X^{\top}r=0$.
+\end{ejemplo}
+
+\begin{observacion}[Cálculo numérico]
+En la práctica no se calcula $(X^{\top}X)^{-1}$: se resuelve el sistema con una factorización de Cholesky, o se aplica a $X$ una factorización QR o la descomposición en valores singulares, que son más estables porque el número de condición de $X^{\top}X$ es el cuadrado del de $X$. Con millones de parámetros, como en una red neuronal, no existe fórmula cerrada y se usa el descenso de gradiente (\cref{sec:lms}).
+\end{observacion}
+
+\section{Interpretación geométrica}
+
+Las ecuaciones normales equivalen a $X^{\top}(y-X\hat\theta)=0$: el residuo es ortogonal a todas las columnas de $X$. Por tanto, $\hat y=X\hat\theta$ es el punto del espacio de columnas $\mathcal{C}(X)$ más próximo a $y$, su \emph{proyección ortogonal}~\cite[§4.2--4.3]{strang}.
+
+\begin{proposicion}[Matriz de proyección]\label{prop:proyeccion}
+Supóngase que $\rg(X)=d+1$ y sea $P=X(X^{\top}X)^{-1}X^{\top}$, de tamaño $n\times n$. Entonces:
+\begin{enumerate}
+  \item $\hat y=Py$ y $r=(I-P)y$;
+  \item $P^{\top}=P$ y $P^{2}=P$;
+  \item $\hat y^{\top}r=0$ y, en consecuencia, $\norm{y}^{2}=\norm{\hat y}^{2}+\norm{r}^{2}$;
+  \item si $X$ contiene la columna de unos, $\sum_i r_i=0$, y la recta (o el hiperplano) ajustada pasa por el punto medio $(\bar x,\bar y)$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\hat y=X\hat\theta=X(X^{\top}X)^{-1}X^{\top}y$. (ii) La transpuesta de $(X^{\top}X)^{-1}$ es ella misma por ser $X^{\top}X$ simétrica, luego $P^{\top}=P$; y $P^{2}=X(X^{\top}X)^{-1}(X^{\top}X)(X^{\top}X)^{-1}X^{\top}=P$. (iii) $\hat y^{\top}r=y^{\top}P(I-P)y=y^{\top}(P-P^{2})y=0$; el teorema de Pitágoras da la igualdad de normas. (iv) La primera ecuación normal es el producto de la columna de unos por $r$: $\sum_i r_i=0$. Dividiendo por $n$, $\bar y=\hat\theta^{\top}\bar x$, donde $\bar x$ es la media de las filas de $X$.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2.2mm]}]
+  \fill[gray!12] (-0.6,-0.9) -- (5.0,-0.9) -- (6.4,1.2) -- (0.8,1.2) -- cycle;
+  \node at (5.3,-0.6) {$\mathcal{C}(X)$};
+  \coordinate (O) at (0,0);
+  \coordinate (P) at (3.6,0.5);
+  \coordinate (Y) at (3.6,3.0);
+  \draw[->,thick] (O) -- (Y) node[above left] {$y$};
+  \draw[->,thick] (O) -- (P) node[below right] {$\hat y=X\hat\theta$};
+  \draw[->,thick,dashed] (P) -- (Y) node[midway,right] {$r=y-\hat y$};
+  \draw (3.6,0.8) -- (3.32,0.76) -- (3.32,0.46);
+  \draw[->] (O) -- (1.6,-0.6) node[below] {$X_{:,1}$};
+  \draw[->] (O) -- (1.3,0.9) node[above] {$X_{:,2}$};
+\end{tikzpicture}
+\caption{Mínimos cuadrados como proyección ortogonal: $\hat y$ es el punto del espacio de columnas más próximo a $y$, y el residuo $r$ es perpendicular a ese espacio.}
+\label{fig:proyeccion}
+\end{figure}
+
+En el \cref{ej:recta}, $\norm{y}^{2}=46$, $\norm{\hat y}^{2}=45{,}8$ y $\norm{r}^{2}=0{,}2$, de acuerdo con la \cref{prop:proyeccion}(iii).
+
+\section{Descenso de gradiente: el algoritmo LMS}
+\label{sec:lms}
+
+Cuando $n$ o $d$ son grandes, se minimiza $J$ iterativamente. Con la pérdida media $\frac{1}{2n}\norm{y-X\theta}^{2}$, el gradiente es $-\frac1n X^{\top}(y-X\theta)$, y el descenso de gradiente con tasa $\alpha>0$ actualiza
+\[
+\theta\leftarrow\theta+\frac{\alpha}{n}\sum_{i=1}^{n}\bigl(y_i-\theta^{\top}x_i\bigr)x_i.
+\]
+Si en cada paso se usa un solo ejemplo, se obtiene la \emph{regla LMS} (\emph{least mean squares}) o de Widrow-Hoff, $\theta\leftarrow\theta+\alpha\,(y_i-\theta^{\top}x_i)\,x_i$: la corrección es proporcional al error cometido en ese ejemplo~\cite[§1.1]{cs229}. Como $J$ es convexa (su hessiano $2X^{\top}X$ es semidefinido positivo, \cref{lem:rango}), el descenso de gradiente converge al mínimo global si la tasa es suficientemente pequeña (módulo~7).
+
+\section{Interpretación probabilística}
+
+La pérdida cuadrática no es una elección arbitraria: es la que resulta de suponer ruido gaussiano~\cite[§1.3]{cs229}, \cite[§3.1.1]{bishop}.
+
+\begin{definicion}[Modelo lineal gaussiano]
+Las respuestas cumplen $y_i=\theta^{\top}x_i+\varepsilon_i$, donde los errores $\varepsilon_1,\dots,\varepsilon_n$ son independientes con distribución $\N(0,\sigma^{2})$. Equivalentemente, $y_i\mid x_i\sim\N(\theta^{\top}x_i,\sigma^{2})$.
+\end{definicion}
+
+\begin{teorema}[Mínimos cuadrados y máxima verosimilitud]\label{teo:mv-gauss}
+En el modelo lineal gaussiano, la log-verosimilitud negativa es
+\[
+-\ln L(\theta,\sigma^{2})=\frac{n}{2}\ln(2\pi\sigma^{2})+\frac{1}{2\sigma^{2}}\norm{y-X\theta}^{2}.
+\]
+Para cualquier $\sigma^{2}>0$, el estimador de máxima verosimilitud de $\theta$ es el de mínimos cuadrados, y el de $\sigma^{2}$ es $\hat\sigma^{2}=\SSE/n$.
+\end{teorema}
+
+\begin{proof}
+La densidad de $y_i$ es $(2\pi\sigma^{2})^{-1/2}\exp\bigl(-(y_i-\theta^{\top}x_i)^{2}/(2\sigma^{2})\bigr)$; por independencia, la verosimilitud es el producto y su logaritmo la suma, lo que da la expresión del enunciado. El primer sumando no depende de $\theta$ y el segundo es $J(\theta)$ multiplicado por la constante positiva $1/(2\sigma^{2})$, luego ambos se minimizan en el mismo $\hat\theta$. Sustituyendo $\hat\theta$ y derivando respecto a $s=\sigma^{2}$: $\frac{n}{2s}-\frac{\SSE}{2s^{2}}=0$, es decir, $s=\SSE/n$; la derivada pasa de negativa a positiva en ese punto, que es por tanto un mínimo.
+\end{proof}
+
+En el \cref{ej:recta}, $\hat\sigma^{2}=0{,}2/4=0{,}05$. El razonamiento se generaliza: cada supuesto sobre la distribución de $y$ produce su pérdida de máxima verosimilitud (\cref{tab:mv}). Con ruido de Laplace, por ejemplo, la pérdida es la suma de valores absolutos (\cref{eje:2-laplace}).
+
+\begin{table}[h]
+\centering\small
+\caption{Pérdida de máxima verosimilitud según la distribución supuesta para $y$.}\label{tab:mv}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Respuesta & Distribución & Pérdida & Modelo \\
+\midrule
+real & normal & cuadrática & regresión lineal (\cref{tema:2}) \\
+binaria & Bernoulli & entropía cruzada binaria & regresión logística (\cref{tema:3}) \\
+una de $K$ clases & categórica & entropía cruzada & regresión softmax (\cref{tema:4}) \\
+token siguiente & categórica sobre $\V$ & entropía cruzada & capa de salida de un LLM \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Física]
+$\frac12\sum_i(y_i-\hat y_i)^{2}$ es la energía elástica de $n$ muelles verticales de constante unidad que unen cada dato con la recta. La recta de mínimos cuadrados es la posición de equilibrio, y las ecuaciones normales expresan que la fuerza total y el momento total de los muelles son nulos.
+\end{observacion}
+
+\begin{lecturas}
+\item Ng y Ma~\cite{cs229}, cap.~1: §1.1 «LMS algorithm», §1.2 «The normal equations» y §1.3 «Probabilistic interpretation».
+\item Strang~\cite{strang}, §4.2 «Projections» y §4.3 «Least Squares Approximations»; MIT 18.06SC~\cite{mit1806}, sesión~2.3.
+\item Bishop~\cite{bishop}, §3.1.1 «Maximum likelihood and least squares» y §3.1.2 «Geometry of least squares».
+\item MIT 6.390~\cite{mit6390}, cap.~2, §2.5 «Analytical solution: ordinary least squares».
+\item Zhang \emph{et al.}~\cite{d2l}, §3.1 «Linear Regression», en particular §3.1.3.
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-rango}
+Con los datos $x=(0,1,2)$, $y=(0,1,3)$ se construye por error una matriz de diseño con tres columnas: unos, $x$ y otra vez $x$. (a) ¿Es invertible $X^{\top}X$? (b) Describa el conjunto de minimizadores sabiendo que, con una sola columna $x$, la solución es $b=-1/6$, $w=3/2$. (c) Proponga dos formas de resolver el problema y halle la solución de norma mínima.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §3.1, ejercicio~4, apartados (a) y (b).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-recta}
+Ajuste por mínimos cuadrados una recta a $x=(0,1,2)$, $y=(0,1,3)$. Calcule $X^{\top}X$, $X^{\top}y$, $\hat\theta$, los residuos, el $\SSE$ y el estimador de máxima verosimilitud $\hat\sigma^{2}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-strang1}
+Se mide $b$ en los instantes $t=-1,1,2$ y se obtiene $b=(1,3,11)$. (a) Ajuste la recta $b=C+Dt$ por mínimos cuadrados. (b) Calcule las alturas $p=A\hat x$ y el error $e=b-p$. (c) Compruebe que $e$ es ortogonal a las dos columnas de $A$. (d) ¿Qué recta se obtiene si los datos son exactamente $e$?
+\fuente{adaptado de MIT 18.06SC~\cite{mit1806}, sesión~2.3 «Projection Matrices and Least Squares», problemas 16.1--16.3 (Strang~\cite{strang}, §4.3).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-strang2}
+Ajuste la mejor recta $C+Dt$ a $b=(7,4,2,1,1)$ en los instantes $t=-2,-1,0,1,2$. Explique por qué $A^{\top}A$ resulta diagonal y calcule el $\SSE$.
+\fuente{adaptado de MIT 18.06SC~\cite{mit1806}, sesión~2.3, problema~16.6 (Strang~\cite{strang}, §4.3).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-laplace}
+Supóngase que $y_i=b+\varepsilon_i$ con errores independientes de Laplace, de densidad $p(\varepsilon)=\frac{1}{2s}e^{-\abs{\varepsilon}/s}$ y escala $s>0$. (a) Escriba la log-verosimilitud negativa de $(b,s)$. (b) Halle los estimadores de máxima verosimilitud para los datos $y=(1,2,4,9,14)$. (c) Explique por qué, en el modelo lineal $y_i=\theta^{\top}x_i+\varepsilon_i$ con este ruido, no existe una fórmula cerrada como las ecuaciones normales.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §3.1, ejercicio~5, apartados (a) y (b).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-traza}
+Sea $X\in\R^{n\times m}$ de rango $m$ y $P=X(X^{\top}X)^{-1}X^{\top}$. (a) Demuestre que $I-P$ es también simétrica e idempotente y que $(I-P)X=0$. (b) Demuestre que $\tr P=m$, el número de parámetros. (c) Demuestre que los autovalores de $P$ son 0 o~1. (d) Para la matriz de diseño del \cref{ej:recta}, compruebe que la diagonal de $P$ es $(0{,}7;\,0{,}3;\,0{,}3;\,0{,}7)$.
+\fuente{adaptado de Strang~\cite{strang}, §4.2 «Projections» (propiedades $P^{\top}=P$ y $P^{2}=P$).}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Regresión logística}
+\label{tema:3}
+% =====================================================================
+
+Para clasificar en dos clases no basta con una recta, cuyas predicciones recorren todo $\R$: hace falta transformar una puntuación lineal en una probabilidad. Este tema estudia la regresión logística, obtiene su pérdida como verosimilitud de Bernoulli, calcula su gradiente y su hessiano, demuestra su convexidad y presenta el método de Newton. Se sigue el capítulo~2 de los apuntes de CS229~\cite[§2.1 y §2.4]{cs229}, Bishop~\cite[§4.3.2--4.3.3]{bishop}, Hastie, Tibshirani y Friedman~\cite[§4.4.1]{esl} y las notas de MIT~6.390~\cite[§4.3--4.4]{mit6390}.
+
+\section{La función sigmoide}
+
+\begin{definicion}[Sigmoide y logit]\label{def:sigmoide}
+La \emph{función sigmoide} o \emph{logística} es $\sigma\colon\R\to(0,1)$, $\sigma(z)=\dfrac{1}{1+e^{-z}}$. Su inversa es la función \emph{logit}, $\sigma^{-1}(p)=\ln\dfrac{p}{1-p}$, el logaritmo de la razón de probabilidades (\emph{log-odds}).
+\end{definicion}
+
+\begin{proposicion}[Propiedades de la sigmoide]\label{prop:sigmoide}
+Para todo $z\in\R$:
+\begin{enumerate}
+  \item $\sigma(-z)=1-\sigma(z)$; en particular, $\sigma(0)=1/2$;
+  \item $\sigma'(z)=\sigma(z)\bigl(1-\sigma(z)\bigr)\in(0,1/4]$, con máximo en $z=0$;
+  \item $\sigma$ es estrictamente creciente, con $\lim_{z\to-\infty}\sigma(z)=0$ y $\lim_{z\to\infty}\sigma(z)=1$;
+  \item $\ln\sigma(z)=-\ln(1+e^{-z})$ y $\ln(1-\sigma(z))=-\ln(1+e^{z})$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $1-\sigma(z)=\frac{e^{-z}}{1+e^{-z}}=\frac{1}{e^{z}+1}=\sigma(-z)$. (ii) $\sigma'(z)=\frac{e^{-z}}{(1+e^{-z})^{2}}=\sigma(z)\cdot\frac{e^{-z}}{1+e^{-z}}=\sigma(z)(1-\sigma(z))$; el producto $p(1-p)$ con $p\in(0,1)$ es positivo y su máximo, $1/4$, se alcanza en $p=1/2$, es decir, en $z=0$. (iii) La derivada es positiva, y los límites se siguen de $e^{-z}\to\infty$ y $e^{-z}\to 0$. (iv) Basta tomar logaritmos en la definición y en (i).
+\end{proof}
+
+\begin{observacion}[Física]
+La ocupación media de un nivel de energía $E$ en la estadística de Fermi-Dirac es $1/\bigl(e^{(E-\mu)/(k_BT)}+1\bigr)=\sigma\bigl((\mu-E)/(k_BT)\bigr)$. La sigmoide es, por tanto, la distribución de Fermi-Dirac, del mismo modo que la softmax es la de Boltzmann (módulo~1).
+\end{observacion}
+
+\section{El modelo y la frontera de decisión}
+
+\begin{definicion}[Regresión logística]\label{def:logistica}
+Sea $\Y=\{0,1\}$. El modelo de \emph{regresión logística} con parámetros $\theta\in\R^{d+1}$ (incluido el término independiente) es
+\[
+P(y=1\mid x;\theta)=\sigma(\theta^{\top}x),\qquad P(y=0\mid x;\theta)=1-\sigma(\theta^{\top}x).
+\]
+El número $z=\theta^{\top}x$ es el \emph{logit} del ejemplo. El \emph{clasificador asociado} predice la clase~1 si $\sigma(z)\ge 1/2$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:frontera}
+En el modelo logístico, el logaritmo de la razón de probabilidades es lineal en $x$, $\ln\frac{P(y=1\mid x)}{P(y=0\mid x)}=\theta^{\top}x$, y la frontera de decisión $\{x:\sigma(\theta^{\top}x)=1/2\}$ es el hiperplano $\theta^{\top}x=0$.
+\end{proposicion}
+
+\begin{proof}
+La primera igualdad es la definición del logit aplicada a $p=\sigma(\theta^{\top}x)$. Por la \cref{prop:sigmoide}, $\sigma$ es estrictamente creciente con $\sigma(0)=1/2$, luego $\sigma(z)=1/2$ si y solo si $z=0$.
+\end{proof}
+
+\section{Verosimilitud y entropía cruzada binaria}
+
+\begin{proposicion}[Pérdida de la regresión logística]\label{prop:bce}
+Sean $(x_i,y_i)$, $i=1,\dots,n$, ejemplos independientes con $y_i\mid x_i\sim\Ber(\sigma(\theta^{\top}x_i))$, y sea $p_i=\sigma(\theta^{\top}x_i)$. La log-verosimilitud negativa media es
+\[
+J(\theta)=\frac{1}{n}\sum_{i=1}^{n}\BCE(p_i,y_i),\qquad \BCE(p,y)=-\bigl[y\ln p+(1-y)\ln(1-p)\bigr],
+\]
+la \emph{entropía cruzada binaria}.
+\end{proposicion}
+
+\begin{proof}
+La función de masa de Bernoulli se escribe en una sola expresión como $P(y\mid x)=p^{y}(1-p)^{1-y}$ para $y\in\{0,1\}$. Por independencia, la verosimilitud es $\prod_i p_i^{y_i}(1-p_i)^{1-y_i}$; su logaritmo cambiado de signo y dividido por $n$ es $J$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:logistica}
+Un ejemplo con logit $z=1$ tiene $p=\sigma(1)=0{,}7311$. Si su etiqueta es $y=1$, la pérdida es $-\ln 0{,}7311=0{,}3133$ nats; si es $y=0$, la pérdida es $-\ln 0{,}2689=1{,}3133$ nats. La diferencia es exactamente $z=1$, porque $\ln\frac{p}{1-p}=z$.
+\end{ejemplo}
+
+\section{Gradiente, hessiano y convexidad}
+
+\begin{teorema}[Gradiente y hessiano]\label{teo:grad-logistica}
+Sea $X$ la matriz de diseño, $p=(p_1,\dots,p_n)$ con $p_i=\sigma(\theta^{\top}x_i)$ y $S=\diag\bigl(p_i(1-p_i)\bigr)$. Entonces
+\[
+\frac{\partial\,\BCE(p_i,y_i)}{\partial z_i}=p_i-y_i,\qquad
+\nabla J(\theta)=\frac{1}{n}X^{\top}(p-y),\qquad
+\nabla^{2}J(\theta)=\frac{1}{n}X^{\top}SX.
+\]
+El hessiano es semidefinido positivo, luego $J$ es convexa. Si $\rg(X)=d+1$, es definido positivo y $J$ es estrictamente convexa.
+\end{teorema}
+
+\begin{proof}
+Por la \cref{prop:sigmoide}(iv), $\BCE=y\ln(1+e^{-z})+(1-y)\ln(1+e^{z})$. Derivando, $\frac{\partial\BCE}{\partial z}=-y\frac{e^{-z}}{1+e^{-z}}+(1-y)\frac{e^{z}}{1+e^{z}}=-y(1-\sigma(z))+(1-y)\sigma(z)=\sigma(z)-y$. Como $z_i=\theta^{\top}x_i$ tiene gradiente $x_i$, la regla de la cadena da $\nabla_\theta\BCE(p_i,y_i)=(p_i-y_i)x_i$, y promediando se obtiene $\nabla J=\frac1n\sum_i(p_i-y_i)x_i=\frac1nX^{\top}(p-y)$. Derivando otra vez, $\nabla_\theta p_i=\sigma'(z_i)x_i=p_i(1-p_i)x_i$, luego $\nabla^{2}J=\frac1n\sum_i p_i(1-p_i)x_ix_i^{\top}=\frac1nX^{\top}SX$. Para todo $v$, $v^{\top}\nabla^{2}Jv=\frac1n\sum_ip_i(1-p_i)(x_i^{\top}v)^{2}\ge 0$. Como $p_i(1-p_i)>0$, la suma es nula solo si $Xv=0$, lo que, con rango completo, obliga a $v=0$.
+\end{proof}
+
+El gradiente tiene la forma «error por entrada», igual que en la regla LMS del \cref{tema:2}: si el modelo ya acierta con seguridad ($p_i\approx y_i$), el ejemplo apenas contribuye. Esta coincidencia no es casual: ambos son modelos lineales generalizados con función de enlace canónica~\cite[cap.~3]{cs229}, \cite[§4.3.6]{bishop}.
+
+\begin{corolario}[Calibración en media]\label{cor:calibracion}
+Si $X$ contiene la columna de unos y $\hat\theta$ minimiza $J$, entonces $\sum_i p_i=\sum_i y_i$: la probabilidad media predicha coincide con la frecuencia observada de la clase~1.
+\end{corolario}
+
+\begin{proof}
+En un mínimo de una función convexa diferenciable, $\nabla J(\hat\theta)=0$. La componente correspondiente a la columna de unos es $\frac1n\sum_i(p_i-y_i)=0$.
+\end{proof}
+
+A diferencia de las ecuaciones normales, la condición $X^{\top}(p-y)=0$ no es lineal en $\theta$, porque $p$ depende de $\theta$ a través de la sigmoide, y no tiene solución en forma cerrada. Puede incluso no tener solución.
+
+\begin{proposicion}[Datos separables]\label{prop:separable}
+Supóngase que existe $\theta_0$ con $\theta_0^{\top}x_i>0$ si $y_i=1$ y $\theta_0^{\top}x_i<0$ si $y_i=0$. Entonces $\inf_\theta J(\theta)=0$, pero el ínfimo no se alcanza: el estimador de máxima verosimilitud no existe.
+\end{proposicion}
+
+\begin{proof}
+Sea $c>0$. Si $y_i=1$, la pérdida del ejemplo $i$ en $c\theta_0$ es $\ln(1+e^{-c\,\theta_0^{\top}x_i})$, que tiende a~0 cuando $c\to\infty$ porque $\theta_0^{\top}x_i>0$; si $y_i=0$, es $\ln(1+e^{c\,\theta_0^{\top}x_i})\to 0$ porque $\theta_0^{\top}x_i<0$. Luego $J(c\theta_0)\to 0$. Por otra parte, cada sumando $\BCE(p_i,y_i)$ es estrictamente positivo para todo $\theta$, porque $p_i\in(0,1)$; así que $J(\theta)>0$ para todo $\theta$.
+\end{proof}
+
+Con datos separables, el descenso de gradiente hace crecer $\norm{\theta}$ sin límite y las probabilidades predichas se acercan a 0 o~1: una forma de sobreajuste que Bishop señala en~\cite[§4.3.2]{bishop}. La regularización del \cref{tema:6} lo corrige.
+
+\section{El método de Newton}
+
+Como $J$ es convexa y dos veces diferenciable, puede minimizarse con el \emph{método de Newton}, que en cada paso minimiza la aproximación de Taylor de segundo orden (módulo~4):
+\[
+\theta_{t+1}=\theta_t-\bigl(\nabla^{2}J(\theta_t)\bigr)^{-1}\nabla J(\theta_t)=\theta_t-\bigl(X^{\top}SX\bigr)^{-1}X^{\top}(p-y).
+\]
+Cerca del óptimo, el método converge cuadráticamente: el número de cifras correctas aproximadamente se duplica en cada iteración~\cite[§2.4]{cs229}. Cada paso exige resolver un sistema de tamaño $d+1$, con un coste del orden de $d^{3}$, razón por la que no se usa en redes con millones de parámetros. Cada paso equivale a resolver un problema de mínimos cuadrados con pesos $S$, de ahí el nombre de \emph{mínimos cuadrados iterativamente reponderados} (IRLS)~\cite[§4.3.3]{bishop}.
+
+\begin{lecturas}
+\item Ng y Ma~\cite{cs229}, cap.~2: §2.1 «Logistic regression» y §2.4 «Another algorithm for maximizing $\ell(\theta)$»; cap.~3 «Generalized linear models».
+\item Bishop~\cite{bishop}, §4.3.2 «Logistic regression» y §4.3.3 «Iterative reweighted least squares».
+\item Hastie, Tibshirani y Friedman~\cite{esl}, §4.4.1 «Fitting Logistic Regression Models».
+\item MIT 6.390~\cite{mit6390}, cap.~4, §4.3 «Linear logistic classifiers» y §4.4 «Gradient descent for logistic regression».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-lineal}
+¿Por qué no conviene estimar $P(y=1\mid x)$ con una regresión lineal ajustada por mínimos cuadrados a etiquetas 0/1? Dé dos razones, una sobre el rango de las predicciones y otra sobre la pérdida.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:3-valores}
+Calcule sin calculadora $\sigma(\ln 3)$, $\sigma(-\ln 3)$ y $\sigma'(0)$, y el logit de $p=0{,}8$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-gradiente}
+Un modelo logístico tiene $w=(1,-2)$ y $b=0{,}5$. Para el ejemplo $x=(2,1)$ con etiqueta $y=0$, calcule el logit $z$, la probabilidad $p$, la pérdida y los gradientes respecto a $w$ y a $b$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-frontera}
+Un modelo logístico con dos características tiene $b=-3$ y $w=(1,2)$. (a) Escriba la ecuación de la frontera de decisión y calcule su distancia al origen. (b) Calcule la probabilidad de la clase~1 en los puntos $A=(0,0)$, $B=(1,1)$ y $C=(3,2)$, y clasifíquelos. (c) ¿Cómo cambian la frontera y las probabilidades si se multiplican $b$ y $w$ por~2?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-newton}
+(a) Demuestre que el hessiano de la entropía cruzada binaria media es $\frac1n\sum_i\sigma_i(1-\sigma_i)x_ix_i^{\top}$, con $\sigma_i=\sigma(\theta^{\top}x_i)$, y que es semidefinido positivo. (b) Con los ejemplos $x_1=(1,1)$, $y_1=1$ y $x_2=(1,-2)$, $y_2=0$ (la primera componente corresponde al término independiente), calcule en $\theta_0=0$ el gradiente, el hessiano y un paso de Newton. (c) Compare $J(\theta_0)$ y $J(\theta_1)$.
+\fuente{adaptado de Stanford CS229~\cite{cs229ps}, verano de 2019, \emph{Problem Set}~1, problema~1, apartados (a) y (b).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-separable}
+Se tienen dos ejemplos en $\R$: $x_1=-1$ con $y_1=0$ y $x_2=1$ con $y_2=1$, y el modelo sin término independiente $P(y=1\mid x)=\sigma(wx)$. (a) Demuestre que $J(w)=\ln(1+e^{-w})$ y que no tiene mínimo. (b) Con la pérdida regularizada $J(w)+\frac{\lambda}{2}w^{2}$, demuestre que existe un único minimizador $w^{*}$ y que cumple $\lambda w^{*}=\sigma(-w^{*})$. (c) Para $\lambda=0{,}1$, aproxime $w^{*}$ con tres cifras y calcule la probabilidad que asigna el modelo a $y_2=1$.
+\fuente{adaptado de la discusión sobre datos linealmente separables de Bishop~\cite{bishop}, §4.3.2.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Regresión softmax y la capa de salida de un LLM}
+\label{tema:4}
+% =====================================================================
+
+La regresión softmax generaliza la logística a $K$ clases: cada ejemplo recibe un vector de $K$ logits, que la función softmax convierte en una distribución. Este tema define el modelo, demuestra que el gradiente de su entropía cruzada respecto a los logits es $p-e_y$, calcula su hessiano y muestra que la última capa de un gran modelo de lenguaje es exactamente este modelo. Se sigue la sección~2.3 de los apuntes de CS229~\cite{cs229}, la sección~4.1 de Zhang \emph{et al.}~\cite{d2l}, la sección~4.3.4 de Bishop~\cite{bishop} y, para la conexión con los LLM, los artículos de Llama~2 y Llama~3~\cite{llama2,llama3}.
+
+\section{El modelo}
+
+\begin{definicion}[Regresión softmax]\label{def:softmax-reg}
+Sea $\Y=\{1,\dots,K\}$. El modelo de \emph{regresión softmax} (o regresión logística multinomial) con parámetros $W\in\R^{d\times K}$ y $b\in\R^{K}$ asigna a cada entrada $x\in\R^{d}$ el vector de logits $z=W^{\top}x+b\in\R^{K}$ y la distribución
+\[
+P(y=k\mid x)=p_k=\softmax(z)_k=\frac{e^{z_k}}{\sum_{j=1}^{K}e^{z_j}},\qquad k=1,\dots,K.
+\]
+\end{definicion}
+
+Si $w_k$ es la columna $k$ de $W$, el logit $z_k=w_k^{\top}x+b_k$ es el producto escalar de la entrada con una \emph{plantilla} de la clase $k$ (módulo~2): el modelo asigna más probabilidad a la clase cuya plantilla se parece más a la entrada. En la práctica del módulo, las columnas de $W$ entrenadas sobre imágenes de $8\times 8$ píxeles se pueden dibujar y recuerdan a los dígitos.
+
+\begin{proposicion}[Relación con la regresión logística]\label{prop:k2}
+\begin{enumerate}
+  \item Si se suma un mismo vector $c$ a todas las columnas de $W$ y una misma constante a todas las componentes de $b$, las probabilidades no cambian. El modelo tiene, por tanto, parámetros redundantes.
+  \item Con $K=2$, $p_1=\sigma(z_1-z_2)$: la regresión logística es la regresión softmax con dos clases y logit $z_1-z_2$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Todos los logits aumentan en la misma cantidad $c^{\top}x+c_0$, y la softmax es invariante por traslación (módulo~1). (ii) Dividiendo numerador y denominador por $e^{z_1}$, $p_1=\frac{e^{z_1}}{e^{z_1}+e^{z_2}}=\frac{1}{1+e^{-(z_1-z_2)}}=\sigma(z_1-z_2)$.
+\end{proof}
+
+\section{La entropía cruzada}
+
+\begin{proposicion}[Pérdida de la regresión softmax]\label{prop:ce}
+Si $y\mid x\sim\Cat(p_1,\dots,p_K)$ con $p=\softmax(z)$, la log-verosimilitud negativa de un ejemplo de clase $y$ es
+\[
+\ell(z,y)=-\ln p_y=-z_y+\LSE(z),\qquad \LSE(z)=\ln\sum_{j=1}^{K}e^{z_j},
+\]
+que coincide con la entropía cruzada $H(e_y,p)$ entre la distribución degenerada en la clase observada y la predicha.
+\end{proposicion}
+
+\begin{proof}
+La masa de la categórica en $y$ es $p_y$, y $-\ln p_y=-\ln e^{z_y}+\ln\sum_je^{z_j}$. Por otra parte, $H(e_y,p)=-\sum_k(e_y)_k\ln p_k=-\ln p_y$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:softmax}
+Con logits $z=(2,1,0)$ y clase correcta la primera: $e^{z}=(7{,}389;\,2{,}718;\,1)$, de suma $11{,}107$, luego $p=(0{,}6652;\,0{,}2447;\,0{,}0900)$ y $\ell=-\ln 0{,}6652=0{,}4076$ nats.
+\end{ejemplo}
+
+\section{El gradiente}
+
+\begin{teorema}[Gradiente de la entropía cruzada]\label{teo:grad-softmax}
+Sea $p=\softmax(z)$ y $\ell(z,y)=-\ln p_y$. Entonces
+\[
+\nabla_z\ell=p-e_y,\qquad\text{y en particular}\quad\sum_{k=1}^{K}\frac{\partial\ell}{\partial z_k}=0.
+\]
+\end{teorema}
+
+\begin{proof}
+Por la \cref{prop:ce}, $\ell=-z_y+\LSE(z)$. El primer término tiene derivada $-\ind[k=y]$ respecto a $z_k$. Para el segundo, por la regla de la cadena, $\frac{\partial}{\partial z_k}\ln\sum_je^{z_j}=\frac{e^{z_k}}{\sum_je^{z_j}}=p_k$. Sumando, $\partial\ell/\partial z_k=p_k-\ind[k=y]$. La suma de las componentes es $\sum_kp_k-1=0$.
+\end{proof}
+
+La suma nula refleja la invariancia por traslación: desplazar todos los logits en la misma cantidad no cambia la pérdida, luego la derivada en la dirección $(1,\dots,1)$ es cero. Subir el logit de la clase correcta equivale a bajar los demás.
+
+\begin{corolario}[Gradiente respecto a los parámetros]\label{cor:grad-W}
+Para un ejemplo, $\nabla_W\ell=x\,(p-e_y)^{\top}\in\R^{d\times K}$ y $\nabla_b\ell=p-e_y$. Para la pérdida media sobre $n$ ejemplos, con $X\in\R^{n\times d}$, $P\in\R^{n\times K}$ la matriz de probabilidades predichas e $Y\in\R^{n\times K}$ la de etiquetas \emph{one-hot},
+\[
+\nabla_W J=\frac{1}{n}X^{\top}(P-Y),\qquad \nabla_bJ=\frac1n(P-Y)^{\top}\mathbf{1}.
+\]
+\end{corolario}
+
+\begin{proof}
+Como $z_k=\sum_iW_{ik}x_i+b_k$, se tiene $\partial z_k/\partial W_{ik}=x_i$ y $\partial z_k/\partial b_k=1$, y $W_{ik}$ solo influye en $z_k$. Por la regla de la cadena, $\partial\ell/\partial W_{ik}=x_i(p_k-\ind[k=y])$, que es la entrada $(i,k)$ de $x(p-e_y)^{\top}$. Promediando sobre los ejemplos, la suma $\sum_m x_m(p_m-e_{y_m})^{\top}$ es el producto $X^{\top}(P-Y)$.
+\end{proof}
+
+En el \cref{ej:softmax}, $\nabla_z\ell=(-0{,}3348;\,0{,}2447;\,0{,}0900)$: el descenso de gradiente sube el primer logit y baja los otros dos, y las componentes suman cero.
+
+\section{Hessiano y convexidad}
+
+\begin{proposicion}[Hessiano respecto a los logits]\label{prop:hess-softmax}
+El hessiano de $\ell(z,y)$ respecto a $z$ es $\nabla_z^{2}\ell=\diag(p)-pp^{\top}$, que no depende de $y$. Es la matriz de covarianza de un vector aleatorio \emph{one-hot} $E$ con $P(E=e_k)=p_k$; por tanto, es semidefinido positivo, y su núcleo contiene el vector $\mathbf{1}$.
+\end{proposicion}
+
+\begin{proof}
+Derivando $p_k=e^{z_k}/S$, con $S=\sum_je^{z_j}$, por la regla del cociente: $\partial p_k/\partial z_j=\bigl(\ind[j=k]e^{z_k}S-e^{z_k}e^{z_j}\bigr)/S^{2}=\ind[j=k]p_k-p_kp_j$. Como $\nabla_z\ell=p-e_y$ y $e_y$ es constante, el hessiano es $\diag(p)-pp^{\top}$. Para el vector $E$: $\E[E]=\sum_kp_ke_k=p$ y $\E[EE^{\top}]=\sum_kp_ke_ke_k^{\top}=\diag(p)$, luego $\Cov(E)=\diag(p)-pp^{\top}$. Toda matriz de covarianza es semidefinida positiva, porque $v^{\top}\Cov(E)v=\Var(v^{\top}E)\ge 0$. Por último, $(\diag(p)-pp^{\top})\mathbf{1}=p-p(p^{\top}\mathbf{1})=p-p=0$.
+\end{proof}
+
+\begin{corolario}\label{cor:convexa-softmax}
+La pérdida media de la regresión softmax es una función convexa de $(W,b)$.
+\end{corolario}
+
+\begin{proof}
+$\ell$ es convexa en $z$ por la \cref{prop:hess-softmax}, y $z$ es una función afín de $(W,b)$. La composición de una función convexa con una afín es convexa, y una media de funciones convexas también lo es (módulo~4).
+\end{proof}
+
+La convexidad no es estricta, por la redundancia de la \cref{prop:k2}(i): hay una dirección en la que la pérdida es constante. Aun así, todo mínimo local es global, y el descenso de gradiente no queda atrapado en mínimos locales malos. Esta garantía se pierde en cuanto la entrada $x$ la produce una red profunda (módulo~9).
+
+\section{La capa de salida de un LLM}
+
+Un modelo de lenguaje de tipo Transformer procesa el contexto con una pila de bloques y obtiene, para la última posición, un vector oculto $h\in\R^{d_{\text{model}}}$. La capa final, llamada \emph{unembedding} o \emph{cabeza de lenguaje}, calcula los logits $z=W_U^{\top}h$ con $W_U\in\R^{d_{\text{model}}\times\abs{\V}}$, y la softmax los convierte en la distribución del token siguiente (\cref{fig:cabeza}). Es una regresión softmax con $K=\abs{\V}$ clases cuya entrada $h$ no es fija, sino que la aprende la red. El preentrenamiento minimiza la entropía cruzada de la \cref{prop:ce} sobre cada posición de cada texto, y el gradiente que recibe la red a través de los logits es el $p-e_y$ del \cref{teo:grad-softmax}.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,node distance=4mm and 3.5mm,
+  caja/.style={draw,thick,rounded corners=2pt,align=center,minimum height=9mm,inner sep=3pt},
+  flecha/.style={-{Stealth[length=2mm]},thick}]
+  \node[caja] (t) {Contexto\\$x_{1:t}$};
+  \node[caja,right=of t] (e) {Embeddings};
+  \node[caja,right=of e] (b) {Bloques\\Transformer\\$\times N$};
+  \node[caja,right=of b] (h) {$h\in\R^{d_{\text{model}}}$};
+  \node[caja,right=of h,fill=gray!12] (u) {$z=W_U^{\top}h$\\$p=\softmax(z)$};
+  \node[caja,above right=3mm and 4mm of u] (l) {Pérdida\\$-\ln p_{x_{t+1}}$};
+  \node[caja,below right=3mm and 4mm of u] (m) {Muestreo\\con temperatura};
+  \draw[flecha] (t) -- (e);
+  \draw[flecha] (e) -- (b);
+  \draw[flecha] (b) -- (h);
+  \draw[flecha] (h) -- (u);
+  \draw[flecha] (u.east) -- (l.west);
+  \draw[flecha] (u.east) -- (m.west);
+  \draw[decorate,decoration={brace,amplitude=4pt,mirror},thick] ([yshift=-3mm]u.south west) -- ([yshift=-3mm]u.south east) node[midway,below=5pt,align=center] {regresión\\softmax};
+\end{tikzpicture}
+\caption{La capa de salida de un LLM es una regresión softmax sobre el vocabulario. En entrenamiento se evalúa la entropía cruzada del token real; en generación se muestrea de $p$ (módulo~1).}
+\label{fig:cabeza}
+\end{figure}
+
+\begin{proposicion}[Pérdida inicial]\label{prop:inicial}
+Si $W=0$ y $b=0$, o en general si todos los logits son iguales, la pérdida de cualquier ejemplo es $\ln K$.
+\end{proposicion}
+
+\begin{proof}
+Con logits iguales, $p_k=1/K$ para todo $k$, y $-\ln(1/K)=\ln K$.
+\end{proof}
+
+El valor $\ln K$ es la referencia de un modelo que no ha aprendido nada: $\ln 10=2{,}303$ nats para los dígitos y $\ln 128\,256=11{,}76$ nats para un vocabulario como el de Llama~3. El \cref{tab:cabezas} compara el tamaño de la capa en ambos casos con datos publicados por sus autores~\cite{llama2,llama3}. Anthropic, Google y xAI no publican $d_{\text{model}}$ ni el tamaño del vocabulario de Claude, Gemini o Grok; lo que sí es público es que se trata de Transformers que terminan en esta capa.
+
+\begin{table}[h]
+\centering\small
+\caption{Parámetros de la capa de salida (sin término independiente en los LLM).}\label{tab:cabezas}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Modelo & Entrada $d$ & Clases $K$ & Parámetros \\
+\midrule
+Clasificador de dígitos de la práctica & $64$ & $10$ & $64\cdot 10+10=650$ \\
+Llama~2 7B~\cite{llama2} & $4096$ & $32\,000$ & $131\,072\,000$ \\
+Llama~3 8B~\cite{llama3} & $4096$ & $128\,256$ & $525\,336\,576$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Modelos lineales generalizados]
+La regresión lineal, la logística y la softmax son casos de un mismo esquema, el de los \emph{modelos lineales generalizados}: la distribución de $y$ pertenece a la familia exponencial (normal, Bernoulli, categórica) y su parámetro natural es una función lineal de $x$. Con esa elección (el enlace canónico), el gradiente de la log-verosimilitud negativa es siempre «predicción menos observación» por la entrada~\cite[cap.~3]{cs229}, \cite[§4.3.6]{bishop}. Las fórmulas $(\hat y-y)x$, $(p-y)x$ y $x(p-e_y)^{\top}$ de los temas~2 a~4 son tres instancias del mismo resultado.
+\end{observacion}
+
+\begin{lecturas}
+\item Ng y Ma~\cite{cs229}, §2.3 «Multi-class classification» y cap.~3 «Generalized linear models».
+\item Zhang \emph{et al.}~\cite{d2l}, §4.1 «Softmax Regression», en particular §4.1.2 «Loss Function».
+\item Bishop~\cite{bishop}, §4.3.4 «Multiclass logistic regression».
+\item MIT 6.390~\cite{mit6390}, cap.~4, §4.5 «Handling multiple classes».
+\item Touvron \emph{et al.}~\cite{llama2}, descripción de la arquitectura y del tokenizador de Llama~2.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-llm}
+Explique por qué la última capa de un LLM es una regresión softmax. Identifique qué desempeña el papel de $x$, de $K$ y de $W$, y qué diferencia hay con el clasificador de dígitos de la práctica.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-logits}
+Con logits $z=(1,2,3)$ y clase correcta la primera, calcule $p$, la pérdida y $\nabla_z\ell$. ¿Cuánto valdría la pérdida si la clase correcta fuese la tercera? Explique por qué la diferencia entre ambas pérdidas es exactamente~2.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-k2}
+Compruebe numéricamente que $\softmax(1{,}3;\,0{,}4)_1=\sigma(1{,}3-0{,}4)$ y demuestre la igualdad $p_1=\sigma(z_1-z_2)$ en general para $K=2$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-llama}
+Llama~3 8B tiene $d_{\text{model}}=4096$ y $\abs{\V}=128\,256$. Calcule el número de parámetros de su capa de salida (sin término independiente), la memoria que ocupa en formato bf16 (2 bytes por número) y la pérdida inicial de un modelo que predice la distribución uniforme.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-gradiente}
+Demuestre que el gradiente de la entropía cruzada de la softmax respecto a los logits es $p-e_y$ y que sus componentes suman cero. Interprete la suma nula mediante la invariancia por traslación de la softmax.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-hessiano}
+(a) Calcule el hessiano de $\ell(z)=-z_y+\LSE(z)$ respecto a los logits. (b) Demuestre que coincide con la matriz de covarianza del vector \emph{one-hot} de una clase muestreada con probabilidades $p=\softmax(z)$. (c) Evalúelo en $z=(\ln 2,0,0)$ y compruebe que cada fila suma cero.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §4.1, ejercicio~1.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Generalización: sesgo y varianza}
+\label{tema:5}
+% =====================================================================
+
+Un modelo que reproduce bien los datos de entrenamiento puede predecir mal datos nuevos. Este tema estudia ese fenómeno, el sobreajuste, y lo explica mediante la descomposición del error en sesgo, varianza y ruido. Se sigue el capítulo~8 de los apuntes de CS229~\cite[§8.1--8.2]{cs229}, las secciones~2.9, 7.2 y~7.3 de Hastie, Tibshirani y Friedman~\cite{esl}, las secciones~1.1 y~3.2 de Bishop~\cite{bishop} y la sección~3.6 de Zhang \emph{et al.}~\cite{d2l}.
+
+\section{Error de entrenamiento y error de generalización}
+
+El experimento clásico de Bishop~\cite[§1.1]{bishop} consiste en ajustar polinomios de grado creciente a pocos puntos ruidosos de una función suave. En la práctica del módulo se toman $n=10$ puntos $x_i$ uniformes en $[0,1]$, con $y_i=\sin(2\pi x_i)+\varepsilon_i$ y $\varepsilon_i\sim\N(0;\,0{,}2^{2})$, se ajusta por mínimos cuadrados un polinomio de grado $p$ (funciones base $1,x,\dots,x^{p}$, \cref{tema:2}) y se mide el error cuadrático medio (ECM) sobre los datos de entrenamiento y sobre 200 puntos nuevos. El \cref{tab:polinomios} recoge el resultado.
+
+\begin{table}[h]
+\centering\small
+\caption{Ajuste polinómico de 10 puntos de $\sin(2\pi x)$ con ruido. La última fila usa la regresión ridge del \cref{tema:6}.}\label{tab:polinomios}
+\begin{tabular}{@{}cccccl@{}}
+\toprule
+Grado $p$ & $\lambda$ & Parámetros & ECM entrenamiento & ECM validación & Diagnóstico \\
+\midrule
+1 & 0 & 2 & $0{,}1183$ & $0{,}2888$ & infraajuste \\
+3 & 0 & 4 & $0{,}0024$ & $0{,}0419$ & equilibrio \\
+9 & 0 & 10 & $0{,}0000$ & $34{,}17$ & sobreajuste \\
+9 & $0{,}001$ & 10 & $0{,}0144$ & $0{,}0652$ & regularizado \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Con $p=9$ hay tantos parámetros como datos y el polinomio pasa exactamente por los diez puntos (\cref{prop:interpolacion}), pero oscila violentamente entre ellos: sus coeficientes alcanzan valores del orden de $5\cdot 10^{6}$.
+
+\begin{definicion}[Infraajuste y sobreajuste]
+Un modelo \emph{infraajusta} si su error de entrenamiento es alto: la clase de hipótesis no puede representar la relación entre $x$ e $y$. Un modelo \emph{sobreajusta} si su error de entrenamiento es pequeño y su error de validación es mucho mayor: el modelo ha reproducido el ruido particular de la muestra.
+\end{definicion}
+
+\begin{proposicion}[Clases encajadas]\label{prop:encajadas}
+Si $\Hc_1\subseteq\Hc_2$, el mínimo del riesgo empírico sobre $\Hc_2$ es menor o igual que sobre $\Hc_1$. En particular, el error de entrenamiento de mínimos cuadrados no aumenta al subir el grado del polinomio.
+\end{proposicion}
+
+\begin{proof}
+El ínfimo de una función sobre un conjunto es menor o igual que sobre cualquier subconjunto. Un polinomio de grado $p$ es uno de grado $p+1$ con coeficiente director nulo, luego las clases de polinomios están encajadas.
+\end{proof}
+
+\begin{proposicion}[Interpolación]\label{prop:interpolacion}
+Si $x_1,\dots,x_n$ son distintos, existe un único polinomio de grado a lo sumo $n-1$ que pasa por los $n$ puntos $(x_i,y_i)$; su error de entrenamiento es nulo.
+\end{proposicion}
+
+\begin{proof}
+Los coeficientes $\theta$ deben cumplir $V\theta=y$, con $V_{ij}=x_i^{\,j-1}$ la matriz de Vandermonde de $n\times n$, cuyo determinante es $\prod_{i<j}(x_j-x_i)\ne 0$. El sistema tiene solución única.
+\end{proof}
+
+La \cref{prop:encajadas} explica por qué el error de entrenamiento no sirve para elegir el grado: siempre favorece al modelo más flexible. El \cref{tab:polinomios} muestra que el error de validación, en cambio, primero baja y después sube.
+
+\section{La descomposición sesgo-varianza}
+
+Para entender la forma en U del error de validación, se considera el conjunto de entrenamiento $S$ como aleatorio y se estudia cómo varía la predicción $\hat f_S(x)$ en un punto fijo $x$~\cite[§8.1.1]{cs229}, \cite[§7.3]{esl}.
+
+\begin{teorema}[Descomposición sesgo-varianza]\label{teo:sesgo-varianza}
+Sea $y=f(x)+\varepsilon$, donde $f$ es determinista y $\varepsilon$ tiene media nula y varianza $\sigma^{2}$. Sea $\hat f_S$ un modelo entrenado con un conjunto aleatorio $S$, independiente de $\varepsilon$, y sea $\bar f(x)=\E_S[\hat f_S(x)]$. Para cada $x$ fijo,
+\[
+\E_{S,\varepsilon}\bigl[(y-\hat f_S(x))^{2}\bigr]
+=\underbrace{\sigma^{2}}_{\text{ruido}}
++\underbrace{\bigl(f(x)-\bar f(x)\bigr)^{2}}_{\text{sesgo}^{2}}
++\underbrace{\E_S\bigl[(\hat f_S(x)-\bar f(x))^{2}\bigr]}_{\text{varianza}}.
+\]
+\end{teorema}
+
+\begin{proof}
+Se omite $x$ y se escribe $\hat f=\hat f_S(x)$. Primero, $y-\hat f=\varepsilon+(f-\hat f)$, de modo que
+\[
+\E\bigl[(y-\hat f)^{2}\bigr]=\E[\varepsilon^{2}]+2\,\E\bigl[\varepsilon(f-\hat f)\bigr]+\E\bigl[(f-\hat f)^{2}\bigr].
+\]
+Por independencia, $\E[\varepsilon(f-\hat f)]=\E[\varepsilon]\,\E[f-\hat f]=0$, y $\E[\varepsilon^{2}]=\sigma^{2}$. Después, $f-\hat f=(f-\bar f)+(\bar f-\hat f)$, y
+\[
+\E\bigl[(f-\hat f)^{2}\bigr]=(f-\bar f)^{2}+2(f-\bar f)\,\E[\bar f-\hat f]+\E\bigl[(\bar f-\hat f)^{2}\bigr],
+\]
+donde $f-\bar f$ es constante y $\E[\bar f-\hat f]=\bar f-\bar f=0$.
+\end{proof}
+
+\begin{definicion}[Sesgo y varianza de un modelo]
+En las condiciones del \cref{teo:sesgo-varianza}, el \emph{sesgo} en $x$ es $\bar f(x)-f(x)$, el error sistemático del modelo promediado sobre los posibles conjuntos de entrenamiento, y la \emph{varianza} es $\Var_S(\hat f_S(x))$, la sensibilidad de la predicción al conjunto concreto. El \emph{ruido} $\sigma^{2}$ es el error irreducible: ningún modelo puede eliminarlo (\cref{teo:regresion}).
+\end{definicion}
+
+Un modelo demasiado simple tiene sesgo alto (no puede seguir a $f$) y varianza baja; uno demasiado flexible tiene sesgo bajo y varianza alta. El error total se minimiza con una complejidad intermedia, lo que se conoce como \emph{compromiso sesgo-varianza}~\cite[§2.9]{esl}.
+
+\begin{ejemplo}[Encoger reduce el error]\label{ej:encoger}
+Se estima la media $\mu=2$ de una población con varianza $\sigma^{2}=4$ a partir de $n=4$ observaciones independientes, con estimadores de la forma $\hat\mu=a\bar x$. Como $\E[\hat\mu]=a\mu$ y $\Var(\hat\mu)=a^{2}\sigma^{2}/n$, el error cuadrático medio es $(a-1)^{2}\mu^{2}+a^{2}\sigma^{2}/n$ (\cref{eje:5-encoger}). El \cref{tab:encoger} muestra que encoger un poco hacia cero introduce sesgo, pero reduce más la varianza: es la idea de la regularización.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Sesgo y varianza del estimador $a\bar x$ del \cref{ej:encoger}.}\label{tab:encoger}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+$a$ & Sesgo$^{2}$ & Varianza & ECM \\
+\midrule
+$1$ (media muestral) & $0$ & $1$ & $1{,}00$ \\
+$0{,}8$ & $0{,}16$ & $0{,}64$ & $0{,}80$ \\
+$0{,}5$ & $1$ & $0{,}25$ & $1{,}25$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proposicion}[Varianza de los mínimos cuadrados]\label{prop:var-mc}
+En el modelo lineal gaussiano con diseño $X$ fijo de rango $m$, el estimador de mínimos cuadrados es insesgado, $\E[\hat\theta]=\theta$, y $\Cov(\hat\theta)=\sigma^{2}(X^{\top}X)^{-1}$.
+\end{proposicion}
+
+\begin{proof}
+$\hat\theta=(X^{\top}X)^{-1}X^{\top}y=\theta+(X^{\top}X)^{-1}X^{\top}\varepsilon$, con $\E[\varepsilon]=0$ y $\Cov(\varepsilon)=\sigma^{2}I$. Para una matriz constante $A$, $\Cov(A\varepsilon)=A\Cov(\varepsilon)A^{\top}$; con $A=(X^{\top}X)^{-1}X^{\top}$ se obtiene $\sigma^{2}(X^{\top}X)^{-1}X^{\top}X(X^{\top}X)^{-1}=\sigma^{2}(X^{\top}X)^{-1}$.
+\end{proof}
+
+Cada parámetro adicional aporta varianza; el \cref{eje:5-varianza} cuantifica la aportación sobre los puntos de entrenamiento.
+
+\section{Diagnóstico y remedios}
+
+El \cref{tab:diagnostico} traduce la descomposición en reglas prácticas.
+
+\begin{table}[h]
+\centering\small
+\caption{Diagnóstico a partir de los errores de entrenamiento y validación.}\label{tab:diagnostico}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.34\textwidth}>{\raggedright\arraybackslash}p{0.15\textwidth}>{\raggedright\arraybackslash}p{0.42\textwidth}@{}}
+\toprule
+Síntoma & Diagnóstico & Remedios \\
+\midrule
+Error alto en entrenamiento y en validación & sesgo alto & modelo más rico, más características, menos regularización, entrenar más \\
+Error bajo en entrenamiento y alto en validación & varianza alta & más datos, más regularización, modelo más simple, parada temprana \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Doble descenso]
+En modelos muy sobreparametrizados, como las redes neuronales, se observa que, tras el pico de error que aparece cuando el número de parámetros se acerca al de datos, el error de validación vuelve a bajar al seguir aumentando el tamaño del modelo. El fenómeno, llamado \emph{doble descenso}, no contradice el \cref{teo:sesgo-varianza}, pero muestra que el número de parámetros no es siempre una buena medida de la complejidad efectiva~\cite[§8.2]{cs229}.
+\end{observacion}
+
+\begin{observacion}[Conexión con los LLM]
+Un LLM preentrenado con billones de tokens suele ver cada texto una sola vez, y sus curvas de pérdida de entrenamiento y validación casi coinciden: el régimen dominante no es el de sobreajuste. El sobreajuste reaparece cuando se ajusta un modelo grande con pocos datos, por ejemplo en el ajuste fino supervisado (módulo~20).
+\end{observacion}
+
+\begin{lecturas}
+\item Ng y Ma~\cite{cs229}, cap.~8: §8.1 «Bias-variance tradeoff», §8.1.1 «A mathematical decomposition (for regression)» y §8.2 «The double descent phenomenon».
+\item Hastie, Tibshirani y Friedman~\cite{esl}, §2.9 «Model Selection and the Bias-Variance Tradeoff», §7.2 «Bias, Variance and Model Complexity» y §7.3 «The Bias-Variance Decomposition».
+\item Bishop~\cite{bishop}, §1.1 «Example: Polynomial Curve Fitting» y §3.2 «The Bias-Variance Decomposition».
+\item Zhang \emph{et al.}~\cite{d2l}, §3.6 «Generalization».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-vf}
+Justifique si son verdaderas o falsas: (a) al aumentar el grado del polinomio, el error de entrenamiento nunca sube; (b) al aumentar la regularización, la varianza del modelo sube; (c) el término de ruido $\sigma^{2}$ disminuye al aumentar el número de datos; (d) un modelo con error de entrenamiento nulo tiene error de generalización nulo.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:5-diagnostico}
+El modelo A tiene una exactitud de $0{,}60$ en entrenamiento y $0{,}58$ en validación; el modelo B, de $0{,}99$ y $0{,}70$. Diagnostique cada uno con el \cref{tab:diagnostico} y proponga un remedio.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-mano}
+Un procedimiento de aprendizaje se entrena con tres conjuntos de entrenamiento igualmente probables y produce, en un punto $x_0$, las predicciones $1{,}8$, $2{,}4$ y $2{,}1$. El valor verdadero es $f(x_0)=2{,}5$ y el ruido tiene varianza $\sigma^{2}=0{,}09$. Calcule el sesgo$^{2}$, la varianza y el error cuadrático esperado en $x_0$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-interpolar}
+(a) Halle el polinomio de grado a lo sumo~2 que pasa por $(0,1)$, $(1,0)$ y $(2,3)$, y calcule el determinante de la matriz de Vandermonde. (b) ¿En qué condiciones la regresión polinómica tiene error de entrenamiento exactamente nulo? (c) ¿Qué ocurre si dos de los $x_i$ coinciden y sus $y_i$ son distintos?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §3.6, ejercicio~1.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-encoger}
+Sean $x_1,\dots,x_n$ independientes con media $\mu$ y varianza $\sigma^{2}$, y sea $\hat\mu=a\bar x$. (a) Demuestre que $\ECM(\hat\mu)=\E[(\hat\mu-\mu)^{2}]=(a-1)^{2}\mu^{2}+a^{2}\sigma^{2}/n$. (b) Halle el $a$ que minimiza el ECM. (c) Evalúelo con $\mu=2$, $\sigma^{2}=4$ y $n=4$, y compare con la media muestral.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-varianza}
+En el modelo lineal gaussiano con diseño fijo $X\in\R^{n\times m}$ de rango $m$, sea $\hat y=X\hat\theta$. (a) Demuestre que $\Cov(\hat y)=\sigma^{2}P$, con $P$ la matriz de proyección de la \cref{prop:proyeccion}. (b) Deduzca que $\frac1n\sum_{i=1}^{n}\Var(\hat y_i)=\sigma^{2}m/n$. (c) Interprete el resultado: ¿cómo crece la varianza media con el número de parámetros? (d) Evalúelo para el \cref{ej:recta} con $\sigma^{2}=0{,}05$.
+\fuente{adaptado de Hastie, Tibshirani y Friedman~\cite{esl}, §7.3, error de predicción medio del ajuste lineal por mínimos cuadrados.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Regularización y selección de modelos}
+\label{tema:6}
+% =====================================================================
+
+Regularizar es añadir a la pérdida un término que penaliza los modelos complicados, para cambiar un poco de sesgo por una reducción mayor de la varianza. Este tema estudia la regresión ridge, su interpretación bayesiana, el lasso y el \emph{weight decay}, y la validación cruzada con la que se eligen los hiperparámetros. Se sigue el capítulo~9 de los apuntes de CS229~\cite[§9.1--9.4]{cs229}, las secciones~3.4 y~7.10 de Hastie, Tibshirani y Friedman~\cite{esl}, las secciones~2.6 a~2.8 de las notas de MIT~6.390~\cite{mit6390}, la sección~3.1.4 de Bishop~\cite{bishop} y la sección~3.7 de Zhang \emph{et al.}~\cite{d2l}. Los métodos proceden de los artículos de Hoerl y Kennard~\cite{hoerl} y de Tibshirani~\cite{lasso}.
+
+\section{Regresión ridge}
+
+\begin{definicion}[Regresión ridge]\label{def:ridge}
+Sea $\lambda>0$. El estimador \emph{ridge} es el minimizador de
+\[
+J_\lambda(\theta)=\norm{y-X\theta}^{2}+\lambda\norm{\theta}^{2}.
+\]
+\end{definicion}
+
+\begin{teorema}\label{teo:ridge}
+Para todo $\lambda>0$ y toda matriz $X$, $X^{\top}X+\lambda I$ es definida positiva, y el estimador ridge existe, es único y vale
+\[
+\hat\theta_\lambda=(X^{\top}X+\lambda I)^{-1}X^{\top}y.
+\]
+\end{teorema}
+
+\begin{proof}
+$v^{\top}(X^{\top}X+\lambda I)v=\norm{Xv}^{2}+\lambda\norm{v}^{2}>0$ para todo $v\ne 0$. Por el \cref{lem:gradientes}, $\nabla J_\lambda=-2X^{\top}y+2X^{\top}X\theta+2\lambda\theta$, que se anula exactamente en el punto del enunciado. El hessiano $2(X^{\top}X+\lambda I)$ es definido positivo, luego $J_\lambda$ es estrictamente convexa y ese punto crítico es su único mínimo global.
+\end{proof}
+
+A diferencia de los mínimos cuadrados, ridge no necesita que $X$ tenga rango completo: resuelve también los problemas con más parámetros que datos. Esta fue la motivación original de Hoerl y Kennard~\cite{hoerl}.
+
+\begin{proposicion}[Contracción en la base de valores singulares]\label{prop:ridge-svd}
+Sea $X=UDV^{\top}$ la descomposición en valores singulares reducida, con $u_j$ las columnas de $U$ y $d_j>0$ los valores singulares. Entonces
+\[
+X\hat\theta_\lambda=\sum_{j}\frac{d_j^{2}}{d_j^{2}+\lambda}\,u_j\,(u_j^{\top}y).
+\]
+\end{proposicion}
+
+\begin{proof}
+Sea $V_\perp$ una base ortonormal del complemento de las columnas de $V$. En la base $[V\ V_\perp]$, $X^{\top}X+\lambda I$ actúa como $\diag(d_j^{2}+\lambda)$ sobre $V$ y como $\lambda I$ sobre $V_\perp$, y $X^{\top}y=VDU^{\top}y$ está en el espacio de $V$. Luego $\hat\theta_\lambda=V\diag\bigl(d_j/(d_j^{2}+\lambda)\bigr)U^{\top}y$, y multiplicando por $X=UDV^{\top}$ se obtiene el enunciado.
+\end{proof}
+
+Los mínimos cuadrados ($\lambda=0$) proyectan $y$ sobre cada dirección $u_j$ sin modificarla (\cref{prop:proyeccion}); ridge multiplica cada componente por $d_j^{2}/(d_j^{2}+\lambda)<1$ y contrae más las direcciones de valor singular pequeño, que son las que el ruido perturba más~\cite[§3.4.1]{esl}. La traza de la matriz que lleva $y$ a $X\hat\theta_\lambda$, $\mathrm{df}(\lambda)=\sum_j d_j^{2}/(d_j^{2}+\lambda)$, se llama \emph{número efectivo de parámetros}: vale $m$ con $\lambda=0$ (\cref{eje:2-traza}) y tiende a 0 cuando $\lambda\to\infty$.
+
+\begin{ejemplo}\label{ej:ridge}
+Sean $x=(-1,0,1)$, $y=(-2,0,2)$ y el modelo sin término independiente $\hat y=wx$. Entonces $\sum x_i^{2}=2$, $\sum x_iy_i=4$ y $\hat w_\lambda=4/(2+\lambda)$. Sin regularizar, $\hat w=2$; con $\lambda=2$, $\hat w=1$, y $\mathrm{df}=2/(2+2)=0{,}5$.
+\end{ejemplo}
+
+\begin{observacion}[El término independiente no se penaliza]
+El término independiente solo desplaza las predicciones y no añade flexibilidad, por lo que no suele penalizarse. Si se centran las columnas de $X$ y el vector $y$, el término independiente óptimo es nulo en el problema centrado, la penalización recae solo sobre $w$ y, al final, $b=\bar y-\hat w^{\top}\bar x$~\cite[§2.6 y §2.7.2]{mit6390}, \cite[§3.4.1]{esl}. Además, ridge no es invariante frente a cambios de escala de las características, que por eso se estandarizan antes de ajustar.
+\end{observacion}
+
+\section{Interpretación bayesiana}
+
+\begin{proposicion}[Ridge como estimación MAP]\label{prop:map}
+Sea $y\mid\theta\sim\N(X\theta,\sigma^{2}I)$ y sea la distribución \emph{a priori} $\theta\sim\N(0,\tau^{2}I)$. El estimador de máximo \emph{a posteriori} (MAP) de $\theta$ es el estimador ridge con $\lambda=\sigma^{2}/\tau^{2}$.
+\end{proposicion}
+
+La demostración se propone en el \cref{eje:6-map}. Regularizar equivale a creer, antes de ver los datos, que los pesos son pequeños; cuanto más firme es esa creencia (menor $\tau$), mayor es $\lambda$~\cite[§9.4]{cs229}, \cite[§3.1.4]{bishop}. Con una distribución \emph{a priori} de Laplace, $p(\theta_j)\propto e^{-\abs{\theta_j}/s}$, el mismo razonamiento conduce a la penalización $\norm{\theta}_1$ de la sección siguiente.
+
+\section{El lasso}
+
+\begin{definicion}[Lasso]
+El estimador \emph{lasso}~\cite{lasso} minimiza $\frac12\norm{y-X\theta}^{2}+\lambda\norm{\theta}_1$, con $\norm{\theta}_1=\sum_j\abs{\theta_j}$.
+\end{definicion}
+
+\begin{proposicion}[Umbral suave]\label{prop:umbral}
+Si las columnas de $X$ son ortonormales ($X^{\top}X=I$) y $\hat\beta=X^{\top}y$ es el estimador de mínimos cuadrados, el lasso tiene solución única
+\[
+\hat\theta_j=\sign(\hat\beta_j)\,\bigl(\abs{\hat\beta_j}-\lambda\bigr)_{+},
+\]
+donde $(t)_{+}=\max(t,0)$. Con la penalización $\frac{\lambda}{2}\norm{\theta}^{2}$ en lugar de $\lambda\norm{\theta}_1$, la solución es $\hat\theta_j=\hat\beta_j/(1+\lambda)$.
+\end{proposicion}
+
+\begin{proof}
+Con $X^{\top}X=I$, $\frac12\norm{y-X\theta}^{2}=\frac12\norm{y}^{2}-\theta^{\top}\hat\beta+\frac12\norm{\theta}^{2}=\frac12\norm{\theta-\hat\beta}^{2}+\text{cte}$. El problema se separa en problemas unidimensionales: minimizar $g(t)=\frac12(t-\beta)^{2}+\lambda\abs{t}$. Si $t>0$, $g'(t)=t-\beta+\lambda$, que se anula en $t=\beta-\lambda$, admisible si $\beta>\lambda$. Si $t<0$, $g'(t)=t-\beta-\lambda$, que se anula en $t=\beta+\lambda$, admisible si $\beta<-\lambda$. Si $\abs{\beta}\le\lambda$, $g$ es decreciente en $(-\infty,0)$ y creciente en $(0,\infty)$, luego el mínimo está en $t=0$. Como $g$ es estrictamente convexa, el mínimo es único. Para ridge, $\frac12(t-\beta)^{2}+\frac{\lambda}{2}t^{2}$ tiene derivada $(1+\lambda)t-\beta$, que se anula en $t=\beta/(1+\lambda)$.
+\end{proof}
+
+Ridge contrae todos los coeficientes en la misma proporción y nunca los anula; el lasso resta una cantidad fija y anula los que no superan el umbral, de modo que selecciona variables y produce modelos \emph{dispersos}~\cite[§3.4.2--3.4.3]{esl}. Las penalizaciones de tipo $\ell_1$ reaparecen en los autocodificadores dispersos de la interpretabilidad (módulo~23).
+
+\section{\emph{Weight decay} y otras formas de regularización}
+
+\begin{proposicion}[Weight decay]\label{prop:weight-decay}
+Un paso de descenso de gradiente con tasa $\eta$ sobre $J(\theta)+\frac{\lambda}{2}\norm{\theta}^{2}$ es
+\[
+\theta\leftarrow(1-\eta\lambda)\,\theta-\eta\,\nabla J(\theta):
+\]
+antes del paso habitual, cada peso se multiplica por el factor $1-\eta\lambda<1$.
+\end{proposicion}
+
+\begin{proof}
+El gradiente de $\frac{\lambda}{2}\norm{\theta}^{2}$ es $\lambda\theta$, luego $\theta-\eta(\nabla J+\lambda\theta)=(1-\eta\lambda)\theta-\eta\nabla J$.
+\end{proof}
+
+Con $\eta=0{,}1$ y $\lambda=0{,}01$, el factor es $0{,}999$: los pesos decaen geométricamente salvo que el gradiente de los datos los sostenga~\cite[§3.7.1]{d2l}. La práctica del módulo usa precisamente la pérdida $J+\frac{\lambda}{2}\norm{W}^{2}$, con gradiente $\frac1nX^{\top}(P-Y)+\lambda W$. Con optimizadores adaptativos como Adam la equivalencia entre penalización $\ell_2$ y decaimiento deja de cumplirse, y AdamW aplica el decaimiento por separado~\cite{adamw} (módulo~7).
+
+\begin{table}[h]
+\centering\small
+\caption{Técnicas de regularización y dónde aparecen en el curso.}\label{tab:regularizacion}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.27\textwidth}>{\raggedright\arraybackslash}p{0.36\textwidth}>{\raggedright\arraybackslash}p{0.29\textwidth}@{}}
+\toprule
+Técnica & Efecto & En el curso \\
+\midrule
+$\ell_2$, ridge, \emph{weight decay} & contrae todos los pesos & AdamW (módulo~7), casi todos los LLM \\
+$\ell_1$, lasso & anula pesos; dispersión & autocodificadores dispersos (módulo~23) \\
+Parada temprana & detiene el ajuste cuando sube la validación & ajuste fino (módulo~20) \\
+\emph{Dropout} & apaga unidades al azar durante el entrenamiento & módulo~11 \\
+Más datos & reduce directamente la varianza & estrategia principal de los LLM \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La parada temprana y el propio descenso de gradiente estocástico tienen un efecto de \emph{regularización implícita}: entre las muchas soluciones de un problema sobreparametrizado, el algoritmo tiende a encontrar unas concretas, a menudo de norma pequeña~\cite[§9.2]{cs229}.
+
+\section{Selección de modelos y validación cruzada}
+
+\begin{definicion}[Validación cruzada con $k$ particiones]\label{def:kfold}
+Sea $S$ el conjunto de entrenamiento y $k\ge 2$. Se divide $S$ al azar en $k$ partes disjuntas $S_1,\dots,S_k$ de tamaños lo más parecidos posible. Para cada valor del hiperparámetro y cada $j=1,\dots,k$, se entrena el modelo con $S\setminus S_j$ y se mide su error en $S_j$. La \emph{estimación por validación cruzada} es la media de los $k$ errores. Se elige el hiperparámetro con menor estimación y, por último, se reentrena con todo $S$~\cite[§9.3]{cs229}, \cite[§7.10.1]{esl}.
+\end{definicion}
+
+Cada ejemplo se usa para validar exactamente una vez por cada valor del hiperparámetro, y la media de $k$ errores tiene menos varianza que el error en una única partición de validación. El precio es el coste: $k$ entrenamientos por cada valor. El caso $k=n$ se llama \emph{dejar uno fuera} (\emph{leave-one-out}); su estimación es casi insesgada, pero su coste es de $n$ entrenamientos.
+
+\begin{observacion}[Uso correcto]
+Todo paso que mire las etiquetas, como seleccionar características o elegir umbrales, debe repetirse dentro de cada partición, usando solo $S\setminus S_j$; si se hace antes con todo $S$, la estimación resulta optimista~\cite[§7.10.2]{esl}. Con series temporales no se baraja: se valida siempre con datos posteriores a los de entrenamiento.
+\end{observacion}
+
+\begin{ejemplo}[Clasificador de dígitos]\label{ej:cv-digitos}
+En la práctica del módulo, los $1797$ dígitos de $8\times 8$ píxeles se dividen en $1079$ de entrenamiento, $359$ de validación y $359$ de prueba. Sobre los de entrenamiento se aplica validación cruzada con $k=5$ (partes de 216, 216, 216, 216 y 215 ejemplos) a una regresión softmax entrenada 25 épocas con descenso de gradiente por minilotes. El \cref{tab:cv} muestra el resultado. Se elige $\lambda=0{,}001$; reentrenado con los $1079$ ejemplos, el modelo obtiene en prueba una exactitud de $0{,}961$ y una entropía cruzada de $0{,}177$ nats (perplejidad $e^{0{,}177}=1{,}19$). Con $\lambda=0{,}1$ la exactitud se hunde por exceso de sesgo.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Exactitud media por validación cruzada ($k=5$) del \cref{ej:cv-digitos}.}\label{tab:cv}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+$\lambda$ & $0$ & $0{,}001$ & $0{,}01$ & $0{,}1$ \\
+\midrule
+Exactitud & $0{,}949$ & $0{,}950$ & $0{,}937$ & $0{,}719$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Conexión con los LLM]
+Entrenar un LLM cuesta tanto que la validación cruzada es inviable. Los hiperparámetros (tasa de aprendizaje, tamaño del lote, proporción entre parámetros y datos) se ajustan en modelos pequeños y se extrapolan a los grandes mediante leyes de escalado (módulo~16).
+\end{observacion}
+
+\begin{lecturas}
+\item Ng y Ma~\cite{cs229}, cap.~9: §9.1 «Regularization», §9.2 «Implicit regularization effect», §9.3 «Model selection via cross validation» y §9.4 «Bayesian statistics and regularization».
+\item Hastie, Tibshirani y Friedman~\cite{esl}, §3.4 «Shrinkage Methods» y §7.10 «Cross-Validation».
+\item MIT 6.390~\cite{mit6390}, cap.~2, §2.6 «Centering», §2.7 «Regularization» y §2.8 «Evaluating learning algorithms».
+\item Bishop~\cite{bishop}, §3.1.4 «Regularized least squares».
+\item Zhang \emph{et al.}~\cite{d2l}, §3.7 «Weight Decay».
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-limites}
+En la regresión ridge con el término independiente sin penalizar, ¿hacia dónde tienden $\hat w_\lambda$ y $\hat b_\lambda$ cuando $\lambda\to 0^{+}$ y cuando $\lambda\to\infty$? En el \cref{ej:ridge}, ¿qué valor de $\lambda$ reduce el peso a la cuarta parte de su valor sin regularizar?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-ridge}
+Con $x=(0,1,2)$ e $y=(0,1,3)$, ajuste ridge con $\lambda=2$ penalizando solo la pendiente. Centre $x$ e $y$, calcule $\hat w$ y después $\hat b=\bar y-\hat w\bar x$. Compruebe el resultado resolviendo $(X^{\top}X+\diag(0,\lambda))\theta=X^{\top}y$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-cv}
+Se dispone de $1079$ ejemplos y se aplica validación cruzada con $k=5$ a cuatro valores de $\lambda$. ¿Cuántos ejemplos tiene cada parte? ¿Con cuántos se entrena en cada ronda? ¿Cuántos entrenamientos se realizan en total, contando el final?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-lasso}
+Un problema con diseño ortonormal tiene estimador de mínimos cuadrados $\hat\beta=(3;\,-0{,}5;\,1{,}2)$. Con $\lambda=1$, calcule la solución del lasso y la de ridge según la \cref{prop:umbral}. ¿Qué coeficientes anula cada método y cuánto contrae cada uno el mayor de ellos?
+\fuente{adaptado de Hastie, Tibshirani y Friedman~\cite{esl}, §3.4.3, comparación de los estimadores en el caso ortonormal.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-map}
+Demuestre la \cref{prop:map}: con verosimilitud $y\mid\theta\sim\N(X\theta,\sigma^{2}I)$ y distribución \emph{a priori} $\theta\sim\N(0,\tau^{2}I)$, el estimador MAP es ridge con $\lambda=\sigma^{2}/\tau^{2}$. ¿Qué ocurre cuando $\tau\to\infty$ y cuando $\tau\to 0^{+}$?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §3.7, ejercicio~6.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-ruido}
+Sea $X\in\R^{n\times m}$ fija y sea $E$ una matriz aleatoria de $n\times m$ con entradas independientes de media~0 y varianza $s^{2}$. (a) Demuestre que $\E\bigl[(X+E)^{\top}(X+E)\bigr]=X^{\top}X+ns^{2}I$. (b) Demuestre que $\E\,\norm{y-(X+E)\theta}^{2}=\norm{y-X\theta}^{2}+ns^{2}\norm{\theta}^{2}$, de modo que ajustar mínimos cuadrados con entradas perturbadas equivale, en media, a ridge con $\lambda=ns^{2}$. (c) Compruébelo en el \cref{ej:ridge}: ¿qué varianza $s^{2}$ corresponde a $\lambda=2$?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §3.1, ejercicio~4, apartados (b) y (c).}
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los resultados exactos se dan como fracción cuando existe. Las pérdidas se expresan en nats.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-tipos}
+\datos cuatro problemas; el modelo debe devolver probabilidades en los de clasificación.
+\planteamiento la salida es real (regresión) o una de un conjunto finito de clases (\cref{def:supervisado}); para predicciones probabilísticas se usa la pérdida logarítmica (\cref{prop:logloss}).
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item Precio: número real, \textbf{regresión}; pérdida cuadrática.
+  \item Dígito: \textbf{clasificación} con $K=10$ clases; pérdida logarítmica (entropía cruzada).
+  \item Token siguiente: \textbf{clasificación} con $K=128\,256$ clases; pérdida logarítmica, la del preentrenamiento.
+  \item Correo deseado o no: \textbf{clasificación binaria}, $K=2$; pérdida logarítmica, que para dos clases es la entropía cruzada binaria (\cref{tema:3}).
+\end{enumerate}
+\resultado \textbf{(a) regresión; (b), (c) y (d) clasificación con 10, $128\,256$ y 2 clases.}
+\comprobacion la pérdida 0-1 solo sería adecuada si el modelo devolviese una única clase sin probabilidad.
+\end{solucion}
+
+\begin{solucion}{eje:1-particion}
+\datos $1797$ ejemplos; 20\,\% de prueba, 20\,\% de validación y el resto de entrenamiento.
+\planteamiento redondear $0{,}2\cdot 1797$ y restar.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $0{,}2\cdot 1797=359{,}4$, que se redondea a $359$ ejemplos de prueba y $359$ de validación.
+  \item Entrenamiento: $1797-2\cdot 359=1797-718=1079$.
+  \item Si $\lambda$ se elige maximizando la exactitud en prueba, la prueba interviene en el ajuste y, por la \cref{prop:optimismo}, su exactitud deja de ser una estimación insesgada del rendimiento: resulta optimista.
+\end{enumerate}
+\resultado \textbf{$1079$ de entrenamiento, $359$ de validación y $359$ de prueba.} El hiperparámetro se elige con validación; la prueba se usa una sola vez al final.
+\comprobacion $1079+359+359=1797$.
+\end{solucion}
+
+\begin{solucion}{eje:1-bayes}
+\datos el \cref{tab:conjunta}; $P(x=0)=0{,}4$, $P(x=1)=0{,}6$, $\E[y\mid x=0]=0{,}75$, $\E[y\mid x=1]=4/3$.
+\planteamiento $\Var(y\mid x)=\E[y^{2}\mid x]-\E[y\mid x]^{2}$; el mejor constante es $c=\E[y]$ y su riesgo es $\Var(y)$ (\cref{teo:regresion} sin $x$).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\E[y^{2}\mid x=0]=(0\cdot 0{,}2+1\cdot 0{,}1+4\cdot 0{,}1)/0{,}4=0{,}5/0{,}4=1{,}25$; $\Var(y\mid x=0)=1{,}25-0{,}75^{2}=1{,}25-0{,}5625=0{,}6875$.
+  \item $\E[y^{2}\mid x=1]=(0{,}2+4\cdot 0{,}3)/0{,}6=1{,}4/0{,}6=7/3$; $\Var(y\mid x=1)=7/3-16/9=5/9\approx 0{,}5556$.
+  \item (a) $\E[\Var(y\mid x)]=0{,}4\cdot 0{,}6875+0{,}6\cdot 5/9=0{,}275+0{,}3333=0{,}6083$.
+  \item (b) $\E[y]=0{,}1+0{,}2+2(0{,}1+0{,}3)=1{,}1$; $\E[y^{2}]=0{,}1+0{,}2+4(0{,}1+0{,}3)=1{,}9$; $\Var(y)=1{,}9-1{,}21=0{,}69$.
+  \item (c) $\E[(f^{*}(x)-1{,}1)^{2}]=0{,}4(0{,}75-1{,}1)^{2}+0{,}6(4/3-1{,}1)^{2}=0{,}4\cdot 0{,}1225+0{,}6\cdot 0{,}05444=0{,}049+0{,}03267=0{,}08167$.
+\end{enumerate}
+\resultado \textbf{(a) $0{,}6083$; (b) $0{,}69$; (c) la diferencia es $0{,}0817$.}
+\comprobacion $0{,}6083+0{,}0817=0{,}6900$, como predice el \cref{teo:regresion} con $f=1{,}1$. Además, $\E[f^{*}(x)]=0{,}4\cdot 0{,}75+0{,}6\cdot 4/3=0{,}3+0{,}8=1{,}1=\E[y]$.
+\end{solucion}
+
+\begin{solucion}{eje:1-constante}
+\datos $x=(1,2,4,9,14)$, $n=5$.
+\planteamiento derivar cada suma respecto a $b$; la derivada de $\abs{x_i-b}$ es $\sign(b-x_i)$ si $b\ne x_i$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\frac{d}{db}\sum(x_i-b)^{2}=-2\sum(x_i-b)=0$, luego $b=\frac1n\sum x_i=30/5=6$, la media. La segunda derivada, $2n>0$, confirma que es un mínimo.
+  \item (b) $\frac{d}{db}\sum\abs{x_i-b}=\#\{x_i<b\}-\#\{x_i>b\}$. Es negativa mientras haya más datos a la derecha que a la izquierda de $b$ y positiva en el caso contrario; cambia de signo en $b=4$, la mediana.
+  \item (c) $\sum(x_i-6)^{2}=25+16+4+9+64=118$ y $\sum(x_i-4)^{2}=9+4+0+25+100=138$; $\sum\abs{x_i-4}=3+2+0+5+10=20$ y $\sum\abs{x_i-6}=5+4+2+3+8=22$.
+  \item Si 14 se sustituye por un valor mayor, la media crece con él, pero la mediana sigue siendo~4.
+\end{enumerate}
+\resultado \textbf{la media, $b=6$, para la pérdida cuadrática; la mediana, $b=4$, para la absoluta}, que es menos sensible al valor atípico.
+\comprobacion cada constante gana en su propia pérdida: $118<138$ y $20<22$.
+\end{solucion}
+
+\begin{solucion}{eje:1-logloss}
+\datos $p$ con $p_k>0$ y $\sum_kp_k=1$; $q$ en el símplex.
+\planteamiento (a) lagrangiana con la restricción $\sum_kq_k=1$; (b) desarrollar el cuadrado.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\Lambda(q,\mu)=-\sum_kp_k\ln q_k+\mu(\sum_kq_k-1)$. Entonces $\partial\Lambda/\partial q_k=-p_k/q_k+\mu=0$, luego $q_k=p_k/\mu$; la restricción da $\mu=1$ y $q=p$.
+  \item Es el mínimo global: la función es estrictamente convexa en el símplex (sus segundas derivadas son $p_k/q_k^{2}>0$ y las cruzadas, nulas) y tiende a $+\infty$ si algún $q_k\to 0$. Equivalentemente, por la \cref{prop:logloss}, el exceso sobre el mínimo es $D_{\mathrm{KL}}(p\Vert q)\ge 0$.
+  \item (b) $\norm{q-e_k}^{2}=\norm{q}^{2}-2q_k+1$. Ponderando con $p_k$ y sumando: $\norm{q}^{2}-2q^{\top}p+1=\norm{q-p}^{2}+1-\norm{p}^{2}$. El único término que depende de $q$ es $\norm{q-p}^{2}$, mínimo en $q=p$.
+  \item (c) Logarítmica: $H(p)=0{,}5\ln 2+2\cdot 0{,}25\ln 4=0{,}5\cdot 0{,}6931+0{,}5\cdot 1{,}3863=1{,}040$ nats.
+  \item Brier: $1-\norm{p}^{2}=1-(0{,}25+0{,}0625+0{,}0625)=0{,}625$.
+\end{enumerate}
+\resultado \textbf{ambos riesgos se minimizan en $q=p$; los mínimos son $H(p)=1{,}040$ nats y $0{,}625$.} $\blacksquare$
+\comprobacion con $q=(1/3,1/3,1/3)$ el riesgo logarítmico es $\ln 3=1{,}099>1{,}040$ y el de Brier, $\norm{q-p}^{2}+0{,}625=0{,}0417+0{,}625=0{,}667>0{,}625$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-rango}
+\datos $x=(0,1,2)$, $y=(0,1,3)$; columnas de $X$: $\mathbf{1}$, $x$, $x$.
+\planteamiento \cref{lem:rango} y \cref{cor:unicidad}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $X^{\top}X=\begin{pmatrix}3&3&3\\3&5&5\\3&5&5\end{pmatrix}$, con dos filas iguales: determinante nulo, \textbf{no es invertible}. Las columnas de $X$ son dependientes: $X(0,1,-1)^{\top}=0$.
+  \item (b) Las predicciones son $b+(w_1+w_2)x$, y solo importa la suma $w_1+w_2$. Por el \cref{cor:unicidad}, los minimizadores son $\theta=(-1/6,\;w_1,\;3/2-w_1)$ con $w_1\in\R$ arbitrario: una recta de soluciones, todas con las mismas predicciones.
+  \item (c) Primera solución: eliminar la columna repetida (o, en general, las columnas dependientes). Segunda: regularizar con ridge (\cref{tema:6}), que hace invertible $X^{\top}X+\lambda I$. Tercera: la pseudoinversa.
+  \item Norma mínima: minimizar $w_1^{2}+(3/2-w_1)^{2}$ da $2w_1-2(3/2-w_1)=0$, es decir, $w_1=w_2=3/4$.
+\end{enumerate}
+\resultado \textbf{$X^{\top}X$ es singular; hay infinitos minimizadores $(-1/6,\,w_1,\,3/2-w_1)$, y el de norma mínima es $(-1/6;\;0{,}75;\;0{,}75)$.}
+\comprobacion el cálculo numérico de $X^{+}y$ da $(-0{,}1667;\,0{,}75;\,0{,}75)$, y $0{,}75+0{,}75=1{,}5$ es la pendiente del \cref{eje:2-recta}.
+\end{solucion}
+
+\begin{solucion}{eje:2-recta}
+\datos $x=(0,1,2)$, $y=(0,1,3)$.
+\planteamiento ecuaciones normales (\cref{teo:normales}) resueltas por Cramer; después $\hat\sigma^{2}=\SSE/n$ (\cref{teo:mv-gauss}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Filas de $X$: $(1,0)$, $(1,1)$, $(1,2)$. $X^{\top}X=\begin{pmatrix}3&0+1+2\\0+1+2&0+1+4\end{pmatrix}=\begin{pmatrix}3&3\\3&5\end{pmatrix}$.
+  \item $X^{\top}y=(0+1+3,\;0+1+6)=(4,7)$.
+  \item Determinante: $3\cdot 5-3\cdot 3=6$.
+  \item $b=(4\cdot 5-3\cdot 7)/6=-1/6\approx-0{,}1667$; $w=(3\cdot 7-3\cdot 4)/6=9/6=3/2$.
+  \item Predicciones $-1/6+1{,}5x$: $(-1/6,\;4/3,\;17/6)$.
+  \item Residuos: $(1/6,\;-1/3,\;1/6)$.
+  \item $\SSE=1/36+4/36+1/36=6/36=1/6\approx 0{,}1667$.
+  \item $\hat\sigma^{2}=(1/6)/3=1/18\approx 0{,}05556$.
+\end{enumerate}
+\resultado \textbf{$\hat\theta=(b,w)=(-1/6,\;3/2)$; $\SSE=1/6$; $\hat\sigma^{2}=1/18\approx 0{,}05556$.}
+\comprobacion ortogonalidad: $\sum r_i=1/6-2/6+1/6=0$ y $\sum x_ir_i=0-1/3+2/6=0$.
+\end{solucion}
+
+\begin{solucion}{eje:2-strang1}
+\datos $t=(-1,1,2)$, $b=(1,3,11)$; filas de $A$: $(1,t_i)$.
+\planteamiento ecuaciones normales $A^{\top}A\hat x=A^{\top}b$ y propiedad $A^{\top}e=0$ (\cref{prop:proyeccion}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $A^{\top}A=\begin{pmatrix}3&-1+1+2\\2&1+1+4\end{pmatrix}=\begin{pmatrix}3&2\\2&6\end{pmatrix}$; $A^{\top}b=(1+3+11,\;-1+3+22)=(15,24)$.
+  \item $\det=18-4=14$; $C=(15\cdot 6-2\cdot 24)/14=42/14=3$; $D=(3\cdot 24-2\cdot 15)/14=42/14=3$.
+  \item (b) Recta $b=3+3t$; alturas $p=(0,6,9)$; error $e=b-p=(1,-3,2)$.
+  \item (c) $A^{\top}e=(1-3+2,\;-1-3+4)=(0,0)$.
+  \item (d) Con datos $e$, $A^{\top}e=0$, luego $\hat x=(A^{\top}A)^{-1}\cdot 0=0$: la recta nula, porque $e$ ya es perpendicular al espacio de columnas.
+\end{enumerate}
+\resultado \textbf{$(C,D)=(3,3)$; $p=(0,6,9)$; $e=(1,-3,2)$; con datos $e$ se obtiene la recta $0$.}
+\comprobacion Pitágoras: $\norm{b}^{2}=1+9+121=131$ y $\norm{p}^{2}+\norm{e}^{2}=117+14=131$.
+\end{solucion}
+
+\begin{solucion}{eje:2-strang2}
+\datos $t=(-2,-1,0,1,2)$, $b=(7,4,2,1,1)$.
+\planteamiento $A^{\top}A=\begin{pmatrix}n&\sum t\\\sum t&\sum t^{2}\end{pmatrix}$; con $\sum t=0$ es diagonal.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\sum t=0$ y $\sum t^{2}=10$: $A^{\top}A=\diag(5,10)$.
+  \item $\sum b=15$; $\sum tb=-14-4+0+1+2=-15$; $A^{\top}b=(15,-15)$.
+  \item $C=15/5=3$; $D=-15/10=-1{,}5$.
+  \item Alturas $(6;\,4{,}5;\,3;\,1{,}5;\,0)$; error $e=(1;\,-0{,}5;\,-1;\,-0{,}5;\,1)$.
+  \item $\SSE=1+0{,}25+1+0{,}25+1=3{,}5$.
+\end{enumerate}
+\resultado \textbf{$b=3-1{,}5t$ y $\SSE=3{,}5$.} $A^{\top}A$ es diagonal porque la columna de unos y la de tiempos son ortogonales cuando $\sum t_i=0$, que es lo mismo que centrar la variable.
+\comprobacion $\sum e_i=0$ y $\sum t_ie_i=-2+0{,}5+0-0{,}5+2=0$.
+\end{solucion}
+
+\begin{solucion}{eje:2-laplace}
+\datos $y=(1,2,4,9,14)$; ruido de Laplace con escala $s$.
+\planteamiento log-verosimilitud negativa y derivadas en $b$ y en $s$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $-\ln L(b,s)=\sum_i\bigl[\ln(2s)+\abs{y_i-b}/s\bigr]=n\ln(2s)+\frac1s\sum_i\abs{y_i-b}$.
+  \item (b) Para cualquier $s$, el término en $b$ es $\frac1s\sum\abs{y_i-b}$, mínimo en la mediana (\cref{eje:1-constante}): $\hat b=4$.
+  \item Derivando en $s$: $n/s-\frac{1}{s^{2}}\sum\abs{y_i-\hat b}=0$, luego $\hat s=\frac1n\sum\abs{y_i-\hat b}=20/5=4$.
+  \item (c) En el modelo lineal la pérdida es $\sum_i\abs{y_i-\theta^{\top}x_i}$, que no es diferenciable donde algún residuo se anula; su «gradiente» $-\sum_i\sign(r_i)x_i$ es constante a trozos, y la condición de óptimo no es un sistema lineal. Se resuelve con programación lineal o con métodos de subgradiente.
+\end{enumerate}
+\resultado \textbf{$-\ln L=n\ln(2s)+\frac1s\sum\abs{y_i-b}$; $\hat b=4$ y $\hat s=4$.}
+\comprobacion la derivada en $s$ pasa de negativa a positiva en $s=4$: $5/3-20/9<0$ y $5/5-20/25>0$.
+\end{solucion}
+
+\begin{solucion}{eje:2-traza}
+\datos $X\in\R^{n\times m}$ de rango $m$; $P=X(X^{\top}X)^{-1}X^{\top}$, simétrica e idempotente (\cref{prop:proyeccion}).
+\planteamiento usar $P^{\top}=P$, $P^{2}=P$ y la propiedad cíclica de la traza, $\tr(AB)=\tr(BA)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $(I-P)^{\top}=I-P$; $(I-P)^{2}=I-2P+P^{2}=I-P$; $PX=X(X^{\top}X)^{-1}X^{\top}X=X$, luego $(I-P)X=0$.
+  \item (b) $\tr P=\tr\bigl(X(X^{\top}X)^{-1}X^{\top}\bigr)=\tr\bigl((X^{\top}X)^{-1}X^{\top}X\bigr)=\tr I_m=m$.
+  \item (c) Si $Pv=\mu v$ con $v\ne 0$, entonces $\mu v=Pv=P^{2}v=\mu^{2}v$, luego $\mu^{2}=\mu$ y $\mu\in\{0,1\}$.
+  \item (d) Con columna de unos y una variable, $P_{ii}=\frac1n+\frac{(x_i-\bar x)^{2}}{\sum_j(x_j-\bar x)^{2}}$. Para $x=(0,1,2,3)$: $\bar x=1{,}5$, $\sum(x_j-\bar x)^{2}=2{,}25+0{,}25+0{,}25+2{,}25=5$, y $P_{ii}=0{,}25+(2{,}25;\,0{,}25;\,0{,}25;\,2{,}25)/5=(0{,}7;\,0{,}3;\,0{,}3;\,0{,}7)$.
+\end{enumerate}
+\resultado \textbf{$I-P$ es un proyector ortogonal sobre el complemento de $\mathcal{C}(X)$; $\tr P=m$; los autovalores son 0 y~1.} $\blacksquare$
+\comprobacion en (d), $0{,}7+0{,}3+0{,}3+0{,}7=2=m$. Por (b) y (c), $P$ tiene exactamente $m$ autovalores iguales a~1.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-lineal}
+\datos etiquetas $y\in\{0,1\}$; modelo $\hat y=w^{\top}x+b$ ajustado por mínimos cuadrados.
+\planteamiento comparar la salida de una recta con una probabilidad, y el supuesto probabilístico de cada pérdida (\cref{tab:mv}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item \textbf{Rango.} $w^{\top}x+b$ recorre todo $\R$: para entradas alejadas da valores negativos o mayores que~1, que no son probabilidades.
+  \item \textbf{Pérdida.} Un ejemplo de clase~1 con $\hat y=3$ está clasificado con mucha seguridad, pero el error cuadrático $(3-1)^{2}=4$ lo penaliza; estos puntos arrastran la recta y desplazan la frontera $\hat y=1/2$.
+  \item \textbf{Supuesto.} Mínimos cuadrados es máxima verosimilitud con ruido gaussiano (\cref{teo:mv-gauss}); una etiqueta binaria sigue una Bernoulli, cuya verosimilitud es la entropía cruzada binaria (\cref{prop:bce}).
+\end{enumerate}
+\resultado \textbf{conviene la regresión logística: salida en $(0,1)$ y pérdida de Bernoulli.}
+\comprobacion $\sigma(z)\in(0,1)$ para todo $z$, y la entropía cruzada de un ejemplo bien clasificado tiende a~0 en lugar de crecer.
+\end{solucion}
+
+\begin{solucion}{eje:3-valores}
+\datos $\sigma(z)=1/(1+e^{-z})$.
+\planteamiento \cref{prop:sigmoide} y $e^{\pm\ln 3}=3^{\pm 1}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\sigma(\ln 3)=1/(1+1/3)=3/4=0{,}75$.
+  \item $\sigma(-\ln 3)=1-\sigma(\ln 3)=1/4=0{,}25$.
+  \item $\sigma'(0)=\sigma(0)(1-\sigma(0))=\frac12\cdot\frac12=\frac14$.
+  \item $\sigma^{-1}(0{,}8)=\ln(0{,}8/0{,}2)=\ln 4\approx 1{,}386$.
+\end{enumerate}
+\resultado \textbf{$3/4$, $1/4$, $1/4$ y $\ln 4\approx 1{,}386$.}
+\comprobacion $\sigma(\ln 4)=1/(1+1/4)=0{,}8$.
+\end{solucion}
+
+\begin{solucion}{eje:3-gradiente}
+\datos $w=(1,-2)$, $b=0{,}5$, $x=(2,1)$, $y=0$.
+\planteamiento $z=w^{\top}x+b$, $p=\sigma(z)$, $\BCE$ y $\partial\BCE/\partial z=p-y$ (\cref{teo:grad-logistica}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $z=1\cdot 2+(-2)\cdot 1+0{,}5=0{,}5$.
+  \item $e^{-0{,}5}=0{,}6065$; $p=1/1{,}6065=0{,}6225$.
+  \item Como $y=0$: $\ell=-\ln(1-p)=-\ln 0{,}3775=0{,}9741$.
+  \item $p-y=0{,}6225$.
+  \item $\nabla_w\ell=(p-y)x=0{,}6225\cdot(2,1)=(1{,}245;\,0{,}6225)$; $\nabla_b\ell=0{,}6225$.
+\end{enumerate}
+\resultado \textbf{$z=0{,}5$; $p\approx 0{,}6225$; $\ell\approx 0{,}974$; $\nabla_w\ell\approx(1{,}245;\,0{,}6225)$; $\nabla_b\ell\approx 0{,}6225$.}
+\comprobacion el gradiente es positivo, así que un paso de descenso baja $z$ y $p$, como corresponde a un ejemplo de clase~0. Además, $\ell>\ln 2=0{,}6931$ porque $p>1/2$ apunta a la clase equivocada.
+\end{solucion}
+
+\begin{solucion}{eje:3-frontera}
+\datos $b=-3$, $w=(1,2)$; puntos $A=(0,0)$, $B=(1,1)$, $C=(3,2)$.
+\planteamiento la frontera es $w^{\top}x+b=0$ (\cref{prop:frontera}); la distancia de un hiperplano $w^{\top}x+b=0$ al origen es $\abs{b}/\norm{w}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Frontera: $x_1+2x_2=3$. Distancia al origen: $3/\sqrt{1+4}=3/\sqrt5\approx 1{,}342$.
+  \item (b) $z_A=-3$, $p_A=\sigma(-3)=0{,}04743$: clase~0. $z_B=1+2-3=0$, $p_B=0{,}5$: sobre la frontera (clase~1 con el convenio $p\ge 1/2$). $z_C=3+4-3=4$, $p_C=\sigma(4)=0{,}9820$: clase~1.
+  \item (c) Con $(2b,2w)$ la frontera $2(x_1+2x_2-3)=0$ es la misma, pero los logits se duplican: $p_A=\sigma(-6)=0{,}002473$, $p_B=0{,}5$, $p_C=\sigma(8)=0{,}9997$. El modelo es más «seguro» sin cambiar sus decisiones.
+\end{enumerate}
+\resultado \textbf{frontera $x_1+2x_2=3$ a distancia $1{,}342$; $p_A=0{,}0474$, $p_B=0{,}5$, $p_C=0{,}982$; al escalar, la frontera no cambia y las probabilidades se alejan de $1/2$.}
+\comprobacion el punto $(3/5,6/5)=\frac{3}{5}(1,2)$ está en la frontera ($3/5+12/5=3$) y su norma es $\frac35\sqrt5=1{,}342$. El apartado (c) anticipa la \cref{prop:separable}.
+\end{solucion}
+
+\begin{solucion}{eje:3-newton}
+\datos $J(\theta)=\frac1n\sum_i\BCE(\sigma_i,y_i)$; $x_1=(1,1)$, $y_1=1$; $x_2=(1,-2)$, $y_2=0$; $\theta_0=0$.
+\planteamiento gradiente y hessiano del \cref{teo:grad-logistica}; paso $\theta_1=\theta_0-H^{-1}\nabla J$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\nabla J=\frac1n\sum(\sigma_i-y_i)x_i$ y $\nabla_\theta\sigma_i=\sigma_i(1-\sigma_i)x_i$, luego $H=\frac1n\sum\sigma_i(1-\sigma_i)x_ix_i^{\top}$, y $v^{\top}Hv=\frac1n\sum\sigma_i(1-\sigma_i)(x_i^{\top}v)^{2}\ge 0$.
+  \item (b) En $\theta_0=0$: $\sigma_1=\sigma_2=0{,}5$ y $\sigma_i(1-\sigma_i)=0{,}25$.
+  \item $\nabla J=\frac12\bigl[(0{,}5-1)(1,1)+(0{,}5-0)(1,-2)\bigr]=\frac12(0;\,-1{,}5)=(0;\,-0{,}75)$.
+  \item $x_1x_1^{\top}+x_2x_2^{\top}=\begin{pmatrix}1&1\\1&1\end{pmatrix}+\begin{pmatrix}1&-2\\-2&4\end{pmatrix}=\begin{pmatrix}2&-1\\-1&5\end{pmatrix}$.
+  \item $H=\frac12\cdot 0{,}25\cdot\begin{pmatrix}2&-1\\-1&5\end{pmatrix}=\begin{pmatrix}0{,}25&-0{,}125\\-0{,}125&0{,}625\end{pmatrix}$.
+  \item $\det H=0{,}15625-0{,}015625=0{,}140625$.
+  \item $H^{-1}=\frac{1}{0{,}140625}\begin{pmatrix}0{,}625&0{,}125\\0{,}125&0{,}25\end{pmatrix}=\begin{pmatrix}4{,}444&0{,}8889\\0{,}8889&1{,}778\end{pmatrix}$.
+  \item $H^{-1}\nabla J=(0{,}8889\cdot(-0{,}75);\;1{,}778\cdot(-0{,}75))=(-0{,}6667;\,-1{,}333)$; $\theta_1=(2/3,\;4/3)$.
+  \item (c) $J(\theta_0)=\ln 2=0{,}6931$. En $\theta_1$, $z_1=2/3+4/3=2$ y $z_2=2/3-8/3=-2$; ambos ejemplos tienen pérdida $\ln(1+e^{-2})=0{,}1269$, luego $J(\theta_1)=0{,}1269$.
+\end{enumerate}
+\resultado \textbf{$\nabla J=(0;\,-0{,}75)$; $H=\begin{pmatrix}0{,}25&-0{,}125\\-0{,}125&0{,}625\end{pmatrix}$; $\theta_1=(2/3,\,4/3)$; $J$ baja de $0{,}6931$ a $0{,}1269$.} $\blacksquare$
+\comprobacion $H(H^{-1}\nabla J)=(0{,}25\cdot(-0{,}6667)+0{,}125\cdot 1{,}333;\;0{,}125\cdot 0{,}6667-0{,}625\cdot 1{,}333)=(0;\,-0{,}75)$. Los datos son separables, así que iteraciones sucesivas harán crecer $\norm{\theta}$ (\cref{prop:separable}).
+\end{solucion}
+
+\begin{solucion}{eje:3-separable}
+\datos $x_1=-1$, $y_1=0$; $x_2=1$, $y_2=1$; modelo $\sigma(wx)$; $\lambda=0{,}1$.
+\planteamiento \cref{prop:sigmoide}(iv) para la pérdida; derivadas primera y segunda para la versión regularizada.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Ejemplo~1: $-\ln(1-\sigma(-w))=-\ln\sigma(w)=\ln(1+e^{-w})$. Ejemplo~2: $-\ln\sigma(w)=\ln(1+e^{-w})$. La media es $J(w)=\ln(1+e^{-w})$.
+  \item $J'(w)=-\sigma(-w)<0$: $J$ es estrictamente decreciente, con $J(w)\to 0$ cuando $w\to\infty$ y $J(w)>0$ para todo $w$. No hay mínimo.
+  \item (b) $G(w)=J(w)+\frac{\lambda}{2}w^{2}$; $G'(w)=-\sigma(-w)+\lambda w$; $G''(w)=\sigma(w)\sigma(-w)+\lambda>0$. $G$ es estrictamente convexa, $G'(0)=-1/2<0$ y $G'(w)\to\infty$: hay un único cero, que cumple $\lambda w^{*}=\sigma(-w^{*})$.
+  \item (c) Newton sobre $g(w)=\lambda w-\sigma(-w)$, con $g'=\lambda+\sigma(w)\sigma(-w)$, desde $w=2$: $g(2)=0{,}2-0{,}1192=0{,}0808$, $g'(2)=0{,}2050$, $w=2-0{,}394=1{,}606$; después $g(1{,}606)=-0{,}0066$, $g'=0{,}2392$, $w=1{,}633$; un paso más da $w^{*}\approx 1{,}634$.
+  \item $P(y_2=1)=\sigma(1{,}634)=0{,}8367$.
+\end{enumerate}
+\resultado \textbf{sin regularizar no hay mínimo; con $\lambda=0{,}1$, $w^{*}\approx 1{,}634$ y $P(y_2=1)\approx 0{,}837$.} $\blacksquare$
+\comprobacion $\lambda w^{*}=0{,}1634$ y $\sigma(-1{,}634)=1-0{,}8367=0{,}1633$. La regularización impide que la probabilidad llegue a~1.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-llm}
+\datos la capa de salida de un LLM (\cref{fig:cabeza}).
+\planteamiento identificar cada pieza de $z=W^{\top}x$, $p=\softmax(z)$, $\ell=-\ln p_y$ (\cref{def:softmax-reg}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $x$ es el vector oculto $h\in\R^{d_{\text{model}}}$ de la última posición, producido por el último bloque Transformer.
+  \item $K=\abs{\V}$: cada clase es un token del vocabulario.
+  \item $W=W_U\in\R^{d_{\text{model}}\times\abs{\V}}$, la matriz de \emph{unembedding}; cada columna es la plantilla de un token.
+  \item La pérdida es $-\ln p$ del token real, la entropía cruzada de la \cref{prop:ce}.
+  \item Diferencia: en el clasificador de dígitos $x$ son los píxeles, fijos; en el LLM, $h$ lo calcula la red y se aprende a la vez que $W_U$.
+\end{enumerate}
+\resultado \textbf{es una regresión softmax con $\abs{\V}$ clases cuya entrada $h$ aprende el Transformer.}
+\comprobacion en Llama~3 8B, $W_U$ tiene $4096\cdot 128\,256=525\,336\,576$ parámetros (\cref{eje:4-llama}).
+\end{solucion}
+
+\begin{solucion}{eje:4-logits}
+\datos $z=(1,2,3)$, clase correcta $y=1$.
+\planteamiento softmax, $\ell=-\ln p_y=-z_y+\LSE(z)$ y $\nabla_z\ell=p-e_y$ (\cref{teo:grad-softmax}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $e^{z}=(2{,}718;\,7{,}389;\,20{,}09)$, de suma $30{,}19$.
+  \item $p=(0{,}09003;\,0{,}2447;\,0{,}6652)$.
+  \item $\ell=-\ln 0{,}09003=2{,}408$.
+  \item $\nabla_z\ell=p-(1,0,0)=(-0{,}9100;\,0{,}2447;\,0{,}6652)$.
+  \item Con $y=3$: $\ell=-\ln 0{,}6652=0{,}4076$.
+  \item Diferencia: $\ell_1-\ell_3=(-z_1+\LSE)-(-z_3+\LSE)=z_3-z_1=2$, porque el término $\LSE(z)$ es común.
+\end{enumerate}
+\resultado \textbf{$p\approx(0{,}0900;\,0{,}2447;\,0{,}6652)$; $\ell\approx 2{,}408$; $\nabla_z\ell\approx(-0{,}9100;\,0{,}2447;\,0{,}6652)$; con la tercera clase, $\ell\approx 0{,}408$.}
+\comprobacion $p$ suma $1{,}000$ y el gradiente suma $-0{,}0001\approx 0$ por redondeo; $2{,}408-0{,}408=2{,}000$. Los valores de $p$ son los del \cref{ej:softmax} permutados, porque $(1,2,3)$ es $(2,1,0)$ invertido y desplazado en una unidad.
+\end{solucion}
+
+\begin{solucion}{eje:4-k2}
+\datos $z=(1{,}3;\,0{,}4)$.
+\planteamiento calcular ambos miembros; después dividir por $e^{z_1}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $e^{1{,}3}=3{,}669$ y $e^{0{,}4}=1{,}492$, de suma $5{,}161$; $\softmax_1=3{,}669/5{,}161=0{,}7109$.
+  \item $z_1-z_2=0{,}9$; $e^{-0{,}9}=0{,}4066$; $\sigma(0{,}9)=1/1{,}4066=0{,}7109$.
+  \item En general: $p_1=\dfrac{e^{z_1}}{e^{z_1}+e^{z_2}}=\dfrac{1}{1+e^{z_2-z_1}}=\sigma(z_1-z_2)$.
+\end{enumerate}
+\resultado \textbf{ambos valen $0{,}7109$, y $p_1=\sigma(z_1-z_2)$ para todo $z\in\R^{2}$.} $\blacksquare$
+\comprobacion si $z_1=z_2$, $p_1=\sigma(0)=1/2$, como corresponde a dos clases con el mismo logit.
+\end{solucion}
+
+\begin{solucion}{eje:4-llama}
+\datos $d_{\text{model}}=4096$, $\abs{\V}=128\,256$; 2 bytes por número.
+\planteamiento la capa es una matriz $d_{\text{model}}\times\abs{\V}$; la pérdida inicial es $\ln K$ (\cref{prop:inicial}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Parámetros: $4096\cdot 128\,256=525\,336\,576$.
+  \item Memoria: $525\,336\,576\cdot 2=1\,050\,673\,152$ bytes $\approx 1{,}051$~GB ($\approx 0{,}9785$~GiB, dividiendo por $2^{30}$).
+  \item Pérdida uniforme: $\ln 128\,256=\ln 1{,}28256+5\ln 10=0{,}2489+11{,}513=11{,}76$ nats.
+\end{enumerate}
+\resultado \textbf{$525\,336\,576$ parámetros; $\approx 1{,}05$~GB en bf16; pérdida inicial $\approx 11{,}76$ nats.}
+\comprobacion orden de magnitud: $4\cdot 10^{3}\cdot 1{,}3\cdot 10^{5}\approx 5{,}2\cdot 10^{8}$. Para Llama~2 7B, $4096\cdot 32\,000=131\,072\,000$, cuatro veces menos, porque su vocabulario es unas cuatro veces menor.
+\end{solucion}
+
+\begin{solucion}{eje:4-gradiente}
+\datos $p=\softmax(z)$, $\ell=-\ln p_y$.
+\planteamiento escribir $\ell=-z_y+\LSE(z)$ y derivar cada término.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\ell=-\ln\bigl(e^{z_y}/\sum_je^{z_j}\bigr)=-z_y+\ln\sum_je^{z_j}$.
+  \item $\partial(-z_y)/\partial z_k=-\ind[k=y]$.
+  \item $\frac{\partial}{\partial z_k}\ln\sum_je^{z_j}=\frac{1}{\sum_je^{z_j}}\cdot e^{z_k}=p_k$.
+  \item $\partial\ell/\partial z_k=p_k-\ind[k=y]$; en forma vectorial, $\nabla_z\ell=p-e_y$.
+  \item $\sum_k(p_k-\ind[k=y])=1-1=0$.
+  \item Invariancia: $\ell(z+c\mathbf{1})=\ell(z)$ para todo $c$. Derivando en $c=0$, $\nabla_z\ell\cdot\mathbf{1}=0$, que es la suma nula.
+\end{enumerate}
+\resultado \textbf{$\nabla_z\ell=p-e_y$, con componentes de suma nula.} $\blacksquare$
+\comprobacion en el \cref{eje:4-logits}, $-0{,}9100+0{,}2447+0{,}6652=-0{,}0001\approx 0$.
+\end{solucion}
+
+\begin{solucion}{eje:4-hessiano}
+\datos $\ell(z)=-z_y+\LSE(z)$, con $\nabla_z\ell=p-e_y$.
+\planteamiento derivar $p_k$ respecto a $z_j$ por la regla del cociente; calcular la covarianza de un vector \emph{one-hot}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con $S=\sum_je^{z_j}$: $\partial p_k/\partial z_j=\bigl(\ind[j=k]e^{z_k}S-e^{z_k}e^{z_j}\bigr)/S^{2}=\ind[j=k]p_k-p_kp_j$. Como $e_y$ es constante, $\nabla^{2}_z\ell=\diag(p)-pp^{\top}$.
+  \item (b) Sea $E$ con $P(E=e_k)=p_k$. $\E[E]=p$; $\E[EE^{\top}]=\sum_kp_ke_ke_k^{\top}=\diag(p)$; $\Cov(E)=\diag(p)-pp^{\top}$.
+  \item (c) $z=(\ln 2,0,0)$: $e^{z}=(2,1,1)$, $S=4$, $p=(0{,}5;\,0{,}25;\,0{,}25)$.
+  \item $pp^{\top}$ tiene entradas $0{,}25$, $0{,}125$ y $0{,}0625$; restándolo de $\diag(p)$:
+  \[
+  \nabla_z^{2}\ell=\begin{pmatrix}0{,}25&-0{,}125&-0{,}125\\-0{,}125&0{,}1875&-0{,}0625\\-0{,}125&-0{,}0625&0{,}1875\end{pmatrix}=\frac{1}{16}\begin{pmatrix}4&-2&-2\\-2&3&-1\\-2&-1&3\end{pmatrix}.
+  \]
+\end{enumerate}
+\resultado \textbf{$\nabla_z^{2}\ell=\diag(p)-pp^{\top}=\Cov(E)$; en el punto dado, la matriz anterior.} $\blacksquare$
+\comprobacion cada fila suma cero: $4-2-2=0$, $-2+3-1=0$, $-2-1+3=0$, de acuerdo con la \cref{prop:hess-softmax}. La diagonal es $p_k(1-p_k)$: $0{,}5\cdot 0{,}5=0{,}25$ y $0{,}25\cdot 0{,}75=0{,}1875$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-vf}
+\planteamiento contrastar cada afirmación con la \cref{prop:encajadas}, el \cref{teo:sesgo-varianza} y la \cref{prop:optimismo}.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Verdadera.} Las clases de polinomios están encajadas (\cref{prop:encajadas}); en el \cref{tab:polinomios}, el ECM de entrenamiento baja de $0{,}1183$ a $0{,}0024$ y a $0{,}0000$.
+  \item \textbf{Falsa.} Más regularización contrae los parámetros hacia cero y el modelo cambia menos al cambiar los datos: la varianza baja y el sesgo sube.
+  \item \textbf{Falsa.} $\sigma^{2}$ es la varianza de $y$ dada $x$, propiedad de la distribución de los datos y no del modelo; más datos reducen la varianza del modelo, no el ruido.
+  \item \textbf{Falsa.} El polinomio de grado~9 del \cref{tab:polinomios} tiene error de entrenamiento nulo y error de validación $34{,}17$. Además, el riesgo nunca es menor que $\sigma^{2}$.
+\end{enumerate}
+\resultado \textbf{V, F, F, F.}
+\end{solucion}
+
+\begin{solucion}{eje:5-diagnostico}
+\datos A: $0{,}60$ en entrenamiento y $0{,}58$ en validación. B: $0{,}99$ y $0{,}70$.
+\planteamiento mirar el nivel del error de entrenamiento y la distancia entre entrenamiento y validación (\cref{tab:diagnostico}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item A: error de entrenamiento alto ($40\,\%$) y diferencia pequeña (2 puntos). No aprende ni los datos que ve: \textbf{sesgo alto}. Remedio: modelo más rico, más características, menos regularización o entrenar más.
+  \item B: error de entrenamiento casi nulo y diferencia de 29 puntos. Reproduce el ruido de la muestra: \textbf{varianza alta}. Remedio: más datos, más regularización, modelo más simple o parada temprana.
+\end{enumerate}
+\resultado \textbf{A infraajusta; B sobreajusta.}
+\comprobacion B se comporta como el polinomio de grado~9 del \cref{tab:polinomios}, y A como el de grado~1.
+\end{solucion}
+
+\begin{solucion}{eje:5-mano}
+\datos predicciones $1{,}8$; $2{,}4$; $2{,}1$, equiprobables; $f(x_0)=2{,}5$; $\sigma^{2}=0{,}09$.
+\planteamiento \cref{teo:sesgo-varianza} con la esperanza sobre $S$ calculada como media de tres valores.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\bar f(x_0)=(1{,}8+2{,}4+2{,}1)/3=6{,}3/3=2{,}1$.
+  \item Sesgo $=2{,}1-2{,}5=-0{,}4$; sesgo$^{2}=0{,}16$.
+  \item Varianza $=\frac13\bigl[(-0{,}3)^{2}+0{,}3^{2}+0^{2}\bigr]=0{,}18/3=0{,}06$.
+  \item Error esperado $=0{,}09+0{,}16+0{,}06=0{,}31$.
+\end{enumerate}
+\resultado \textbf{sesgo$^{2}=0{,}16$, varianza $=0{,}06$, error cuadrático esperado $=0{,}31$.}
+\comprobacion directamente, $\E_S[(f-\hat f)^{2}]=\frac13(0{,}7^{2}+0{,}1^{2}+0{,}4^{2})=\frac13(0{,}49+0{,}01+0{,}16)=0{,}22=0{,}16+0{,}06$; sumando el ruido, $0{,}31$.
+\end{solucion}
+
+\begin{solucion}{eje:5-interpolar}
+\datos puntos $(0,1)$, $(1,0)$, $(2,3)$; polinomio $\theta_0+\theta_1x+\theta_2x^{2}$.
+\planteamiento resolver $V\theta=y$ con la matriz de Vandermonde (\cref{prop:interpolacion}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $x=0$: $\theta_0=1$. $x=1$: $1+\theta_1+\theta_2=0$, es decir, $\theta_1+\theta_2=-1$. $x=2$: $1+2\theta_1+4\theta_2=3$, es decir, $\theta_1+2\theta_2=1$.
+  \item Restando: $\theta_2=2$ y $\theta_1=-3$. El polinomio es $1-3x+2x^{2}$.
+  \item $\det V=(x_2-x_1)(x_3-x_1)(x_3-x_2)=(1-0)(2-0)(2-1)=2$.
+  \item (b) El error de entrenamiento es nulo siempre que los $x_i$ sean distintos y el grado sea al menos $n-1$: con grado $n-1$ hay solución única; con grado mayor, infinitas.
+  \item (c) Si $x_i=x_j$ con $y_i\ne y_j$, ninguna función puede pasar por ambos puntos: el error de entrenamiento es positivo para cualquier grado, y $V$ tiene dos filas iguales.
+\end{enumerate}
+\resultado \textbf{$1-3x+2x^{2}$, con $\det V=2$; interpolación exacta si los $x_i$ son distintos y $p\ge n-1$.}
+\comprobacion $1-3+2=0$ y $1-6+8=3$.
+\end{solucion}
+
+\begin{solucion}{eje:5-encoger}
+\datos $x_1,\dots,x_n$ independientes con media $\mu$ y varianza $\sigma^{2}$; $\hat\mu=a\bar x$.
+\planteamiento $\ECM=\text{sesgo}^{2}+\text{varianza}$ (\cref{teo:sesgo-varianza} sin ruido); minimizar en $a$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\E[\bar x]=\mu$, luego $\E[\hat\mu]=a\mu$ y el sesgo es $(a-1)\mu$.
+  \item Por independencia, $\Var(\bar x)=\sigma^{2}/n$, luego $\Var(\hat\mu)=a^{2}\sigma^{2}/n$.
+  \item (a) $\ECM=\E[(\hat\mu-a\mu)^{2}]+(a\mu-\mu)^{2}=(a-1)^{2}\mu^{2}+a^{2}\sigma^{2}/n$, porque el término cruzado tiene esperanza nula.
+  \item (b) $\frac{d\,\ECM}{da}=2(a-1)\mu^{2}+2a\sigma^{2}/n=0$, luego $a^{*}=\dfrac{\mu^{2}}{\mu^{2}+\sigma^{2}/n}$. La segunda derivada, $2\mu^{2}+2\sigma^{2}/n$, es positiva.
+  \item (c) $\sigma^{2}/n=1$; $a^{*}=4/5=0{,}8$; $\ECM(0{,}8)=0{,}04\cdot 4+0{,}64\cdot 1=0{,}80$, frente a $\ECM(1)=1$.
+\end{enumerate}
+\resultado \textbf{$a^{*}=\mu^{2}/(\mu^{2}+\sigma^{2}/n)=0{,}8$ y $\ECM=0{,}80$, frente a $1{,}00$ de la media muestral.} $\blacksquare$
+\comprobacion coincide con el \cref{tab:encoger}. Si $n\to\infty$, $a^{*}\to 1$: con muchos datos no conviene encoger. El $a^{*}$ depende de $\mu$, desconocido; en la práctica el grado de contracción se elige por validación.
+\end{solucion}
+
+\begin{solucion}{eje:5-varianza}
+\datos $y=X\theta+\varepsilon$, $\Cov(\varepsilon)=\sigma^{2}I$; $\hat y=Py$.
+\planteamiento $\Cov(Ay)=A\Cov(y)A^{\top}$ para una matriz constante $A$; \cref{eje:2-traza}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\Cov(\hat y)=P\,(\sigma^{2}I)\,P^{\top}=\sigma^{2}PP^{\top}=\sigma^{2}P^{2}=\sigma^{2}P$.
+  \item (b) $\Var(\hat y_i)=\sigma^{2}P_{ii}$, luego $\frac1n\sum_i\Var(\hat y_i)=\frac{\sigma^{2}}{n}\tr P=\sigma^{2}m/n$.
+  \item (c) La varianza media sobre los puntos de entrenamiento crece linealmente con el número de parámetros $m$: cada parámetro añade $\sigma^{2}/n$. Con $m=n$ (interpolación), alcanza $\sigma^{2}$.
+  \item (d) $\Var(\hat y_i)=0{,}05\cdot(0{,}7;\,0{,}3;\,0{,}3;\,0{,}7)=(0{,}035;\,0{,}015;\,0{,}015;\,0{,}035)$, de media $0{,}025$.
+\end{enumerate}
+\resultado \textbf{$\Cov(\hat y)=\sigma^{2}P$ y varianza media $\sigma^{2}m/n$; en el ejemplo, $0{,}025$.} $\blacksquare$
+\comprobacion $\sigma^{2}m/n=0{,}05\cdot 2/4=0{,}025$. Los puntos extremos ($x=0$ y $x=3$) tienen más varianza que los centrales, porque están más lejos de $\bar x$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-limites}
+\datos ridge con $b$ sin penalizar; \cref{ej:ridge}: $\hat w_\lambda=4/(2+\lambda)$.
+\planteamiento con datos centrados, $\hat w_\lambda=(X_c^{\top}X_c+\lambda I)^{-1}X_c^{\top}y_c$ y $\hat b=\bar y-\hat w^{\top}\bar x$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\lambda\to 0^{+}$: $\hat w_\lambda$ tiende a la solución de mínimos cuadrados (a la de norma mínima si $X$ no tiene rango completo).
+  \item $\lambda\to\infty$: $\hat w_\lambda\to 0$ y $\hat b\to\bar y$; el modelo predice la media de las respuestas.
+  \item Cuarta parte de $\hat w=2$: $4/(2+\lambda)=0{,}5$, luego $2+\lambda=8$ y $\lambda=6$.
+\end{enumerate}
+\resultado \textbf{$\lambda\to 0^{+}$: mínimos cuadrados; $\lambda\to\infty$: $\hat w\to 0$ y $\hat b\to\bar y$; en el ejemplo, $\lambda=6$.}
+\comprobacion con $\lambda=6$, $\mathrm{df}=2/8=0{,}25$: el número efectivo de parámetros también se reduce a la cuarta parte.
+\end{solucion}
+
+\begin{solucion}{eje:6-ridge}
+\datos $x=(0,1,2)$, $y=(0,1,3)$, $\lambda=2$ solo sobre $w$.
+\planteamiento con datos centrados, $\hat w=\sum x_{c,i}y_{c,i}/(\sum x_{c,i}^{2}+\lambda)$ y $\hat b=\bar y-\hat w\bar x$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\bar x=1$; $\bar y=4/3$.
+  \item $x_c=(-1,0,1)$; $y_c=(-4/3,\;-1/3,\;5/3)$.
+  \item $\sum x_cy_c=4/3+0+5/3=3$; $\sum x_c^{2}=2$.
+  \item $\hat w=3/(2+2)=3/4$ (sin regularizar sería $3/2$).
+  \item $\hat b=4/3-3/4=7/12\approx 0{,}5833$.
+  \item Comprobación matricial: $\begin{pmatrix}3&3\\3&5+2\end{pmatrix}\theta=\begin{pmatrix}4\\7\end{pmatrix}$, con determinante $21-9=12$: $b=(28-21)/12=7/12$, $w=(21-12)/12=3/4$.
+\end{enumerate}
+\resultado \textbf{$\hat w=0{,}75$ y $\hat b=7/12\approx 0{,}5833$}: la pendiente se reduce a la mitad.
+\comprobacion la recta pasa por $(\bar x,\bar y)$: $7/12+3/4=16/12=4/3$, como exige la observación sobre el término independiente no penalizado.
+\end{solucion}
+
+\begin{solucion}{eje:6-cv}
+\datos $n=1079$, $k=5$, cuatro valores de $\lambda$ y un entrenamiento final.
+\planteamiento repartir $n$ en $k$ partes lo más iguales posible (\cref{def:kfold}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $1079=5\cdot 215+4$: cuatro partes de $216$ y una de $215$.
+  \item Se entrena con $1079-216=863$ ejemplos, o con $1079-215=864$ cuando se valida con la parte pequeña.
+  \item Entrenamientos de la validación cruzada: $5\cdot 4=20$; con el final, $21$.
+\end{enumerate}
+\resultado \textbf{partes de 216, 216, 216, 216 y 215; 863 u 864 ejemplos por ronda; 21 entrenamientos.}
+\comprobacion $4\cdot 216+215=864+215=1079$: cada ejemplo se valida exactamente una vez por valor de $\lambda$.
+\end{solucion}
+
+\begin{solucion}{eje:6-lasso}
+\datos $\hat\beta=(3;\,-0{,}5;\,1{,}2)$, $X^{\top}X=I$, $\lambda=1$.
+\planteamiento \cref{prop:umbral}: lasso $\sign(\hat\beta_j)(\abs{\hat\beta_j}-\lambda)_{+}$; ridge $\hat\beta_j/(1+\lambda)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Lasso: $3-1=2$; $\abs{-0{,}5}=0{,}5\le 1$, luego $0$; $1{,}2-1=0{,}2$. Solución $(2;\,0;\,0{,}2)$.
+  \item Ridge: $\hat\beta/2=(1{,}5;\,-0{,}25;\,0{,}6)$.
+  \item El mayor coeficiente, 3, pierde una unidad con el lasso ($-33\,\%$) y la mitad con ridge ($-50\,\%$).
+\end{enumerate}
+\resultado \textbf{lasso $(2;\,0;\,0{,}2)$, que anula el segundo coeficiente; ridge $(1{,}5;\,-0{,}25;\,0{,}6)$, que no anula ninguno.}
+\comprobacion para el segundo coeficiente, $g(t)=\frac12(t+0{,}5)^{2}+\abs{t}$ vale $0{,}125$ en $t=0$, $0{,}1513$ en $t=-0{,}05$ y $0{,}2013$ en $t=0{,}05$: el mínimo está en~0.
+\end{solucion}
+
+\begin{solucion}{eje:6-map}
+\datos $y\mid\theta\sim\N(X\theta,\sigma^{2}I)$; $\theta\sim\N(0,\tau^{2}I)$.
+\planteamiento por Bayes, $p(\theta\mid y)\propto p(y\mid\theta)\,p(\theta)$; se minimiza $-\ln p(\theta\mid y)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El denominador $p(y)$ no depende de $\theta$ y no afecta al maximizador.
+  \item $-\ln p(y\mid\theta)=\frac{1}{2\sigma^{2}}\norm{y-X\theta}^{2}+\text{cte}$ (\cref{teo:mv-gauss}).
+  \item $-\ln p(\theta)=\frac{1}{2\tau^{2}}\norm{\theta}^{2}+\text{cte}$.
+  \item $-\ln p(\theta\mid y)=\frac{1}{2\sigma^{2}}\norm{y-X\theta}^{2}+\frac{1}{2\tau^{2}}\norm{\theta}^{2}+\text{cte}$.
+  \item Multiplicando por $2\sigma^{2}>0$: $\norm{y-X\theta}^{2}+\frac{\sigma^{2}}{\tau^{2}}\norm{\theta}^{2}$, que es $J_\lambda$ con $\lambda=\sigma^{2}/\tau^{2}$.
+  \item $\tau\to\infty$: la distribución \emph{a priori} se vuelve plana, $\lambda\to 0$ y se recupera la máxima verosimilitud (mínimos cuadrados).
+  \item $\tau\to 0^{+}$: la creencia en $\theta=0$ es cada vez más firme, $\lambda\to\infty$ y $\hat\theta\to 0$.
+\end{enumerate}
+\resultado \textbf{MAP $=$ ridge con $\lambda=\sigma^{2}/\tau^{2}$.} $\blacksquare$
+\comprobacion en el \cref{ej:ridge}, con $\sigma^{2}=1$ y $\tau^{2}=0{,}5$ se obtiene $\lambda=2$ y $\hat w=4/(2+2)=1$, frente a $\hat w=2$ de máxima verosimilitud.
+\end{solucion}
+
+\begin{solucion}{eje:6-ruido}
+\datos $X$ fija; $E$ con entradas $e_{ij}$ independientes, $\E[e_{ij}]=0$, $\E[e_{ij}^{2}]=s^{2}$.
+\planteamiento calcular las esperanzas entrada a entrada usando la independencia.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $(X+E)^{\top}(X+E)=X^{\top}X+X^{\top}E+E^{\top}X+E^{\top}E$. Los términos cruzados tienen esperanza nula porque $\E[E]=0$.
+  \item $(E^{\top}E)_{jk}=\sum_ie_{ij}e_{ik}$, con $\E[e_{ij}e_{ik}]=s^{2}$ si $j=k$ y $0$ si $j\ne k$. Luego $\E[E^{\top}E]=ns^{2}I$.
+  \item (b) $y-(X+E)\theta=(y-X\theta)-E\theta$. Entonces $\E\norm{y-(X+E)\theta}^{2}=\norm{y-X\theta}^{2}-2(y-X\theta)^{\top}\E[E]\theta+\theta^{\top}\E[E^{\top}E]\theta=\norm{y-X\theta}^{2}+ns^{2}\norm{\theta}^{2}$.
+  \item Es la función objetivo ridge con $\lambda=ns^{2}$.
+  \item (c) En el \cref{ej:ridge}, $n=3$ y $\lambda=2$, luego $s^{2}=2/3\approx 0{,}6667$.
+\end{enumerate}
+\resultado \textbf{perturbar las entradas con ruido de varianza $s^{2}$ equivale, en media, a ridge con $\lambda=ns^{2}$; en el ejemplo, $s^{2}=2/3$.} $\blacksquare$
+\comprobacion con $s^{2}=2/3$, $\E\bigl[\sum_i(x_i+e_i)^{2}\bigr]=2+3\cdot 2/3=4=\sum x_i^{2}+\lambda$, el denominador de $\hat w_\lambda=4/(2+\lambda)$.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{bishop}
+C.~M. Bishop.
+\newblock \emph{Pattern Recognition and Machine Learning}.
+\newblock Springer, 2006.
+\newblock Caps.~1, 3 y~4.
+\newblock \url{https://www.microsoft.com/en-us/research/people/cmbishop/prml-book/}
+
+\bibitem{llama3}
+A.~Grattafiori \emph{et al.} (Llama Team, AI @ Meta).
+\newblock The Llama 3 herd of models.
+\newblock arXiv:2407.21783, 2024.
+\newblock Los valores $d_{\text{model}}=4096$ y $\abs{\V}=128\,256$ de Llama~3 8B figuran en el archivo de configuración publicado con los pesos del modelo.
+\newblock \url{https://arxiv.org/abs/2407.21783}
+
+\bibitem{esl}
+T.~Hastie, R.~Tibshirani y J.~Friedman.
+\newblock \emph{The Elements of Statistical Learning: Data Mining, Inference, and Prediction}, 2.ª ed.
+\newblock Springer, 2009.
+\newblock Caps.~2, 3, 4 y~7.
+\newblock \url{https://hastie.su.domains/ElemStatLearn/}
+
+\bibitem{hoerl}
+A.~E. Hoerl y R.~W. Kennard.
+\newblock Ridge regression: biased estimation for nonorthogonal problems.
+\newblock \emph{Technometrics}, 12(1):55--67, 1970.
+
+\bibitem{adamw}
+I.~Loshchilov y F.~Hutter.
+\newblock Decoupled weight decay regularization.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2019.
+\newblock \url{https://arxiv.org/abs/1711.05101}
+
+\bibitem{mit6390}
+MIT 6.390 (antes 6.036) Staff.
+\newblock \emph{Introduction to Machine Learning}, notas del curso.
+\newblock Massachusetts Institute of Technology. Cap.~2 «Regression» y cap.~4 «Classification».
+\newblock \url{https://introml.mit.edu/notes/}
+
+\bibitem{cs229}
+A.~Ng y T.~Ma.
+\newblock CS229 Lecture Notes (apuntes principales del curso).
+\newblock Stanford University. Parte~I «Supervised learning» (caps.~1--3) y parte~III «Generalization and regularization» (caps.~8--9).
+\newblock \url{https://cs229.stanford.edu/main_notes.pdf}
+
+\bibitem{cs229ps}
+Stanford CS229: Machine Learning.
+\newblock \emph{Problem Set}~1.
+\newblock Stanford University, verano de 2019.
+\newblock \url{https://cs229.stanford.edu/summer2019/ps1.pdf}
+
+\bibitem{strang}
+G.~Strang.
+\newblock \emph{Introduction to Linear Algebra}, 5.ª ed.
+\newblock Wellesley-Cambridge Press, 2016.
+\newblock Cap.~4 «Orthogonality».
+\newblock \url{https://math.mit.edu/~gs/linearalgebra/}
+
+\bibitem{mit1806}
+G.~Strang.
+\newblock 18.06SC: Linear Algebra.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, otoño de 2011. Sesión~2.3 «Projection Matrices and Least Squares».
+\newblock \url{https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/}
+
+\bibitem{lasso}
+R.~Tibshirani.
+\newblock Regression shrinkage and selection via the lasso.
+\newblock \emph{Journal of the Royal Statistical Society, Series B}, 58(1):267--288, 1996.
+
+\bibitem{llama2}
+H.~Touvron \emph{et al.}
+\newblock Llama 2: Open foundation and fine-tuned chat models.
+\newblock arXiv:2307.09288, 2023.
+\newblock \url{https://arxiv.org/abs/2307.09288}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock §3.1 «Linear Regression», §3.6 «Generalization», §3.7 «Weight Decay» y §4.1 «Softmax Regression».
+\newblock \url{https://d2l.ai/}
+
+\end{thebibliography}
+
+
+\end{document}

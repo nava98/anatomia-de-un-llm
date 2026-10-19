@@ -1,0 +1,130 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase V — Módulo 20
+%  Ajuste fino e instrucciones
+%  Compilar: latexmk -r ../latexmkrc M20-ajuste-fino.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 20}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\Lsft}{\mathcal{L}_{\mathrm{SFT}}}
+\newcommand{\rango}{\operatorname{rango}}
+\newcommand{\img}{\operatorname{im}}
+\newcommand{\Col}{\operatorname{Col}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Fis}{\mathcal{I}}
+\newcommand{\tok}[1]{\texttt{\detokenize{#1}}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 20. Ajuste fino e instrucciones},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase V \textperiodcentered\ Alineamiento, aprendizaje por refuerzo, agentes e interpretabilidad}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 20\par}\vspace{0.3cm}
+{\LARGE Ajuste fino e instrucciones\par}
+\vspace{0.2cm}
+{\large Ajuste supervisado, olvido catastrófico y adaptación eficiente en parámetros\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Un modelo preentrenado con la pérdida de los módulos~15 y~16 es un \emph{modelo base}: dado un texto, lo continúa con la distribución del corpus de entrenamiento. Ante la entrada «p: capital de francia\textbackslash n r:», el mini-GPT de la práctica produce una continuación plausible del corpus y no la respuesta «paris», aunque ese dato aparezca en sus datos de entrenamiento. Lo que convierte un modelo base en un asistente es el \emph{posentrenamiento}: primero se ajusta el modelo para imitar respuestas de calidad (ajuste supervisado o SFT, este módulo) y después se optimizan las preferencias humanas (módulo~21). Este módulo estudia el ajuste fino como problema de optimización que parte de un modelo ya entrenado: la transferencia y sus técnicas clásicas, la pérdida del ajuste supervisado con instrucciones, el olvido de lo aprendido y su control, y los métodos que modifican solo una fracción mínima de los parámetros, con LoRA y QLoRA como casos centrales. Sobre los procedimientos de Claude, Gemini y Grok solo se usa información pública; sus laboratorios no publican los datos ni las recetas de su ajuste supervisado.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item formular el ajuste fino como minimización de una pérdida de destino a partir de un modelo preentrenado, distinguirlo de la extracción de características y aplicar las técnicas de ULMFiT (tasas discriminativas, tasa triangular inclinada y descongelación gradual);
+  \item definir la pérdida enmascarada del ajuste supervisado, demostrar que es la log-verosimilitud condicional de la respuesta, construir la plantilla de chat y razonar sobre normalización, relleno, empaquetado y acumulación de gradientes;
+  \item describir el olvido catastrófico, resolver el modelo cuadrático de compromiso entre tarea nueva y antigua y deducir la penalización de EWC a partir de la aproximación de Laplace y la información de Fisher;
+  \item definir los métodos de ajuste eficiente en parámetros (adaptadores, ajuste de \emph{prompt} y de prefijo), contar sus parámetros y explicar la dimensión intrínseca del ajuste fino;
+  \item formular LoRA, contar sus parámetros, demostrar la cota de rango y las fórmulas de sus gradientes, justificar la inicialización $B=0$ y la escala $\alpha/r$ y relacionarla con el teorema de Eckart--Young;
+  \item explicar la cuantización NF4 y la doble cuantización de QLoRA, estimar la memoria de cada configuración de ajuste y decidir entre ajuste fino, instrucciones en el contexto y recuperación de documentos.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1 se usa la regla de la cadena de probabilidades y la entropía cruzada; del módulo~3, la SVD y el teorema de Eckart--Young; del módulo~4, los gradientes matriciales; del módulo~5, la distribución normal y el cálculo de esperanzas; del módulo~7, el descenso de gradiente y Adam; del módulo~12, los tokens especiales; de los módulos~13 a~15, la atención y el mini-GPT; del módulo~17, la contabilidad de memoria del entrenamiento (16 bytes por parámetro), y del módulo~19, la cuantización por bloques.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Transferencia y ajuste fino & \cite{jm3}, \cite{howard-ruder}, \cite{d2l}, \cite{cs224n} \\
+2 & Ajuste supervisado con instrucciones & \cite{jm3}, \cite{cs336}, \cite{wei-flan}, \cite{ouyang}, \cite{zhou-lima} \\
+3 & Olvido catastrófico & \cite{mccloskey}, \cite{kirkpatrick}, \cite{bishop}, \cite{gbc} \\
+4 & Ajuste eficiente en parámetros & \cite{houlsby}, \cite{lester}, \cite{li-liang}, \cite{aghajanyan} \\
+5 & LoRA: adaptación de bajo rango & \cite{hu-lora}, \cite{eckart-young}, \cite{mml}, \cite{cs224n} \\
+6 & QLoRA y elección de estrategia & \cite{dettmers}, \cite{cs336a1}, \cite{jm3} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La organización sigue el capítulo~8, «Post-training», de Jurafsky y Martin~\cite{jm3} (§8.1 sobre el ajuste con instrucciones y §8.2 sobre el ajuste eficiente en parámetros), las clases~8 («Post-training») y~9 («Efficient Adaptation») del curso CS224N de Stanford~\cite{cs224n}, la clase~15 («Alignment -- SFT/RLHF») del curso CS336 de Stanford~\cite{cs336} y el temario del curso 11-711 de Carnegie Mellon~\cite{cmu711}. De la tarea~5 de CS336~\cite{cs336a5,cs336a5s} proceden los ejercicios sobre máscaras, normalización y empaquetado. La transferencia clásica sigue a Howard y Ruder~\cite{howard-ruder} y el §14.2 de Zhang \emph{et al.}~\cite{d2l}; el olvido catastrófico, a McCloskey y Cohen~\cite{mccloskey} y Kirkpatrick \emph{et al.}~\cite{kirkpatrick}, con la aproximación de Laplace de Bishop~\cite[§4.4]{bishop} y el análisis cuadrático de la penalización $L^{2}$ de Goodfellow, Bengio y Courville~\cite[§7.1.1]{gbc}. Los métodos se toman de sus artículos originales: FLAN~\cite{wei-flan}, T0~\cite{sanh-t0}, InstructGPT~\cite{ouyang}, LIMA~\cite{zhou-lima}, los adaptadores~\cite{houlsby}, el ajuste de \emph{prompt}~\cite{lester} y de prefijo~\cite{li-liang}, la dimensión intrínseca~\cite{li-intrinsic,aghajanyan}, LoRA~\cite{hu-lora} y QLoRA~\cite{dettmers}. La relación con la SVD remite al módulo~3 y a Deisenroth, Faisal y Ong~\cite[cap.~4]{mml}. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\theta_0$, $\theta$ & parámetros del modelo preentrenado y parámetros ajustados \\
+$u=u_{1:n}$, $y=y_{1:m}$ & instrucción (\emph{prompt}) y respuesta, como secuencias de tokens \\
+$x_{1:T}$, $m_t\in\{0,1\}$ & secuencia completa (instrucción seguida de respuesta) y máscara de las posiciones que puntúan \\
+$\Lsft$ & pérdida del ajuste supervisado (entropía cruzada enmascarada) \\
+$\eta$, $\eta^{l}$ & tasa de aprendizaje global y de la capa $l$ \\
+$\lambda$ & intensidad de la penalización que ancla los parámetros a $\theta_0$ \\
+$\Fis(\theta)$, $F_i$ & matriz de información de Fisher y su diagonal \\
+$D$, $d'$ & número total de parámetros y dimensión del subespacio entrenable (tema~4) \\
+$W\in\R^{d\times k}$, $x\in\R^{k}$ & en los temas~4 a~6, matriz preentrenada congelada y entrada de la capa \\
+$A\in\R^{r\times k}$, $B\in\R^{d\times r}$ & factores de LoRA; $r$ es el rango \\
+$\alpha$, $s=\alpha/r$ & hiperparámetro de escala de LoRA y factor efectivo \\
+$\sigma_1\ge\sigma_2\ge\cdots$ & valores singulares \\
+$\Phi$, $\Phi^{-1}$ & función de distribución de la normal estándar y su inversa (función cuantil) \\
+$N$, $N_{\mathrm{LoRA}}$ & parámetros del modelo base y de los adaptadores \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

@@ -1,0 +1,185 @@
+% =====================================================================
+\chapter{Del texto a los bytes: Unicode y UTF-8}
+\label{tema:1}
+% =====================================================================
+
+Un tokenizador transforma texto en una secuencia de enteros. Antes de elegir las unidades conviene fijar qué es un texto para un ordenador: una sucesión de puntos de código Unicode que se almacena como una sucesión de bytes. Este tema plantea el compromiso entre longitud de la secuencia y tamaño del vocabulario, define la codificación UTF-8 y demuestra las dos propiedades que la hacen adecuada como punto de partida de los tokenizadores modernos: es un código prefijo y se autosincroniza. Se sigue~\cite[§2.3]{jm3}, la definición del RFC~3629~\cite{rfc3629} y la §2 de la tarea~1 de CS336~\cite{cs336}.
+
+\section{El problema de la tokenización}
+
+Se recuerda del módulo~1 que un \emph{tokenizador} es un par de aplicaciones $\tau\colon\Sigma^{*}\to\V^{*}$ y $\delta\colon\V^{*}\to\Sigma^{*}$ con $\delta(\tau(s))=s$ para toda cadena $s$. La elección de $\V$ fija la granularidad y, con ella, dos magnitudes que compiten: el tamaño $K=\abs{\V}$ y la longitud $\abs{\tau(s)}$ de las secuencias.
+
+\begin{table}[h]
+\centering\small
+\caption{Granularidad de la tokenización, con la palabra «caballerías» como ejemplo.}\label{tab:granularidad}
+\begin{tabularx}{\textwidth}{@{}lcc>{\raggedright\arraybackslash}X@{}}
+\toprule
+Unidad & Tokens & $K$ típico & Limitación principal \\
+\midrule
+Carácter & 11 & $\sim 10^{2}$ & secuencias largas; la atención cuesta $O(n^{2})$ \\
+Palabra & 1 & $>5\cdot 10^{5}$ & palabras fuera del vocabulario; formas sin relación \\
+Subpalabra & 2--5 & $3{,}2\cdot 10^{4}$--$2{,}6\cdot 10^{5}$ & hay que entrenar el tokenizador \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Con un vocabulario de palabras, «caballería» y «caballerías» son tokens sin ninguna relación, y una palabra nueva o con una errata no tiene representación. Con caracteres, cualquier texto es representable, pero las secuencias son largas, y el coste de la atención crece con el cuadrado de la longitud (módulo~13). Las subpalabras reparten el vocabulario según la frecuencia: las palabras comunes son un solo token y las raras se componen de piezas frecuentes.
+
+\begin{observacion}\label{obs:congelado}
+El tokenizador se entrena antes que el modelo y por separado, con un algoritmo de conteo, y después se congela. El modelo solo recibe los enteros que produce. En los temas~2 y~3 se estudian los dos algoritmos de entrenamiento más usados.
+\end{observacion}
+
+\section{Unicode y puntos de código}
+
+\begin{definicion}[Punto de código]
+Unicode asigna a cada carácter un entero, su \emph{punto de código}, del conjunto $\{0,1,\dots,\hx{10FFFF}_{16}\}$, que se escribe en hexadecimal con el prefijo \hx{U+}. Los puntos de código del intervalo \hx{U+D800}--\hx{U+DFFF} (\emph{sustitutos}) están reservados y no representan caracteres. Los restantes se llaman \emph{valores escalares Unicode}~\cite{rfc3629}.
+\end{definicion}
+
+Por ejemplo, «a» es \hx{U+0061} (97), «ñ» es \hx{U+00F1} (241) y el signo del euro es \hx{U+20AC} (8364). Un punto de código es abstracto: no fija la forma gráfica (el glifo) con que se dibuja el carácter~\cite[§2.3.1]{jm3}. Unicode~16.0 define más de $1{,}5\cdot 10^{5}$ caracteres.
+
+Un modelo podría usar los puntos de código como vocabulario inicial, pero este tendría más de $1{,}3\cdot 10^{5}$ símbolos, casi todos raros. Por eso los tokenizadores modernos parten de la representación del texto en bytes.
+
+\section{La codificación UTF-8}
+
+\begin{definicion}[UTF-8]\label{def:utf8}
+La codificación \emph{UTF-8} asigna a cada valor escalar $c$ una cadena de 1 a 4 bytes según el \cref{tab:utf8}. Los bits de $c$, escritos en binario con el número de bits útiles de su fila y completados con ceros a la izquierda, rellenan de izquierda a derecha las posiciones marcadas con \bits{x}. La codificación de un texto es la concatenación de las codificaciones de sus caracteres.
+\end{definicion}
+
+\begin{table}[h]
+\centering\small
+\caption{Definición de UTF-8~\cite{rfc3629}. Se llama \emph{byte inicial} al primero de cada fila y \emph{bytes de continuación} a los demás.}\label{tab:utf8}
+\begin{tabular}{@{}lccl@{}}
+\toprule
+Puntos de código & Bytes & Bits útiles & Patrón de bits \\
+\midrule
+\hx{U+0000}--\hx{U+007F} & 1 & 7 & \bits{0xxxxxxx} \\
+\hx{U+0080}--\hx{U+07FF} & 2 & 11 & \bits{110xxxxx 10xxxxxx} \\
+\hx{U+0800}--\hx{U+FFFF} & 3 & 16 & \bits{1110xxxx 10xxxxxx 10xxxxxx} \\
+\hx{U+10000}--\hx{U+10FFFF} & 4 & 21 & \bits{11110xxx 10xxxxxx 10xxxxxx 10xxxxxx} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Se exige además que cada carácter use la fila más corta en la que cabe: las codificaciones \emph{sobrelargas}, como escribir «a» con dos bytes, no son UTF-8 válido. Como consecuencia, los bytes \hx{C0}, \hx{C1} y \hx{F5}--\hx{FF} no aparecen nunca en un texto UTF-8~\cite{rfc3629}.
+
+\begin{ejemplo}[La letra ñ]\label{ej:enie}
+El punto de código de «ñ» es $\hx{F1}_{16}=241>127$, luego usa la fila de 2 bytes. En binario con 11 bits, $241=\bits{00011110001}$, que se reparte en $5+6$ bits: \bits{00011} y \bits{110001}. Los bytes son
+\[
+\bits{110}\,\bits{00011}=\bits{11000011}=\hx{C3}_{16}=195,\qquad
+\bits{10}\,\bits{110001}=\bits{10110001}=\hx{B1}_{16}=177.
+\]
+La \cref{fig:enie} muestra el reparto. Todas las vocales con tilde del español tienen puntos de código entre \hx{U+00C0} y \hx{U+00FF}, de modo que su byte inicial es \hx{C3}: «á» $=\hx{C3 A1}$, «é» $=\hx{C3 A9}$, «ó» $=\hx{C3 B3}$.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small\ttfamily,
+  b/.style={draw,minimum width=5.2mm,minimum height=6mm,inner sep=0pt},
+  h/.style={b,fill=black!12}]
+  % bits útiles
+  \foreach \v [count=\i] in {0,0,0,1,1,1,1,0,0,0,1}{
+    \node[b] (u\i) at (\i*0.52,1.9) {\v};}
+  \node[anchor=east,font=\small] at (0.2,1.9) {\textrm{$241$ en 11 bits}};
+  % byte 1
+  \foreach \v [count=\i] in {1,1,0}{\node[h] (a\i) at (\i*0.52-0.9,0) {\v};}
+  \foreach \v [count=\i] in {0,0,0,1,1}{\node[b] (p\i) at (\i*0.52+0.66,0) {\v};}
+  % byte 2
+  \foreach \v [count=\i] in {1,0}{\node[h] (c\i) at (\i*0.52+3.6,0) {\v};}
+  \foreach \v [count=\i] in {1,1,0,0,0,1}{\node[b] (q\i) at (\i*0.52+4.64,0) {\v};}
+  \draw[-{Stealth[length=2mm]}] (u3.south) -- (p3.north);
+  \draw[-{Stealth[length=2mm]}] (u8.south) -- (q3.north);
+  \draw[decorate,decoration={brace,mirror,amplitude=4pt}] ([yshift=-1mm]a1.south west) -- ([yshift=-1mm]p5.south east) node[midway,below=5pt,font=\small] {\textrm{byte inicial} \hx{C3}};
+  \draw[decorate,decoration={brace,mirror,amplitude=4pt}] ([yshift=-1mm]c1.south west) -- ([yshift=-1mm]q6.south east) node[midway,below=5pt,font=\small] {\textrm{byte de continuación} \hx{B1}};
+\end{tikzpicture}
+\caption{Codificación UTF-8 de «ñ» (\cref{ej:enie}). Las casillas sombreadas son los bits fijos del patrón; las blancas, los bits útiles del punto de código.}
+\label{fig:enie}
+\end{figure}
+
+\begin{proposicion}\label{prop:contar-utf8}
+El número de puntos de código que UTF-8 codifica con 1, 2, 3 y 4 bytes es, respectivamente, $128$, $1920$, $63\,488$ y $1\,048\,576$. Descontando los $2048$ sustitutos, que pertenecen a la fila de 3 bytes, hay $1\,112\,064$ valores escalares.
+\end{proposicion}
+
+\begin{proof}
+Cada fila del \cref{tab:utf8} cubre un intervalo de enteros; su cardinal es la diferencia de los extremos más uno: $\hx{80}_{16}=128$; $\hx{800}_{16}-\hx{80}_{16}=2048-128=1920$; $\hx{10000}_{16}-\hx{800}_{16}=65\,536-2048=63\,488$; $\hx{110000}_{16}-\hx{10000}_{16}=1\,114\,112-65\,536=1\,048\,576$. Los sustitutos son $\hx{E000}_{16}-\hx{D800}_{16}=2048$, todos en el intervalo de 3 bytes. El total es $1\,114\,112-2048=1\,112\,064$.
+\end{proof}
+
+\section{Propiedades de UTF-8}
+
+\begin{definicion}[Código prefijo]
+Sea $C\colon\Sigma\to\mathcal{B}^{*}$ una aplicación que asigna a cada símbolo una cadena de bytes no vacía. $C$ es un \emph{código prefijo} si ninguna palabra del código $C(a)$ es prefijo propio de otra $C(b)$ y, además, $C$ es inyectiva.
+\end{definicion}
+
+\begin{teorema}[UTF-8 es un código prefijo]\label{teo:prefijo}
+La codificación UTF-8 de un carácter es inyectiva y ninguna palabra del código es prefijo propio de otra. En consecuencia, su extensión a cadenas, $\Enc\colon\Sigma^{*}\to\mathcal{B}^{*}$, es inyectiva: toda cadena de bytes UTF-8 válida se descompone de forma única en caracteres.
+\end{teorema}
+
+\begin{proof}
+\emph{Paso 1 (el byte inicial determina la longitud).} El byte inicial de una palabra de longitud $n$ empieza por \bits{0} si $n=1$ y por $n$ unos seguidos de un cero si $n\in\{2,3,4\}$. Estos cuatro prefijos de bits son incompatibles entre sí, de modo que la longitud de una palabra del código se lee en su primer byte.
+
+\emph{Paso 2 (sin prefijos propios).} Si $C(a)$ fuera prefijo propio de $C(b)$, ambas palabras tendrían el mismo primer byte y, por el paso~1, la misma longitud, lo que contradice que el prefijo sea propio.
+
+\emph{Paso 3 (inyectividad por caracteres).} Dentro de una fila, la aplicación que lleva los bits útiles a la cadena de bytes es una biyección entre enteros de $\ell$ bits y cadenas con el patrón fijado. Si $C(a)=C(b)$, ambas están en la misma fila (paso~1) y tienen los mismos bits útiles, luego $a=b$.
+
+\emph{Paso 4 (cadenas).} Sea $b_1\dots b_L=\Enc(x)=\Enc(y)$. El primer byte fija la longitud $n$ de la primera palabra (paso~1); los $n$ primeros bytes son, a la vez, $C(x_1)$ y $C(y_1)$, luego $x_1=y_1$ (paso~3). Se elimina esa palabra y se razona por inducción sobre $L$.
+\end{proof}
+
+\begin{proposicion}[Autosincronización]\label{prop:autosinc}
+En una cadena UTF-8 válida, un byte es de continuación si y solo si sus dos bits más altos son \bits{10}. Por tanto, desde cualquier posición se encuentra el comienzo del carácter que la contiene retrocediendo a lo sumo 3 bytes.
+\end{proposicion}
+
+\begin{proof}
+Por el \cref{tab:utf8}, todo byte de continuación empieza por \bits{10}, y ningún byte inicial lo hace: los iniciales empiezan por \bits{0}, \bits{110}, \bits{1110} o \bits{11110}. Basta, pues, retroceder mientras el byte empiece por \bits{10}; como un carácter tiene a lo sumo 3 bytes de continuación, se retrocede como mucho 3 posiciones.
+\end{proof}
+
+La autosincronización tiene una consecuencia práctica: si un archivo se corta por la mitad de un carácter, solo se pierde ese carácter, y los siguientes se decodifican bien~\cite[§2.3.2]{jm3}. Además, UTF-8 es compatible con ASCII, porque los 128 primeros puntos de código ocupan un byte con su valor ASCII.
+
+\section{Consecuencias para el español y para los LLM}
+
+\begin{observacion}
+Las letras con tilde, la diéresis, la «ñ» y los signos de apertura «¿» y «¡» y las comillas angulares ocupan 2 bytes. En el fragmento inicial de \emph{El Quijote} que se usa en la práctica del módulo hay $2484$ caracteres y $2536$ bytes; los $52$ bytes de más corresponden a $48$ letras con tilde o «ñ» y a $4$ comillas angulares. La palabra «año» tiene 3 caracteres y 4 bytes.
+\end{observacion}
+
+\begin{corolario}\label{cor:vocab256}
+Todo texto se representa sin pérdida como una cadena de $\mathcal{B}^{*}$, con $\abs{\mathcal{B}}=2^{8}=256$. Un tokenizador cuyo vocabulario inicial sean los 256 bytes nunca necesita un token «desconocido».
+\end{corolario}
+
+\begin{proof}
+Por el \cref{teo:prefijo}, $\Enc$ es inyectiva, luego existe una inversa por la izquierda $\Enc^{-1}$ sobre su imagen y $\Enc^{-1}(\Enc(x))=x$. Cada byte es uno de los $2^{8}$ valores de $\mathcal{B}$, todos presentes en el vocabulario inicial.
+\end{proof}
+
+El precio es que un carácter no ASCII ocupa varios tokens iniciales, y un tokenizador de bytes debe aprender fusiones como $\hx{C3}+\hx{B1}\to$ «ñ» antes de poder formar «año». Además, un token puede contener solo una parte de un carácter; el \cref{tema:2} analiza qué ocurre entonces al decodificar.
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, §2.3 «Unicode», con §2.3.1 «Code Points» y §2.3.2 «UTF-8 Encoding».
+\item Yergeau, RFC~3629~\cite{rfc3629}: definición normativa de UTF-8.
+\item Stanford CS336~\cite{cs336}, tarea~1, §2.1 y §2.2 (Unicode y codificaciones Unicode).
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-decod}
+Un programa decodifica una cadena de bytes UTF-8 decodificando cada byte por separado y concatenando los resultados. (a) Dé una palabra española para la que falla y explique por qué. (b) Dé una cadena de 2 bytes que no corresponda a ningún carácter y justifíquelo.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §2.2, problema \emph{unicode2}, apartados (b) y (c).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-e}
+La «é» es \hx{U+00E9}. Obtenga sus bytes UTF-8 en binario y en hexadecimal.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-contar}
+¿Cuántos bytes UTF-8 ocupan «pingüino», «Ñandú» y «café» seguido de un espacio y del carácter \hx{U+2615} (taza de café)? Justifíquelo carácter a carácter.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-mano}
+Codifique a mano en UTF-8, mostrando los bits, el signo «¿» (\hx{U+00BF}) y el carácter chino \hx{U+8FDB}. ¿Cuántos bytes ocupa cada uno?
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~2, ejercicio~2.3 (se sustituye la «é» por «¿»).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-filas}
+Compruebe la \cref{prop:contar-utf8} y calcule qué fracción de los valores escalares Unicode se codifica con 4 bytes. ¿Por qué el emoji \hx{U+1F600} ocupa 4 bytes?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-sobrelargo}
+(a) Demuestre que, si se admitieran codificaciones sobrelargas, la decodificación dejaría de ser inyectiva: habría cadenas de bytes distintas que representan el mismo texto. Explique por qué esto perjudica a un tokenizador de bytes. (b) Demuestre que los bytes \hx{C0} y \hx{C1} solo podrían aparecer en una codificación sobrelarga.
+\end{ejercicio}

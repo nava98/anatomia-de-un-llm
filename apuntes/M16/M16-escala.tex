@@ -1,0 +1,127 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase IV — Módulo 16
+%  Preentrenamiento a escala
+%  Compilar: latexmk -r ../latexmkrc M16-escala.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 16}
+
+\hypersetup{pdftitle={Módulo 16. Preentrenamiento a escala},pdfauthor={Anatomía de un LLM}}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\PP}{\mathbb{P}}
+\newcommand{\Nopt}{N_{\mathrm{opt}}}
+\newcommand{\Dopt}{D_{\mathrm{opt}}}
+\newcommand{\Loss}{\mathcal{L}}
+\newcommand{\sig}{\operatorname{sig}}
+\newcommand{\nctx}{n_{\mathrm{ctx}}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase IV \textperiodcentered\ Escala, sistemas y arquitecturas modernas}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 16\par}\vspace{0.3cm}
+{\LARGE Preentrenamiento a escala\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Los módulos~14 y~15 construyeron un Transformer, contaron su coste y lo entrenaron a pequeña escala. Este módulo estudia qué ocurre cuando el mismo procedimiento se lleva a billones de tokens y a decenas de miles de millones de parámetros. La pregunta central es económica: con un presupuesto de cómputo $C$ fijo, ¿qué tamaño de modelo $N$ y qué número de tokens $D$ conviene elegir, y de dónde salen esos tokens? La respuesta tiene dos partes. La primera es la ingeniería de los datos: filtrar la web, eliminar duplicados con MinHash y LSH y mezclar fuentes. La segunda son las \emph{leyes de escalado}, relaciones empíricas en forma de ley de potencia entre la pérdida y los recursos, que permiten plantear el reparto como un problema de optimización con restricciones y resolverlo con multiplicadores de Lagrange. El módulo termina con dos cuestiones abiertas: si las capacidades «emergentes» son reales y qué cuesta ampliar la ventana de contexto.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item describir las etapas de preparación de un corpus de preentrenamiento, aplicar reglas heurísticas de calidad, relacionar el filtro por perplejidad con la entropía cruzada y calcular las épocas de cada fuente de una mezcla;
+  \item definir la similitud de Jaccard, demostrar la propiedad fundamental de MinHash, obtener la varianza de su estimador y analizar la curva en S del LSH por bandas;
+  \item caracterizar las leyes de potencia, ajustarlas por mínimos cuadrados en escala log-log y enunciar las leyes de escalado de Kaplan \emph{et al.};
+  \item derivar con multiplicadores de Lagrange el reparto óptimo de Chinchilla entre $N$ y $D$, demostrar sus consecuencias y justificar la regla de unos 20 tokens por parámetro;
+  \item explicar los tres métodos empíricos de Hoffmann \emph{et al.}, incorporar el coste de inferencia y la repetición de datos al reparto y calcular cuándo se amortiza sobreentrenar un modelo pequeño;
+  \item analizar el argumento de la métrica sobre las capacidades emergentes y cuantificar el coste en cómputo, memoria y codificación posicional del contexto largo.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1, la entropía cruzada, la perplejidad y la desigualdad de Gibbs (tema~5). Del módulo~4, los multiplicadores de Lagrange y la convexidad. Del módulo~5, la independencia, la distribución binomial y la varianza de una media. Del módulo~6, la divergencia de Kullback--Leibler. Del módulo~7, los calendarios de tasa de aprendizaje con decaimiento coseno. Del módulo~8, la regresión lineal por mínimos cuadrados. Del módulo~12, la tokenización. Del módulo~13, el coste cuadrático de la atención. Del módulo~14, la regla $C\approx 6ND$, el coste $2N$ por token de la inferencia y RoPE (temas~4 y~6). Del módulo~15, el bucle de entrenamiento y las curvas de pérdida.
+
+\section*{Organización}
+\begin{center}
+\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Datos de preentrenamiento & \cite{rae}, \cite{wenzek}, \cite{fineweb}, \cite{llama}, \cite{cs336a4} \\
+2 & Deduplicación: MinHash y LSH & \cite{mmds}, \cite{cs246}, \cite{broder}, \cite{lee}, \cite{cs336a4} \\
+3 & Leyes de potencia y leyes de Kaplan & \cite{kaplan}, \cite{cs324}, \cite{cs336a3} \\
+4 & El reparto óptimo del cómputo: Chinchilla & \cite{hoffmann}, \cite{bv}, \cite{cs336a3} \\
+5 & Estimación empírica, inferencia y datos limitados & \cite{hoffmann}, \cite{muennighoff}, \cite{sardana}, \cite{cs336a3} \\
+6 & Capacidades emergentes y contexto largo & \cite{wei}, \cite{schaeffer}, \cite{chenpi}, \cite{llama3} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La deduplicación sigue el capítulo~3, «Finding Similar Items», de Leskovec, Rajaraman y Ullman~\cite{mmds}, libro de texto del curso CS246 de Stanford~\cite{cs246}, y la sección~3 de la práctica de datos del curso CS336 de Stanford~\cite{cs336a4}. Las leyes de escalado siguen los artículos originales de Kaplan \emph{et al.}~\cite{kaplan} y de Hoffmann \emph{et al.}~\cite{hoffmann}, la clase sobre leyes de escalado del curso CS324 de Stanford~\cite{cs324} y la práctica de leyes de escalado de CS336~\cite{cs336a3}; la forma convexa del problema de reparto procede de la programación geométrica de Boyd y Vandenberghe~\cite[§4.5]{bv}. Los datos sobre corpus reales proceden de los informes de Gopher~\cite{rae}, LLaMA~\cite{llama,llama2,llama3}, RefinedWeb~\cite{refinedweb} y FineWeb~\cite{fineweb}; la repetición de datos, de Muennighoff \emph{et al.}~\cite{muennighoff}; las capacidades emergentes, de Wei \emph{et al.}~\cite{wei} y Schaeffer, Miranda y Koyejo~\cite{schaeffer}. Anthropic, Google y xAI no publican el tamaño ni la composición de los corpus de Claude, Gemini y Grok; sobre ellos solo se usa información pública~\cite{gemini15}.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$N$, $D$, $C$ & parámetros, tokens de entrenamiento y FLOPs de entrenamiento \\
+$L$, $L(N,D)$ & pérdida de validación (nats por token) y su ley de escalado \\
+$E$, $A$, $B$, $\alpha$, $\beta$ & constantes de la ley de Chinchilla \\
+$\Nopt(C)$, $\Dopt(C)$ & reparto óptimo para el presupuesto $C$ \\
+$w_i$, $U_i$, $e_i$ & peso, tokens únicos y épocas de la fuente $i$ de una mezcla \\
+$J(A,B)$ & similitud de Jaccard de dos conjuntos \\
+$h$, $\sig(S)$ & función hash y firma MinHash del conjunto $S$ \\
+$b$, $r$ & bandas y filas por banda del LSH ($n=br$ funciones hash) \\
+$k$ & longitud de una respuesta en tokens o de un \emph{shingle} \\
+$n$, $\nctx$ & longitud de la secuencia y ventana de contexto \\
+$\ln$, $\log_{10}$ & logaritmo natural y decimal \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Las pérdidas se miden en nats por token. Se usa la escala numérica larga del español: un \emph{billón} es $10^{12}$ y mil millones, $10^{9}$.
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

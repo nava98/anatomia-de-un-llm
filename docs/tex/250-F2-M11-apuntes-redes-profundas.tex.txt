@@ -1,0 +1,1877 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase II — Módulo 11
+%  Entrenar redes profundas
+%  Compilar: latexmk -r ../latexmkrc M11-redes-profundas.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 11}
+
+\hypersetup{pdftitle={Módulo 11. Entrenar redes profundas},pdfauthor={Anatomía de un LLM}}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\uno}{\mathbf{1}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\RMS}{\operatorname{RMS}}
+\newcommand{\LN}{\operatorname{LN}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+\newcommand{\Norm}{\operatorname{Norm}}
+\newcommand{\ReLU}{\operatorname{ReLU}}
+\newcommand{\Bern}{\operatorname{Bernoulli}}
+\newcommand{\fl}{\operatorname{fl}}
+\newcommand{\ulp}{\operatorname{ulp}}
+\newcommand{\smin}{\sigma_{\min}}
+\newcommand{\Loss}{\mathcal{L}}
+\newcommand{\NaN}{\text{\fontseries{m}\ttfamily NaN}}
+\newcommand{\Inf}{\text{\fontseries{m}\ttfamily inf}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase II \textperiodcentered\ Aprendizaje automático y redes neuronales}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 11\par}\vspace{0.3cm}
+{\LARGE Entrenar redes profundas\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Un modelo de lenguaje actual apila decenas de bloques idénticos y se entrena en aritmética de 16 bits durante billones de tokens. Las dos circunstancias son hostiles al descenso de gradiente. La profundidad convierte el gradiente de las primeras capas en un producto de muchas matrices jacobianas, cuya norma tiende a crecer o a decrecer exponencialmente; la precisión reducida hace que sumas, exponenciales y cuadrados desborden, se anulen o pierdan los sumandos pequeños. Este módulo estudia, con el mismo grado de formalización que los anteriores, las piezas que hacen posible el entrenamiento a pesar de ello: la inicialización calibrada, las conexiones residuales, la normalización por capa en sus variantes LayerNorm y RMSNorm, la posición pre-norm de la normalización, el dropout, el recorte del gradiente por norma global, la aritmética de coma flotante con la precisión mixta y la evaluación estable de la función log-sum-exp. Todas ellas aparecen en el bloque del Transformer que se construye en la fase~III.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item expresar el gradiente de una red profunda como producto de jacobianos, acotar su norma mediante valores singulares y explicar el desvanecimiento y la explosión del gradiente, incluida la condición de Pascanu, Mikolov y Bengio para redes recurrentes;
+  \item demostrar la ley de propagación de la varianza y deducir de ella las inicializaciones de Xavier y de He;
+  \item demostrar que el jacobiano de una red residual contiene la identidad, acotar inferiormente su menor valor singular y describir el flujo residual de un Transformer;
+  \item calcular LayerNorm y RMSNorm, demostrar sus invariancias y la ortogonalidad del gradiente que atraviesa RMSNorm, y justificar la posición pre-norm en los modelos de lenguaje;
+  \item demostrar que el dropout invertido es insesgado, calcular la varianza que introduce y aplicar el recorte de gradiente por norma global;
+  \item deducir el rango, la precisión y la unidad de redondeo de fp32, fp16, bf16 y fp8 a partir de sus bits, explicar la absorción de sumandos y los tres ingredientes de la precisión mixta;
+  \item evaluar log-sum-exp, softmax y entropía cruzada de forma estable y diagnosticar el origen de una pérdida que se vuelve \NaN.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~3, los valores singulares, la norma espectral y la descomposición espectral de una matriz simétrica (temas~1 y~2). Del módulo~4, la regla de la cadena para funciones vectoriales y la matriz jacobiana, que se usan en todos los temas. Del módulo~5, esperanza, varianza, independencia y la distribución de Bernoulli (temas~1, 2 y~4). Del módulo~7, el descenso de gradiente estocástico, Adam y el calentamiento de la tasa de aprendizaje (temas~3 y~4). Del módulo~9, el perceptrón multicapa y las funciones de activación; del módulo~10, la retropropagación en grafos computacionales. La softmax y la entropía cruzada del módulo~1 se retoman en el tema~6.
+
+\section*{Organización}
+\begin{center}
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Gradientes que se desvanecen o explotan & \cite{gbc}, \cite{d2l}, \cite{pascanu}, \cite{glorot} \\
+2 & Conexiones residuales & \cite{resnet}, \cite{resnet-id}, \cite{d2l}, \cite{bishopdl} \\
+3 & Normalización: LayerNorm, RMSNorm y pre-norm & \cite{layernorm}, \cite{rmsnorm}, \cite{xiong}, \cite{bishopdl} \\
+4 & Dropout y recorte del gradiente & \cite{srivastava}, \cite{gbc}, \cite{pascanu}, \cite{cs231n} \\
+5 & Aritmética de coma flotante y precisión mixta & \cite{ieee754}, \cite{goldberg}, \cite{micikevicius}, \cite{cs336} \\
+6 & Estabilidad numérica de softmax y entropía cruzada & \cite{gbc}, \cite{d2l}, \cite{cs336} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. El análisis del gradiente en profundidad sigue la sección~8.2.5 y el capítulo~10 (§10.7 y §10.11) de Goodfellow, Bengio y Courville~\cite{gbc}, las secciones~5.4 y~9.7 de Zhang \emph{et al.}~\cite{d2l} y el artículo de Pascanu, Mikolov y Bengio~\cite{pascanu}; la inicialización, los artículos de Glorot y Bengio~\cite{glorot} y de He \emph{et al.}~\cite{he-init}. Las conexiones residuales y la normalización siguen la sección~8.6 de~\cite{d2l} y las secciones~7.4 y~9.5 de Bishop y Bishop~\cite{bishopdl}, junto con los artículos originales de He \emph{et al.}~\cite{resnet,resnet-id}, Ba, Kiros y Hinton~\cite{layernorm}, Zhang y Sennrich~\cite{rmsnorm} y Xiong \emph{et al.}~\cite{xiong}. El dropout sigue la sección~7.12 de~\cite{gbc}, la sección~5.6 de~\cite{d2l}, las notas de CS231n~\cite{cs231n} y el artículo de Srivastava \emph{et al.}~\cite{srivastava}. La aritmética de coma flotante sigue la norma IEEE~754~\cite{ieee754}, el tutorial de Goldberg~\cite{goldberg} y el libro de Higham~\cite{higham}; la precisión mixta, los artículos de Micikevicius \emph{et al.}~\cite{micikevicius,fp8}. Varios ejercicios proceden de las prácticas del curso CS336 de Stanford~\cite{cs336,cs336b} y del curso CS224N~\cite{cs224n}; el curso 11-785 de CMU~\cite{cmu11785} cubre el mismo temario. Sobre Claude, Gemini y Grok solo se usa información pública: Anthropic y Google no documentan la normalización ni la precisión con que entrenan sus modelos; el código publicado de Grok-1~\cite{grok1} sí permite consultarlas.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$h_\ell\in\R^{d}$, $z_\ell=W_\ell h_{\ell-1}$ & activación y preactivación de la capa $\ell$, con $\ell=1,\dots,L$ \\
+$J_\ell=\partial h_\ell/\partial h_{\ell-1}$ & jacobiano de la capa (o de la rama residual, tema~2) \\
+$\Loss$, $g=\nabla_\theta\Loss$ & pérdida y gradiente respecto de los parámetros \\
+$\norm{A}_2$, $\smin(A)$ & norma espectral (mayor valor singular) y menor valor singular \\
+$\Var$, $\E$ & varianza y esperanza \\
+$\mu$, $\sigma^{2}$, $\RMS(x)$ & media, varianza y raíz cuadrática media de un vector \\
+$\gamma,\beta$; $g$ & ganancia y sesgo de LayerNorm; ganancia de RMSNorm \\
+$\epsilon$ & constante de estabilidad dentro de una raíz \\
+$p$, $m_i\sim\Bern(1-p)$ & probabilidad de apagado del dropout y máscara \\
+$c$ & umbral del recorte del gradiente \\
+$e$, $m$ & bits de exponente y de mantisa de un formato de coma flotante \\
+$\varepsilon=2^{-m}$, $u=\varepsilon/2$ & épsilon de máquina y unidad de redondeo \\
+$\fl(x)$ & número representable más cercano a $x$ \\
+$\LSE(z)$ & log-sum-exp, $\ln\sum_i e^{z_i}$ \\
+$u\odot w$, $\uno$ & producto elemento a elemento; vector de unos \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Gradientes que se desvanecen o explotan}
+\label{tema:1}
+% =====================================================================
+
+En una red profunda, el gradiente que recibe una capa es el producto de los jacobianos de todas las capas que tiene por encima. Este tema formaliza esa observación, acota la norma del producto mediante valores singulares y deduce de ella los dos fenómenos que dificultan el entrenamiento en profundidad: el desvanecimiento y la explosión del gradiente. Se estudian después sus dos causas principales, la escala de los pesos y la saturación de las activaciones, y se obtiene la inicialización que mantiene constante la varianza de la señal. Se sigue~\cite[§8.2.5, §10.7]{gbc}, \cite[§5.4 y §9.7]{d2l} y los artículos de Pascanu, Mikolov y Bengio~\cite{pascanu}, Glorot y Bengio~\cite{glorot} y He \emph{et al.}~\cite{he-init}.
+
+\section{El gradiente como producto de jacobianos}
+
+\begin{definicion}[Red profunda de anchura constante]\label{def:red}
+Sea $L\ge 1$. Una \emph{red de $L$ capas} con anchura $d$ y activación $f\colon\R\to\R$ derivable transforma una entrada $h_0\in\R^{d}$ mediante
+\[
+z_\ell=W_\ell h_{\ell-1},\qquad h_\ell=f(z_\ell),\qquad \ell=1,\dots,L,
+\]
+con $W_\ell\in\R^{d\times d}$ y $f$ aplicada componente a componente. La pérdida $\Loss$ depende de la entrada solo a través de $h_L$. El \emph{jacobiano de la capa $\ell$} es
+\[
+J_\ell=\frac{\partial h_\ell}{\partial h_{\ell-1}}=\diag\bigl(f'(z_\ell)\bigr)\,W_\ell .
+\]
+\end{definicion}
+
+Los sesgos se omiten porque no intervienen en los jacobianos respecto de las activaciones. La anchura constante simplifica la notación; todos los resultados se extienden a anchuras variables.
+
+\begin{proposicion}[Gradiente en profundidad]\label{prop:grad-prof}
+Con la notación de la \cref{def:red}, escribiendo los gradientes como vectores columna,
+\[
+\nabla_{h_{\ell}}\Loss=J_{\ell+1}\T J_{\ell+2}\T\cdots J_L\T\,\nabla_{h_L}\Loss,
+\qquad
+\frac{\partial\Loss}{\partial W_\ell}=\Bigl(\diag\bigl(f'(z_\ell)\bigr)\nabla_{h_\ell}\Loss\Bigr)\,h_{\ell-1}\T .
+\]
+\end{proposicion}
+
+\begin{proof}
+La regla de la cadena del módulo~4 para la composición $h_{\ell}\mapsto h_{\ell+1}\mapsto\cdots\mapsto h_L\mapsto\Loss$ da $\partial\Loss/\partial h_\ell=(\partial\Loss/\partial h_L)\,J_L J_{L-1}\cdots J_{\ell+1}$ como vector fila; trasponiendo se obtiene la primera igualdad. Para la segunda, $(z_\ell)_i=\sum_j (W_\ell)_{ij}(h_{\ell-1})_j$, luego $\partial\Loss/\partial(W_\ell)_{ij}=(\partial\Loss/\partial (z_\ell)_i)\,(h_{\ell-1})_j$, y $\partial\Loss/\partial(z_\ell)_i=f'((z_\ell)_i)\,\partial\Loss/\partial(h_\ell)_i$ porque $f$ actúa componente a componente.
+\end{proof}
+
+El gradiente de los pesos de la capa $\ell$ contiene, por tanto, el producto de los $L-\ell$ jacobianos que tiene encima. Las primeras capas atraviesan casi todos.
+
+\begin{ejemplo}[Caso escalar]\label{ej:escalar}
+Si $d=1$ y cada jacobiano vale una constante $a>0$, el gradiente que llega a $h_0$ es $a^{L}$ veces el de $h_L$. La \cref{tab:factores} muestra que pequeñas desviaciones de $a=1$ se amplifican exponencialmente con la profundidad.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}cccl@{}}
+\toprule
+Factor por capa $a$ & $L=10$ & $L=24$ & Efecto \\
+\midrule
+$0{,}25$ & $9{,}5\cdot 10^{-7}$ & $3{,}6\cdot 10^{-15}$ & desvanecimiento extremo \\
+$0{,}5$ & $9{,}8\cdot 10^{-4}$ & $6{,}0\cdot 10^{-8}$ & las primeras capas no aprenden \\
+$1$ & $1$ & $1$ & caso ideal \\
+$1{,}1$ & $2{,}59$ & $9{,}85$ & crecimiento moderado \\
+$1{,}5$ & $57{,}7$ & $1{,}7\cdot 10^{4}$ & explosión \\
+\bottomrule
+\end{tabular}
+\caption{Factor $a^{L}$ por el que se multiplica el gradiente al atravesar $L$ capas escalares.}
+\label{tab:factores}
+\end{table}
+
+\section{Cotas mediante valores singulares}
+
+Para matrices, el papel del factor $a$ lo desempeñan los valores singulares. Para $A\in\R^{d\times d}$ se escribe $\norm{A}_2=\max_{\norm{x}=1}\norm{Ax}$ (el mayor valor singular, módulo~3) y $\smin(A)=\min_{\norm{x}=1}\norm{Ax}$ (el menor). Ambos coinciden para $A$ y $A\T$.
+
+\begin{lema}\label{lem:producto}
+Para $A,B\in\R^{d\times d}$ se cumple $\smin(A)\,\smin(B)\le\smin(AB)\le\norm{AB}_2\le\norm{A}_2\norm{B}_2$.
+\end{lema}
+
+\begin{proof}
+Sea $x$ con $\norm{x}=1$. Por definición, $\norm{Ay}\le\norm{A}_2\norm{y}$ y $\norm{Ay}\ge\smin(A)\norm{y}$ para todo $y$. Con $y=Bx$:
+$\norm{ABx}\le\norm{A}_2\norm{Bx}\le\norm{A}_2\norm{B}_2$ y $\norm{ABx}\ge\smin(A)\norm{Bx}\ge\smin(A)\smin(B)$. Tomando el máximo y el mínimo sobre $x$ se obtienen las desigualdades extremas; la central es inmediata.
+\end{proof}
+
+\begin{teorema}[Cotas del gradiente en profundidad]\label{teo:cotas}
+Con la notación de la \cref{def:red},
+\[
+\prod_{\ell=1}^{L}\smin(J_\ell)\;\le\;\frac{\norm{\nabla_{h_0}\Loss}}{\norm{\nabla_{h_L}\Loss}}\;\le\;\prod_{\ell=1}^{L}\norm{J_\ell}_2\;\le\;\prod_{\ell=1}^{L}\gamma\,\norm{W_\ell}_2,
+\qquad \gamma=\sup_{t\in\R}\abs{f'(t)} .
+\]
+\end{teorema}
+
+\begin{proof}
+Por la \cref{prop:grad-prof}, $\nabla_{h_0}\Loss=J_1\T\cdots J_L\T\nabla_{h_L}\Loss$. Aplicando el \cref{lem:producto} $L-1$ veces y usando que $\smin$ y $\norm{\cdot}_2$ no cambian al trasponer se obtienen las dos primeras desigualdades. La última se sigue de $\norm{J_\ell}_2\le\norm{\diag(f'(z_\ell))}_2\norm{W_\ell}_2$ y de que la norma espectral de una matriz diagonal es el mayor valor absoluto de su diagonal, que es a lo sumo $\gamma$.
+\end{proof}
+
+\begin{corolario}[Condición suficiente de desvanecimiento]\label{cor:pascanu}
+Si existe $\lambda<1$ tal que $\gamma\norm{W_\ell}_2\le\lambda$ para todo $\ell$, entonces $\norm{\nabla_{h_0}\Loss}\le\lambda^{L}\norm{\nabla_{h_L}\Loss}$, que tiende a~0 exponencialmente con $L$. En consecuencia, que el gradiente explote exige que $\norm{W_\ell}_2>1/\gamma$ para alguna capa.
+\end{corolario}
+
+\begin{proof}
+La primera afirmación es la cota superior del \cref{teo:cotas}. La segunda es su contrarrecíproca: si $\norm{W_\ell}_2\le 1/\gamma$ en todas las capas, el cociente de normas es a lo sumo~1 y el gradiente no puede crecer.
+\end{proof}
+
+En una red recurrente la misma matriz $W$ se aplica una vez por paso de tiempo, de modo que el corolario se lee con $L$ igual a la longitud de la secuencia. Es el resultado de~\cite[§2.1]{pascanu}: con $\gamma=1$ para $\tanh$ y $\gamma=1/4$ para la sigmoide logística, basta $\norm{W}_2<1/\gamma$ para que el gradiente se desvanezca a lo largo del tiempo. Goodfellow \emph{et al.}~\cite[§10.7]{gbc} y Zhang \emph{et al.}~\cite[§9.7.2]{d2l} presentan el caso lineal, en el que el gradiente contiene las potencias $W^{t}$.
+
+\begin{ejemplo}[Potencias de una matriz simétrica]\label{ej:potencias}
+Sea $M=\begin{psmallmatrix}0{,}85&0{,}35\\0{,}35&0{,}85\end{psmallmatrix}$, con autovalores $1{,}2$ y $0{,}5$ y autovectores $(1,1)/\sqrt2$ y $(1,-1)/\sqrt2$. Para $x=(1,0)$,
+\[
+M^{k}x=\tfrac12\bigl(1{,}2^{k}+0{,}5^{k},\ 1{,}2^{k}-0{,}5^{k}\bigr).
+\]
+Con $k=10$: $1{,}2^{10}=6{,}192$ y $0{,}5^{10}=9{,}8\cdot 10^{-4}$, luego $M^{10}x=(3{,}096;\,3{,}095)$. La componente en la dirección del autovalor~$0{,}5$ ha desaparecido y la norma crece como $1{,}2^{k}$: una misma matriz hace explotar unas direcciones y desvanecer otras.
+\end{ejemplo}
+
+\begin{observacion}
+Los productos de muchos factores grandes crean en la superficie de pérdida regiones casi verticales, llamadas \emph{acantilados}~\cite[§8.2.4]{gbc}. Un paso de gradiente en una de ellas puede expulsar los parámetros lejos de la región que se estaba explorando. El recorte del gradiente del \cref{tema:4} es el remedio estándar.
+\end{observacion}
+
+\section{Saturación de las activaciones}
+
+El factor $\diag(f'(z_\ell))$ del jacobiano depende de las preactivaciones. Para las activaciones del módulo~9:
+\begin{itemize}[leftmargin=1.4em]
+  \item $\tanh'(t)=1-\tanh^{2}(t)\in(0,1]$, con máximo en $t=0$. Vale $0{,}420$ en $t=1$, $0{,}0707$ en $t=2$ y $0{,}0099$ en $t=3$.
+  \item La sigmoide $s(t)=1/(1+e^{-t})$ cumple $s'(t)=s(t)(1-s(t))\le 1/4$.
+  \item $\ReLU'(t)=1$ si $t>0$ y $0$ si $t<0$.
+\end{itemize}
+
+Una unidad con $\abs{z}$ grande está \emph{saturada}: su derivada es casi nula y anula la fila correspondiente del jacobiano. Si una unidad ReLU tiene preactivación negativa para todas las entradas, su gradiente es exactamente cero y deja de aprender. Por el \cref{teo:cotas}, basta que una sola capa tenga $\smin(J_\ell)$ pequeño para que el producto completo pueda serlo.
+
+\section{Propagación de la varianza e inicialización}
+
+La escala de los pesos se elige para que la varianza de la señal no crezca ni decrezca de una capa a la siguiente. El resultado clave es el siguiente~\cite[§5.4.2]{d2l}.
+
+\begin{teorema}[Propagación de la varianza]\label{teo:varianza}
+Sea $y=\sum_{i=1}^{n}w_ix_i$, donde las $2n$ variables $w_1,\dots,w_n,x_1,\dots,x_n$ son independientes, $\E[w_i]=0$, $\Var(w_i)=\sigma^{2}$ y $\E[x_i^{2}]=q$ para todo $i$. Entonces $\E[y]=0$ y
+\[
+\Var(y)=n\,\sigma^{2}\,q .
+\]
+Si además $\E[x_i]=0$, entonces $q=\Var(x_i)$.
+\end{teorema}
+
+\begin{proof}
+Por independencia, $\E[w_ix_i]=\E[w_i]\E[x_i]=0$, luego $\E[y]=0$. Para $i\ne j$, $\E[(w_ix_i)(w_jx_j)]=\E[w_i]\E[w_j]\E[x_ix_j]=0$: los sumandos están incorrelados y sus varianzas se suman. Cada una vale $\Var(w_ix_i)=\E[w_i^{2}x_i^{2}]=\E[w_i^{2}]\E[x_i^{2}]=\sigma^{2}q$. Sumando los $n$ términos se obtiene el enunciado.
+\end{proof}
+
+\begin{corolario}[Inicialización de Xavier]\label{cor:xavier}
+En una red lineal ($f(t)=t$) con entradas centradas, $\Var(z_\ell)=(n\sigma^{2})^{\ell}\Var(h_0)$. La varianza se conserva en todas las capas si y solo si $\sigma^{2}=1/n$. La pasada hacia atrás multiplica por las matrices traspuestas, cuyo número de entradas por fila es el de salidas, y la varianza del gradiente se conserva con $\sigma^{2}=1/n_{\text{sal}}$; Glorot y Bengio~\cite{glorot} proponen el compromiso $\sigma^{2}=2/(n_{\text{ent}}+n_{\text{sal}})$.
+\end{corolario}
+
+\begin{proof}
+Aplicando el \cref{teo:varianza} capa a capa, cada una multiplica la varianza por $n\sigma^{2}$; tras $\ell$ capas el factor es $(n\sigma^{2})^{\ell}$, que vale~1 para todo $\ell$ si y solo si $n\sigma^{2}=1$.
+\end{proof}
+
+\begin{proposicion}[Inicialización de He]\label{prop:he}
+Sea $z$ una variable aleatoria con densidad simétrica respecto de~0 y varianza $v$. Entonces $\E[\ReLU(z)^{2}]=v/2$. En consecuencia, en una red ReLU la varianza de las preactivaciones se conserva con $\sigma^{2}=2/n$~\cite{he-init}.
+\end{proposicion}
+
+\begin{proof}
+Por simetría, $\int_{0}^{\infty}t^{2}\rho(t)\,dt=\int_{-\infty}^{0}t^{2}\rho(t)\,dt$, y su suma es $\E[z^{2}]=v$. Como $\ReLU(z)^{2}$ vale $z^{2}$ si $z>0$ y~0 en otro caso, $\E[\ReLU(z)^{2}]=\int_{0}^{\infty}t^{2}\rho(t)\,dt=v/2$. Por el \cref{teo:varianza} con $q=v/2$, la preactivación siguiente tiene varianza $n\sigma^{2}v/2$, igual a $v$ si y solo si $\sigma^{2}=2/n$.
+\end{proof}
+
+\begin{ejemplo}[Inicialización por defecto de una capa lineal]\label{ej:pytorch}
+Una capa lineal de PyTorch inicializa sus pesos con distribución uniforme en $[-1/\sqrt n,\,1/\sqrt n]$. La varianza de la uniforme en $[-a,a]$ es $a^{2}/3$, luego $\sigma^{2}=1/(3n)$ y $n\sigma^{2}=1/3$. En una red lineal de 24 capas la desviación típica de la señal se multiplica por $(1/\sqrt3)^{24}=3^{-12}\approx 1{,}9\cdot 10^{-6}$, y el gradiente sufre un factor del mismo orden. En la práctica del módulo, una red de 24 capas $\tanh$ con esta inicialización da un cociente de $1{,}4\cdot 10^{-5}$ entre la norma del gradiente de la primera capa y la de la última.
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+Las redes recurrentes del módulo~12 aplican el mismo jacobiano una vez por token, y el \cref{cor:pascanu} explica su dificultad para aprender dependencias largas. El Transformer evita la recurrencia, pero apila decenas de bloques; lo que lo hace entrenable es la conexión residual del \cref{tema:2}, no una inicialización perfecta.
+\end{observacion}
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.2.4 «Cliffs and Exploding Gradients», §8.2.5 «Long-Term Dependencies», §8.4 «Parameter Initialization Strategies» y §10.7 «The Challenge of Long-Term Dependencies».
+\item Zhang \emph{et al.}~\cite{d2l}, §5.4 «Numerical Stability and Initialization» y §9.7 «Backpropagation Through Time».
+\item Bishop y Bishop~\cite{bishopdl}, §7.2.5 «Parameter initialization».
+\item Pascanu, Mikolov y Bengio~\cite{pascanu}, §2.1 «The mechanics».
+\item Notas de CS231n~\cite{cs231n}, «Neural Networks Part 2», apartado «Weight Initialization».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-congelada}
+Explique por qué, en una red de 24 capas sin conexiones residuales, la primera capa puede quedar prácticamente «congelada» aunque la última aprenda con normalidad. Use la \cref{prop:grad-prof} y el \cref{ej:pytorch}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-factores}
+Calcule el factor por el que se multiplica el gradiente tras 24 capas escalares si cada una contribuye con (a) $0{,}5$; (b) $1{,}1$. (c) ¿Cuántas capas con factor $0{,}5$ hacen falta para que el factor caiga por debajo de $2^{-24}\approx 6\cdot 10^{-8}$, el menor número positivo representable en fp16 (\cref{tema:5})?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-saturacion}
+(a) Calcule $\tanh'(t)$ para $t=0,1,2,3$. (b) En una red escalar de 5 capas $\tanh$ con pesos $w_\ell=1$, todas las preactivaciones valen~2. Calcule el factor del gradiente entre la salida y la entrada. (c) ¿Qué factor daría la sigmoide en el mejor caso posible?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-xavier}
+Una capa tiene $n=64$ entradas. (a) Calcule la desviación típica $\sigma$ de los pesos que conserva la varianza en una red lineal y la que la conserva en una red ReLU. (b) Calcule el factor $n\sigma^{2}$ de la inicialización por defecto del \cref{ej:pytorch} y la varianza de la señal tras 10 capas lineales, partiendo de varianza~1.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-singulares}
+(a) Demuestre que, para matrices cuadradas, todos los valores singulares de $AB$ están comprendidos entre $\smin(A)\smin(B)$ y $\norm{A}_2\norm{B}_2$. (b) Deduzca que si los jacobianos de una red cumplen $s_{\min}\le\smin(J_\ell)$ y $\norm{J_\ell}_2\le s_{\max}$, el cociente del \cref{teo:cotas} está entre $s_{\min}^{L}$ y $s_{\max}^{L}$, y calcule ambos extremos para $s_{\min}=0{,}9$, $s_{\max}=1{,}1$ y $L=24$. (c) ¿Qué indica el resultado sobre las condiciones que deben cumplir los jacobianos para que el gradiente esté bien condicionado?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.4, ejercicio~3 (cotas de los autovalores de un producto de matrices).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-potencias}
+Sea $M\in\R^{d\times d}$ simétrica con autovalores $\lambda_1>\abs{\lambda_2}\ge\dots\ge\abs{\lambda_d}$ y autovectores ortonormales $v_1,\dots,v_d$. (a) Demuestre que $M^{k}$ tiene autovalores $\lambda_i^{k}$ con los mismos autovectores. (b) Demuestre que, si $x$ tiene componente no nula sobre $v_1$, la dirección de $M^{k}x$ converge a la de $\pm v_1$. (c) Compruebe (b) con la matriz del \cref{ej:potencias} para $k=1$ y $k=10$. (d) Explique qué implica para los gradientes de una red recurrente.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §9.7, ejercicio~1.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Conexiones residuales}
+\label{tema:2}
+% =====================================================================
+
+Una conexión residual suma a la salida de un bloque su propia entrada. Con este cambio mínimo, el jacobiano de cada bloque pasa a ser la identidad más una corrección, y el producto de jacobianos del \cref{tema:1} contiene siempre un término que no se atenúa con la profundidad. Este tema define las redes residuales, demuestra sus propiedades de propagación hacia delante y hacia atrás, y describe el flujo residual de un Transformer. Se sigue el artículo original de He \emph{et al.}~\cite{resnet}, su continuación sobre aplicaciones identidad~\cite{resnet-id}, \cite[§8.6]{d2l} y \cite[§9.5]{bishopdl}.
+
+\section{Clases de funciones anidadas}
+
+Zhang \emph{et al.}~\cite[§8.6.1]{d2l} motivan las redes residuales con un argumento sobre clases de funciones. Sea $\mathcal{F}_L$ el conjunto de funciones que puede representar una arquitectura de $L$ bloques. Al añadir un bloque se esperaría $\mathcal{F}_L\subseteq\mathcal{F}_{L+1}$: una red más profunda debería poder imitar a la menos profunda. En una red plana esto exige que el bloque nuevo aprenda exactamente la identidad, lo que no es fácil con capas no lineales; empíricamente, las redes planas muy profundas obtienen \emph{mayor} error de entrenamiento que otras menos profundas~\cite{resnet}.
+
+\begin{definicion}[Bloque y red residual]\label{def:residual}
+Un \emph{bloque residual} es una aplicación $\R^{d}\to\R^{d}$ de la forma
+\[
+h\longmapsto h+F(h;\theta),
+\]
+donde $F$, la \emph{rama residual}, es una red diferenciable con parámetros $\theta$. Una \emph{red residual} de $L$ bloques calcula $h_\ell=h_{\ell-1}+F_\ell(h_{\ell-1})$ para $\ell=1,\dots,L$.
+\end{definicion}
+
+\begin{proposicion}[Anidamiento]\label{prop:anidamiento}
+Si cada rama $F_\ell$ termina en una capa lineal $u\mapsto Vu$, la red residual de $L+1$ bloques puede representar cualquier función que represente la de $L$ bloques.
+\end{proposicion}
+
+\begin{proof}
+Basta tomar $V=0$ en la última capa de $F_{L+1}$. Entonces $F_{L+1}\equiv 0$ y el bloque añadido es la identidad, de modo que $h_{L+1}=h_L$.
+\end{proof}
+
+La proposición explica también la idea de \emph{residuo}: el bloque no tiene que aprender la transformación deseada $H(h)$, sino la diferencia $F(h)=H(h)-h$, que es pequeña cuando $H$ se parece a la identidad.
+
+\section{Propagación en una red residual}
+
+\begin{proposicion}[Propagación hacia delante]\label{prop:adelante}
+En una red residual, para $0\le\ell<L$,
+\[
+h_L=h_\ell+\sum_{k=\ell+1}^{L}F_k(h_{k-1}).
+\]
+\end{proposicion}
+
+\begin{proof}
+Por inducción sobre $L-\ell$. Si $L=\ell+1$ es la \cref{def:residual}. Si es cierto para $L-1$, entonces $h_L=h_{L-1}+F_L(h_{L-1})=h_\ell+\sum_{k=\ell+1}^{L-1}F_k(h_{k-1})+F_L(h_{L-1})$.
+\end{proof}
+
+La salida es la entrada de cualquier bloque más la suma de las aportaciones de los bloques posteriores. Esta lectura aditiva, destacada en~\cite[§2]{resnet-id}, contrasta con la composición $f_L\circ\cdots\circ f_1$ de una red plana.
+
+\begin{teorema}[Jacobiano de una red residual]\label{teo:jac-residual}
+Sea $J_\ell=\partial F_\ell/\partial h_{\ell-1}$, evaluado en $h_{\ell-1}$. Entonces
+\[
+\frac{\partial h_L}{\partial h_0}=(I+J_L)(I+J_{L-1})\cdots(I+J_1)
+=I+\sum_{\ell=1}^{L}J_\ell+\sum_{1\le\ell<k\le L}J_kJ_\ell+\cdots+J_L\cdots J_1,
+\]
+donde el desarrollo tiene $2^{L}$ términos, uno por cada subconjunto de bloques, con los factores en orden decreciente de índice. En particular, contiene el término $I$.
+\end{teorema}
+
+\begin{proof}
+El jacobiano de $h\mapsto h+F_\ell(h)$ es $I+J_\ell$, porque la derivada de la identidad es $I$. La regla de la cadena da el producto. Al desarrollarlo, cada término se obtiene eligiendo en cada factor $(I+J_\ell)$ o bien $I$ o bien $J_\ell$; hay $2^{L}$ elecciones, y la que elige $I$ en los $L$ factores produce $I$. Como el producto de matrices no es conmutativo, en cada término se conserva el orden original de los factores.
+\end{proof}
+
+\begin{corolario}\label{cor:grad-residual}
+$\nabla_{h_0}\Loss=\nabla_{h_L}\Loss+\Bigl(\sum_{\ell}J_\ell+\sum_{\ell<k}J_kJ_\ell+\cdots\Bigr)\T\nabla_{h_L}\Loss$. El gradiente de la salida llega a la entrada sin atenuar, sumado a correcciones.
+\end{corolario}
+
+Cada término del desarrollo corresponde a un camino por la red que atraviesa un subconjunto de ramas y salta las demás. Una red plana solo dispone del camino $J_L\cdots J_1$, que es el último término.
+
+\begin{ejemplo}[Dos bloques escalares]\label{ej:dos-bloques}
+Con $J_1=-0{,}3$ y $J_2=0{,}2$, la red residual da $(1-0{,}3)(1+0{,}2)=0{,}84$, que es $1+(-0{,}3+0{,}2)+(0{,}2)(-0{,}3)=1-0{,}1-0{,}06$. La red plana con los mismos jacobianos daría solo $J_2J_1=-0{,}06$.
+\end{ejemplo}
+
+\begin{proposicion}[Cota inferior]\label{prop:cota-residual}
+Si $\norm{J_\ell}_2\le a<1$ para todo $\ell$, entonces
+\[
+\smin\Bigl(\frac{\partial h_L}{\partial h_0}\Bigr)\ge(1-a)^{L}>0 .
+\]
+En particular, ningún vector de gradiente no nulo en la salida se anula en la entrada.
+\end{proposicion}
+
+\begin{proof}
+Para $\norm{x}=1$, la desigualdad triangular inversa da $\norm{(I+J_\ell)x}\ge\norm{x}-\norm{J_\ell x}\ge 1-a$, luego $\smin(I+J_\ell)\ge 1-a$. Por el \cref{lem:producto}, el menor valor singular del producto es al menos $(1-a)^{L}$. La segunda afirmación se sigue del \cref{cor:grad-residual} y de que $\smin$ no cambia al trasponer.
+\end{proof}
+
+En una red plana, en cambio, basta un $J_\ell$ con núcleo no trivial (una capa ReLU con unidades apagadas, por ejemplo) para que algún gradiente se anule. La cota de la \cref{prop:cota-residual} no impide el desvanecimiento si $a$ es grande, pero al inicio del entrenamiento las ramas tienen jacobianos pequeños y $(1\pm a)^{L}$ queda cerca de~1: con $a=0{,}01$ y $L=24$, entre $0{,}99^{24}=0{,}786$ y $1{,}01^{24}=1{,}27$.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=7mm,minimum width=14mm,align=center},
+  suma/.style={draw,thick,circle,inner sep=1pt}]
+  \node (in) at (0,0) {$h_{\ell-1}$};
+  \node[caja] (F) at (3,1.1) {$F_\ell$};
+  \node[suma] (s) at (6,0) {$+$};
+  \node (out) at (8,0) {$h_\ell$};
+  \draw[->,thick] (in) -- node[below] {identidad} (s);
+  \draw[->,thick] (1.2,0) |- (F);
+  \draw[->,thick] (F) -| (s);
+  \draw[->,thick] (s) -- (out);
+\end{tikzpicture}
+\caption{Bloque residual. El camino inferior aporta el término $I$ del \cref{teo:jac-residual}; la rama superior aporta $J_\ell$.}
+\label{fig:bloque-residual}
+\end{figure}
+
+\section{El flujo residual de un Transformer}
+
+En un Transformer, el vector $h_\ell\in\R^{d}$ asociado a cada token recorre todos los bloques. Cada subbloque de atención o de perceptrón multicapa lee de él y le suma su aportación; por eso se le llama \emph{flujo residual}. La \cref{prop:adelante} dice que el flujo de la última capa es la suma del embedding inicial y de todas las aportaciones. En el módulo~23 se usará esta descomposición para interpretar qué escribe cada bloque.
+
+\begin{proposicion}[Crecimiento del flujo residual]\label{prop:crecimiento}
+Supóngase que, al inicio del entrenamiento, las aportaciones $F_k(h_{k-1})$ de una componente del flujo son variables aleatorias de media nula, incorreladas entre sí y con $h_0$, y con varianza $v$ cada una. Entonces $\Var\bigl((h_L)_i\bigr)=\Var\bigl((h_0)_i\bigr)+Lv$: la desviación típica del flujo crece como $\sqrt{L}$.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:adelante}, $(h_L)_i=(h_0)_i+\sum_{k=1}^{L}F_k(h_{k-1})_i$. La varianza de una suma de variables incorreladas es la suma de sus varianzas.
+\end{proof}
+
+Este crecimiento motiva dos prácticas de los modelos de lenguaje. GPT-2~\cite[§2.3]{gpt2} multiplica en la inicialización los pesos de las capas que escriben en el flujo por $1/\sqrt{N}$, con $N$ el número de capas residuales, lo que reduce cada varianza $v$ en un factor $N$. Y los Transformer pre-norm añaden una normalización final antes de la capa de salida (\cref{tema:3}).
+
+\begin{observacion}[Conexión con los LLM]
+Todos los Transformer abiertos que se estudian en el curso (GPT-2, LLaMA, Grok-1) usan conexiones residuales en torno a cada subbloque. Las ResNet se introdujeron en visión para entrenar redes de 152 capas~\cite{resnet}; en los modelos de lenguaje, la misma idea permite apilar decenas de bloques.
+\end{observacion}
+
+\begin{lecturas}
+\item He, Zhang, Ren y Sun~\cite{resnet}, §3 «Deep Residual Learning», y~\cite{resnet-id}, §2 (propagación con atajos identidad).
+\item Zhang \emph{et al.}~\cite{d2l}, §8.6.1 «Function Classes» y §8.6.2 «Residual Blocks».
+\item Bishop y Bishop~\cite{bishopdl}, §9.5 «Residual Connections».
+\item Radford \emph{et al.}~\cite{gpt2}, §2.3 «Model» (inicialización escalada de las capas residuales).
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-anidadas}
+La \cref{prop:anidamiento} garantiza que añadir bloques residuales no reduce la clase de funciones representables. ¿Por qué no basta entonces con aumentar sin límite la profundidad? Dé dos razones, una estadística y otra computacional.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §8.6, ejercicio~5.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-factor}
+En una red residual escalar de 24 bloques, calcule el factor $\prod_\ell(1+J_\ell)$ si (a) $J_\ell=0{,}01$ para todo $\ell$; (b) $J_\ell=-0{,}01$ para todo $\ell$. (c) Compárelos con la red plana de 24 capas con factor $0{,}5$ y explique por qué la red residual con $J_\ell=-0{,}5$ sería igual de mala.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-matrices}
+Sean $J_1=\begin{psmallmatrix}0{,}2&0\\0{,}1&-0{,}1\end{psmallmatrix}$ y $J_2=\begin{psmallmatrix}-0{,}1&0{,}3\\0&0{,}2\end{psmallmatrix}$. Calcule el jacobiano $(I+J_2)(I+J_1)$ de una red residual de dos bloques, compruebe que es igual a $I+J_1+J_2+J_2J_1$ y compárelo con el jacobiano $J_2J_1$ de la red plana.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-flujo}
+Un Transformer tiene $N=48$ capas residuales. Al inicio, el flujo tiene varianza~1 por componente y cada capa aporta una variable incorrelada de varianza $v=0{,}5$. (a) Calcule la varianza y la desviación típica del flujo a la salida. (b) Repita el cálculo si los pesos de salida de cada capa se multiplican por $1/\sqrt{N}$, como en GPT-2.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cota}
+(a) Demuestre que el desarrollo del \cref{teo:jac-residual} contiene el término $I$. (b) En el caso escalar con $\abs{J_\ell}\le a<1$, demuestre que $\prod_\ell(1+J_\ell)\ge(1-a)^{L}>0$. (c) Muestre con un ejemplo de dos capas que en una red plana el factor $\prod_\ell J_\ell$ puede anularse aunque solo una capa tenga jacobiano nulo.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Normalización: LayerNorm, RMSNorm y pre-norm}
+\label{tema:3}
+% =====================================================================
+
+Normalizar una capa consiste en reescalar cada vector de activaciones con estadísticos calculados sobre él mismo, de modo que su escala no derive de una capa a otra. Este tema define la normalización por lotes, la normalización por capa (LayerNorm) y su simplificación RMSNorm, demuestra sus propiedades de invariancia, calcula el jacobiano de RMSNorm y analiza dónde debe colocarse la normalización respecto de la conexión residual. Se sigue~\cite[§7.4]{bishopdl}, \cite[§8.5]{d2l} y \cite[§8.7.1]{gbc}, junto con los artículos de Ioffe y Szegedy~\cite{ioffe}, Ba, Kiros y Hinton~\cite{layernorm}, Zhang y Sennrich~\cite{rmsnorm} y Xiong \emph{et al.}~\cite{xiong}.
+
+\section{Normalización por lotes y por capa}
+
+\begin{definicion}[Normalización por lotes]\label{def:batchnorm}
+Sea un minibatch de $B$ vectores $x^{(1)},\dots,x^{(B)}\in\R^{d}$. La \emph{normalización por lotes} (BatchNorm) normaliza cada \emph{componente} $i$ con la media y la varianza de esa componente sobre el lote:
+\[
+\hat x^{(b)}_i=\frac{x^{(b)}_i-\mu_i}{\sqrt{\sigma_i^{2}+\epsilon}},\qquad
+\mu_i=\frac1B\sum_{b=1}^{B}x^{(b)}_i,\quad \sigma_i^{2}=\frac1B\sum_{b=1}^{B}\bigl(x^{(b)}_i-\mu_i\bigr)^{2},
+\]
+y después aplica una ganancia y un sesgo aprendidos por componente~\cite{ioffe}.
+\end{definicion}
+
+La salida de BatchNorm para un ejemplo depende de los demás ejemplos del lote; en inferencia se sustituyen $\mu_i$ y $\sigma_i^{2}$ por medias móviles estimadas durante el entrenamiento~\cite[§8.5.2]{d2l}. Para secuencias de longitud variable y para la generación token a token, esta dependencia es un inconveniente. La normalización por capa la elimina normalizando sobre las componentes de cada vector.
+
+\begin{definicion}[LayerNorm]\label{def:layernorm}
+Sea $x\in\R^{d}$, y sean $\gamma,\beta\in\R^{d}$ parámetros y $\epsilon\ge 0$. Con
+\[
+\mu=\frac1d\sum_{i=1}^{d}x_i,\qquad \sigma^{2}=\frac1d\sum_{i=1}^{d}(x_i-\mu)^{2},
+\]
+la \emph{normalización por capa} es
+\[
+\LN(x)_i=\gamma_i\,\frac{x_i-\mu}{\sqrt{\sigma^{2}+\epsilon}}+\beta_i,\qquad i=1,\dots,d~\cite{layernorm}.
+\]
+\end{definicion}
+
+\begin{definicion}[RMSNorm]\label{def:rmsnorm}
+Sea $x\in\R^{d}$, $g\in\R^{d}$ y $\epsilon\ge 0$. Con $\RMS(x)=\sqrt{\frac1d\sum_{i=1}^{d}x_i^{2}+\epsilon}$, se define
+\[
+\RMSNorm(x)_i=g_i\,\frac{x_i}{\RMS(x)},\qquad i=1,\dots,d~\cite{rmsnorm}.
+\]
+\end{definicion}
+
+RMSNorm suprime el centrado y el sesgo $\beta$: solo fija la escala. En un Transformer ambas se aplican por separado al vector de cada token, por lo que funcionan igual en entrenamiento y en inferencia y con lotes de cualquier tamaño.
+
+\begin{ejemplo}\label{ej:normas}
+Sea $x=(2,4,6)$ con $\gamma=g=\uno$, $\beta=0$ y $\epsilon=0$. Para LayerNorm, $\mu=4$, $\sigma^{2}=(4+0+4)/3=8/3$ y $\sigma=1{,}633$, luego $\LN(x)=(-1{,}225;\,0;\,1{,}225)$. Para RMSNorm, $\RMS(x)=\sqrt{(4+16+36)/3}=\sqrt{56/3}=4{,}320$, luego $\RMSNorm(x)=(0{,}463;\,0{,}926;\,1{,}389)$.
+\end{ejemplo}
+
+\begin{proposicion}[Estadísticos de la salida]\label{prop:estad-salida}
+Sea $\epsilon=0$, $\gamma=g=\uno$ y $\beta=0$.
+\begin{enumerate}
+  \item Si $x$ no es constante, $y=\LN(x)$ cumple $\frac1d\sum_iy_i=0$ y $\frac1d\sum_iy_i^{2}=1$.
+  \item Si $x\ne 0$, $y=\RMSNorm(x)$ cumple $\frac1d\sum_iy_i^{2}=1$, es decir, $\norm{y}=\sqrt d$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\sum_i(x_i-\mu)=\sum_ix_i-d\mu=0$, y $\frac1d\sum_i(x_i-\mu)^{2}/\sigma^{2}=\sigma^{2}/\sigma^{2}=1$. (ii) $\frac1d\sum_ix_i^{2}/\RMS(x)^{2}=\RMS(x)^{2}/\RMS(x)^{2}=1$.
+\end{proof}
+
+\section{Invariancias}
+
+\begin{proposicion}[Invariancias]\label{prop:invariancias}
+Sea $\epsilon=0$, $\alpha>0$ y $c\in\R$.
+\begin{enumerate}
+  \item $\LN(\alpha x+c\uno)=\LN(x)$ para todo $x$ no constante.
+  \item $\RMSNorm(\alpha x)=\RMSNorm(x)$ para todo $x\ne 0$, pero en general $\RMSNorm(x+c\uno)\ne\RMSNorm(x)$.
+  \item Si la entrada de la normalización es $x=Wu$ con $W\in\R^{d\times n}$, la salida no cambia al sustituir $W$ por $\alpha W$, para LayerNorm y para RMSNorm.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) La media de $\alpha x+c\uno$ es $\alpha\mu+c$ y su varianza $\alpha^{2}\sigma^{2}$; el cociente $(\alpha x_i+c-\alpha\mu-c)/(\alpha\sigma)$ es $(x_i-\mu)/\sigma$. (ii) $\RMS(\alpha x)=\alpha\RMS(x)$ y el cociente no cambia. Para el contraejemplo, con $x=(1,3)$ se tiene $\RMS(x)=\sqrt5$ y $\RMSNorm(x)=(0{,}447;\,1{,}342)$, mientras que $x+\uno=(2,4)$ tiene $\RMS=\sqrt{10}$ y $\RMSNorm(x+\uno)=(0{,}632;\,1{,}265)$. (iii) Es (i) o (ii) aplicado a $\alpha Wu=\alpha x$.
+\end{proof}
+
+La propiedad (iii) figura en la tabla de invariancias de Ba \emph{et al.}~\cite[§5.1]{layernorm}: la salida no depende de la escala de los pesos de la capa anterior. Zhang y Sennrich~\cite{rmsnorm} conservan esta invariancia de escala, que consideran la responsable del buen comportamiento de LayerNorm, y renuncian a la de traslación, con lo que se ahorra el cálculo de la media.
+
+\begin{teorema}[Jacobiano de RMSNorm]\label{teo:jac-rms}
+Sea $\epsilon=0$, $x\ne 0$ y $r=\RMS(x)$. El jacobiano de $y=\RMSNorm(x)$ es
+\[
+J=\frac{\partial y}{\partial x}=\frac1r\diag(g)\Bigl(I-\frac{xx\T}{d\,r^{2}}\Bigr)
+=\frac1r\diag(g)\Bigl(I-\frac{xx\T}{\norm{x}^{2}}\Bigr).
+\]
+En consecuencia, $Jx=0$ y, para todo $v\in\R^{d}$, $x\T(J\T v)=0$: el gradiente que atraviesa RMSNorm hacia atrás es ortogonal a $x$, y su norma es a lo sumo $\max_i\abs{g_i}\,\norm{v}/r$.
+\end{teorema}
+
+\begin{proof}
+Como $r^{2}=\frac1d\sum_kx_k^{2}$, se tiene $\partial r/\partial x_j=x_j/(d\,r)$. Derivando $y_i=g_ix_i/r$,
+\[
+\frac{\partial y_i}{\partial x_j}=g_i\Bigl(\frac{\delta_{ij}}{r}-\frac{x_i}{r^{2}}\frac{x_j}{d\,r}\Bigr)=\frac{g_i}{r}\Bigl(\delta_{ij}-\frac{x_ix_j}{d\,r^{2}}\Bigr),
+\]
+que es la expresión matricial del enunciado, con $d\,r^{2}=\norm{x}^{2}$. La matriz $P=I-xx\T/\norm{x}^{2}$ es la proyección ortogonal sobre el complemento de $x$, luego $Px=0$ y $Jx=0$. Además $J\T v=\frac1rP\diag(g)v$ y $x\T P=(Px)\T=0$. Por último, $\norm{P}_2=1$ y $\norm{\diag(g)}_2=\max_i\abs{g_i}$.
+\end{proof}
+
+La identidad $Jx=0$ es la versión infinitesimal de la invariancia de escala: al derivar $\RMSNorm((1+t)x)=\RMSNorm(x)$ en $t=0$ se obtiene $Jx=0$. La cota $\norm{v}/r$ muestra el efecto estabilizador: si una capa anterior infla sus activaciones, $r$ crece y el gradiente que se le devuelve se reduce en la misma proporción.
+
+\begin{observacion}
+Un cálculo análogo, con $\hat y=(x-\mu\uno)/\sigma$, da para LayerNorm con $\gamma=\uno$, $\beta=0$ y $\epsilon=0$
+\[
+\frac{\partial\hat y}{\partial x}=\frac1\sigma\Bigl(I-\frac{\uno\uno\T}{d}-\frac{\hat y\hat y\T}{d}\Bigr),
+\]
+que anula tanto $\uno$ como $x-\mu\uno$, de acuerdo con la invariancia (i) de la \cref{prop:invariancias}.
+\end{observacion}
+
+\section{Post-norm y pre-norm}
+
+\begin{definicion}[Posición de la normalización]\label{def:pre-post}
+Sea $\Norm$ una normalización (LayerNorm o RMSNorm) y $F$ una rama residual. Un bloque es
+\[
+\text{\emph{post-norm} si } h_\ell=\Norm\bigl(h_{\ell-1}+F(h_{\ell-1})\bigr),\qquad
+\text{\emph{pre-norm} si } h_\ell=h_{\ell-1}+F\bigl(\Norm(h_{\ell-1})\bigr).
+\]
+\end{definicion}
+
+El Transformer original~\cite{vaswani} es post-norm. GPT-2~\cite[§2.3]{gpt2} trasladó la normalización a la entrada de cada subbloque y añadió una normalización final tras el último bloque; LLaMA~\cite{llama} usa pre-norm con RMSNorm, y la mayoría de los modelos abiertos posteriores la han adoptado.
+
+\begin{proposicion}[Jacobianos de ambas posiciones]\label{prop:jac-pre-post}
+Sea $N_\ell$ el jacobiano de la normalización del bloque $\ell$ y $J_\ell$ el de la rama $F_\ell$, cada uno evaluado en su argumento. Entonces
+\[
+\text{post-norm: }\frac{\partial h_L}{\partial h_0}=\prod_{\ell=L}^{1}N_\ell\,(I+J_\ell),\qquad
+\text{pre-norm: }\frac{\partial h_L}{\partial h_0}=\prod_{\ell=L}^{1}\bigl(I+J_\ell N_\ell\bigr),
+\]
+donde los productos se escriben con los índices en orden decreciente. Solo el desarrollo de pre-norm contiene el término $I$.
+\end{proposicion}
+
+\begin{proof}
+Regla de la cadena aplicada a cada definición: en post-norm el bloque es $\Norm\circ(\mathrm{id}+F)$; en pre-norm, $\mathrm{id}+F\circ\Norm$. En post-norm, todo término del desarrollo contiene los $L$ factores $N_\ell$, que no son la identidad (por el \cref{teo:jac-rms}, cada uno anula una dirección). En pre-norm, eligiendo $I$ en cada factor se obtiene $I$, como en el \cref{teo:jac-residual}.
+\end{proof}
+
+En pre-norm, el flujo residual no pasa por ninguna normalización y conserva el camino identidad. A cambio, su norma crece con la profundidad (\cref{prop:crecimiento}), y hace falta una normalización final antes de la proyección a logits. Xiong \emph{et al.}~\cite{xiong} demuestran, con argumentos de campo medio, que en post-norm el gradiente esperado de los parámetros próximos a la salida es grande en la inicialización, lo que obliga a un calentamiento largo de la tasa de aprendizaje (módulo~7); en pre-norm los gradientes están acotados y el calentamiento puede acortarse o suprimirse.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=7mm,minimum width=13mm,align=center},
+  suma/.style={draw,thick,circle,inner sep=1pt}]
+  \node (in) at (0,0) {$h$};
+  \node[caja] (n1) at (1.9,1.1) {RMSNorm};
+  \node[caja] (a) at (3.9,1.1) {Atención};
+  \node[suma] (s1) at (5.3,0) {$+$};
+  \node[caja] (n2) at (7.0,1.1) {RMSNorm};
+  \node[caja] (m) at (8.9,1.1) {MLP};
+  \node[suma] (s2) at (10.2,0) {$+$};
+  \node (out) at (11.4,0) {$h'$};
+  \draw[->,thick] (in) -- (s1);
+  \draw[->,thick] (0.7,0) |- (n1);
+  \draw[->,thick] (n1) -- (a);
+  \draw[->,thick] (a) -| (s1);
+  \draw[->,thick] (s1) -- (s2);
+  \draw[->,thick] (5.9,0) |- (n2);
+  \draw[->,thick] (n2) -- (m);
+  \draw[->,thick] (m) -| (s2);
+  \draw[->,thick] (s2) -- (out);
+  \draw[decorate,decoration={brace,mirror,amplitude=4pt}] (0.3,-0.35) -- (10.9,-0.35) node[midway,below=5pt,font=\footnotesize] {flujo residual: no atraviesa ninguna normalización};
+\end{tikzpicture}
+\caption{Bloque decodificador pre-norm, el que se construye en el módulo~14. Cada subbloque normaliza su entrada y suma su salida al flujo residual.}
+\label{fig:prenorm}
+\end{figure}
+
+\begin{observacion}[Sobre los modelos comerciales]
+Anthropic y Google no han hecho pública la normalización que usan Claude y Gemini. El código publicado de Grok-1~\cite{grok1} incluye capas RMSNorm.
+\end{observacion}
+
+\begin{lecturas}
+\item Bishop y Bishop~\cite{bishopdl}, §7.4.2 «Batch normalization» y §7.4.3 «Layer normalization».
+\item Zhang \emph{et al.}~\cite{d2l}, §8.5 «Batch Normalization», en particular §8.5.2.3 «Layer Normalization».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.7.1 «Batch Normalization».
+\item Ba, Kiros y Hinton~\cite{layernorm}, §3 y §5.1 «Invariance under weights and data transformations».
+\item Zhang y Sennrich~\cite{rmsnorm}; Xiong \emph{et al.}~\cite{xiong}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-clasificar}
+Clasifique como pre-norm o post-norm: (a) $h+\operatorname{Attn}(\LN(h))$; (b) $\LN(h+\operatorname{MLP}(h))$. ¿Cuál conserva la identidad en el camino residual? Justifíquelo con la \cref{prop:jac-pre-post}.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:3-preactivacion}
+En una versión posterior de las ResNet, cada rama pasó de aplicar «convolución, normalización, activación» seguidas de la suma y una activación a aplicar «normalización, activación, convolución» antes de la suma, sin nada después. Explique por qué la segunda ordenación deja un camino identidad limpio entre bloques y qué relación guarda con pre-norm.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §8.6, ejercicio~4 (véase también~\cite{resnet-id}).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-calculo}
+Calcule $\LN(x)$ y $\RMSNorm(x)$ para $x=(1,2,3,6)$ con $\gamma=g=\uno$, $\beta=0$ y $\epsilon=0$, y compruebe la \cref{prop:estad-salida}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-invariancia}
+Con $x=(1,2,3,6)$: (a) calcule $\LN(2x+10\cdot\uno)$ y compruebe que coincide con $\LN(x)$; (b) calcule $\RMSNorm(x+3\cdot\uno)$ y compárelo con $\RMSNorm(x)$. ¿Qué parte de la \cref{prop:invariancias} ilustra cada apartado?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-jacobiano}
+Calcule el jacobiano de RMSNorm en $x=(3,4)$ con $g=\uno$ y $\epsilon=0$ usando el \cref{teo:jac-rms}, y compruebe que $Jx=0$ y que $J$ es simétrica.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-ortogonal}
+(a) Demuestre que $\RMSNorm(\alpha x)=\RMSNorm(x)$ para $\alpha>0$ y $\epsilon=0$, y deduzca $Jx=0$ derivando respecto de $\alpha$. (b) Sea $\Loss$ una pérdida que depende de $x$ solo a través de $y=\RMSNorm(x)$. Demuestre que $x\T\nabla_x\Loss=0$. (c) Demuestre que a lo largo del flujo del gradiente $\dot x=-\nabla_x\Loss$ la norma $\norm{x}$ es constante, y que un paso discreto $x\leftarrow x-\eta\nabla_x\Loss$ con $\eta>0$ la aumenta salvo que el gradiente sea nulo. (d) ¿Qué ocurre con $\epsilon>0$?
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Dropout y recorte del gradiente}
+\label{tema:4}
+% =====================================================================
+
+Este tema reúne dos técnicas que actúan sobre el entrenamiento sin cambiar la arquitectura. El dropout introduce ruido multiplicativo en las activaciones para regularizar; el recorte del gradiente limita la longitud de cada paso para que un gradiente anómalo no destruya lo aprendido. Se demuestran las propiedades que justifican ambas: el dropout invertido es insesgado y su varianza se calcula en forma cerrada; el recorte por norma global conserva la dirección del gradiente y acota el paso. Se sigue~\cite[§7.12]{gbc}, \cite[§5.6]{d2l}, \cite[§9.6.1]{bishopdl} y las notas de CS231n~\cite{cs231n} para el dropout, con el artículo de Srivastava \emph{et al.}~\cite{srivastava}; y \cite[§8.2.4 y §10.11]{gbc} y el artículo de Pascanu, Mikolov y Bengio~\cite{pascanu} para el recorte.
+
+\section{Dropout}
+
+\begin{definicion}[Dropout invertido]\label{def:dropout}
+Sea $h\in\R^{d}$ un vector de activaciones y $p\in[0,1)$. Durante el entrenamiento, el \emph{dropout invertido} con probabilidad $p$ sustituye $h$ por
+\[
+\tilde h_i=\frac{m_i\,h_i}{1-p},\qquad m_i\sim\Bern(1-p)\ \text{independientes},\qquad i=1,\dots,d.
+\]
+En evaluación se usa $\tilde h=h$.
+\end{definicion}
+
+Cada unidad se apaga con probabilidad $p$ y las que sobreviven se amplifican por $1/(1-p)$. La variante original~\cite{srivastava} no amplificaba durante el entrenamiento y, en cambio, multiplicaba los pesos por $1-p$ en la evaluación; la variante invertida traslada esa corrección al entrenamiento y deja intacto el código de inferencia~\cite{cs231n}.
+
+\begin{proposicion}[Esperanza y varianza]\label{prop:dropout}
+Con la notación de la \cref{def:dropout}, para $h$ fijo,
+\[
+\E[\tilde h_i]=h_i,\qquad \Var(\tilde h_i)=\frac{p}{1-p}\,h_i^{2}.
+\]
+\end{proposicion}
+
+\begin{proof}
+$\E[m_i]=1-p$ y, como $m_i^{2}=m_i$, $\E[m_i^{2}]=1-p$. Por linealidad, $\E[\tilde h_i]=h_i(1-p)/(1-p)=h_i$. Además $\E[\tilde h_i^{2}]=h_i^{2}(1-p)/(1-p)^{2}=h_i^{2}/(1-p)$, y $\Var(\tilde h_i)=h_i^{2}/(1-p)-h_i^{2}=h_i^{2}\,p/(1-p)$.
+\end{proof}
+
+\begin{corolario}[Dropout antes de una capa lineal]\label{cor:dropout-lineal}
+Sea $y=w\T\tilde h$ con $w\in\R^{d}$ fijo. Entonces $\E[y]=w\T h$ y $\Var(y)=\frac{p}{1-p}\sum_{i=1}^{d}w_i^{2}h_i^{2}$.
+\end{corolario}
+
+\begin{proof}
+La esperanza se sigue de la linealidad y de la \cref{prop:dropout}. Las $\tilde h_i$ son independientes, luego $\Var(y)=\sum_iw_i^{2}\Var(\tilde h_i)$.
+\end{proof}
+
+El corolario muestra que, para una capa lineal, evaluar sin máscara da exactamente la salida media sobre todas las máscaras. Goodfellow \emph{et al.}~\cite[§7.12]{gbc} interpretan el dropout como el entrenamiento simultáneo de los $2^{d}$ subredes que se obtienen al eliminar unidades, con parámetros compartidos; la regla de evaluación sin máscara, llamada \emph{regla de escalado de pesos}, es exacta para modelos sin no linealidades ocultas, como el anterior, y solo aproximada en redes profundas no lineales.
+
+\begin{ejemplo}\label{ej:dropout}
+Con $p=0{,}3$, las supervivientes se multiplican por $1/0{,}7=1{,}429$. Para $h=(5,5,5,5)$ y la máscara $m=(1,0,1,1)$, $\tilde h=(7{,}143;\,0;\,7{,}143;\,7{,}143)$. Cada componente tiene esperanza~5 y, por la \cref{prop:dropout}, varianza $\frac{0{,}3}{0{,}7}\cdot 25=10{,}71$.
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+El dropout reduce el sobreajuste, que es pequeño cuando cada ejemplo se ve una sola vez. En el preentrenamiento de modelos de lenguaje con billones de tokens se usa dropout bajo o nulo; en el ajuste fino con pocos datos (módulo~20) vuelve a ser útil. En evaluación hay que desactivarlo: en PyTorch, con \texttt{model.eval()}.
+\end{observacion}
+
+\section{Recorte del gradiente por norma global}
+
+\begin{definicion}[Recorte por norma global]\label{def:recorte}
+Sean $g^{(1)},\dots,g^{(K)}$ los gradientes de los $K$ tensores de parámetros de un modelo y sea $g\in\R^{n}$ su concatenación. Dado un umbral $c>0$, el \emph{recorte por norma global} sustituye cada $g^{(k)}$ por
+\[
+\hat g^{(k)}=\alpha\,g^{(k)},\qquad \alpha=\min\Bigl(1,\ \frac{c}{\norm{g}_2}\Bigr),
+\]
+con el convenio $\alpha=1$ si $g=0$.
+\end{definicion}
+
+\begin{proposicion}[Propiedades del recorte]\label{prop:recorte}
+Sea $\hat g=\alpha g$ el gradiente recortado.
+\begin{enumerate}
+  \item $\hat g$ tiene la dirección y el sentido de $g$, y $\norm{\hat g}_2=\min(\norm{g}_2,\,c)$.
+  \item Un paso de descenso $\theta\leftarrow\theta-\eta\hat g$ cumple $\norm{\Delta\theta}_2\le\eta c$.
+  \item Si $\hat g\ne 0$, $\hat g$ es una dirección de descenso: $\langle\nabla\Loss,-\hat g\rangle<0$ cuando $\hat g$ se calcula con el gradiente exacto.
+  \item Recortar cada tensor por separado con el mismo umbral conserva, en general, la dirección de cada $g^{(k)}$ pero no la de $g$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\alpha>0$, de modo que $\hat g$ es un múltiplo positivo de $g$. Si $\norm{g}\le c$, $\alpha=1$ y $\norm{\hat g}=\norm{g}$; si $\norm{g}>c$, $\norm{\hat g}=c\norm{g}/\norm{g}=c$. (ii) $\norm{\Delta\theta}=\eta\norm{\hat g}\le\eta c$ por (i). (iii) $\langle g,-\alpha g\rangle=-\alpha\norm{g}^{2}<0$. (iv) Con factores distintos $\alpha_k=\min(1,c/\norm{g^{(k)}})$, el vector concatenado $(\alpha_1g^{(1)},\dots,\alpha_Kg^{(K)})$ es proporcional a $g$ solo si todos los $\alpha_k$ con $g^{(k)}\ne 0$ coinciden. El \cref{eje:4-global} da un contraejemplo.
+\end{proof}
+
+\begin{ejemplo}\label{ej:recorte}
+Sea $g=(6,8)$ y $c=5$. Como $\norm{g}=10$, el factor es $\alpha=1/2$ y $\hat g=(3,4)$, con norma~5 y la misma dirección $(0{,}6;\,0{,}8)$. Con $c=20$, $\alpha=1$ y el gradiente no cambia.
+\end{ejemplo}
+
+El recorte lo propusieron Pascanu, Mikolov y Bengio~\cite[§3.2]{pascanu} para redes recurrentes, donde el \cref{cor:pascanu} permite gradientes que explotan; en un acantilado de la superficie de pérdida~\cite[§8.2.4]{gbc}, el gradiente apunta en una dirección razonable pero tiene una longitud desproporcionada, y el recorte conserva lo primero y corrige lo segundo. En PyTorch se aplica con \texttt{torch.nn.utils.clip\_grad\_norm\_} entre \texttt{backward()} y el paso del optimizador.
+
+\begin{observacion}[Conexión con los LLM]
+El recorte por norma global es parte de la receta de preentrenamiento de los modelos abiertos; LLaMA, por ejemplo, usa umbral $c=1$~\cite{llama}. La norma del gradiente antes de recortar, que \texttt{clip\_grad\_norm\_} devuelve, es además una magnitud de diagnóstico que conviene registrar en cada paso (\cref{tema:6}). Con Adam (módulo~7), el gradiente recortado es el que entra en los momentos $m_t$ y $v_t$.
+\end{observacion}
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §7.12 «Dropout», §8.2.4 «Cliffs and Exploding Gradients» y §10.11 «Optimization for Long-Term Dependencies».
+\item Zhang \emph{et al.}~\cite{d2l}, §5.6 «Dropout».
+\item Bishop y Bishop~\cite{bishopdl}, §9.6 «Model Averaging» y §9.6.1 «Dropout».
+\item Notas de CS231n~\cite{cs231n}, «Neural Networks Part 2», apartado «Regularization» (dropout invertido).
+\item Srivastava \emph{et al.}~\cite{srivastava}; Pascanu, Mikolov y Bengio~\cite{pascanu}, §3.2 «Scaling down the gradients».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-eval}
+Al evaluar una red, un estudiante obtiene resultados distintos en cada ejecución con la misma entrada. ¿Qué ha olvidado? ¿Por qué la media de las activaciones no delata el error?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:4-constante}
+Durante el entrenamiento se aplica $h_{\mathrm{drop}}=\gamma\,(d\odot h)$, donde cada $d_i$ vale~0 con probabilidad $p$ y~1 con probabilidad $1-p$. (a) Determine $\gamma$ para que $\E[h_{\mathrm{drop},i}]=h_i$. (b) Con $p=0{,}2$, $h=(1,3,0,2)$ y $d=(1,0,1,1)$, calcule $h_{\mathrm{drop}}$. (c) ¿Por qué se aplica dropout al entrenar y no al evaluar?
+\fuente{adaptado de Stanford CS224N~\cite{cs224n}, invierno de 2021, práctica~3, pregunta~1(b), apartados (i) y (ii).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-mascara}
+Aplique dropout invertido con $p=0{,}3$ a $h=(5,5,5,5)$ con la máscara $m=(1,0,1,1)$. Compruebe que $\E[\tilde h_i]=h_i$ y calcule la media de la salida para esta máscara concreta.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-recorte}
+El gradiente es $g=(6,8)$. Aplique el recorte por norma global con $c=5$ y con $c=20$, y compruebe la \cref{prop:recorte}(i).
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-global}
+Un modelo tiene dos tensores de parámetros con gradientes $g^{(1)}=(1,2)$ y $g^{(2)}=(2)$. (a) Recorte con norma global máxima $c=1$. (b) Recorte cada tensor por separado con $c=1$ y compruebe que el vector resultante no es proporcional a $(1,2,2)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-epsilon}
+Una implementación del recorte multiplica todos los gradientes por $M/(\norm{g}_2+\epsilon)$ cuando $\norm{g}_2\ge M$, con $\epsilon=10^{-6}$. Con $g^{(1)}=(2,-1)$, $g^{(2)}=(2)$ y $M=1$: (a) calcule la norma global, el factor y los gradientes recortados; (b) calcule la norma del resultado y explique por qué no es exactamente $M$.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, primavera de 2026, práctica~1 (\emph{basics}), versión~26.0.3, §4.5, problema \texttt{gradient\_clipping}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-varianza}
+(a) Demuestre la \cref{prop:dropout} y el \cref{cor:dropout-lineal}. (b) Para $w=(1,2,-1)$, $h=(2,1,2)$ y $p=0{,}5$, calcule $\E[y]$ y $\Var(y)$ con el corolario y compruébelo enumerando las ocho máscaras posibles. (c) Explique cómo cambia la varianza de las activaciones de una capa oculta cuando se activa el dropout y por qué crece sin límite cuando $p\to 1$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.6, ejercicio~3 (varianza de las activaciones con y sin dropout).}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Aritmética de coma flotante y precisión mixta}
+\label{tema:5}
+% =====================================================================
+
+Los modelos de lenguaje se entrenan con números de 16 e incluso de 8 bits. Un formato de coma flotante reparte sus bits entre el exponente, que fija el rango, y la mantisa, que fija la precisión relativa; esa elección determina qué valores desbordan, cuáles se anulan y qué sumandos se pierden al acumular. Este tema define los formatos con la norma IEEE~754~\cite{ieee754}, demuestra las cotas de rango y de error de redondeo, estudia la absorción de sumandos pequeños y justifica con ella los tres ingredientes de la precisión mixta de Micikevicius \emph{et al.}~\cite{micikevicius}. Se sigue además el tutorial de Goldberg~\cite{goldberg} y el libro de Higham~\cite{higham}.
+
+\section{Formatos de coma flotante}
+
+\begin{definicion}[Formato binario de coma flotante]\label{def:formato}
+Sean $e\ge 2$ y $m\ge 1$ enteros. Un \emph{formato binario} con $e$ bits de exponente y $m$ bits de mantisa representa cada número con $1+e+m$ bits: un signo $s\in\{0,1\}$, un exponente almacenado $E\in\{0,\dots,2^{e}-1\}$ y una fracción $f=(f_1\dots f_m)_2$. Con el \emph{sesgo} $b=2^{e-1}-1$:
+\begin{enumerate}
+  \item si $1\le E\le 2^{e}-2$, el número es \emph{normal} y vale $x=(-1)^{s}\,(1.f_1\dots f_m)_2\cdot 2^{E-b}$;
+  \item si $E=0$, vale $(-1)^{s}\,(0.f_1\dots f_m)_2\cdot 2^{1-b}$: el cero si $f=0$ y un número \emph{subnormal} si $f\ne 0$;
+  \item si $E=2^{e}-1$, representa $\pm\infty$ si $f=0$ y \NaN\ (\emph{not a number}) si $f\ne 0$.
+\end{enumerate}
+\end{definicion}
+
+Los formatos binary32 (fp32, $e=8$, $m=23$) y binary16 (fp16, $e=5$, $m=10$) son los de la norma~\cite{ieee754}. El formato bfloat16 (bf16, $e=8$, $m=7$) no forma parte de ella; se obtiene conservando los 16 bits más significativos de un fp32.
+
+\begin{proposicion}[Rango y precisión]\label{prop:rango}
+En el formato de la \cref{def:formato}:
+\begin{enumerate}
+  \item el mayor número finito es $x_{\max}=(2-2^{-m})\,2^{b}$;
+  \item el menor normal positivo es $x_{\min}=2^{1-b}$, y el menor subnormal positivo, $2^{1-b-m}$;
+  \item en cada intervalo $[2^{k},2^{k+1})$ con $1-b\le k\le b$, los números representables están equiespaciados con separación $2^{k-m}$;
+  \item el \emph{épsilon de máquina}, distancia de~1 al siguiente número representable, es $\varepsilon=2^{-m}$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) El mayor exponente normal es $E=2^{e}-2$, es decir, $E-b=2^{e}-2-(2^{e-1}-1)=2^{e-1}-1=b$; la mayor mantisa es $(1.1\dots1)_2=2-2^{-m}$. (ii) El menor exponente normal es $E=1$, con $E-b=1-b$ y mantisa~1. El menor subnormal tiene $f=(0\dots01)_2=2^{-m}$. (iii) Fijado el exponente $k=E-b$, los $2^{m}$ valores de $f$ dan los números $(1+j2^{-m})2^{k}$, $j=0,\dots,2^{m}-1$, separados por $2^{k-m}$. (iv) Es (iii) con $k=0$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+Formato & $e$ & $m$ & $x_{\max}$ & $x_{\min}$ (normal) & $\varepsilon=2^{-m}$ & Cifras decimales \\
+\midrule
+fp32 & 8 & 23 & $3{,}40\cdot 10^{38}$ & $1{,}18\cdot 10^{-38}$ & $1{,}19\cdot 10^{-7}$ & $\approx 7$ \\
+fp16 & 5 & 10 & $65\,504$ & $6{,}10\cdot 10^{-5}$ & $9{,}77\cdot 10^{-4}$ & $\approx 3$ \\
+bf16 & 8 & 7 & $3{,}39\cdot 10^{38}$ & $1{,}18\cdot 10^{-38}$ & $7{,}81\cdot 10^{-3}$ & $\approx 2$ \\
+fp8 E4M3 & 4 & 3 & $448$ & $1{,}56\cdot 10^{-2}$ & $0{,}125$ & $\approx 1$ \\
+fp8 E5M2 & 5 & 2 & $57\,344$ & $6{,}10\cdot 10^{-5}$ & $0{,}25$ & $<1$ \\
+\bottomrule
+\end{tabular}
+\caption{Formatos usados en el entrenamiento de redes. El formato E4M3 no sigue la \cref{def:formato}(iii); véase la \cref{obs:e4m3}.}
+\label{tab:formatos}
+\end{table}
+
+\begin{ejemplo}[fp16]\label{ej:fp16}
+Con $e=5$, $m=10$: $b=2^{4}-1=15$; $x_{\max}=(2-2^{-10})2^{15}=2^{16}-2^{5}=65\,504$; $x_{\min}=2^{-14}=6{,}10\cdot 10^{-5}$; menor subnormal $2^{-24}=5{,}96\cdot 10^{-8}$; $\varepsilon=2^{-10}=9{,}77\cdot 10^{-4}$.
+\end{ejemplo}
+
+\begin{observacion}[El formato E4M3]\label{obs:e4m3}
+Los dos formatos de 8 bits proceden de Micikevicius \emph{et al.}~\cite{fp8}. E5M2 sigue las reglas IEEE. E4M3 renuncia a los infinitos y reserva para \NaN\ un único patrón de bits (exponente y fracción con todos los bits a~1). Así, el exponente $E=15$ queda disponible para números normales y el máximo es $(1{,}110)_2\cdot 2^{15-7}=1{,}75\cdot 2^{8}=448$, en lugar del valor $1{,}875\cdot 2^{7}=240$ que darían las reglas IEEE.
+\end{observacion}
+
+El formato bf16 tiene el exponente de fp32 y, por tanto, prácticamente su mismo rango, con una precisión mucho menor. Pasar de fp32 a bf16 equivale a redondear la mantisa a 7 bits. Por su rango, bf16 es el formato habitual para entrenar modelos de lenguaje: casi nunca desborda.
+
+\section{Redondeo y unidad de redondeo}
+
+\begin{definicion}[Redondeo al más próximo]\label{def:fl}
+Para $x\in\R$ con $\abs{x}\le x_{\max}$, $\fl(x)$ es el número representable más cercano a $x$; en caso de empate, el de último bit de mantisa par. La \emph{unidad de redondeo} es $u=\varepsilon/2=2^{-m-1}$.
+\end{definicion}
+
+\begin{teorema}[Error relativo de redondeo]\label{teo:redondeo}
+Si $x_{\min}\le\abs{x}\le x_{\max}$, entonces $\fl(x)=x(1+\delta)$ con $\abs{\delta}\le u$.
+\end{teorema}
+
+\begin{proof}
+Sea $x>0$ (el caso negativo es simétrico) y sea $k$ tal que $2^{k}\le x<2^{k+1}$. Por la \cref{prop:rango}(iii), $x$ está entre dos números representables consecutivos separados por $2^{k-m}$ (si $x$ supera el mayor número del intervalo, el siguiente es $2^{k+1}$, a la misma distancia). El más cercano dista a lo sumo la mitad, $\abs{\fl(x)-x}\le 2^{k-m-1}$. Dividiendo por $x\ge 2^{k}$, $\abs{\delta}=\abs{\fl(x)-x}/x\le 2^{-m-1}=u$.
+\end{proof}
+
+La norma IEEE~754 exige que la suma, la resta, el producto, el cociente y la raíz cuadrada se redondeen correctamente: el resultado calculado es $\fl(x\circ y)$, el redondeo del resultado exacto. Junto con el \cref{teo:redondeo}, esto da el \emph{modelo estándar} del análisis de errores~\cite{higham,goldberg}: $\fl(x\circ y)=(x\circ y)(1+\delta)$ con $\abs\delta\le u$, mientras no haya desbordamiento ni subdesbordamiento.
+
+\begin{lema}[Absorción]\label{lem:absorcion}
+Sea $x>0$ representable con $2^{k}\le x<2^{k+1}$ y sea $0\le y<2^{k-m-1}$, la mitad de la separación del intervalo. Entonces $\fl(x+y)=x$.
+\end{lema}
+
+\begin{proof}
+El siguiente representable mayor que $x$ es $x+2^{k-m}$. Como $x\le x+y<x+2^{k-m-1}$, el resultado exacto está más cerca de $x$ que de $x+2^{k-m}$, y $x$ es el representable más cercano.
+\end{proof}
+
+\begin{corolario}[Estancamiento de una suma]\label{cor:estancamiento}
+Sea $a>0$ representable y sea la suma recursiva $s_0=0$, $s_{j+1}=\fl(s_j+a)$. Si para algún $j$ se cumple $2^{k}\le s_j<2^{k+1}$ con $a<2^{k-m-1}$, entonces $s_i=s_j$ para todo $i\ge j$. En particular, la suma no supera la menor potencia $2^{k}$ que cumple $2^{k}>a\,2^{m+1}$, más una separación.
+\end{corolario}
+
+\begin{proof}
+La primera afirmación es el \cref{lem:absorcion} aplicado repetidamente. Para la segunda, la suma es creciente; cuando alcanza el intervalo que empieza en esa potencia $2^{k}$ se cumple $a<2^{k-m-1}$ y queda detenida, y la suma exacta $s_j+a$ que la hizo entrar en él es menor que $2^{k}+a<2^{k}+2^{k-m}$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Operación & fp32 & fp16 & bf16 \\
+\midrule
+$300\cdot 300$ & $90\,000$ & \Inf & $90\,112$ \\
+$e^{12}$ & $162\,754{,}8$ & \Inf & $162\,816$ \\
+$1+2^{-8}$ & $1{,}0039$ & $1{,}0039$ & $1$ \\
+$1000+1$ & $1001$ & $1001$ & $1000$ \\
+$0{,}001$ sumado $10^{4}$ veces & $10{,}0004$ & $4$ & $0{,}5$ \\
+\bottomrule
+\end{tabular}
+\caption{Resultados de operaciones sencillas en tres formatos, comprobados con PyTorch.}
+\label{tab:errores}
+\end{table}
+
+\begin{ejemplo}[Estancamiento en fp16 y bf16]\label{ej:estancamiento}
+En la última fila de la \cref{tab:errores}, el sumando $0{,}001$ se almacena en fp16 como $a=0{,}0010004$. Con $m=10$, $a\,2^{11}=2{,}049$, y la menor potencia de~2 mayor es $4$: en el intervalo $[4,8)$ la semiseparación es $2^{2-11}=0{,}00195>a$ y la suma se detiene en~4. En bf16, $a=0{,}00099945$ y $a\,2^{8}=0{,}256$, de modo que la suma se detiene en $0{,}5$.
+\end{ejemplo}
+
+\begin{teorema}[Error de la suma recursiva]\label{teo:suma}
+Sea $\hat s_n$ el resultado de sumar $x_1,\dots,x_n$ en orden, $\hat s_1=x_1$, $\hat s_k=\fl(\hat s_{k-1}+x_k)$, sin desbordamiento ni subdesbordamiento, y sea $(n-1)u<1$. Entonces
+\[
+\abs{\hat s_n-\sum_{i=1}^{n}x_i}\le\gamma_{n-1}\sum_{i=1}^{n}\abs{x_i},\qquad\gamma_k=\frac{ku}{1-ku}.
+\]
+\end{teorema}
+
+\begin{proof}
+Por el modelo estándar, $\hat s_k=(\hat s_{k-1}+x_k)(1+\delta_k)$ con $\abs{\delta_k}\le u$. Desarrollando la recurrencia, $\hat s_n=\sum_{i=1}^{n}x_i\prod_{j=\max(i,2)}^{n}(1+\delta_j)$, donde cada producto tiene a lo sumo $n-1$ factores. Para un producto de $k$ factores, $\abs{\prod_j(1+\delta_j)-1}\le(1+u)^{k}-1\le e^{ku}-1\le\frac{1}{1-ku}-1=\gamma_k$, usando $e^{t}\le 1/(1-t)$ para $0\le t<1$ (la primera desigualdad se obtiene desarrollando el producto y acotando cada término por su valor absoluto). Como $\gamma_k$ crece con $k$, restando $\sum_ix_i$ y aplicando la desigualdad triangular se obtiene la cota~\cite{higham}.
+\end{proof}
+
+El teorema explica la diferencia entre formatos. En fp32, $u=2^{-24}=5{,}96\cdot 10^{-8}$ y, para $n=10^{4}$ sumandos de $0{,}001$, la cota es $\gamma_{9999}\cdot 10=0{,}006$; el error observado en la \cref{tab:errores} es $4\cdot 10^{-4}$. En fp16, $u=2^{-11}$ y $(n-1)u\approx 4{,}9>1$: la cota no garantiza nada, y la suma se estanca.
+
+\section{Precisión mixta}
+
+Micikevicius \emph{et al.}~\cite[§3]{micikevicius} entrenan en fp16 sin perder precisión con tres técnicas.
+
+\paragraph{Copia maestra de los pesos en fp32 (§3.1).} El optimizador actualiza una copia fp32 de los pesos; la copia fp16 solo se usa en las pasadas hacia delante y hacia atrás. Por el \cref{lem:absorcion}, si un peso $w\in[2^{k},2^{k+1})$ recibe una actualización $\abs{\Delta w}<2^{k-m-1}$, la suma $w+\Delta w$ redondeada devuelve $w$. Como $w<2^{k+1}$, esto ocurre seguro si $\abs{w}/\abs{\Delta w}>2^{m+2}$ y puede ocurrir desde $2^{m+1}$; en fp16 este último cociente es $2^{11}=2048$, el que señala el artículo.
+
+\paragraph{Escalado de la pérdida (§3.2).} Muchos gradientes de activaciones son menores que el menor subnormal de fp16, $2^{-24}$, y se anulan. Se multiplica la pérdida por un factor $S$, se retropropaga y se dividen los gradientes de los pesos por $S$ antes de la actualización, que se omite si aparece un \Inf\ o un \NaN. La elección $S=2^{j}$ es conveniente por la proposición siguiente.
+
+\begin{proposicion}\label{prop:escala}
+Si $x$ y $2^{j}x$ están en el rango normal, $\fl(2^{j}x)=2^{j}\fl(x)$. En particular, multiplicar o dividir un número representable por $2^{j}$ es exacto en ausencia de desbordamiento.
+\end{proposicion}
+
+\begin{proof}
+Multiplicar por $2^{j}$ suma $j$ al exponente y conserva la mantisa, de modo que biyecta los representables de $[2^{k},2^{k+1})$ con los de $[2^{k+j},2^{k+j+1})$ y multiplica todas las distancias por $2^{j}$. El más cercano a $2^{j}x$ es, por tanto, $2^{j}$ veces el más cercano a $x$.
+\end{proof}
+
+\paragraph{Acumulación en fp32 (§3.3).} Los productos escalares de las multiplicaciones de matrices acumulan las sumas parciales en fp32 y solo convierten el resultado a fp16; las reducciones grandes (sumas de la normalización y de la softmax) también se hacen en fp32. El \cref{teo:suma} justifica esta práctica.
+
+\begin{observacion}[bf16 y fp8]
+Con bf16 no hace falta escalar la pérdida, porque su rango es el de fp32, pero la copia maestra y la acumulación en fp32 siguen siendo necesarias, porque su precisión es aún menor que la de fp16. Los formatos fp8 se usan en las GPU recientes para las multiplicaciones de matrices, E4M3 en la pasada hacia delante y E5M2 para los gradientes, siempre con factores de escala por tensor~\cite{fp8}; el módulo~17 los estudia con el hardware y el módulo~19 trata la cuantización para inferencia. Anthropic, Google y xAI no han hecho pública la precisión con que entrenan Claude, Gemini y Grok.
+\end{observacion}
+
+\begin{lecturas}
+\item IEEE~754-2019~\cite{ieee754}, cláusulas sobre formatos binarios y redondeo.
+\item Goldberg~\cite{goldberg}, partes dedicadas al error de redondeo y a la norma IEEE.
+\item Higham~\cite{higham}, capítulos sobre aritmética de coma flotante y sobre sumación.
+\item Micikevicius \emph{et al.}~\cite{micikevicius}, §3 «Implementation»; y~\cite{fp8} para los formatos de 8 bits.
+\item Stanford CS336~\cite{cs336b}, práctica~2 (\emph{systems}), §2.1 sobre precisión mixta.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-riesgo}
+¿En qué formato es más arriesgado almacenar una activación de valor $70\,000$: fp16, bf16 o fp32? ¿En cuál se pierde más precisión al almacenar $1{,}003$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-deducir}
+Deduzca el máximo, el menor normal y el épsilon de fp16 ($e=5$, $m=10$) y de bf16 ($e=8$, $m=7$) a partir de la \cref{prop:rango}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-fp8}
+(a) Calcule el sesgo, el máximo, el menor normal y el épsilon de E5M2 con las reglas de la \cref{def:formato}. (b) Calcule los mismos valores para E4M3 si se siguieran esas reglas, y explique por qué su máximo real es~448. (c) ¿Cuál de los dos formatos es más adecuado para gradientes y cuál para activaciones?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-mil}
+En bf16 los números de $[512,1024)$ están separados por $2^{9}\cdot 2^{-7}=4$. (a) Calcule $1000+1$ y $1000+4$ en bf16. (b) Calcule $1000+1$ en fp16, con separación $2^{9}\cdot 2^{-10}=0{,}5$. (c) ¿A partir de qué tamaño se pierde un sumando al añadirlo a 1000 en bf16?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-rmsnorm}
+Se recomienda convertir la entrada de RMSNorm a fp32 antes de elevarla al cuadrado. Compruébelo con $x=(300,400)$ en fp16, $g=\uno$ y $\epsilon=10^{-5}$: (a) calcule $\RMSNorm(x)$ con todas las operaciones en fp16; (b) calcúlelo en fp32 y convierta el resultado a fp16.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, primavera de 2026, práctica~1 (\emph{basics}), versión~26.0.3, §3.4.1, problema \texttt{rmsnorm}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-absorcion}
+(a) Demuestre el \cref{teo:redondeo}. (b) Demuestre el \cref{lem:absorcion}. (c) Deduzca que, en fp16, una actualización $\Delta w$ de un peso $w>0$ se pierde con seguridad si $w/\abs{\Delta w}>4096$, y dé un ejemplo con $w=1$ en el que se pierda con $w/\abs{\Delta w}$ ligeramente superior a $2048$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-acumular}
+Se suma $0{,}01$ mil veces partiendo de $s=0$ en cuatro variantes: (i) todo en fp32; (ii) todo en fp16; (iii) acumulador fp32 y sumando fp16; (iv) como (iii), convirtiendo antes el sumando a fp32. (a) Explique por qué $0{,}01$ vale en fp16 exactamente $1311\cdot 2^{-17}=0{,}0100021\ldots$ (b) Calcule cuánto aumenta $s$ en cada suma en fp16 cuando $s\in[4,8)$ y cuando $s\in[8,16)$. (c) Explique los resultados medidos: (i) $10{,}0001$; (ii) $9{,}953$; (iii) y (iv) $10{,}0021$.
+\fuente{adaptado de Stanford CS336~\cite{cs336b}, primavera de 2026, práctica~2 (\emph{systems}), versión~26.1.3, §2.1.5, problema \texttt{mixed\_precision\_accumulation}.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Estabilidad numérica de softmax y entropía cruzada}
+\label{tema:6}
+% =====================================================================
+
+La capa de salida de un modelo de lenguaje calcula una softmax sobre decenas de miles de logits, y la pérdida de entrenamiento es su entropía cruzada (módulo~1). Ambas contienen exponenciales, que en coma flotante desbordan o se anulan con argumentos moderados. Este tema determina esos límites, introduce la función log-sum-exp y su evaluación estable, deduce de ella la forma correcta de calcular la entropía cruzada a partir de los logits y termina con la propagación de \NaN\ y un procedimiento para diagnosticar una pérdida que deja de ser finita. Se sigue~\cite[§4.1]{gbc}, \cite[§4.5.2]{d2l} y las prácticas de CS336~\cite{cs336}.
+
+\section{Límites de la exponencial}
+
+\begin{proposicion}\label{prop:exp-rango}
+En un formato con mayor número finito $x_{\max}$ y menor normal $x_{\min}$, el valor exacto $e^{t}$ es finito y normal si y solo si $\ln x_{\min}\le t\le\ln x_{\max}$. Los intervalos son, aproximadamente,
+\[
+\text{fp32 y bf16: }[-87{,}3;\ 88{,}7],\qquad \text{fp16: }[-9{,}70;\ 11{,}09].
+\]
+\end{proposicion}
+
+\begin{proof}
+La exponencial es estrictamente creciente, de modo que $x_{\min}\le e^{t}\le x_{\max}$ equivale a tomar logaritmos en ambas desigualdades. Con la \cref{tab:formatos}: $\ln(3{,}40\cdot 10^{38})=88{,}72$, $\ln 2^{-126}=-87{,}34$, $\ln 65\,504=11{,}09$ y $\ln 2^{-14}=-9{,}70$; el máximo de bf16 da $\ln(3{,}39\cdot 10^{38})=88{,}72$ con tres decimales.
+\end{proof}
+
+Por debajo del límite inferior, el resultado es subnormal, con menos bits de precisión, y algo más abajo se anula. Goodfellow \emph{et al.}~\cite[§4.1]{gbc} describen las dos formas en que falla la softmax ingenua $e^{z_i}/\sum_je^{z_j}$: si algún logit es grande, el numerador y el denominador desbordan y el cociente $\infty/\infty$ es \NaN; si todos son muy negativos, ambos se anulan y $0/0$ es \NaN.
+
+\section{La función log-sum-exp}
+
+\begin{definicion}[Log-sum-exp]\label{def:lse}
+Para $z\in\R^{n}$, $\LSE(z)=\ln\sum_{i=1}^{n}e^{z_i}$. La softmax del módulo~1 se escribe $\softmax(z)_i=e^{z_i-\LSE(z)}$.
+\end{definicion}
+
+\begin{proposicion}[Propiedades de log-sum-exp]\label{prop:lse}
+Sea $z\in\R^{n}$ y $c\in\R$.
+\begin{enumerate}
+  \item $\LSE(z+c\uno)=\LSE(z)+c$ y $\softmax(z+c\uno)=\softmax(z)$.
+  \item $\max_iz_i\le\LSE(z)\le\max_iz_i+\ln n$; la cota superior se alcanza si y solo si todas las componentes son iguales.
+  \item $\nabla\LSE(z)=\softmax(z)$.
+  \item $\nabla^{2}\LSE(z)=\diag(p)-pp\T$ con $p=\softmax(z)$, que es semidefinida positiva; en consecuencia, $\LSE$ es convexa.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\sum_ie^{z_i+c}=e^{c}\sum_ie^{z_i}$; se toma el logaritmo. Para la softmax, $e^{z_i+c-\LSE(z)-c}=e^{z_i-\LSE(z)}$. (iii) $\partial\LSE/\partial z_k=e^{z_k}/\sum_ie^{z_i}=\softmax(z)_k$. Los apartados (ii) y (iv) son los \cref{eje:6-cotas,eje:6-convexa}.
+\end{proof}
+
+\begin{proposicion}[Evaluación estable]\label{prop:lse-estable}
+Sea $c=\max_iz_i$. Entonces
+\[
+\LSE(z)=c+\ln S,\qquad \softmax(z)_i=\frac{e^{z_i-c}}{S},\qquad S=\sum_{i=1}^{n}e^{z_i-c}\in[1,n].
+\]
+En esta forma ninguna exponencial desborda, porque todos sus argumentos son $\le 0$, y el denominador nunca se anula, porque contiene el término $e^{0}=1$.
+\end{proposicion}
+
+\begin{proof}
+Las fórmulas son la \cref{prop:lse}(i) con la constante $-c$. Cada $z_i-c\le 0$ da $e^{z_i-c}\in(0,1]$, y el término con $z_i=c$ vale exactamente~1; por tanto $1\le S\le n$, y $\ln S\in[0,\ln n]$ se calcula sin problemas.
+\end{proof}
+
+\begin{ejemplo}\label{ej:lse}
+Para $z=(1000,999,998)$, la evaluación ingenua da $e^{1000}=\infty$ en fp32 y la softmax es \NaN. Con $c=1000$, $S=1+e^{-1}+e^{-2}=1{,}503$, $\LSE(z)=1000+\ln 1{,}503=1000{,}408$ y $\softmax(z)=(0{,}665;\,0{,}245;\,0{,}090)$, la misma que para $z=(2,1,0)$ en el módulo~1, de acuerdo con la \cref{prop:lse}(i). En fp16 basta $z=(12,10,0)$ para desbordar, porque $e^{12}=162\,755>65\,504$.
+\end{ejemplo}
+
+\section{Entropía cruzada a partir de los logits}
+
+\begin{proposicion}[Log-softmax y entropía cruzada]\label{prop:ce}
+Sea $z\in\R^{n}$ el vector de logits y $y\in\{1,\dots,n\}$ la clase correcta. Entonces
+\[
+\ln\softmax(z)_i=z_i-\LSE(z),\qquad \ell(z,y)=-\ln\softmax(z)_y=\LSE(z)-z_y\ge 0,
+\]
+\[
+\nabla_z\ell=\softmax(z)-e_y,
+\]
+donde $e_y$ es el vector canónico.
+\end{proposicion}
+
+\begin{proof}
+La primera igualdad es el logaritmo de la \cref{def:lse}; la segunda, su caso $i=y$, y no es negativa por la \cref{prop:lse}(ii), ya que $\LSE(z)\ge\max_iz_i\ge z_y$. El gradiente se sigue de la \cref{prop:lse}(iii) y de $\nabla_zz_y=e_y$.
+\end{proof}
+
+La fórmula $\ell=\LSE(z)-z_y$, calculada con la \cref{prop:lse-estable}, no evalúa nunca el logaritmo de un número que pueda haberse anulado. Por eso las funciones de pérdida de las bibliotecas, como \texttt{F.cross\_entropy} de PyTorch, reciben logits y no probabilidades~\cite[§4.5.2]{d2l}, y la composición \texttt{torch.log(torch.softmax(z))} debe evitarse.
+
+\begin{ejemplo}\label{ej:log-cero}
+En fp16, con $z=(0,-20)$, la softmax ingenua da $e^{-20}/(1+e^{-20})$ con $e^{-20}=2{,}1\cdot 10^{-9}$, menor que el menor subnormal $2^{-24}=6\cdot 10^{-8}$: se redondea a~0, y $\ln 0=-\infty$. La fórmula de la \cref{prop:ce} da $\ln\softmax(z)_2=-20-\ln(1+e^{-20})=-20{,}000$, el valor correcto.
+\end{ejemplo}
+
+\section{Propagación de \texorpdfstring{\NaN}{NaN} y diagnóstico}
+
+La norma IEEE~754~\cite{ieee754} define como \NaN\ los resultados de las operaciones inválidas ${\infty-\infty}$, ${0\cdot\infty}$, ${0/0}$, ${\infty/\infty}$ y $\sqrt{x}$ con $x<0$, y establece que toda operación aritmética con un operando \NaN\ da \NaN; además, toda comparación con \NaN\ es falsa. En particular, $\NaN\cdot 0=\NaN$: multiplicar por cero no limpia el valor.
+
+\begin{observacion}[Contagio]\label{obs:contagio}
+Si la pérdida de un paso es \NaN, la retropropagación multiplica ese valor por todos los jacobianos locales, de modo que el gradiente de todo parámetro del que depende la pérdida es \NaN, y la actualización convierte esos parámetros en \NaN. A partir de ese paso la red ya no produce números. Por eso el diagnóstico debe hacerse en el primer paso en que aparece un valor no finito.
+\end{observacion}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Síntoma & Causa probable & Remedio \\
+\midrule
+La pérdida crece varios órdenes de magnitud y luego da \NaN & tasa de aprendizaje alta; gradientes que explotan (\cref{tema:1}) & bajar la tasa, calentamiento, recorte del gradiente (\cref{tema:4}) \\
+\Inf\ repentino en fp16 & desbordamiento por encima de $65\,504$ & bf16, o escalado dinámico de la pérdida (\cref{tema:5}) \\
+\NaN\ en una softmax o un logaritmo & exponencial desbordada, $\ln 0$ & \cref{prop:lse-estable}; entropía cruzada con logits \\
+\NaN\ en una normalización & división por $\RMS(x)=0$ & $\epsilon>0$ dentro de la raíz (\cref{tema:3}) \\
+Picos aislados de la pérdida & lote anómalo & recorte, descartar el lote, volver a un punto de control \\
+\bottomrule
+\end{tabularx}
+\caption{Diagnóstico de una pérdida no finita.}
+\label{tab:diagnostico}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  pre/.style={draw,thick,diamond,aspect=2.2,inner sep=1pt,align=center},
+  acc/.style={draw,thick,rounded corners=2pt,align=center,text width=3.4cm,minimum height=8mm}]
+  \node[acc] (a) at (0,0) {¿pérdida \NaN\ o \Inf?};
+  \node[pre] (b) at (0,-1.7) {¿crecía\\antes?};
+  \node[acc] (c) at (-3.6,-3.6) {gradientes que explotan: bajar la tasa, recortar, calentar};
+  \node[pre] (d) at (2.6,-3.4) {¿fp16?};
+  \node[acc] (e) at (0.4,-5.6) {desbordamiento: bf16 o escalado de la pérdida};
+  \node[acc] (f) at (4.8,-5.6) {buscar $\ln$, división o exponencial sin proteger};
+  \draw[->,thick] (a) -- (b);
+  \draw[->,thick] (b.west) -| node[above,pos=0.3] {sí} (c.north);
+  \draw[->,thick] (b.east) -| node[above,pos=0.3,xshift=5mm] {no, salto brusco} (d.north);
+  \draw[->,thick] (d.west) -| node[above,pos=0.3] {sí} (e.north);
+  \draw[->,thick] (d.east) -| node[above,pos=0.3] {no} (f.north);
+\end{tikzpicture}
+\caption{Árbol de decisión para una pérdida no finita. En todos los casos conviene registrar la norma del gradiente por capa y los histogramas de activaciones.}
+\label{fig:diagnostico}
+\end{figure}
+
+\begin{observacion}[Lo que se observa en la práctica]
+En la práctica del módulo se provoca el fallo a propósito: una red residual sin normalizar entrenada con tasa de aprendizaje~10 pasa de una pérdida de $2{,}6$ a $10^{30}$ y llega a \NaN\ en el paso~24. Con recorte del gradiente a norma~1, la pérdida se mantiene finita durante los 60 pasos.
+\end{observacion}
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §4.1 «Overflow and Underflow».
+\item Zhang \emph{et al.}~\cite{d2l}, §4.5.2 «Softmax Revisited».
+\item Stanford CS336~\cite{cs336}, práctica~1 (\emph{basics}), problema \texttt{softmax} (§3.4.4) y entropía cruzada estable.
+\item IEEE~754-2019~\cite{ieee754}, tratamiento de las excepciones y de los valores \NaN.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-diagnostico}
+Indique la causa más probable y un remedio para cada caso: (a) en fp16 la pérdida es normal y en un paso concreto se vuelve \Inf, sin crecimiento previo; (b) la pérdida pasa de $2{,}3$ a $10^{6}$ en pocos pasos y luego a \NaN; (c) la pérdida es \NaN\ desde el primer paso en una red que usa \texttt{torch.log(torch.softmax(z))}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-lse}
+Calcule $\LSE(1000,999,998)$ y la softmax correspondiente con tres decimales, y compruebe las cotas de la \cref{prop:lse}(ii).
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-softmax}
+Sean las puntuaciones $v=(100,101,103)$ en fp32. (a) ¿Qué devuelve la softmax ingenua y por qué? (b) Demuestre que $\softmax(v-c\uno)=\softmax(v)$ para toda constante $c$. (c) Calcule la softmax con $c=\max_iv_i$.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, primavera de 2026, práctica~1 (\emph{basics}), versión~26.0.3, §3.4.4, problema \texttt{softmax}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-rango}
+Calcule el menor y el mayor argumento $t$ para los que $e^{t}$ no se desborda ni da un resultado subnormal en fp32, fp16 y bf16. ¿Qué formato limita más los logits de una softmax ingenua?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §4.5, ejercicio~1 (se omiten los formatos FP64, TF32 e INT8).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-ce}
+(a) Para los logits $z=(2,1,0)$ y la clase correcta $y=3$, calcule la entropía cruzada $\ell(z,y)$ y su gradiente con la \cref{prop:ce}. (b) En fp16, con $z=(0,-20)$, calcule $\ln\softmax(z)_2$ de forma ingenua y de forma estable.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-cotas}
+Demuestre la \cref{prop:lse}(ii): $\max_iz_i\le\LSE(z)\le\max_iz_i+\ln n$, con igualdad en la cota superior si y solo si todas las componentes de $z$ son iguales. Compruébelo con $z=(3,3)$ y con $z=(2,1,0)$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-convexa}
+(a) Demuestre que $\nabla^{2}\LSE(z)=\diag(p)-pp\T$ con $p=\softmax(z)$. (b) Demuestre que, para todo $v\in\R^{n}$, $v\T(\diag(p)-pp\T)v=\sum_ip_i(v_i-\bar v)^{2}\ge 0$, con $\bar v=\sum_ip_iv_i$, y concluya que $\LSE$ y la entropía cruzada $\ell(\cdot,y)$ son convexas en los logits. (c) Compruebe que $\uno$ está en el núcleo del hessiano y relaciónelo con la \cref{prop:lse}(i).
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; las potencias de~2 de los formatos numéricos son exactas. Los valores en coma flotante se han comprobado con PyTorch.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-congelada}
+\datos red plana de 24 capas; factor por capa $1/\sqrt3$ con la inicialización por defecto (\cref{ej:pytorch}).
+\planteamiento por la \cref{prop:grad-prof}, el gradiente de los pesos de la capa $\ell$ contiene el producto de los $L-\ell$ jacobianos que tiene encima.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El gradiente de la capa~1 atraviesa los jacobianos $J_2,\dots,J_{24}$: 23 factores.
+  \item Si cada uno escala por $1/\sqrt3=0{,}5774$, el producto es $0{,}5774^{23}=3{,}3\cdot 10^{-6}$.
+  \item El gradiente de la capa~24 no atraviesa ningún jacobiano: factor~1.
+  \item Con la misma tasa de aprendizaje, el paso de la capa~1 es unas $3\cdot 10^{5}$ veces menor que el de la última: sus pesos apenas cambian.
+\end{enumerate}
+\resultado \textbf{la capa~1 recibe un gradiente del orden de $3\cdot 10^{-6}$ veces el de la última y queda prácticamente congelada}, aunque la última aprenda con normalidad.
+\comprobacion la práctica del módulo mide un cociente de $1{,}4\cdot 10^{-5}$ entre las capas~1 y~24, del mismo orden de magnitud.
+\end{solucion}
+
+\begin{solucion}{eje:1-factores}
+\datos 24 capas; factores $0{,}5$ y $1{,}1$; umbral $2^{-24}$.
+\planteamiento el factor total es el producto de los factores por capa (\cref{ej:escalar}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $0{,}5^{24}=1/2^{24}=1/16\,777\,216=5{,}960\cdot 10^{-8}$.
+  \item (b) $1{,}1^{2}=1{,}21$; $1{,}1^{4}=1{,}4641$; $1{,}1^{8}=2{,}1436$; $1{,}1^{16}=4{,}5950$; $1{,}1^{24}=1{,}1^{16}\cdot 1{,}1^{8}=4{,}5950\cdot 2{,}1436=9{,}850$.
+  \item (c) $0{,}5^{L}<2^{-24}\iff 2^{-L}<2^{-24}\iff L>24$. Con $L=24$ el factor es exactamente $2^{-24}$; hace falta $L=25$.
+\end{enumerate}
+\resultado \textbf{(a) $5{,}96\cdot 10^{-8}$; (b) $9{,}85$; (c) 25 capas.}
+\comprobacion por logaritmos, $1{,}1^{24}=e^{24\ln 1{,}1}=e^{24\cdot 0{,}09531}=e^{2{,}287}=9{,}85$.
+\end{solucion}
+
+\begin{solucion}{eje:1-saturacion}
+\datos $\tanh'(t)=1-\tanh^{2}(t)$; 5 capas, $w_\ell=1$, preactivaciones~2; $s'(t)\le 1/4$.
+\planteamiento el jacobiano escalar de cada capa es $f'(z_\ell)\,w_\ell$ (\cref{def:red}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\tanh 0=0\Rightarrow\tanh'(0)=1$; $\tanh 1=0{,}7616$, $\tanh^{2}1=0{,}5800\Rightarrow\tanh'(1)=0{,}4200$.
+  \item $\tanh 2=0{,}9640$, $\tanh^{2}2=0{,}9293\Rightarrow\tanh'(2)=0{,}07065$; $\tanh 3=0{,}9951$, $\tanh^{2}3=0{,}9901\Rightarrow\tanh'(3)=0{,}009866$.
+  \item (b) Cada capa aporta $0{,}07065\cdot 1$; el producto es $0{,}07065^{5}=1{,}760\cdot 10^{-6}$.
+  \item (c) La sigmoide alcanza su derivada máxima $1/4$ en $t=0$; en el mejor caso, $(1/4)^{5}=1/1024=9{,}766\cdot 10^{-4}$.
+\end{enumerate}
+\resultado \textbf{(a) $1$; $0{,}420$; $0{,}0707$; $0{,}0099$. (b) $1{,}76\cdot 10^{-6}$. (c) $9{,}77\cdot 10^{-4}$.}
+\comprobacion el resultado (c) coincide con $\gamma^{L}$ del \cref{teo:cotas} con $\gamma=1/4$, $\norm{W}=1$ y $L=5$: incluso en el mejor caso, la sigmoide reduce el gradiente.
+\end{solucion}
+
+\begin{solucion}{eje:1-xavier}
+\datos $n=64$; varianza inicial~1; $\sigma^{2}=1/(3n)$ por defecto.
+\planteamiento \cref{cor:xavier} ($\sigma^{2}=1/n$), \cref{prop:he} ($\sigma^{2}=2/n$) y factor $n\sigma^{2}$ por capa.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Red lineal: $\sigma^{2}=1/64=0{,}015625$, $\sigma=1/8=0{,}125$.
+  \item Red ReLU: $\sigma^{2}=2/64=0{,}03125$, $\sigma=\sqrt{0{,}03125}=0{,}1768$.
+  \item (b) $n\sigma^{2}=64\cdot 1/(3\cdot 64)=1/3$.
+  \item Tras 10 capas: $(1/3)^{10}=1/59\,049=1{,}694\cdot 10^{-5}$.
+\end{enumerate}
+\resultado \textbf{(a) $\sigma=0{,}125$ (Xavier) y $\sigma\approx 0{,}177$ (He); (b) factor $1/3$ y varianza $1{,}69\cdot 10^{-5}$ tras 10 capas.}
+\comprobacion He multiplica la varianza de Xavier por~2 y, por tanto, la desviación típica por $\sqrt2$: $0{,}125\cdot 1{,}414=0{,}1768$.
+\end{solucion}
+
+\begin{solucion}{eje:1-singulares}
+\datos $A,B\in\R^{d\times d}$; $s_{\min}=0{,}9$, $s_{\max}=1{,}1$, $L=24$.
+\planteamiento los valores singulares de una matriz $C$ son los valores $\norm{Cv}$ para sus vectores singulares derechos $v$ unitarios, de modo que todos están entre $\smin(C)$ y $\norm{C}_2$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Sea $\sigma$ un valor singular de $AB$ con vector singular derecho $v$, $\norm{v}=1$. Entonces $\sigma=\norm{ABv}$.
+  \item $\norm{ABv}\le\norm{A}_2\norm{Bv}\le\norm{A}_2\norm{B}_2$, y $\norm{ABv}\ge\smin(A)\norm{Bv}\ge\smin(A)\smin(B)$ (\cref{lem:producto}).
+  \item (b) Por inducción sobre el número de factores, $\smin(J_1\T\cdots J_L\T)\ge\prod_\ell\smin(J_\ell)\ge s_{\min}^{L}$ y $\norm{J_1\T\cdots J_L\T}_2\le s_{\max}^{L}$; el cociente del \cref{teo:cotas} queda entre ambos.
+  \item $0{,}9^{24}=0{,}07977$ y $1{,}1^{24}=9{,}850$.
+  \item (c) El intervalo $[0{,}080;\,9{,}85]$ es amplio aunque cada jacobiano esté a un 10\,\% de una isometría: el número de condición del producto puede llegar a $(1{,}1/0{,}9)^{24}=123{,}5$. Para un gradiente bien condicionado, todos los valores singulares de cada jacobiano deben estar muy próximos a~1.
+\end{enumerate}
+\resultado \textbf{los valores singulares de $AB$ están en $[\smin(A)\smin(B),\,\norm{A}_2\norm{B}_2]$; con 24 capas, el cociente está en $[0{,}080;\,9{,}85]$.}
+\comprobacion con $A=\diag(2,1)$ y $B=\diag(1,3)$, $AB=\diag(2,3)$ tiene valores singulares $2$ y $3$, dentro de $[1\cdot 1,\,2\cdot 3]=[1,6]$.
+\end{solucion}
+
+\begin{solucion}{eje:1-potencias}
+\datos $M=\sum_i\lambda_iv_iv_i\T$ con $v_i\T v_j=\delta_{ij}$; $M=\begin{psmallmatrix}0{,}85&0{,}35\\0{,}35&0{,}85\end{psmallmatrix}$, $x=(1,0)$.
+\planteamiento descomposición espectral (módulo~3) y desarrollo de $x$ en la base de autovectores.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Por inducción: si $M^{k}=\sum_i\lambda_i^{k}v_iv_i\T$, entonces $M^{k+1}=\sum_{i,j}\lambda_i^{k}\lambda_jv_i(v_i\T v_j)v_j\T=\sum_i\lambda_i^{k+1}v_iv_i\T$. Así $M^{k}v_i=\lambda_i^{k}v_i$.
+  \item (b) Sea $x=\sum_ic_iv_i$ con $c_1\ne 0$. Entonces $M^{k}x=\lambda_1^{k}\bigl(c_1v_1+\sum_{i\ge 2}c_i(\lambda_i/\lambda_1)^{k}v_i\bigr)$.
+  \item Como $\abs{\lambda_i/\lambda_1}<1$ para $i\ge 2$, los términos de la suma tienden a~0, y $M^{k}x/\norm{M^{k}x}\to\operatorname{signo}(c_1\lambda_1^{k})\,v_1$.
+  \item (c) $x=(1,0)$ tiene $c_1=c_2=1/\sqrt2$ respecto de $v_1=(1,1)/\sqrt2$ y $v_2=(1,-1)/\sqrt2$. Para $k=1$, $Mx=(0{,}85;\,0{,}35)$, de dirección $(0{,}9247;\,0{,}3807)$.
+  \item Para $k=10$, $M^{10}x=(3{,}0964;\,3{,}0954)$ (\cref{ej:potencias}), de norma $4{,}3782$ y dirección $(0{,}70722;\,0{,}70700)$, frente a $v_1=(0{,}70711;\,0{,}70711)$.
+  \item (d) En una red recurrente lineal el gradiente contiene potencias $(W\T)^{k}$. Su componente sobre el autovector dominante escala como $\lambda_1^{k}$, que explota si $\abs{\lambda_1}>1$ y se desvanece si $\abs{\lambda_1}<1$; además, la dirección del gradiente queda dominada por $v_1$, con independencia de la señal de error.
+\end{enumerate}
+\resultado \textbf{$M^{k}$ tiene autovalores $\lambda_i^{k}$ y $M^{k}x$ se alinea con $v_1$; con $k=10$ la dirección coincide con $v_1$ en tres decimales.}
+\comprobacion $1{,}2^{10}=6{,}1917$ y $\tfrac12(6{,}1917+0{,}00098)=3{,}0964$, $\tfrac12(6{,}1917-0{,}00098)=3{,}0954$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-anidadas}
+\planteamiento separar lo que se puede representar de lo que se puede aprender con datos y recursos finitos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Razón estadística: una clase mayor contiene funciones que se ajustan a los datos de entrenamiento sin generalizar; con datos finitos, aumentar la capacidad puede aumentar el error de prueba (módulo~8).
+  \item Razón computacional: el coste de cálculo y de memoria de cada paso crece linealmente con la profundidad, y la pasada hacia delante es secuencial a lo largo de las capas, lo que aumenta la latencia.
+  \item Además, que la clase contenga una buena función no garantiza que el optimizador la encuentre; el flujo residual crece con la profundidad (\cref{prop:crecimiento}).
+\end{enumerate}
+\resultado \textbf{la inclusión de clases garantiza que la profundidad no empeora la capacidad de representación, pero no la generalización ni el coste.}
+\end{solucion}
+
+\begin{solucion}{eje:2-factor}
+\datos 24 bloques; $J_\ell=\pm 0{,}01$; red plana con factor $0{,}5$.
+\planteamiento en el caso escalar, el factor residual es $\prod_\ell(1+J_\ell)$ (\cref{teo:jac-residual}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $1{,}01^{2}=1{,}0201$; $1{,}01^{4}=1{,}0406$; $1{,}01^{8}=1{,}0829$; $1{,}01^{16}=1{,}1726$; $1{,}01^{24}=1{,}1726\cdot 1{,}0829=1{,}270$.
+  \item (b) $0{,}99^{24}$: $0{,}99^{2}=0{,}9801$; $0{,}99^{4}=0{,}9606$; $0{,}99^{8}=0{,}9227$; $0{,}99^{16}=0{,}8515$; $0{,}99^{24}=0{,}8515\cdot 0{,}9227=0{,}7857$.
+  \item (c) Red plana: $0{,}5^{24}=5{,}96\cdot 10^{-8}$. Red residual con $J_\ell=-0{,}5$: $(1-0{,}5)^{24}=5{,}96\cdot 10^{-8}$, idéntico.
+\end{enumerate}
+\resultado \textbf{(a) $1{,}27$; (b) $0{,}786$; (c) la red residual solo ayuda si las ramas son pequeñas; si todas se oponen a la identidad con $J_\ell=-0{,}5$, el factor es el mismo que en la red plana.}
+\comprobacion $e^{\pm 0{,}24}=1{,}271$ y $0{,}787$, de acuerdo con $(1\pm x)^{n}\approx e^{\pm nx}$.
+\end{solucion}
+
+\begin{solucion}{eje:2-matrices}
+\datos $J_1=\begin{psmallmatrix}0{,}2&0\\0{,}1&-0{,}1\end{psmallmatrix}$, $J_2=\begin{psmallmatrix}-0{,}1&0{,}3\\0&0{,}2\end{psmallmatrix}$.
+\planteamiento \cref{teo:jac-residual} con $L=2$: $(I+J_2)(I+J_1)=I+J_1+J_2+J_2J_1$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $I+J_2=\begin{psmallmatrix}0{,}9&0{,}3\\0&1{,}2\end{psmallmatrix}$ e $I+J_1=\begin{psmallmatrix}1{,}2&0\\0{,}1&0{,}9\end{psmallmatrix}$.
+  \item Producto: fila~1, $(0{,}9\cdot 1{,}2+0{,}3\cdot 0{,}1;\ 0{,}3\cdot 0{,}9)=(1{,}11;\,0{,}27)$; fila~2, $(1{,}2\cdot 0{,}1;\ 1{,}2\cdot 0{,}9)=(0{,}12;\,1{,}08)$.
+  \item $J_2J_1$: fila~1, $(-0{,}1\cdot 0{,}2+0{,}3\cdot 0{,}1;\ 0{,}3\cdot(-0{,}1))=(0{,}01;\,-0{,}03)$; fila~2, $(0{,}2\cdot 0{,}1;\ 0{,}2\cdot(-0{,}1))=(0{,}02;\,-0{,}02)$.
+  \item $I+J_1+J_2=\begin{psmallmatrix}1{,}1&0{,}3\\0{,}1&1{,}1\end{psmallmatrix}$; sumando $J_2J_1$ se obtiene $\begin{psmallmatrix}1{,}11&0{,}27\\0{,}12&1{,}08\end{psmallmatrix}$.
+\end{enumerate}
+\resultado \textbf{$(I+J_2)(I+J_1)=\begin{psmallmatrix}1{,}11&0{,}27\\0{,}12&1{,}08\end{psmallmatrix}$, cercano a~$I$; la red plana daría $J_2J_1=\begin{psmallmatrix}0{,}01&-0{,}03\\0{,}02&-0{,}02\end{psmallmatrix}$}, con valores singulares $0{,}041$ y $0{,}0097$.
+\comprobacion los valores singulares de la matriz residual son $1{,}293$ y $0{,}902$, mayores que $(1-a)^{2}=0{,}397$ con $a=\max(\norm{J_1}_2,\norm{J_2}_2)=\max(0{,}229;\,0{,}370)=0{,}370$, como exige la \cref{prop:cota-residual}.
+\end{solucion}
+
+\begin{solucion}{eje:2-flujo}
+\datos $N=48$; $\Var(h_0)=1$; $v=0{,}5$; escalado $1/\sqrt N$.
+\planteamiento \cref{prop:crecimiento}: $\Var(h_N)=\Var(h_0)+Nv$. Multiplicar unos pesos por $1/\sqrt N$ multiplica la varianza de su salida por $1/N$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\Var(h_N)=1+48\cdot 0{,}5=1+24=25$; desviación típica $\sqrt{25}=5$.
+  \item (b) Cada aportación tiene varianza $v/N=0{,}5/48=0{,}01042$.
+  \item $\Var(h_N)=1+48\cdot 0{,}01042=1+0{,}5=1{,}5$; desviación típica $\sqrt{1{,}5}=1{,}225$.
+\end{enumerate}
+\resultado \textbf{(a) varianza~25, desviación típica~5; (b) varianza~$1{,}5$, desviación típica $1{,}22$.}
+\comprobacion en (b) la varianza total añadida es $v=0{,}5$ con independencia de $N$: el escalado hace que la profundidad no cambie la escala del flujo.
+\end{solucion}
+
+\begin{solucion}{eje:2-cota}
+\datos $h_\ell=h_{\ell-1}+F_\ell(h_{\ell-1})$; caso escalar con $\abs{J_\ell}\le a<1$.
+\planteamiento desarrollo del producto de jacobianos y cota de cada factor.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Cada bloque tiene jacobiano $I+J_\ell$; por la regla de la cadena, $\partial h_L/\partial h_0=(I+J_L)\cdots(I+J_1)$.
+  \item Al desarrollar, cada término elige $I$ o $J_\ell$ en cada factor; el que elige siempre $I$ vale $I$. El desarrollo contiene, por tanto, el término $I$.
+  \item (b) $\abs{J_\ell}\le a$ implica $J_\ell\ge -a$, luego $1+J_\ell\ge 1-a>0$.
+  \item Todos los factores son positivos y mayores o iguales que $1-a$; multiplicando las $L$ desigualdades entre números positivos, $\prod_\ell(1+J_\ell)\ge(1-a)^{L}>0$. $\blacksquare$
+  \item (c) Red plana con $J_1=0$ (unidad ReLU apagada) y $J_2=3$: $J_2J_1=0$. La red residual con las mismas ramas da $(1+3)(1+0)=4$.
+\end{enumerate}
+\resultado \textbf{el desarrollo contiene $I$; con $\abs{J_\ell}\le a<1$ el factor escalar es al menos $(1-a)^{L}>0$}; en una red plana basta una capa con jacobiano nulo para anularlo.
+\comprobacion con $a=0{,}01$ y $L=24$, la cota es $0{,}99^{24}=0{,}786$, el valor del \cref{eje:2-factor}(b).
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-clasificar}
+\datos (a) $h+\operatorname{Attn}(\LN(h))$; (b) $\LN(h+\operatorname{MLP}(h))$.
+\planteamiento \cref{def:pre-post}: pre-norm normaliza dentro de la rama; post-norm, después de la suma.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) La normalización está dentro de la rama: \textbf{pre-norm}. Su jacobiano es $I+J_{\mathrm{Attn}}N$, con el término $I$.
+  \item (b) La normalización envuelve la suma: \textbf{post-norm}. Su jacobiano es $N(I+J_{\mathrm{MLP}})$; la identidad queda multiplicada por $N$.
+  \item Con $L$ bloques post-norm, el camino directo atraviesa $L$ jacobianos de normalización y deja de ser la identidad (\cref{prop:jac-pre-post}).
+\end{enumerate}
+\resultado \textbf{(a) pre-norm; (b) post-norm. Solo (a) conserva la identidad en el camino residual.}
+\comprobacion es el patrón de la \cref{fig:prenorm}.
+\end{solucion}
+
+\begin{solucion}{eje:3-preactivacion}
+\planteamiento identificar qué operaciones quedan en el camino principal, fuera de la rama.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Ordenación original: $h_\ell=\ReLU\bigl(h_{\ell-1}+F(h_{\ell-1})\bigr)$. La ReLU posterior a la suma está en el camino principal; su jacobiano $\diag(\mathbf 1[\,\cdot>0])$ multiplica la identidad y puede anular componentes.
+  \item Ordenación de preactivación: $h_\ell=h_{\ell-1}+F(h_{\ell-1})$ con $F=\mathrm{conv}\circ\ReLU\circ\mathrm{BN}$. Tras la suma no hay nada: el camino principal es exactamente la identidad y se aplica el \cref{teo:jac-residual}.
+  \item Pre-norm hace lo mismo con la normalización de un Transformer: la mueve dentro de la rama y deja el flujo residual libre.
+\end{enumerate}
+\resultado \textbf{la preactivación saca del camino principal la normalización y la no linealidad, con lo que el jacobiano de cada bloque es $I+J_\ell$; es la misma idea que pre-norm.}
+\end{solucion}
+
+\begin{solucion}{eje:3-calculo}
+\datos $x=(1,2,3,6)$, $d=4$, $\gamma=g=\uno$, $\beta=0$, $\epsilon=0$.
+\planteamiento \cref{def:layernorm,def:rmsnorm}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Media: $\mu=(1+2+3+6)/4=12/4=3$.
+  \item Desviaciones: $x-\mu=(-2,-1,0,3)$; cuadrados $(4,1,0,9)$; $\sigma^{2}=14/4=3{,}5$; $\sigma=1{,}871$.
+  \item $\LN(x)=(-2/1{,}871;\ -1/1{,}871;\ 0;\ 3/1{,}871)=(-1{,}069;\,-0{,}5345;\,0;\,1{,}604)$.
+  \item Cuadrados de $x$: $(1,4,9,36)$; media $50/4=12{,}5$; $\RMS(x)=\sqrt{12{,}5}=3{,}536$.
+  \item $\RMSNorm(x)=(0{,}2828;\,0{,}5657;\,0{,}8485;\,1{,}697)$.
+\end{enumerate}
+\resultado \textbf{$\LN(x)\approx(-1{,}069;\,-0{,}5345;\,0;\,1{,}604)$;}\newline \textbf{$\RMSNorm(x)\approx(0{,}2828;\,0{,}5657;\,0{,}8485;\,1{,}697)$.}
+\comprobacion la salida de LayerNorm suma $-1{,}069-0{,}5345+0+1{,}604\approx 0$ y la media de sus cuadrados es $(1{,}143+0{,}2857+0+2{,}571)/4=1{,}000$. La media de los cuadrados de RMSNorm es $(0{,}08+0{,}32+0{,}72+2{,}88)/4=1$.
+\end{solucion}
+
+\begin{solucion}{eje:3-invariancia}
+\datos $x=(1,2,3,6)$; $2x+10\uno=(12,14,16,22)$; $x+3\uno=(4,5,6,9)$.
+\planteamiento recalcular los estadísticos y comparar con el \cref{eje:3-calculo}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\mu=64/4=16$; desviaciones $(-4,-2,0,6)$; cuadrados $(16,4,0,36)$; $\sigma^{2}=56/4=14$; $\sigma=3{,}742$.
+  \item $\LN(2x+10\uno)=(-4,-2,0,6)/3{,}742=(-1{,}069;\,-0{,}5345;\,0;\,1{,}604)$, igual que $\LN(x)$.
+  \item (b) Cuadrados de $x+3\uno$: $(16,25,36,81)$; media $158/4=39{,}5$; $\RMS=6{,}285$.
+  \item $\RMSNorm(x+3\uno)=(0{,}6364;\,0{,}7956;\,0{,}9547;\,1{,}432)$, distinto de $\RMSNorm(x)=(0{,}2828;\,0{,}5657;\,0{,}8485;\,1{,}697)$.
+\end{enumerate}
+\resultado \textbf{(a) coinciden: invariancia de LayerNorm frente a escala y traslación (\cref{prop:invariancias}(i)); (b) no coinciden: RMSNorm no es invariante frente a traslaciones (\cref{prop:invariancias}(ii)).}
+\comprobacion en (a) la desviación típica se multiplica por $\alpha=2$: $3{,}742=2\cdot 1{,}871$.
+\end{solucion}
+
+\begin{solucion}{eje:3-jacobiano}
+\datos $x=(3,4)$, $d=2$, $g=\uno$, $\epsilon=0$.
+\planteamiento \cref{teo:jac-rms}: $J=\frac1r\bigl(I-xx\T/\norm{x}^{2}\bigr)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\norm{x}^{2}=9+16=25$; $r=\sqrt{25/2}=3{,}536$.
+  \item $xx\T/25=\begin{psmallmatrix}9&12\\12&16\end{psmallmatrix}/25=\begin{psmallmatrix}0{,}36&0{,}48\\0{,}48&0{,}64\end{psmallmatrix}$; $I-xx\T/25=\begin{psmallmatrix}0{,}64&-0{,}48\\-0{,}48&0{,}36\end{psmallmatrix}$.
+  \item $J=\frac{1}{3{,}536}\begin{psmallmatrix}0{,}64&-0{,}48\\-0{,}48&0{,}36\end{psmallmatrix}=\begin{psmallmatrix}0{,}1810&-0{,}1358\\-0{,}1358&0{,}1018\end{psmallmatrix}$.
+  \item $Jx=\frac1r(0{,}64\cdot 3-0{,}48\cdot 4;\ -0{,}48\cdot 3+0{,}36\cdot 4)=\frac1r(1{,}92-1{,}92;\ -1{,}44+1{,}44)=(0,0)$.
+\end{enumerate}
+\resultado \textbf{$J\approx\begin{psmallmatrix}0{,}1810&-0{,}1358\\-0{,}1358&0{,}1018\end{psmallmatrix}$, simétrica y con $Jx=0$.}
+\comprobacion la diferenciación automática de PyTorch da la misma matriz. Además, $(-4,3)\perp x$ y $J(-4,3)=(-4,3)/r$: en la dirección ortogonal, $J$ actúa como $1/r$ por la identidad.
+\end{solucion}
+
+\begin{solucion}{eje:3-ortogonal}
+\datos $y=\RMSNorm(x)$, $\epsilon=0$ salvo en (d); $\Loss=\Loss(y)$.
+\planteamiento \cref{teo:jac-rms} y regla de la cadena.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\RMS(\alpha x)=\sqrt{\alpha^{2}\frac1d\sum x_i^{2}}=\alpha\RMS(x)$ para $\alpha>0$, luego $g_i\alpha x_i/(\alpha\RMS(x))=\RMSNorm(x)_i$.
+  \item Derivando $\phi(\alpha)=\RMSNorm(\alpha x)$, constante, en $\alpha=1$: $0=\phi'(1)=J\,x$.
+  \item (b) $\nabla_x\Loss=J\T\nabla_y\Loss$ y $x\T J\T\nabla_y\Loss=(Jx)\T\nabla_y\Loss=0$.
+  \item (c) $\frac{d}{dt}\norm{x}^{2}=2x\T\dot x=-2x\T\nabla_x\Loss=0$: la norma es constante.
+  \item Con un paso discreto, $\norm{x-\eta\nabla_x\Loss}^{2}=\norm{x}^{2}-2\eta\,x\T\nabla_x\Loss+\eta^{2}\norm{\nabla_x\Loss}^{2}=\norm{x}^{2}+\eta^{2}\norm{\nabla_x\Loss}^{2}$, mayor que $\norm{x}^{2}$ si el gradiente no es nulo.
+  \item (d) Con $\epsilon>0$, $r^{2}=s+\epsilon$ con $s=\norm{x}^{2}/d$. Repitiendo el cálculo, $(Jx)_i=\frac{g_ix_i}{r}\bigl(1-\frac{s}{r^{2}}\bigr)=\frac{g_ix_i\,\epsilon}{r^{3}}$, que no es nulo pero es despreciable si $s\gg\epsilon$.
+\end{enumerate}
+\resultado \textbf{$Jx=0$ y $x\T\nabla_x\Loss=0$; la norma se conserva en el flujo continuo y crece en cada paso discreto. Con $\epsilon>0$ la invariancia es solo aproximada.}
+\comprobacion en el \cref{eje:3-jacobiano}, $x\T J\T v=(Jx)\T v=0$ para todo $v$, porque $Jx=0$ y $J$ es simétrica.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-eval}
+\planteamiento el dropout invertido conserva la esperanza, pero cada máscara es aleatoria (\cref{prop:dropout}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Falta poner el modelo en modo evaluación (\texttt{model.eval()} en PyTorch), que desactiva el dropout.
+  \item Con dropout activo, cada pasada sortea una máscara distinta y la salida cambia.
+  \item La media no lo delata: $\E[\tilde h_i]=(1-p)\,h_i/(1-p)+p\cdot 0=h_i$.
+  \item Lo que cambia es la varianza, $\frac{p}{1-p}h_i^{2}$: cada ejecución concreta tiene ruido.
+\end{enumerate}
+\resultado falta \texttt{model.eval()}; \textbf{el dropout invertido es insesgado, por lo que la media coincide, pero cada ejecución tiene ruido.}
+\comprobacion con $p=0{,}3$ y $h_i=5$, $0{,}7\cdot 7{,}143+0{,}3\cdot 0=5{,}000$ (\cref{eje:4-mascara}).
+\end{solucion}
+
+\begin{solucion}{eje:4-constante}
+\datos $P(d_i=0)=p$; $p=0{,}2$; $h=(1,3,0,2)$; $d=(1,0,1,1)$.
+\planteamiento $\E[d_i]=1-p$ y linealidad de la esperanza.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\E[h_{\mathrm{drop},i}]=\gamma h_i\E[d_i]=\gamma h_i(1-p)$. Igualando a $h_i$ para $h_i\ne 0$: $\gamma=1/(1-p)$.
+  \item (b) $\gamma=1/0{,}8=1{,}25$; $d\odot h=(1,0,0,2)$; $h_{\mathrm{drop}}=(1{,}25;\,0;\,0;\,2{,}5)$.
+  \item (c) Al entrenar, la máscara impide que la red dependa de unidades concretas y actúa como regularizador. Al evaluar se quiere una predicción determinista, la del modelo medio; gracias a $\gamma$, usar $h$ sin máscara da la esperanza correcta.
+\end{enumerate}
+\resultado \textbf{$\gamma=1/(1-p)=1{,}25$; $h_{\mathrm{drop}}=(1{,}25;\,0;\,0;\,2{,}5)$.} Es el dropout invertido de la \cref{def:dropout}.
+\comprobacion $\E[h_{\mathrm{drop},2}]=0{,}8\cdot 1{,}25\cdot 3+0{,}2\cdot 0=3=h_2$.
+\end{solucion}
+
+\begin{solucion}{eje:4-mascara}
+\datos $p=0{,}3$; $h=(5,5,5,5)$; $m=(1,0,1,1)$.
+\planteamiento $\tilde h_i=m_ih_i/(1-p)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $1-p=0{,}7$; factor $1/0{,}7=1{,}429$.
+  \item $m\odot h=(5,0,5,5)$; $\tilde h=(7{,}143;\,0;\,7{,}143;\,7{,}143)$.
+  \item $\E[\tilde h_i]=0{,}7\cdot(5/0{,}7)+0{,}3\cdot 0=5=h_i$.
+  \item Media de la salida para esta máscara: $3\cdot 7{,}143/4=5{,}357$.
+\end{enumerate}
+\resultado \textbf{$\tilde h\approx(7{,}143;\,0;\,7{,}143;\,7{,}143)$, con $\E[\tilde h_i]=5$; la media de esta realización es $5{,}357$.}
+\comprobacion con una fracción $3/4$ de supervivientes, la media es $5\cdot(3/4)/0{,}7=5{,}357$; promediando sobre muchas máscaras la fracción tiende a $0{,}7$ y la media a~5.
+\end{solucion}
+
+\begin{solucion}{eje:4-recorte}
+\datos $g=(6,8)$; $c=5$ y $c=20$.
+\planteamiento $\hat g=g\min(1,c/\norm{g})$ (\cref{def:recorte}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\norm{g}=\sqrt{36+64}=\sqrt{100}=10$.
+  \item $c=5$: $\alpha=\min(1;\,0{,}5)=0{,}5$; $\hat g=(3,4)$.
+  \item $c=20$: $\alpha=\min(1;\,2)=1$; $\hat g=(6,8)$.
+\end{enumerate}
+\resultado \textbf{$c=5$: $\hat g=(3,4)$; $c=20$: $\hat g=(6,8)$, sin recorte.}
+\comprobacion $\norm{(3,4)}=5=\min(10,5)$ y la dirección $(0{,}6;\,0{,}8)$ se conserva, como afirma la \cref{prop:recorte}(i).
+\end{solucion}
+
+\begin{solucion}{eje:4-global}
+\datos $g^{(1)}=(1,2)$, $g^{(2)}=(2)$, $c=1$.
+\planteamiento la norma global es la del vector concatenado; el mismo factor se aplica a todos los tensores.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $g=(1,2,2)$, $\norm{g}=\sqrt{1+4+4}=3$; $\alpha=1/3$.
+  \item $\hat g^{(1)}=(0{,}3333;\,0{,}6667)$ y $\hat g^{(2)}=(0{,}6667)$.
+  \item (b) $\norm{g^{(1)}}=\sqrt5=2{,}236$, luego $\hat g^{(1)}=(0{,}4472;\,0{,}8944)$; $\norm{g^{(2)}}=2$, luego $\hat g^{(2)}=(1)$.
+  \item El vector $(0{,}4472;\,0{,}8944;\,1)$ no es proporcional a $(1,2,2)$: el cociente entre la tercera y la primera componente es $2{,}236$ en lugar de~2.
+\end{enumerate}
+\resultado \textbf{norma global: $\hat g^{(1)}=(1/3,\,2/3)$, $\hat g^{(2)}=(2/3)$. Recortar por separado cambia la dirección del gradiente total.}
+\comprobacion $\norm{(1/3,2/3,2/3)}=\sqrt{1/9+4/9+4/9}=1=c$.
+\end{solucion}
+
+\begin{solucion}{eje:4-epsilon}
+\datos $g^{(1)}=(2,-1)$, $g^{(2)}=(2)$, $M=1$, $\epsilon=10^{-6}$.
+\planteamiento factor $M/(\norm{g}+\epsilon)$ si $\norm{g}\ge M$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\norm{g}=\sqrt{4+1+4}=3\ge 1$: hay que recortar.
+  \item Factor: $1/(3+10^{-6})=0{,}3333332$.
+  \item $\hat g^{(1)}=(0{,}6667;\,-0{,}3333)$ y $\hat g^{(2)}=(0{,}6667)$.
+  \item (b) Norma resultante: $3/(3+10^{-6})=0{,}9999997$.
+  \item El $\epsilon$ evita la división por cero cuando $g=0$ y deja la norma ligeramente por debajo de $M$.
+\end{enumerate}
+\resultado \textbf{norma global~3 y factor $\approx 1/3$; $\hat g^{(1)}\approx(0{,}6667;\,-0{,}3333)$, $\hat g^{(2)}\approx(0{,}6667)$; norma final $0{,}9999997$.}
+\comprobacion \texttt{torch.nn.utils.clip\_grad\_norm\_} devuelve la norma original, 3, y deja los mismos gradientes.
+\end{solucion}
+
+\begin{solucion}{eje:4-varianza}
+\datos $w=(1,2,-1)$, $h=(2,1,2)$, $p=0{,}5$; $m_i\sim\Bern(0{,}5)$ independientes.
+\planteamiento \cref{prop:dropout} y \cref{cor:dropout-lineal}; enumeración de las $2^{3}$ máscaras equiprobables.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Las demostraciones son las del texto: $\E[m_i]=\E[m_i^{2}]=1-p$ da $\E[\tilde h_i]=h_i$ y $\E[\tilde h_i^{2}]=h_i^{2}/(1-p)$, de donde $\Var(\tilde h_i)=h_i^{2}p/(1-p)$; la independencia de las máscaras da la suma de varianzas.
+  \item (b) $\E[y]=w\T h=1\cdot 2+2\cdot 1+(-1)\cdot 2=2$.
+  \item $\Var(y)=\frac{0{,}5}{0{,}5}(1\cdot 4+4\cdot 1+1\cdot 4)=12$.
+  \item Enumeración: $w_ih_i/(1-p)=(4,4,-4)$, luego $y=4(m_1+m_2-m_3)$. Las ocho máscaras dan $0,\,4,\,4,\,-4,\,8,\,0,\,0,\,4$, cada una con probabilidad $1/8$.
+  \item Media: $16/8=2$. Segundo momento: $(0+16+16+16+64+0+0+16)/8=128/8=16$. Varianza: $16-2^{2}=12$.
+  \item (c) Sin dropout, la activación $h_i$ es fija dada la entrada; con dropout, su segundo momento pasa a $h_i^{2}/(1-p)$ y su varianza a $\frac{p}{1-p}h_i^{2}$, que tiende a infinito cuando $p\to 1$ porque las pocas unidades supervivientes se amplifican por $1/(1-p)$.
+\end{enumerate}
+\resultado \textbf{$\E[y]=2$ y $\Var(y)=12$, confirmados por enumeración; la varianza que añade el dropout es $\frac{p}{1-p}h_i^{2}$ por componente.}
+\comprobacion la desviación típica es $\sqrt{12}=3{,}464$, mayor que la media: con $p=0{,}5$ el ruido es grande.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-riesgo}
+\datos $70\,000$ y $1{,}003$; fp16 ($x_{\max}=65\,504$, $\varepsilon=2^{-10}$), bf16 ($x_{\max}=3{,}39\cdot 10^{38}$, $\varepsilon=2^{-7}$), fp32.
+\planteamiento desbordamiento si el valor supera $x_{\max}$; pérdida de precisión según la separación cerca de~1, que es $\varepsilon$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $70\,000>65\,504$: en fp16 se convierte en \Inf. En bf16 cabe, redondeado a $70\,144$ (separación $2^{16}\cdot 2^{-7}=512$). En fp32 es exacto.
+  \item Cerca de~1, bf16 separa los números $2^{-7}=0{,}0078$; los vecinos de $1{,}003$ son $1$ y $1{,}0078$, y el más cercano es~1. Error: $0{,}003$.
+  \item fp16 los separa $2^{-10}=0{,}000977$; $1{,}003$ se redondea a $1+3\cdot 2^{-10}=1{,}00293$. Error: $7\cdot 10^{-5}$.
+\end{enumerate}
+\resultado \textbf{$70\,000$ es arriesgado en fp16 (da \Inf); $1{,}003$ pierde más precisión en bf16 (se almacena como~1).}
+\comprobacion en PyTorch, $1{,}003$ en bf16 da $1{,}0$ y en fp16 da $1{,}0029$.
+\end{solucion}
+
+\begin{solucion}{eje:5-deducir}
+\datos fp16: $e=5$, $m=10$; bf16: $e=8$, $m=7$.
+\planteamiento \cref{prop:rango}: $b=2^{e-1}-1$, $x_{\max}=(2-2^{-m})2^{b}$, $x_{\min}=2^{1-b}$, $\varepsilon=2^{-m}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item fp16: $b=2^{4}-1=15$.
+  \item $x_{\max}=(2-2^{-10})2^{15}=2^{16}-2^{5}=65\,536-32=65\,504$.
+  \item $x_{\min}=2^{-14}=1/16\,384=6{,}104\cdot 10^{-5}$; $\varepsilon=2^{-10}=9{,}766\cdot 10^{-4}$.
+  \item bf16: $b=2^{7}-1=127$.
+  \item $x_{\max}=(2-2^{-7})2^{127}=1{,}9922\cdot 1{,}7014\cdot 10^{38}=3{,}390\cdot 10^{38}$.
+  \item $x_{\min}=2^{-126}=1{,}175\cdot 10^{-38}$; $\varepsilon=2^{-7}=0{,}0078125$.
+\end{enumerate}
+\resultado \textbf{fp16: $65\,504$, $6{,}10\cdot 10^{-5}$, $9{,}77\cdot 10^{-4}$. bf16: $3{,}39\cdot 10^{38}$, $1{,}18\cdot 10^{-38}$, $0{,}0078125$.}
+\comprobacion bf16 tiene casi el rango de fp32 ($3{,}40\cdot 10^{38}$ y $1{,}18\cdot 10^{-38}$) porque comparten los 8 bits de exponente.
+\end{solucion}
+
+\begin{solucion}{eje:5-fp8}
+\datos E5M2: $e=5$, $m=2$; E4M3: $e=4$, $m=3$.
+\planteamiento \cref{prop:rango} y \cref{obs:e4m3}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) E5M2: $b=15$; $x_{\max}=(2-2^{-2})2^{15}=1{,}75\cdot 32\,768=57\,344$; $x_{\min}=2^{-14}=6{,}10\cdot 10^{-5}$; $\varepsilon=2^{-2}=0{,}25$.
+  \item (b) E4M3 con reglas IEEE: $b=2^{3}-1=7$; el mayor exponente normal sería $E=14$, con $E-b=7$; $x_{\max}=(2-2^{-3})2^{7}=1{,}875\cdot 128=240$; $x_{\min}=2^{-6}=0{,}015625$; $\varepsilon=2^{-3}=0{,}125$.
+  \item E4M3 real: sin infinitos y con un único patrón \NaN\ (todos los bits de exponente y fracción a~1), el exponente $E=15$ es normal salvo en ese patrón. La mayor mantisa permitida con $E=15$ es $(1{,}110)_2=1{,}75$, y $x_{\max}=1{,}75\cdot 2^{8}=448$.
+  \item (c) Los gradientes abarcan muchos órdenes de magnitud y requieren rango: E5M2. Pesos y activaciones requieren más precisión relativa: E4M3.
+\end{enumerate}
+\resultado \textbf{E5M2: $57\,344$, $6{,}10\cdot 10^{-5}$, $0{,}25$. E4M3: con reglas IEEE serían $240$, $0{,}0156$, $0{,}125$; el máximo real es~448.}
+\comprobacion \texttt{torch.finfo} da $448$ y $57\,344$ como máximos de \texttt{float8\_e4m3fn} y \texttt{float8\_e5m2}.
+\end{solucion}
+
+\begin{solucion}{eje:5-mil}
+\datos bf16 en $[512,1024)$: separación~4; fp16 en $[512,1024)$: separación $0{,}5$.
+\planteamiento el resultado exacto se redondea al representable más cercano; en caso de empate, al de mantisa par (\cref{def:fl}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $1000+1=1001$; vecinos representables en bf16: $1000$ y $1004$, a distancias~1 y~3. Resultado: $1000$.
+  \item $1000+4=1004=4\cdot 251$, representable: resultado exacto.
+  \item (b) En fp16, $1001=0{,}5\cdot 2002$ es representable: resultado exacto.
+  \item (c) Por el \cref{lem:absorcion}, se pierde todo sumando $0\le y<2$, la mitad de la separación. Con $y=2$ hay empate entre $1000=4\cdot 250$ y $1004=4\cdot 251$, y gana el de mantisa par, $1000$; con $y>2$ el resultado es $1004$.
+\end{enumerate}
+\resultado \textbf{bf16: $1000+1=1000$ y $1000+4=1004$; fp16: $1000+1=1001$. En bf16 se pierde cualquier sumando de hasta~2.}
+\comprobacion PyTorch da $1000$ para $1000+2$ y $1004$ para $1000+2{,}5$ en bf16.
+\end{solucion}
+
+\begin{solucion}{eje:5-rmsnorm}
+\datos $x=(300,400)$ en fp16 ($x_{\max}=65\,504$); $g=\uno$; $\epsilon=10^{-5}$; $d=2$.
+\planteamiento $\RMSNorm(x)_i=x_i/\sqrt{\frac1d\sum x_j^{2}+\epsilon}$; el cuadrado es lo que desborda.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) En fp16: $300^{2}=90\,000>65\,504\to\Inf$; $400^{2}=160\,000\to\Inf$.
+  \item Media $\Inf$; $\RMS=\sqrt{\Inf+10^{-5}}=\Inf$; salida $(300/\Inf,\ 400/\Inf)=(0,0)$. La señal se destruye sin ningún error.
+  \item (b) En fp32: $x^{2}=(90\,000;\ 160\,000)$; media $125\,000$; $\RMS=\sqrt{125\,000{,}00001}=353{,}6$.
+  \item Salida: $(300/353{,}6;\ 400/353{,}6)=(0{,}8485;\,1{,}131)$.
+  \item En fp16, con separación $2^{-11}$ en $[0{,}5;1)$ y $2^{-10}$ en $[1,2)$: $(0{,}8486;\,1{,}132)$.
+\end{enumerate}
+\resultado \textbf{todo en fp16: $(0,0)$; en fp32 convertido a fp16: $(0{,}8486;\,1{,}132)$.}
+\comprobacion $300/\sqrt{125\,000}=3/(5\sqrt2)=0{,}8485$ y $4/(5\sqrt2)=1{,}131$; la media de sus cuadrados es $(0{,}72+1{,}28)/2=1$.
+\end{solucion}
+
+\begin{solucion}{eje:5-absorcion}
+\datos formato con $m$ bits de mantisa; fp16, $m=10$.
+\planteamiento \cref{prop:rango}(iii): en $[2^{k},2^{k+1})$ la separación es $2^{k-m}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Sea $2^{k}\le x<2^{k+1}$. Los representables vecinos de $x$ distan $2^{k-m}$ entre sí, luego $\abs{\fl(x)-x}\le 2^{k-m-1}$. Dividiendo por $x\ge 2^{k}$: $\abs\delta\le 2^{-m-1}=u$.
+  \item (b) El representable siguiente a $x$ es $x+2^{k-m}$. Si $0\le y<2^{k-m-1}$, entonces $\abs{(x+y)-x}=y<2^{k-m}-y=\abs{(x+2^{k-m})-(x+y)}$, y $\fl(x+y)=x$.
+  \item (c) Sea $w\in[2^{k},2^{k+1})$. Si $w/\abs{\Delta w}>4096=2^{12}$, entonces $\abs{\Delta w}<w/2^{12}<2^{k+1}/2^{12}=2^{k-11}$, la mitad de la separación en fp16, y por (b) la actualización se pierde.
+  \item Ejemplo: $w=1$ ($k=0$), semiseparación $2^{-11}=4{,}883\cdot 10^{-4}$. Con $\Delta w=4{,}8\cdot 10^{-4}$, $w/\Delta w=2083>2048$ y $\fl(1+0{,}00048)=1$.
+\end{enumerate}
+\resultado \textbf{$\abs\delta\le u$; un sumando menor que la semiseparación se absorbe; en fp16 una actualización se pierde siempre si $w/\abs{\Delta w}>4096$, y puede perderse desde $2048$.} $\blacksquare$
+\comprobacion en PyTorch, $1+0{,}00048$ en fp16 da $1$, mientras que $1+0{,}0005$ da $1{,}000977$, porque $0{,}0005$ supera la semiseparación.
+\end{solucion}
+
+\begin{solucion}{eje:5-acumular}
+\datos mil sumas de $0{,}01$; fp16 con $m=10$; en $[2^{k},2^{k+1})$ la separación es $2^{k-10}$.
+\planteamiento cada suma se redondea al múltiplo más próximo de la separación del intervalo en que está $s$; el error por suma depende de cuántas separaciones mide el sumando.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $0{,}01\in[2^{-7},2^{-6})$, con separación $2^{-7-10}=2^{-17}=7{,}629\cdot 10^{-6}$. Como $0{,}01/2^{-17}=1310{,}72$, se redondea a $1311$ separaciones: $1311\cdot 2^{-17}=0{,}0100021$.
+  \item (b) $s\in[4,8)$: separación $2^{-8}=0{,}003906$; el sumando mide $2{,}561$ separaciones y se redondea a~3, de modo que cada suma aumenta $s$ en $3\cdot 2^{-8}=0{,}01172$.
+  \item $s\in[8,16)$: separación $2^{-7}=0{,}0078125$; el sumando mide $1{,}280$ separaciones y se redondea a~1: cada suma aumenta $s$ en $0{,}0078125$.
+  \item (c) (i) En fp32 la separación cerca de~10 es $2^{3-23}=9{,}5\cdot 10^{-7}$ y el error acumulado es pequeño: $10{,}0001$.
+  \item (ii) En fp16 el error por suma cambia de signo según el intervalo. En $[0{,}5;4)$ cada suma aumenta $s$ en $0{,}009766$, por defecto; en $[4,8)$, en $0{,}01172$, por exceso; en $[8,10)$, en $0{,}0078125$, por defecto. La simulación paso a paso da 359 sumas en $[0{,}5;4)$ con error total $-0{,}0830$; 341 en $[4,8)$ con $+0{,}5815$; 250 en $[8,10)$ con $-0{,}5474$; y 50 por debajo de $0{,}5$ con $-0{,}0001$.
+  \item El neto es $-0{,}0490$, y $1000\cdot 0{,}0100021-0{,}0490=10{,}0021-0{,}0490=9{,}953$.
+  \item (iii) y (iv): el acumulador fp32 apenas pierde nada, pero el sumando ya es el $0{,}01$ de fp16: $1000\cdot 0{,}0100021=10{,}0021$. En (iii) la conversión a fp32 se hace implícitamente antes de sumar; en (iv), explícitamente.
+\end{enumerate}
+\resultado \textbf{(a) $0{,}01\approx 1311\cdot 2^{-17}$; (b) $+0{,}01172$ por suma en $[4,8)$ y $+0{,}0078125$ en $[8,16)$; (c) el error de (ii) procede del acumulador fp16; el de (iii) y (iv), solo del redondeo del sumando.}
+\comprobacion $359+341+250+50=1000$ sumas. Es el argumento de la acumulación en fp32 de la precisión mixta y del \cref{teo:suma}.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-diagnostico}
+\planteamiento \cref{tab:diagnostico} y \cref{fig:diagnostico}.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item Salto brusco a \Inf\ en fp16 sin crecimiento previo: desbordamiento de alguna activación o gradiente por encima de $65\,504$. Remedio: bf16, o escalado dinámico de la pérdida que omita el paso y reduzca $S$.
+  \item Crecimiento de varios órdenes y después \NaN: gradientes que explotan. Remedio: bajar la tasa de aprendizaje, alargar el calentamiento y recortar el gradiente.
+  \item \texttt{torch.log(torch.softmax(z))}: alguna probabilidad se anula por subdesbordamiento y $\ln 0=-\infty$; en la retropropagación aparecen operaciones como $0\cdot\infty$ que dan \NaN. Remedio: \texttt{log\_softmax} o la entropía cruzada aplicada a los logits (\cref{prop:ce}).
+\end{enumerate}
+\resultado \textbf{(a) desbordamiento en fp16; (b) gradientes que explotan; (c) logaritmo de una probabilidad nula.}
+\end{solucion}
+
+\begin{solucion}{eje:6-lse}
+\datos $z=(1000,999,998)$.
+\planteamiento \cref{prop:lse-estable} con $c=1000$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $z-c\uno=(0,-1,-2)$.
+  \item $e^{0}=1$; $e^{-1}=0{,}3679$; $e^{-2}=0{,}1353$; $S=1{,}503$.
+  \item $\ln 1{,}503=0{,}4076$; $\LSE(z)=1000{,}408$.
+  \item $\softmax(z)=(1/1{,}503;\ 0{,}3679/1{,}503;\ 0{,}1353/1{,}503)=(0{,}665;\,0{,}245;\,0{,}090)$.
+\end{enumerate}
+\resultado \textbf{$\LSE(z)\approx 1000{,}408$ y $\softmax(z)\approx(0{,}665;\,0{,}245;\,0{,}090)$.}
+\comprobacion las probabilidades suman $1{,}000$ y $1000\le 1000{,}408\le 1000+\ln 3=1001{,}099$.
+\end{solucion}
+
+\begin{solucion}{eje:6-softmax}
+\datos $v=(100,101,103)$ en fp32; $\ln x_{\max}=88{,}72$.
+\planteamiento \cref{prop:exp-rango} y \cref{prop:lse}(i).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $100>88{,}72$, luego $e^{100}=2{,}7\cdot 10^{43}$ desborda a \Inf, igual que $e^{101}$ y $e^{103}$. Cada componente es $\Inf/\Inf=\NaN$.
+  \item (b) $\softmax(v-c\uno)_i=\frac{e^{v_i}e^{-c}}{e^{-c}\sum_je^{v_j}}=\softmax(v)_i$, porque $e^{-c}$ sale de la suma y se cancela. $\blacksquare$
+  \item (c) $c=103$; $v-c\uno=(-3,-2,0)$; $e^{-3}=0{,}04979$, $e^{-2}=0{,}1353$, $e^{0}=1$; suma $1{,}185$.
+  \item $\softmax(v)=(0{,}04979/1{,}185;\ 0{,}1353/1{,}185;\ 1/1{,}185)=(0{,}04201;\,0{,}1142;\,0{,}8438)$.
+\end{enumerate}
+\resultado \textbf{ingenua: $(\NaN,\NaN,\NaN)$; estable: $(0{,}0420;\,0{,}1142;\,0{,}8438)$.}
+\comprobacion las componentes suman $1{,}000$; \texttt{torch.softmax} en fp32 da lo mismo.
+\end{solucion}
+
+\begin{solucion}{eje:6-rango}
+\datos $x_{\max}$ y $x_{\min}$ de la \cref{tab:formatos}.
+\planteamiento \cref{prop:exp-rango}: $t\in[\ln x_{\min},\ln x_{\max}]$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item fp32: $\ln(3{,}403\cdot 10^{38})=88{,}72$; $\ln 2^{-126}=-126\ln 2=-87{,}34$.
+  \item fp16: $\ln 65\,504=11{,}09$; $\ln 2^{-14}=-14\ln 2=-9{,}704$.
+  \item bf16: $\ln(3{,}390\cdot 10^{38})=88{,}72$; $\ln 2^{-126}=-87{,}34$.
+\end{enumerate}
+\resultado \textbf{fp32 y bf16: $t\in[-87{,}34;\ 88{,}72]$; fp16: $t\in[-9{,}70;\ 11{,}09]$. fp16 es el más restrictivo: un logit de~12 ya desborda.}
+\comprobacion en PyTorch, $e^{11{,}0}$ en fp16 da $59\,872$ y $e^{11{,}1}$ da \Inf; en fp32, $e^{88{,}7}$ es finito y $e^{88{,}8}$ es \Inf.
+\end{solucion}
+
+\begin{solucion}{eje:6-ce}
+\datos (a) $z=(2,1,0)$, $y=3$; (b) $z=(0,-20)$ en fp16.
+\planteamiento \cref{prop:ce}: $\ell=\LSE(z)-z_y$ y $\nabla_z\ell=\softmax(z)-e_y$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\LSE(z)=2+\ln(1+e^{-1}+e^{-2})=2+0{,}4076=2{,}408$; $\ell=2{,}408-0=2{,}408$.
+  \item $\softmax(z)=(0{,}6652;\,0{,}2447;\,0{,}0900)$; $\nabla_z\ell=(0{,}6652;\,0{,}2447;\,-0{,}9100)$.
+  \item (b) Ingenua: $e^{-20}=2{,}06\cdot 10^{-9}$ es menor que la mitad del menor subnormal de fp16, $2^{-25}=2{,}98\cdot 10^{-8}$, y se redondea a~0; $\softmax(z)_2=0$ y $\ln 0=-\infty$.
+  \item Estable: $\LSE(z)=0+\ln(1+e^{-20})=2{,}06\cdot 10^{-9}$, y $\ln\softmax(z)_2=-20-2{,}06\cdot 10^{-9}=-20{,}000$.
+\end{enumerate}
+\resultado \textbf{(a) $\ell=2{,}408$ y $\nabla_z\ell=(0{,}665;\,0{,}245;\,-0{,}910)$; (b) ingenua $-\infty$, estable $-20{,}000$.}
+\comprobacion las componentes del gradiente suman $0$ (salvo redondeo), porque $\softmax(z)$ y $e_y$ suman~1. PyTorch da \texttt{-inf} con \texttt{log(softmax)} y $-20$ con \texttt{log\_softmax} en fp16.
+\end{solucion}
+
+\begin{solucion}{eje:6-cotas}
+\datos $z\in\R^{n}$, $c=\max_iz_i$, $S=\sum_ie^{z_i-c}$.
+\planteamiento $\LSE(z)=c+\ln S$ (\cref{prop:lse-estable}) y monotonía del logaritmo.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Cada $z_i-c\le 0$, luego cada término $e^{z_i-c}\in(0,1]$.
+  \item Cota inferior: $S$ contiene el término $e^{0}=1$ del máximo y los demás son positivos, así que $S\ge 1$ y $\ln S\ge 0$: $\LSE(z)\ge c$.
+  \item Cota superior: $S$ es suma de $n$ términos menores o iguales que~1, así que $S\le n$ y $\LSE(z)\le c+\ln n$.
+  \item Igualdad superior: $S=n$ exige que todos los términos valgan~1, es decir, $z_i=c$ para todo $i$; recíprocamente, si todas las componentes son iguales, $S=n$. $\blacksquare$
+  \item $z=(3,3)$: $\LSE=3+\ln 2=3{,}693$, la cota superior. $z=(2,1,0)$: $\LSE=2{,}408\in[2;\ 2+\ln 3]=[2;\ 3{,}099]$.
+\end{enumerate}
+\resultado \textbf{$\max_iz_i\le\LSE(z)\le\max_iz_i+\ln n$, con igualdad superior si y solo si todas las $z_i$ son iguales.}
+\comprobacion la cota inferior se alcanza solo en el límite: $\LSE(t,0)\to t$ cuando $t\to+\infty$, porque $\ln(1+e^{-t})\to 0$.
+\end{solucion}
+
+\begin{solucion}{eje:6-convexa}
+\datos $p=\softmax(z)$; $\nabla\LSE=p$ (\cref{prop:lse}(iii)).
+\planteamiento derivar $p_k=e^{z_k}/\sum_ie^{z_i}$ y estudiar la forma cuadrática del hessiano.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Por la regla del cociente, $\partial p_k/\partial z_j=p_k\delta_{jk}-p_kp_j$. Como $\partial^{2}\LSE/\partial z_j\partial z_k=\partial p_k/\partial z_j$, el hessiano es $\diag(p)-pp\T$.
+  \item (b) $v\T\diag(p)v=\sum_ip_iv_i^{2}$ y $v\T pp\T v=(\sum_ip_iv_i)^{2}=\bar v^{2}$.
+  \item Usando $\sum_ip_i=1$: $\sum_ip_i(v_i-\bar v)^{2}=\sum_ip_iv_i^{2}-2\bar v\sum_ip_iv_i+\bar v^{2}=\sum_ip_iv_i^{2}-\bar v^{2}$, que es la forma cuadrática. Es una suma de términos no negativos.
+  \item Un hessiano semidefinido positivo en todo punto implica convexidad (módulo~4). La entropía cruzada $\ell=\LSE(z)-z_y$ es la suma de una función convexa y una lineal, luego es convexa.
+  \item (c) Con $v=\uno$, $\bar v=1$ y $v_i-\bar v=0$ para todo $i$: la forma cuadrática es nula y $(\diag(p)-pp\T)\uno=p-p(p\T\uno)=0$. Es coherente con la \cref{prop:lse}(i): a lo largo de la dirección $\uno$, $\LSE$ es lineal y su segunda derivada se anula.
+\end{enumerate}
+\resultado \textbf{$\nabla^{2}\LSE=\diag(p)-pp\T\succeq 0$, con $\uno$ en su núcleo; $\LSE$ y la entropía cruzada son convexas en los logits.} $\blacksquare$
+\comprobacion para $n=2$ y $z=(0,0)$, $p=(0{,}5;\,0{,}5)$ y el hessiano es $\begin{psmallmatrix}0{,}25&-0{,}25\\-0{,}25&0{,}25\end{psmallmatrix}$, con autovalores $0{,}5$ y $0$.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+\def\UrlBreaks{\do\/\do-}
+
+\bibitem{layernorm}
+J.~L. Ba, J.~R. Kiros y G.~E. Hinton.
+\newblock Layer normalization.
+\newblock Prepublicación, 2016.
+\newblock \url{https://arxiv.org/abs/1607.06450}
+
+\bibitem{bishopdl}
+C.~M. Bishop y H.~Bishop.
+\newblock \emph{Deep Learning: Foundations and Concepts}.
+\newblock Springer, 2024.
+\newblock Cap.~7, «Gradient Descent» (§7.4 «Normalization»); cap.~9, «Regularization» (§9.5 «Residual Connections» y §9.6.1 «Dropout»).
+\newblock \url{https://www.bishopbook.com/}
+
+\bibitem{cs231n}
+F.-F. Li \emph{et al.}
+\newblock CS231n: Deep Learning for Computer Vision. Notas del curso.
+\newblock Stanford University, 2026. «Neural Networks Part 2: Setting up the Data and the Loss», apartados «Weight Initialization» y «Regularization».
+\newblock \url{https://cs231n.github.io/neural-networks-2/}
+
+\bibitem{cs224n}
+C.~Manning \emph{et al.}
+\newblock CS224N: Natural Language Processing with Deep Learning.
+\newblock Stanford University, invierno de 2021. Práctica~3, «Dependency Parsing».
+\newblock \url{https://web.stanford.edu/class/archive/cs/cs224n/cs224n.1214/assignments/a3.pdf}
+
+\bibitem{cs336}
+T.~Hashimoto y P.~Liang.
+\newblock CS336: Language Modeling from Scratch.
+\newblock Stanford University, primavera de 2026. Práctica~1, «Basics», versión~26.0.3.
+\newblock \url{https://github.com/stanford-cs336/assignment1-basics}
+
+\bibitem{cs336b}
+T.~Hashimoto y P.~Liang.
+\newblock CS336: Language Modeling from Scratch.
+\newblock Stanford University, primavera de 2026. Práctica~2, «Systems», versión~26.1.3.
+\newblock \url{https://github.com/stanford-cs336/assignment2-systems}
+
+\bibitem{glorot}
+X.~Glorot e Y.~Bengio.
+\newblock Understanding the difficulty of training deep feedforward neural networks.
+\newblock En \emph{Proceedings of the 13th International Conference on Artificial Intelligence and Statistics (AISTATS)}, PMLR 9:249--256, 2010.
+
+\bibitem{goldberg}
+D.~Goldberg.
+\newblock What every computer scientist should know about floating-point arithmetic.
+\newblock \emph{ACM Computing Surveys}, 23(1):5--48, 1991.
+
+\bibitem{gbc}
+I.~Goodfellow, Y.~Bengio y A.~Courville.
+\newblock \emph{Deep Learning}.
+\newblock MIT Press, 2016.
+\newblock Cap.~4, «Numerical Computation»; cap.~7, «Regularization for Deep Learning»; cap.~8, «Optimization for Training Deep Models»; cap.~10, «Sequence Modeling: Recurrent and Recursive Nets».
+\newblock \url{https://www.deeplearningbook.org/}
+
+\bibitem{resnet}
+K.~He, X.~Zhang, S.~Ren y J.~Sun.
+\newblock Deep residual learning for image recognition.
+\newblock En \emph{IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, págs.~770--778, 2016.
+\newblock \url{https://arxiv.org/abs/1512.03385}
+
+\bibitem{he-init}
+K.~He, X.~Zhang, S.~Ren y J.~Sun.
+\newblock Delving deep into rectifiers: Surpassing human-level performance on ImageNet classification.
+\newblock En \emph{IEEE International Conference on Computer Vision (ICCV)}, 2015.
+\newblock \url{https://arxiv.org/abs/1502.01852}
+
+\bibitem{resnet-id}
+K.~He, X.~Zhang, S.~Ren y J.~Sun.
+\newblock Identity mappings in deep residual networks.
+\newblock En \emph{European Conference on Computer Vision (ECCV)}, 2016.
+\newblock \url{https://arxiv.org/abs/1603.05027}
+
+\bibitem{higham}
+N.~J. Higham.
+\newblock \emph{Accuracy and Stability of Numerical Algorithms}, 2.ª ed.
+\newblock SIAM, 2002.
+
+\bibitem{ieee754}
+IEEE Computer Society.
+\newblock \emph{IEEE Standard for Floating-Point Arithmetic}, IEEE Std 754-2019.
+\newblock IEEE, 2019.
+
+\bibitem{ioffe}
+S.~Ioffe y C.~Szegedy.
+\newblock Batch normalization: Accelerating deep network training by reducing internal covariate shift.
+\newblock En \emph{International Conference on Machine Learning (ICML)}, 2015.
+\newblock \url{https://arxiv.org/abs/1502.03167}
+
+\bibitem{micikevicius}
+P.~Micikevicius, S.~Narang, J.~Alben, G.~Diamos, E.~Elsen, D.~Garcia, B.~Ginsburg, M.~Houston, O.~Kuchaiev, G.~Venkatesh y H.~Wu.
+\newblock Mixed precision training.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2018.
+\newblock \url{https://arxiv.org/abs/1710.03740}
+
+\bibitem{fp8}
+P.~Micikevicius \emph{et al.}
+\newblock FP8 formats for deep learning.
+\newblock Prepublicación, 2022.
+\newblock \url{https://arxiv.org/abs/2209.05433}
+
+\bibitem{pascanu}
+R.~Pascanu, T.~Mikolov e Y.~Bengio.
+\newblock On the difficulty of training recurrent neural networks.
+\newblock En \emph{International Conference on Machine Learning (ICML)}, PMLR 28(3):1310--1318, 2013.
+\newblock \url{https://arxiv.org/abs/1211.5063}
+
+\bibitem{gpt2}
+A.~Radford, J.~Wu, R.~Child, D.~Luan, D.~Amodei e I.~Sutskever.
+\newblock Language models are unsupervised multitask learners.
+\newblock Informe técnico, OpenAI, 2019.
+
+\bibitem{cmu11785}
+B.~Raj \emph{et al.}
+\newblock 11-785: Introduction to Deep Learning.
+\newblock Carnegie Mellon University, otoño de 2025.
+\newblock \url{https://deeplearning.cs.cmu.edu/}
+
+\bibitem{srivastava}
+N.~Srivastava, G.~Hinton, A.~Krizhevsky, I.~Sutskever y R.~Salakhutdinov.
+\newblock Dropout: A simple way to prevent neural networks from overfitting.
+\newblock \emph{Journal of Machine Learning Research}, 15(56):1929--1958, 2014.
+\newblock \url{https://jmlr.org/papers/v15/srivastava14a.html}
+
+\bibitem{llama}
+H.~Touvron \emph{et al.}
+\newblock LLaMA: Open and efficient foundation language models.
+\newblock Prepublicación, 2023.
+\newblock \url{https://arxiv.org/abs/2302.13971}
+
+\bibitem{vaswani}
+A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N. Gomez, Ł.~Kaiser e I.~Polosukhin.
+\newblock Attention is all you need.
+\newblock En \emph{Advances in Neural Information Processing Systems 30 (NeurIPS)}, 2017.
+\newblock \url{https://arxiv.org/abs/1706.03762}
+
+\bibitem{grok1}
+xAI.
+\newblock Grok-1: código y pesos publicados.
+\newblock 2024.
+\newblock \url{https://github.com/xai-org/grok-1}
+
+\bibitem{xiong}
+R.~Xiong, Y.~Yang, D.~He, K.~Zheng, S.~Zheng, C.~Xing, H.~Zhang, Y.~Lan, L.~Wang y T.-Y. Liu.
+\newblock On layer normalization in the Transformer architecture.
+\newblock En \emph{International Conference on Machine Learning (ICML)}, 2020.
+\newblock \url{https://arxiv.org/abs/2002.04745}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock Cap.~4, «Linear Neural Networks for Classification»; cap.~5, «Multilayer Perceptrons»; cap.~8, «Modern Convolutional Neural Networks»; cap.~9, «Recurrent Neural Networks».
+\newblock \url{https://d2l.ai/}
+
+\bibitem{rmsnorm}
+B.~Zhang y R.~Sennrich.
+\newblock Root mean square layer normalization.
+\newblock En \emph{Advances in Neural Information Processing Systems 32 (NeurIPS)}, 2019.
+\newblock \url{https://arxiv.org/abs/1910.07467}
+
+\end{thebibliography}
+
+
+\end{document}

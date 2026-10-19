@@ -1,0 +1,213 @@
+% =====================================================================
+\chapter{LoRA: adaptación de bajo rango}
+\label{tema:5}
+% =====================================================================
+
+LoRA (\emph{low-rank adaptation}) congela cada matriz preentrenada y aprende solo una corrección de rango bajo, escrita como producto de dos matrices delgadas. Es hoy el método PEFT más usado porque no añade latencia de inferencia y su análisis se reduce al álgebra lineal del módulo~3. Este tema sigue el artículo original de Hu \emph{et al.}~\cite[§4 y~§7]{hu-lora}, el teorema de Eckart y Young~\cite{eckart-young} en la forma del módulo~3 y de Deisenroth, Faisal y Ong~\cite[§4.6]{mml}, y la clase invitada sobre LoRA del curso CS224N~\cite{cs224n}.
+
+\section{Definición y número de parámetros}
+
+\begin{definicion}[LoRA]\label{def:lora}
+Sea $W\in\R^{d\times k}$ una matriz preentrenada de una capa lineal $h=Wx$, con $x\in\R^{k}$. Sean $r\ll\min(d,k)$ el \emph{rango}, $\alpha>0$ un hiperparámetro de escala y $s=\alpha/r$. LoRA sustituye la capa por
+\[
+h=Wx+s\,BAx,\qquad A\in\R^{r\times k},\ B\in\R^{d\times r},
+\]
+con $W$ congelada y $A$, $B$ entrenables. Se inicializa $A$ con entradas gaussianas y $B=0$~\cite[§4.1]{hu-lora}. La matriz efectiva es $W'=W+s\,BA$.
+\end{definicion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},font=\small,
+  caja/.style={draw,thick,minimum height=8mm,minimum width=24mm,align=center}]
+  \node (x) at (0,0) {$x\in\R^{k}$};
+  \node[caja] (W) at (3.6,0.9) {$W$ congelada\\ $d\times k$};
+  \node[caja] (A) at (3.0,-0.9) {$A$ entrenable\\ $r\times k$};
+  \node[caja] (B) at (6.2,-0.9) {$B$ entrenable\\ $d\times r$, $B_0=0$};
+  \node[draw,thick,circle,inner sep=1pt] (s) at (8.6,0) {$+$};
+  \node (h) at (10.7,0) {$h\in\R^{d}$};
+  \draw[->] (x) |- (W);
+  \draw[->] (x) |- (A);
+  \draw[->] (A) -- node[above] {$\R^{r}$} (B);
+  \draw[->] (W) -| (s);
+  \draw[->] (B) -| node[pos=0.25,below] {$\times s$} (s);
+  \draw[->] (s) -- (h);
+\end{tikzpicture}
+\caption{Capa lineal con LoRA. La entrada atraviesa la matriz congelada y, en paralelo, el cuello de dimensión $r$ formado por $A$ y $B$. Como $B$ empieza en cero, al principio $h=Wx$.}
+\label{fig:lora}
+\end{figure}
+
+\begin{proposicion}[Parámetros y coste]\label{prop:lora-param}
+LoRA entrena $r(d+k)$ parámetros por matriz, una fracción $r(d+k)/(dk)=r(1/d+1/k)$ de los $dk$ del ajuste completo. Calcular $s\,B(Ax)$ cuesta $2r(d+k)$ operaciones más un escalado, frente a las $2dk$ de $Wx$, y nunca requiere formar $BA$.
+\end{proposicion}
+
+\begin{proof}
+$A$ tiene $rk$ entradas y $B$, $dr$. El producto $Ax$ es $(r\times k)(k\times 1)$ y cuesta $2rk$ operaciones (módulo~17, tema~1); $B(Ax)$ es $(d\times r)(r\times 1)$ y cuesta $2dr$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\caption{Parámetros entrenables de LoRA en una matriz.}\label{tab:lora}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Matriz & $r$ & Completo $dk$ & LoRA $r(d+k)$ & Fracción \\
+\midrule
+$64\times 64$ & 4 & $4096$ & $512$ & $12{,}5\,\%$ \\
+$768\times 768$ & 4 & $589\,824$ & $6144$ & $1{,}04\,\%$ \\
+$4096\times 4096$ & 8 & $16\,777\,216$ & $65\,536$ & $0{,}39\,\%$ \\
+$4096\times 4096$ & 16 & $16\,777\,216$ & $131\,072$ & $0{,}78\,\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{ejemplo}[Una capa LoRA a mano]\label{ej:lora-mano}
+Sean $W=I_2$, $B=(1,2)\T$, $A=(0{,}5;\,-1)$, $r=1$ y $\alpha=2$, de modo que $s=2$. Entonces
+\[
+BA=\begin{pmatrix}0{,}5&-1\\1&-2\end{pmatrix},\qquad W'=I+2BA=\begin{pmatrix}2&-2\\2&-3\end{pmatrix}.
+\]
+Para $x=(1,0)$: $Ax=0{,}5$, $B(Ax)=(0{,}5;\,1)$ y $h=(1,0)+2\cdot(0{,}5;\,1)=(2,2)$, que coincide con $W'x$.
+\end{ejemplo}
+
+En el mini-GPT de la práctica ($d=64$, red de alimentación de dimensión 256, 2 bloques), LoRA con $r=4$ en las cuatro matrices de atención ($64\times 64$) y las dos de la red de alimentación ($64\times 256$ y $256\times 64$) de cada bloque entrena $2\cdot(4\cdot 512+2\cdot 1280)=9216$ parámetros, el $8{,}57\,\%$ de los $107\,520$ del modelo. En GPT-3 de 175\,000 millones de parámetros, Hu \emph{et al.} redujeron los parámetros entrenables unas $10\,000$ veces y la memoria de GPU unas 3 veces respecto al ajuste completo con Adam; con $r=4$ en $W_Q$ y $W_V$, el punto de control pasó de unos 350~GB a unos 35~MB~\cite[§4.2]{hu-lora}.
+
+\begin{proposicion}[Fusión]\label{prop:fusion}
+Tras el entrenamiento, sustituir $W$ por $W'=W+s\,BA$ produce la misma función que la capa LoRA y el mismo coste de inferencia que la capa original.
+\end{proposicion}
+
+\begin{proof}
+Por la distributividad del producto de matrices, $W'x=Wx+s\,(BA)x=Wx+s\,B(Ax)$ para todo $x$. $W'$ tiene la misma forma $d\times k$ que $W$, luego $W'x$ cuesta $2dk$ operaciones, como $Wx$.
+\end{proof}
+
+Así, LoRA no añade latencia de inferencia, a diferencia de los adaptadores del \cref{tema:4}. Sin fusionar, en cambio, un mismo modelo base puede servir muchos adaptadores pequeños e intercambiarlos en cada petición.
+
+\section{Rango de la corrección}
+
+\begin{proposicion}[Cota de rango]\label{prop:rango}
+Para todo $A\in\R^{r\times k}$ y $B\in\R^{d\times r}$, $\rango(BA)\le r$.
+\end{proposicion}
+
+\begin{proof}
+Para todo $x\in\R^{k}$, $(BA)x=B(Ax)$ es una combinación lineal de las $r$ columnas de $B$ con coeficientes las componentes de $Ax\in\R^{r}$. Luego $\img(BA)\subseteq\img(B)=\Col(B)$, que está generado por $r$ vectores y tiene dimensión a lo sumo~$r$. El rango es la dimensión de la imagen.
+\end{proof}
+
+\begin{proposicion}[Recíproco]\label{prop:factorizacion}
+Toda matriz $M\in\R^{d\times k}$ con $\rango M\le r$ puede escribirse como $M=BA$ con $B\in\R^{d\times r}$ y $A\in\R^{r\times k}$.
+\end{proposicion}
+
+\begin{proof}
+Sea $M=\sum_{i=1}^{\rho}\sigma_iu_iv_i\T$ la SVD reducida de $M$, con $\rho=\rango M\le r$ (módulo~3). Tómense como columnas de $B$ los vectores $\sigma_1u_1,\dots,\sigma_\rho u_\rho$, completados con $r-\rho$ columnas nulas, y como filas de $A$ los vectores $v_1\T,\dots,v_\rho\T$, completados con $r-\rho$ filas nulas. Entonces $BA=\sum_{i=1}^{\rho}\sigma_iu_iv_i\T=M$.
+\end{proof}
+
+\begin{corolario}\label{cor:representables}
+El conjunto de correcciones que LoRA de rango $r$ puede representar es exactamente $\{\Delta W\in\R^{d\times k}:\rango\Delta W\le r\}$. Si $r<\min(d,k)$, ninguna corrección de rango completo es representable.
+\end{corolario}
+
+\section{Gradientes e inicialización}
+
+\begin{proposicion}[Gradientes de LoRA]\label{prop:grad-lora}
+Sea $h=Wx+s\,BAx$ y sea $G=\partial\mathcal{L}/\partial h\in\R^{d}$ el gradiente que llega a la salida. Entonces
+\[
+\frac{\partial\mathcal{L}}{\partial B}=s\,G\,(Ax)\T\in\R^{d\times r},\qquad
+\frac{\partial\mathcal{L}}{\partial A}=s\,B\T G\,x\T\in\R^{r\times k}.
+\]
+Con un lote, se suman las contribuciones de cada ejemplo.
+\end{proposicion}
+
+\begin{proof}
+Se usa la regla del módulo~4: si $h=Mz$ con $z$ fijo, entonces $\partial\mathcal{L}/\partial M=Gz\T$. (i) Respecto a $B$, $h$ depende de $B$ a través de $s\,B(Ax)$, que es de la forma $Mz$ con $M=B$ y $z=s\,Ax$; luego $\partial\mathcal{L}/\partial B=G\,(s\,Ax)\T$. (ii) Respecto a $A$, sea $c=Ax\in\R^{r}$. Como $h$ depende de $c$ a través de $s\,Bc$, se tiene $\partial\mathcal{L}/\partial c=s\,B\T G$. Y como $c=Ax$ es de la forma $Mz$ con $M=A$ y $z=x$, $\partial\mathcal{L}/\partial A=(s\,B\T G)\,x\T$.
+\end{proof}
+
+\begin{corolario}[Inicialización]\label{cor:init}
+Con $B=0$ y $A$ aleatoria:
+\begin{enumerate}
+  \item $BA=0$ y el modelo ajustado empieza siendo exactamente el modelo base;
+  \item en el primer paso $\partial\mathcal{L}/\partial A=0$, pero $\partial\mathcal{L}/\partial B=s\,G(Ax)\T\ne 0$ si $G\ne 0$ y $Ax\ne 0$, de modo que $B$ deja de ser nula y, desde el segundo paso, también $A$ recibe gradiente.
+\end{enumerate}
+En cambio, $(A,B)=(0,0)$ es un punto fijo del descenso de gradiente (\cref{eje:5-init}).
+\end{corolario}
+
+La elección simétrica, $A=0$ con $B$ aleatoria, también empieza en el modelo base y también permite aprender; el convenio del artículo original es $B=0$.
+
+\section{La escala \texorpdfstring{$\alpha/r$}{alpha/r}}
+
+\begin{proposicion}[Adam es invariante a la escala del gradiente]\label{prop:adam-escala}
+Sea el optimizador Adam con $\varepsilon=0$ (módulo~7). Si se multiplican todos los gradientes por una constante $c>0$, la sucesión de actualizaciones de los parámetros no cambia.
+\end{proposicion}
+
+\begin{proof}
+Con gradientes $cg_t$, los momentos pasan a ser $m'_t=c\,m_t$ y $v'_t=c^{2}v_t$, por ser medias móviles exponenciales lineales en $g_t$ y en $g_t^{2}$ respectivamente; las correcciones de sesgo no dependen de $c$. La actualización es $\eta\,\hat m'_t/\sqrt{\hat v'_t}=\eta\,c\,\hat m_t/(c\sqrt{\hat v_t})=\eta\,\hat m_t/\sqrt{\hat v_t}$.
+\end{proof}
+
+Por la \cref{prop:grad-lora}, el gradiente de $B$ es proporcional a $s$. Por la \cref{prop:adam-escala}, la actualización $\Delta B$ del primer paso no depende de $s$, y la variación de la función, $s\,\Delta B\,A\,x$, es proporcional a $s$. El factor $s=\alpha/r$ actúa, por tanto, como un multiplicador de la tasa de aprendizaje. Hu \emph{et al.} observan que ajustar $\alpha$ con Adam equivale aproximadamente a ajustar la tasa, fijan $\alpha$ al primer valor de $r$ que prueban y no lo modifican; dividir por $r$ reduce la necesidad de reajustar hiperparámetros al cambiar el rango~\cite[§4.1]{hu-lora}. En la práctica se fija $\alpha$ (por ejemplo, $\alpha=16$ o $\alpha=2r$) y se ajusta $r$.
+
+\section{Por qué funciona: relación con la SVD}
+
+LoRA apuesta a que la actualización $\Delta W$ que necesita el ajuste fino tiene un espectro que decae deprisa. El teorema de Eckart--Young (módulo~3, tema~5) cuantifica lo que se pierde al restringir el rango.
+
+\begin{teorema}[Eckart--Young, norma de Frobenius]\label{teo:ey}
+Sea $\Delta W=\sum_i\sigma_iu_iv_i\T$ la SVD, con $\sigma_1\ge\sigma_2\ge\cdots$. Para todo $r$, la matriz $\Delta W_r=\sum_{i\le r}\sigma_iu_iv_i\T$ minimiza $\norm{\Delta W-M}_F$ entre las matrices de rango a lo sumo~$r$, y
+\[
+\norm{\Delta W-\Delta W_r}_F=\Bigl(\sum_{i>r}\sigma_i^{2}\Bigr)^{1/2}.
+\]
+\end{teorema}
+
+La demostración está en el módulo~3 y en~\cite{eckart-young}.
+
+\begin{corolario}[Error mínimo de LoRA]\label{cor:error-lora}
+Sea $\Delta W^{\star}$ la actualización ideal de una matriz. Entonces
+\[
+\min_{A,B}\,\norm{s\,BA-\Delta W^{\star}}_F=\Bigl(\sum_{i>r}\sigma_i^{2}(\Delta W^{\star})\Bigr)^{1/2}.
+\]
+\end{corolario}
+
+\begin{proof}
+Como $s>0$, $\{s\,BA\}$ recorre el mismo conjunto que $\{BA\}$, que por el \cref{cor:representables} es el de las matrices de rango a lo sumo $r$. Basta aplicar el \cref{teo:ey}.
+\end{proof}
+
+\begin{ejemplo}\label{ej:energia}
+Si los valores singulares de $\Delta W^{\star}$ son $(3;\,1;\,0{,}1)$, la energía total es $\sum\sigma_i^{2}=9+1+0{,}01=10{,}01$. La mejor corrección de rango~1 tiene error $\sqrt{1+0{,}01}=1{,}005$ y conserva $9/10{,}01=89{,}9\,\%$ de la energía; la de rango~2 tiene error $0{,}1$ y conserva $10/10{,}01=99{,}9\,\%$.
+\end{ejemplo}
+
+Hay dos diferencias con truncar una SVD. LoRA no calcula ninguna SVD: el descenso de gradiente encuentra $B$ y $A$ directamente. Y LoRA aproxima la \emph{actualización}, no $W$, que suele tener rango completo y no se puede comprimir así sin perder mucho.
+
+\begin{observacion}[Evidencia empírica]
+Hu \emph{et al.} adaptan principalmente $W_Q$ y $W_V$ y encuentran que, en algunas tareas, un rango tan pequeño como $r=1$ basta~\cite[§7.1 y~§7.2]{hu-lora}; las direcciones singulares principales aprendidas con $r=8$ y con $r=64$ se solapan mucho, y el resto parecen ruido. Dettmers \emph{et al.} observaron, en cambio, que para igualar el ajuste completo en modelos grandes hace falta aplicar LoRA a todas las capas lineales~\cite[§4]{dettmers}. En la práctica del módulo, la actualización del ajuste completo en $W_Q$ tiene rango 64 y sus 4 primeros valores singulares solo concentran el $41{,}5\,\%$ de la energía: un modelo tan pequeño, ajustado de forma tan agresiva, no cumple bien la hipótesis. Aun así, LoRA acierta más en la prueba ($0{,}450$ frente a $0{,}300$, con tasas de aprendizaje distintas); una explicación plausible es que restringir el rango regulariza.
+\end{observacion}
+
+\begin{lecturas}
+\item Hu \emph{et al.}~\cite{hu-lora}, §4.1 (formulación, inicialización y escala), §4.2 (aplicación a los Transformer) y §7 (análisis del rango).
+\item Módulo~3, tema~5, y Deisenroth, Faisal y Ong~\cite{mml}, §4.6 «Matrix Approximation».
+\item CS224N~\cite{cs224n}, clase invitada «Tinker and LoRA Without Regret».
+\item Jurafsky y Martin~\cite{jm3}, §8.2.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-vf}
+Justifique si son verdaderas o falsas: (a) LoRA modifica los pesos $W$ durante el entrenamiento; (b) si se inicializan $A$ y $B$ a cero, LoRA funciona igual; (c) tras fusionar un adaptador, la inferencia es igual de rápida que con el modelo base.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-contar}
+(a) Una matriz de la red de alimentación mide $1024\times 4096$. ¿Cuántos parámetros tiene? ¿Cuántos entrena LoRA con $r=8$ y qué porcentaje es? (b) Un modelo de 12 capas con $d=768$ aplica LoRA con $r=8$ a $W_Q$, $W_K$, $W_V$ y $W_O$, todas de $768\times 768$. Calcule los parámetros entrenables, los de esas matrices y el porcentaje.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-fusion}
+Sean $W=I_2$, $B=(1,0)\T$, $A=(2,1)$, $r=1$ y $\alpha=2$. Calcule la matriz fusionada $W'$ y $W'x$ para $x=(1,1)$, y compruebe el resultado por el camino sin fusionar.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-grad}
+En una capa LoRA con $s=2$, $B=(0,0)\T$ y $A=(1,1)$ llega el gradiente $G=(1,-1)$ para la entrada $x=(2,1)$. Calcule $\partial\mathcal{L}/\partial B$ y $\partial\mathcal{L}/\partial A$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-svd}
+Sea $\Delta W=\begin{pmatrix}2&1&1\\1&2&-1\end{pmatrix}$. Calcule su SVD a partir de $\Delta W\,\Delta W\T$, su mejor aproximación de rango~1, el error de Frobenius y la energía conservada. Escriba esa aproximación como un producto $BA$ con $B\in\R^{2\times 1}$ y $A\in\R^{1\times 3}$.
+\fuente{adaptado de Deisenroth, Faisal y Ong~\cite{mml}, cap.~4, ejercicio~4.10.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-rango}
+Demuestre que $\rango(BA)\le r$ y que, por tanto, si $r<\min(d,k)$ existen actualizaciones $\Delta W$ que LoRA no puede representar exactamente. Dé un ejemplo con $d=k=2$ y $r=1$ y compruébelo con el determinante.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-init}
+Use la \cref{prop:grad-lora} para demostrar que, con $A=0$ y $B=0$, los parámetros no cambian nunca con descenso de gradiente (ni con Adam). Demuestre después que, con $B=0$ y $A\ne 0$, la actualización de $B$ en el primer paso es distinta de cero si $G\ne 0$ y $Ax\ne 0$.
+\end{ejercicio}

@@ -1,0 +1,1732 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase III — Módulo 12
+%  Representar el lenguaje
+%  Compilar: latexmk -r ../latexmkrc M12-tokenizacion.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 12}
+
+% Notación propia del módulo
+\newcommand{\tok}[1]{\texttt{#1}}
+\newcommand{\hx}[1]{\texttt{#1}}
+\newcommand{\bits}[1]{\texttt{#1}}
+\newcommand{\ESP}{\rule[-0.2ex]{0.55em}{0.6pt}}
+\newcommand{\vs}{\texttt{\textvisiblespace}}
+\newcommand{\PMI}{\operatorname{PMI}}
+\newcommand{\PPMI}{\operatorname{PPMI}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Enc}{\operatorname{enc}}
+\newcommand{\Dec}{\operatorname{dec}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\sep}{\ensuremath{\cdot}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 12. Representar el lenguaje},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase III \textperiodcentered\ Secuencias y Transformer}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 12\par}\vspace{0.3cm}
+{\LARGE Representar el lenguaje\par}
+\vspace{0.2cm}
+{\large Tokenización, embeddings y modelos secuenciales\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Antes de que un gran modelo de lenguaje procese un texto, un programa sin parámetros aprendidos por descenso de gradiente lo convierte en una secuencia de enteros, y una tabla convierte cada entero en un vector. Este módulo estudia esas dos etapas y la historia de los modelos que precedieron al Transformer. Parte de la representación del texto como bytes mediante UTF-8, desarrolla el algoritmo BPE (\emph{Byte Pair Encoding}) y el modelo unigram de SentencePiece, analiza el coste del vocabulario y sus efectos sobre el comportamiento de los modelos, presenta los embeddings estáticos de word2vec y termina con los modelos de $n$-gramas, las redes recurrentes y las LSTM, cuyas limitaciones motivan la atención del módulo~13.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item codificar a mano caracteres Unicode en UTF-8 y demostrar que esta codificación es un código prefijo que se autosincroniza;
+  \item ejecutar a mano el entrenamiento y la codificación de BPE, demostrar cuánto acorta cada fusión y probar que la decodificación de un BPE de bytes recupera el texto original;
+  \item definir el modelo unigram, demostrar la corrección del algoritmo de Viterbi para segmentar y describir su entrenamiento por EM y poda;
+  \item calcular el coste en parámetros de un vocabulario y la compresión de un tokenizador, y explicar los efectos de la tokenización sobre el recuento de letras, la aritmética y los idiomas;
+  \item definir los embeddings, la similitud coseno y la información mutua puntual, derivar los gradientes de skip-gram con softmax y con muestreo negativo y relacionar este último con la PMI;
+  \item analizar la dispersión de los $n$-gramas, demostrar la cota exponencial del gradiente en una red recurrente, describir la LSTM y el recorte del gradiente, y justificar por qué estos modelos no escalan como el Transformer.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1 se usan los tokens, el tokenizador como par codificación-decodificación, los modelos de $n$-gramas y la entropía cruzada; del módulo~2, el producto escalar, la norma y la similitud coseno; del módulo~3, los valores y vectores propios de una matriz simétrica y la norma espectral; del módulo~4, la regla de la cadena multivariable y el jacobiano; del módulo~6, la información mutua; del módulo~8, la regresión logística y la softmax con entropía cruzada; del módulo~9, el modelo de lenguaje neuronal de Bengio \emph{et al.}, y del módulo~11, el desvanecimiento del gradiente y las conexiones residuales. Se usan también la numeración binaria y hexadecimal.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Del texto a los bytes: Unicode y UTF-8 & \cite{jm3}, \cite{rfc3629}, \cite{cs336} \\
+2 & El algoritmo BPE & \cite{sennrich}, \cite{jm3}, \cite{cs336}, \cite{gpt2} \\
+3 & El modelo unigram, SentencePiece y el vocabulario & \cite{kudo}, \cite{sentencepiece}, \cite{jm3}, \cite{petrov} \\
+4 & Embeddings y word2vec & \cite{jm3}, \cite{cs224n}, \cite{mikolov13b}, \cite{levy} \\
+5 & Modelos secuenciales: $n$-gramas, RNN y LSTM & \cite{jm3}, \cite{cs224n}, \cite{bengio94}, \cite{pascanu}, \cite{lstm} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La parte de tokenización sigue el capítulo~2 de Jurafsky y Martin~\cite{jm3}, «Words and Tokens» (§2.3 «Unicode» y §2.4 «Subword Tokenization: Byte-Pair Encoding»), y la sección~2 de la tarea~1 del curso CS336 de Stanford~\cite{cs336}, en la que se programa un tokenizador BPE de bytes. Los algoritmos se toman de sus artículos originales: Sennrich, Haddow y Birch~\cite{sennrich} para BPE, Radford \emph{et al.}~\cite{gpt2} para su versión a nivel de byte, Kudo~\cite{kudo} para el modelo unigram y Kudo y Richardson~\cite{sentencepiece} para SentencePiece; la codificación UTF-8 se define en el RFC~3629~\cite{rfc3629}. Los embeddings siguen el capítulo~5 de~\cite{jm3}, «Embeddings», y la clase~2 de CS224N~\cite{cs224n}, «Word Vectors», con los artículos de Mikolov \emph{et al.}~\cite{mikolov13a,mikolov13b} y de Levy y Goldberg~\cite{levy}. Los modelos recurrentes siguen el capítulo~14 de~\cite{jm3}, «RNNs and LSTMs», la clase~4 de CS224N, el capítulo~10 de Goodfellow, Bengio y Courville~\cite{gbc} y los capítulos~9 y~10 de Zhang \emph{et al.}~\cite{d2l}; los resultados sobre el gradiente proceden de Bengio, Simard y Frasconi~\cite{bengio94} y de Pascanu, Mikolov y Bengio~\cite{pascanu}, y la LSTM, de Hochreiter y Schmidhuber~\cite{lstm}. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública: el informe técnico de Gemini~\cite{gemini} indica que su tokenizador es de tipo SentencePiece, los pesos de Grok-1 publicados por xAI incluyen su vocabulario, y Anthropic no ha publicado los detalles del tokenizador de Claude.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\Sigma$, $\Sigma^{*}$ & alfabeto de caracteres (puntos de código Unicode) y cadenas sobre él \\
+$\mathcal{B}=\{0,\dots,255\}$ & conjunto de los bytes; $\mathcal{B}^{*}$, cadenas de bytes \\
+\hx{U+00F1}, \hx{C3}, \bits{110xxxxx} & punto de código, byte en hexadecimal y patrón de bits \\
+$\V$, $K=\abs{\V}$, $\V_0$ & vocabulario, su tamaño y vocabulario inicial de BPE \\
+$k$ & número de fusiones de BPE \\
+$u\Vert v$ & concatenación de las cadenas $u$ y $v$ \\
+$s=(t_1,\dots,t_m)$, $p(t)$ & segmentación en tokens y probabilidad unigram de un token \\
+$E\in\R^{K\times d}$, $e_i$ & matriz de embeddings y vector \emph{one-hot} del token $i$ \\
+$v_w$, $u_w$ & vector de una palabra como centro y como contexto en skip-gram \\
+$\sigma$, $\odot$ & sigmoide logística y producto componente a componente \\
+$h_t$, $c_t$ & estado oculto de una red recurrente y celda de memoria de una LSTM \\
+$f_t$, $i_t$, $o_t$ & puertas de olvido, de entrada y de salida de una LSTM \\
+$\norm{\cdot}$ & norma euclídea de un vector o norma espectral de una matriz \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Del texto a los bytes: Unicode y UTF-8}
+\label{tema:1}
+% =====================================================================
+
+Un tokenizador transforma texto en una secuencia de enteros. Antes de elegir las unidades conviene fijar qué es un texto para un ordenador: una sucesión de puntos de código Unicode que se almacena como una sucesión de bytes. Este tema plantea el compromiso entre longitud de la secuencia y tamaño del vocabulario, define la codificación UTF-8 y demuestra las dos propiedades que la hacen adecuada como punto de partida de los tokenizadores modernos: es un código prefijo y se autosincroniza. Se sigue~\cite[§2.3]{jm3}, la definición del RFC~3629~\cite{rfc3629} y la §2 de la tarea~1 de CS336~\cite{cs336}.
+
+\section{El problema de la tokenización}
+
+Se recuerda del módulo~1 que un \emph{tokenizador} es un par de aplicaciones $\tau\colon\Sigma^{*}\to\V^{*}$ y $\delta\colon\V^{*}\to\Sigma^{*}$ con $\delta(\tau(s))=s$ para toda cadena $s$. La elección de $\V$ fija la granularidad y, con ella, dos magnitudes que compiten: el tamaño $K=\abs{\V}$ y la longitud $\abs{\tau(s)}$ de las secuencias.
+
+\begin{table}[h]
+\centering\small
+\caption{Granularidad de la tokenización, con la palabra «caballerías» como ejemplo.}\label{tab:granularidad}
+\begin{tabularx}{\textwidth}{@{}lcc>{\raggedright\arraybackslash}X@{}}
+\toprule
+Unidad & Tokens & $K$ típico & Limitación principal \\
+\midrule
+Carácter & 11 & $\sim 10^{2}$ & secuencias largas; la atención cuesta $O(n^{2})$ \\
+Palabra & 1 & $>5\cdot 10^{5}$ & palabras fuera del vocabulario; formas sin relación \\
+Subpalabra & 2--5 & $3{,}2\cdot 10^{4}$--$2{,}6\cdot 10^{5}$ & hay que entrenar el tokenizador \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Con un vocabulario de palabras, «caballería» y «caballerías» son tokens sin ninguna relación, y una palabra nueva o con una errata no tiene representación. Con caracteres, cualquier texto es representable, pero las secuencias son largas, y el coste de la atención crece con el cuadrado de la longitud (módulo~13). Las subpalabras reparten el vocabulario según la frecuencia: las palabras comunes son un solo token y las raras se componen de piezas frecuentes.
+
+\begin{observacion}\label{obs:congelado}
+El tokenizador se entrena antes que el modelo y por separado, con un algoritmo de conteo, y después se congela. El modelo solo recibe los enteros que produce. En los temas~2 y~3 se estudian los dos algoritmos de entrenamiento más usados.
+\end{observacion}
+
+\section{Unicode y puntos de código}
+
+\begin{definicion}[Punto de código]
+Unicode asigna a cada carácter un entero, su \emph{punto de código}, del conjunto $\{0,1,\dots,\hx{10FFFF}_{16}\}$, que se escribe en hexadecimal con el prefijo \hx{U+}. Los puntos de código del intervalo \hx{U+D800}--\hx{U+DFFF} (\emph{sustitutos}) están reservados y no representan caracteres. Los restantes se llaman \emph{valores escalares Unicode}~\cite{rfc3629}.
+\end{definicion}
+
+Por ejemplo, «a» es \hx{U+0061} (97), «ñ» es \hx{U+00F1} (241) y el signo del euro es \hx{U+20AC} (8364). Un punto de código es abstracto: no fija la forma gráfica (el glifo) con que se dibuja el carácter~\cite[§2.3.1]{jm3}. Unicode~16.0 define más de $1{,}5\cdot 10^{5}$ caracteres.
+
+Un modelo podría usar los puntos de código como vocabulario inicial, pero este tendría más de $1{,}3\cdot 10^{5}$ símbolos, casi todos raros. Por eso los tokenizadores modernos parten de la representación del texto en bytes.
+
+\section{La codificación UTF-8}
+
+\begin{definicion}[UTF-8]\label{def:utf8}
+La codificación \emph{UTF-8} asigna a cada valor escalar $c$ una cadena de 1 a 4 bytes según el \cref{tab:utf8}. Los bits de $c$, escritos en binario con el número de bits útiles de su fila y completados con ceros a la izquierda, rellenan de izquierda a derecha las posiciones marcadas con \bits{x}. La codificación de un texto es la concatenación de las codificaciones de sus caracteres.
+\end{definicion}
+
+\begin{table}[h]
+\centering\small
+\caption{Definición de UTF-8~\cite{rfc3629}. Se llama \emph{byte inicial} al primero de cada fila y \emph{bytes de continuación} a los demás.}\label{tab:utf8}
+\begin{tabular}{@{}lccl@{}}
+\toprule
+Puntos de código & Bytes & Bits útiles & Patrón de bits \\
+\midrule
+\hx{U+0000}--\hx{U+007F} & 1 & 7 & \bits{0xxxxxxx} \\
+\hx{U+0080}--\hx{U+07FF} & 2 & 11 & \bits{110xxxxx 10xxxxxx} \\
+\hx{U+0800}--\hx{U+FFFF} & 3 & 16 & \bits{1110xxxx 10xxxxxx 10xxxxxx} \\
+\hx{U+10000}--\hx{U+10FFFF} & 4 & 21 & \bits{11110xxx 10xxxxxx 10xxxxxx 10xxxxxx} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Se exige además que cada carácter use la fila más corta en la que cabe: las codificaciones \emph{sobrelargas}, como escribir «a» con dos bytes, no son UTF-8 válido. Como consecuencia, los bytes \hx{C0}, \hx{C1} y \hx{F5}--\hx{FF} no aparecen nunca en un texto UTF-8~\cite{rfc3629}.
+
+\begin{ejemplo}[La letra ñ]\label{ej:enie}
+El punto de código de «ñ» es $\hx{F1}_{16}=241>127$, luego usa la fila de 2 bytes. En binario con 11 bits, $241=\bits{00011110001}$, que se reparte en $5+6$ bits: \bits{00011} y \bits{110001}. Los bytes son
+\[
+\bits{110}\,\bits{00011}=\bits{11000011}=\hx{C3}_{16}=195,\qquad
+\bits{10}\,\bits{110001}=\bits{10110001}=\hx{B1}_{16}=177.
+\]
+La \cref{fig:enie} muestra el reparto. Todas las vocales con tilde del español tienen puntos de código entre \hx{U+00C0} y \hx{U+00FF}, de modo que su byte inicial es \hx{C3}: «á» $=\hx{C3 A1}$, «é» $=\hx{C3 A9}$, «ó» $=\hx{C3 B3}$.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small\ttfamily,
+  b/.style={draw,minimum width=5.2mm,minimum height=6mm,inner sep=0pt},
+  h/.style={b,fill=black!12}]
+  % bits útiles
+  \foreach \v [count=\i] in {0,0,0,1,1,1,1,0,0,0,1}{
+    \node[b] (u\i) at (\i*0.52,1.9) {\v};}
+  \node[anchor=east,font=\small] at (0.2,1.9) {\textrm{$241$ en 11 bits}};
+  % byte 1
+  \foreach \v [count=\i] in {1,1,0}{\node[h] (a\i) at (\i*0.52-0.9,0) {\v};}
+  \foreach \v [count=\i] in {0,0,0,1,1}{\node[b] (p\i) at (\i*0.52+0.66,0) {\v};}
+  % byte 2
+  \foreach \v [count=\i] in {1,0}{\node[h] (c\i) at (\i*0.52+3.6,0) {\v};}
+  \foreach \v [count=\i] in {1,1,0,0,0,1}{\node[b] (q\i) at (\i*0.52+4.64,0) {\v};}
+  \draw[-{Stealth[length=2mm]}] (u3.south) -- (p3.north);
+  \draw[-{Stealth[length=2mm]}] (u8.south) -- (q3.north);
+  \draw[decorate,decoration={brace,mirror,amplitude=4pt}] ([yshift=-1mm]a1.south west) -- ([yshift=-1mm]p5.south east) node[midway,below=5pt,font=\small] {\textrm{byte inicial} \hx{C3}};
+  \draw[decorate,decoration={brace,mirror,amplitude=4pt}] ([yshift=-1mm]c1.south west) -- ([yshift=-1mm]q6.south east) node[midway,below=5pt,font=\small] {\textrm{byte de continuación} \hx{B1}};
+\end{tikzpicture}
+\caption{Codificación UTF-8 de «ñ» (\cref{ej:enie}). Las casillas sombreadas son los bits fijos del patrón; las blancas, los bits útiles del punto de código.}
+\label{fig:enie}
+\end{figure}
+
+\begin{proposicion}\label{prop:contar-utf8}
+El número de puntos de código que UTF-8 codifica con 1, 2, 3 y 4 bytes es, respectivamente, $128$, $1920$, $63\,488$ y $1\,048\,576$. Descontando los $2048$ sustitutos, que pertenecen a la fila de 3 bytes, hay $1\,112\,064$ valores escalares.
+\end{proposicion}
+
+\begin{proof}
+Cada fila del \cref{tab:utf8} cubre un intervalo de enteros; su cardinal es la diferencia de los extremos más uno: $\hx{80}_{16}=128$; $\hx{800}_{16}-\hx{80}_{16}=2048-128=1920$; $\hx{10000}_{16}-\hx{800}_{16}=65\,536-2048=63\,488$; $\hx{110000}_{16}-\hx{10000}_{16}=1\,114\,112-65\,536=1\,048\,576$. Los sustitutos son $\hx{E000}_{16}-\hx{D800}_{16}=2048$, todos en el intervalo de 3 bytes. El total es $1\,114\,112-2048=1\,112\,064$.
+\end{proof}
+
+\section{Propiedades de UTF-8}
+
+\begin{definicion}[Código prefijo]
+Sea $C\colon\Sigma\to\mathcal{B}^{*}$ una aplicación que asigna a cada símbolo una cadena de bytes no vacía. $C$ es un \emph{código prefijo} si ninguna palabra del código $C(a)$ es prefijo propio de otra $C(b)$ y, además, $C$ es inyectiva.
+\end{definicion}
+
+\begin{teorema}[UTF-8 es un código prefijo]\label{teo:prefijo}
+La codificación UTF-8 de un carácter es inyectiva y ninguna palabra del código es prefijo propio de otra. En consecuencia, su extensión a cadenas, $\Enc\colon\Sigma^{*}\to\mathcal{B}^{*}$, es inyectiva: toda cadena de bytes UTF-8 válida se descompone de forma única en caracteres.
+\end{teorema}
+
+\begin{proof}
+\emph{Paso 1 (el byte inicial determina la longitud).} El byte inicial de una palabra de longitud $n$ empieza por \bits{0} si $n=1$ y por $n$ unos seguidos de un cero si $n\in\{2,3,4\}$. Estos cuatro prefijos de bits son incompatibles entre sí, de modo que la longitud de una palabra del código se lee en su primer byte.
+
+\emph{Paso 2 (sin prefijos propios).} Si $C(a)$ fuera prefijo propio de $C(b)$, ambas palabras tendrían el mismo primer byte y, por el paso~1, la misma longitud, lo que contradice que el prefijo sea propio.
+
+\emph{Paso 3 (inyectividad por caracteres).} Dentro de una fila, la aplicación que lleva los bits útiles a la cadena de bytes es una biyección entre enteros de $\ell$ bits y cadenas con el patrón fijado. Si $C(a)=C(b)$, ambas están en la misma fila (paso~1) y tienen los mismos bits útiles, luego $a=b$.
+
+\emph{Paso 4 (cadenas).} Sea $b_1\dots b_L=\Enc(x)=\Enc(y)$. El primer byte fija la longitud $n$ de la primera palabra (paso~1); los $n$ primeros bytes son, a la vez, $C(x_1)$ y $C(y_1)$, luego $x_1=y_1$ (paso~3). Se elimina esa palabra y se razona por inducción sobre $L$.
+\end{proof}
+
+\begin{proposicion}[Autosincronización]\label{prop:autosinc}
+En una cadena UTF-8 válida, un byte es de continuación si y solo si sus dos bits más altos son \bits{10}. Por tanto, desde cualquier posición se encuentra el comienzo del carácter que la contiene retrocediendo a lo sumo 3 bytes.
+\end{proposicion}
+
+\begin{proof}
+Por el \cref{tab:utf8}, todo byte de continuación empieza por \bits{10}, y ningún byte inicial lo hace: los iniciales empiezan por \bits{0}, \bits{110}, \bits{1110} o \bits{11110}. Basta, pues, retroceder mientras el byte empiece por \bits{10}; como un carácter tiene a lo sumo 3 bytes de continuación, se retrocede como mucho 3 posiciones.
+\end{proof}
+
+La autosincronización tiene una consecuencia práctica: si un archivo se corta por la mitad de un carácter, solo se pierde ese carácter, y los siguientes se decodifican bien~\cite[§2.3.2]{jm3}. Además, UTF-8 es compatible con ASCII, porque los 128 primeros puntos de código ocupan un byte con su valor ASCII.
+
+\section{Consecuencias para el español y para los LLM}
+
+\begin{observacion}
+Las letras con tilde, la diéresis, la «ñ» y los signos de apertura «¿» y «¡» y las comillas angulares ocupan 2 bytes. En el fragmento inicial de \emph{El Quijote} que se usa en la práctica del módulo hay $2484$ caracteres y $2536$ bytes; los $52$ bytes de más corresponden a $48$ letras con tilde o «ñ» y a $4$ comillas angulares. La palabra «año» tiene 3 caracteres y 4 bytes.
+\end{observacion}
+
+\begin{corolario}\label{cor:vocab256}
+Todo texto se representa sin pérdida como una cadena de $\mathcal{B}^{*}$, con $\abs{\mathcal{B}}=2^{8}=256$. Un tokenizador cuyo vocabulario inicial sean los 256 bytes nunca necesita un token «desconocido».
+\end{corolario}
+
+\begin{proof}
+Por el \cref{teo:prefijo}, $\Enc$ es inyectiva, luego existe una inversa por la izquierda $\Enc^{-1}$ sobre su imagen y $\Enc^{-1}(\Enc(x))=x$. Cada byte es uno de los $2^{8}$ valores de $\mathcal{B}$, todos presentes en el vocabulario inicial.
+\end{proof}
+
+El precio es que un carácter no ASCII ocupa varios tokens iniciales, y un tokenizador de bytes debe aprender fusiones como $\hx{C3}+\hx{B1}\to$ «ñ» antes de poder formar «año». Además, un token puede contener solo una parte de un carácter; el \cref{tema:2} analiza qué ocurre entonces al decodificar.
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, §2.3 «Unicode», con §2.3.1 «Code Points» y §2.3.2 «UTF-8 Encoding».
+\item Yergeau, RFC~3629~\cite{rfc3629}: definición normativa de UTF-8.
+\item Stanford CS336~\cite{cs336}, tarea~1, §2.1 y §2.2 (Unicode y codificaciones Unicode).
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-decod}
+Un programa decodifica una cadena de bytes UTF-8 decodificando cada byte por separado y concatenando los resultados. (a) Dé una palabra española para la que falla y explique por qué. (b) Dé una cadena de 2 bytes que no corresponda a ningún carácter y justifíquelo.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §2.2, problema \emph{unicode2}, apartados (b) y (c).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-e}
+La «é» es \hx{U+00E9}. Obtenga sus bytes UTF-8 en binario y en hexadecimal.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-contar}
+¿Cuántos bytes UTF-8 ocupan «pingüino», «Ñandú» y «café» seguido de un espacio y del carácter \hx{U+2615} (taza de café)? Justifíquelo carácter a carácter.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-mano}
+Codifique a mano en UTF-8, mostrando los bits, el signo «¿» (\hx{U+00BF}) y el carácter chino \hx{U+8FDB}. ¿Cuántos bytes ocupa cada uno?
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~2, ejercicio~2.3 (se sustituye la «é» por «¿»).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-filas}
+Compruebe la \cref{prop:contar-utf8} y calcule qué fracción de los valores escalares Unicode se codifica con 4 bytes. ¿Por qué el emoji \hx{U+1F600} ocupa 4 bytes?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-sobrelargo}
+(a) Demuestre que, si se admitieran codificaciones sobrelargas, la decodificación dejaría de ser inyectiva: habría cadenas de bytes distintas que representan el mismo texto. Explique por qué esto perjudica a un tokenizador de bytes. (b) Demuestre que los bytes \hx{C0} y \hx{C1} solo podrían aparecer en una codificación sobrelarga.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{El algoritmo BPE}
+\label{tema:2}
+% =====================================================================
+
+El algoritmo BPE (\emph{Byte Pair Encoding}) construye un vocabulario de subpalabras de abajo arriba: parte de los símbolos básicos y fusiona, una y otra vez, el par adyacente más frecuente. Lo propuso Gage como método de compresión de datos~\cite{gage}, y Sennrich, Haddow y Birch lo adaptaron a la segmentación de palabras para la traducción automática~\cite[§3.2]{sennrich}; Radford \emph{et al.} lo aplicaron a bytes en GPT-2~\cite[§2.2]{gpt2}. Este tema define el algoritmo, demuestra cuánto acorta cada fusión y prueba que la decodificación recupera el texto. Se sigue~\cite[§2.4]{jm3} y la §2.4 de la tarea~1 de CS336~\cite{cs336}.
+
+\section{Entrenamiento}
+
+\begin{definicion}[Corpus de palabras y pares]\label{def:corpus-bpe}
+Un \emph{corpus de entrenamiento} es un conjunto finito de palabras $w$, cada una con una frecuencia $n_w\ge 1$ y escrita como una secuencia de símbolos de un vocabulario $\V$. Para dos símbolos $a,b\in\V$, la \emph{frecuencia del par} $(a,b)$ es
+\[
+N(a,b)=\sum_{w}n_w\cdot\#\{\,i : w_i=a,\ w_{i+1}=b\,\},
+\]
+el número de posiciones en que $b$ sigue inmediatamente a $a$, ponderado por la frecuencia de cada palabra.
+\end{definicion}
+
+\begin{definicion}[Fusión]
+La \emph{fusión} del par $(a,b)$ sustituye en cada palabra, recorriéndola de izquierda a derecha, cada aparición de $a$ seguido de $b$ por un símbolo nuevo $ab=a\Vert b$, y añade $ab$ al vocabulario.
+\end{definicion}
+
+\begin{definicion}[Entrenamiento de BPE]\label{def:bpe}
+Dados un corpus escrito en un vocabulario inicial $\V_0$ y un número de fusiones $k$, el \emph{entrenamiento de BPE} repite $k$ veces:
+\begin{enumerate}[label=\arabic*.]
+  \item calcular $N(a,b)$ para todos los pares adyacentes;
+  \item elegir un par $(a^{*},b^{*})$ de frecuencia máxima, con una regla de desempate fija;
+  \item fusionarlo y anotar la regla $a^{*}+b^{*}\to a^{*}b^{*}$.
+\end{enumerate}
+El resultado es la \emph{lista ordenada de fusiones} $\mu_1,\dots,\mu_k$, que constituye el tokenizador.
+\end{definicion}
+
+Las palabras se obtienen del texto en un paso previo, la \emph{pretokenización}, de modo que las fusiones nunca cruzan el límite entre dos palabras~\cite[§3.2]{sennrich}. Sennrich \emph{et al.} añaden al final de cada palabra un símbolo especial de fin de palabra para poder reconstruir los espacios.
+
+\begin{proposicion}\label{prop:tam-vocab}
+Tras $k$ fusiones, el vocabulario tiene a lo sumo $\abs{\V_0}+k$ símbolos, con igualdad cuando las $k$ cadenas creadas son distintas entre sí y no pertenecen a $\V_0$. En particular, si $\V_0$ está formado por símbolos de longitud~1, $\abs{\V}=\abs{\V_0}+k$ salvo repeticiones de una misma cadena obtenida por dos caminos distintos.
+\end{proposicion}
+
+\begin{proof}
+Cada fusión añade exactamente un símbolo, $a^{*}\Vert b^{*}$, y no elimina ninguno; por inducción sobre $k$, el número de símbolos añadidos es $k$ y el vocabulario tiene a lo sumo $\abs{\V_0}+k$ elementos distintos. Si los $k$ símbolos creados son cadenas distintas y ajenas a $\V_0$, no hay coincidencias y se alcanza la igualdad. Un símbolo creado tiene longitud al menos~2, de modo que nunca coincide con un símbolo de longitud~1.
+\end{proof}
+
+En la práctica se usa la igualdad $\abs{\V}=\abs{\V_0}+k$, y $k$ es el único hiperparámetro del entrenamiento~\cite[§3.2]{sennrich}.
+
+\begin{lema}\label{lem:solape}
+Si $a\neq b$, dos apariciones del par $(a,b)$ en una secuencia no comparten ninguna posición.
+\end{lema}
+
+\begin{proof}
+Dos apariciones distintas que compartieran una posición ocuparían las posiciones $(i,i+1)$ y $(i+1,i+2)$. El símbolo de la posición $i+1$ sería el segundo del primer par, luego $b$, y el primero del segundo, luego $a$. Así $a=b$, en contra de la hipótesis.
+\end{proof}
+
+\begin{proposicion}[Compresión de una fusión]\label{prop:compresion}
+Sea un corpus con $L$ símbolos en total (contando cada palabra $n_w$ veces) y sea $(a,b)$, con $a\neq b$, un par de frecuencia $N(a,b)=c$. Tras fusionarlo, el corpus tiene $L-c$ símbolos.
+\end{proposicion}
+
+\begin{proof}
+Por el \cref{lem:solape}, las $c$ apariciones ocupan posiciones disjuntas, de modo que la fusión las sustituye todas. Cada sustitución convierte dos símbolos en uno y resta exactamente~1 a la longitud; las sustituciones no interfieren entre sí, así que la longitud total baja en $c$.
+\end{proof}
+
+\begin{observacion}
+Si $a=b$, las apariciones pueden solaparse: «\tok{aaa}» contiene dos pares $(\tok{a},\tok{a})$, pero la fusión de izquierda a derecha solo puede aplicar una y deja «\tok{aa}\sep\tok{a}». En ese caso la longitud baja en el número de apariciones \emph{no solapadas}. Por la \cref{prop:compresion}, elegir el par más frecuente es elegir la fusión que más acorta el corpus en ese paso: BPE es un algoritmo \emph{voraz}. No garantiza la segmentación globalmente más corta con $k$ fusiones, pero funciona bien en la práctica.
+\end{observacion}
+
+\begin{ejemplo}[Entrenamiento a mano]\label{ej:bpe-casa}
+Corpus: «casa» $\times 3$, «casas» $\times 2$, «masa» $\times 1$, «mesa» $\times 1$, con $\V_0$ formado por las letras y $L=3\cdot 4+2\cdot 5+4+4=30$ símbolos. En el primer paso, $(\tok{a},\tok{s})$ aparece una vez en cada «casa», dos en cada «casas», una en «masa» y ninguna en «mesa»: $N(\tok{a},\tok{s})=3+4+1=8$. El \cref{tab:bpe-casa} recoge los cuatro primeros pasos. Cada longitud es la anterior menos la frecuencia del par fusionado, como afirma la \cref{prop:compresion}: $30-8=22$, $22-5=17$, $17-3=14$ y $14-2=12$.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\footnotesize
+\setlength{\tabcolsep}{4pt}
+\caption{Cuatro fusiones de BPE sobre el corpus del \cref{ej:bpe-casa}. El punto separa los símbolos de cada palabra.}\label{tab:bpe-casa}
+\begin{tabularx}{\textwidth}{@{}cll>{\raggedright\arraybackslash}Xr@{}}
+\toprule
+Paso & Pares más frecuentes & Fusión & Corpus resultante & $L$ \\
+\midrule
+0 & --- & --- & \tok{c}\sep\tok{a}\sep\tok{s}\sep\tok{a}\,($\times3$); \tok{c}\sep\tok{a}\sep\tok{s}\sep\tok{a}\sep\tok{s}\,($\times2$); \tok{m}\sep\tok{a}\sep\tok{s}\sep\tok{a}; \tok{m}\sep\tok{e}\sep\tok{s}\sep\tok{a} & 30 \\
+1 & $(\tok{a},\tok{s})$ 8, $(\tok{s},\tok{a})$ 7 & $\tok{a}+\tok{s}$ & \tok{c}\sep\tok{as}\sep\tok{a}\,($\times3$); \tok{c}\sep\tok{as}\sep\tok{as}\,($\times2$); \tok{m}\sep\tok{as}\sep\tok{a}; \tok{m}\sep\tok{e}\sep\tok{s}\sep\tok{a} & 22 \\
+2 & $(\tok{c},\tok{as})$ 5, $(\tok{as},\tok{a})$ 4 & $\tok{c}+\tok{as}$ & \tok{cas}\sep\tok{a}\,($\times3$); \tok{cas}\sep\tok{as}\,($\times2$); \tok{m}\sep\tok{as}\sep\tok{a}; \tok{m}\sep\tok{e}\sep\tok{s}\sep\tok{a} & 17 \\
+3 & $(\tok{cas},\tok{a})$ 3, $(\tok{cas},\tok{as})$ 2 & $\tok{cas}+\tok{a}$ & \tok{casa}\,($\times3$); \tok{cas}\sep\tok{as}\,($\times2$); \tok{m}\sep\tok{as}\sep\tok{a}; \tok{m}\sep\tok{e}\sep\tok{s}\sep\tok{a} & 14 \\
+4 & $(\tok{cas},\tok{as})$ 2, resto 1 & $\tok{cas}+\tok{as}$ & \tok{casa}\,($\times3$); \tok{casas}\,($\times2$); \tok{m}\sep\tok{as}\sep\tok{a}; \tok{m}\sep\tok{e}\sep\tok{s}\sep\tok{a} & 12 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Codificación y decodificación}
+
+\begin{definicion}[Codificación BPE]\label{def:cod-bpe}
+Para codificar una palabra nueva se escribe en símbolos de $\V_0$ y se aplican las fusiones $\mu_1,\dots,\mu_k$ \emph{en el orden en que se aprendieron}, cada una a toda la palabra, de izquierda a derecha. La \emph{decodificación} de una secuencia de tokens es la concatenación de las cadenas que representan.
+\end{definicion}
+
+\begin{ejemplo}\label{ej:codificar}
+Con las fusiones del \cref{tab:bpe-casa}, «pasas» $=\tok{p}\sep\tok{a}\sep\tok{s}\sep\tok{a}\sep\tok{s}$ pasa a $\tok{p}\sep\tok{as}\sep\tok{as}$ con $\mu_1$ y ninguna otra fusión aplica: 3 tokens. «cosas» da $\tok{c}\sep\tok{o}\sep\tok{s}\sep\tok{as}$, 4 tokens, porque el par $(\tok{c},\tok{o})$ nunca se vio. «casasas» da $\tok{casas}\sep\tok{as}$, 2 tokens. Las frecuencias del texto que se codifica no intervienen: solo importa el orden de las fusiones~\cite[§2.4.2]{jm3}.
+\end{ejemplo}
+
+\begin{teorema}[Corrección de BPE]\label{teo:bpe-correcto}
+Sea $\V_0$ un vocabulario inicial tal que toda cadena admite una escritura en símbolos de $\V_0$, y sea $\delta$ la decodificación por concatenación. Para toda cadena $x$, la codificación $\tau(x)$ está definida y $\delta(\tau(x))=x$.
+\end{teorema}
+
+\begin{proof}
+Sea $t^{(j)}=(t^{(j)}_1,\dots,t^{(j)}_{m_j})$ la secuencia de tokens tras aplicar las $j$ primeras fusiones, y sea $\delta(t^{(j)})=t^{(j)}_1\Vert\dots\Vert t^{(j)}_{m_j}$. Se demuestra por inducción sobre $j$ que $\delta(t^{(j)})=x$.
+
+Para $j=0$, $t^{(0)}$ es la escritura de $x$ en símbolos de $\V_0$, que existe por hipótesis, y su concatenación es $x$. Supóngase $\delta(t^{(j-1)})=x$. La fusión $\mu_j=(a,b)$ sustituye ciertos pares de tokens consecutivos $t_i=a$, $t_{i+1}=b$ por el token $a\Vert b$; como la concatenación es asociativa, $\dots\Vert a\Vert b\Vert\dots=\dots\Vert(a\Vert b)\Vert\dots$ y la concatenación total no cambia. Así $\delta(t^{(j)})=x$ para todo $j$, y en particular para $j=k$.
+\end{proof}
+
+\begin{corolario}\label{cor:no-unk}
+Un tokenizador BPE nunca falla: en el peor caso no se aplica ninguna fusión y se devuelven los símbolos de $\V_0$. Con $\V_0=\mathcal{B}$ (BPE a nivel de byte), por el \cref{cor:vocab256} no hay tokens desconocidos.
+\end{corolario}
+
+\section{Desempates y determinismo}
+
+Cuando varios pares empatan en frecuencia máxima, el paso~2 de la \cref{def:bpe} necesita una regla. Cualquier regla sirve, pero debe ser fija para que el tokenizador sea reproducible. La tarea de CS336 elige el par mayor en orden lexicográfico~\cite[§2.4]{cs336}; otra opción frecuente es el primer par que aparece en el corpus. Reglas distintas producen tokenizadores distintos (\cref{eje:2-lex}).
+
+\begin{observacion}
+La codificación de la \cref{def:cod-bpe} es determinista: la misma cadena da siempre la misma secuencia de tokens. El modelo unigram del \cref{tema:3}, en cambio, define una distribución sobre segmentaciones y permite muestrearlas.
+\end{observacion}
+
+\section{BPE a nivel de byte y pretokenización}
+
+GPT-2 aplica BPE a los bytes UTF-8 del texto, con $\V_0=\mathcal{B}$ y $\abs{\V_0}=256$, en lugar de los más de $1{,}3\cdot 10^{5}$ símbolos que exigiría partir de los puntos de código~\cite[§2.2]{gpt2}. Su vocabulario tiene $50\,257$ tokens~\cite[§2.3]{gpt2}: los 256 bytes, un token especial de fin de texto y $50\,000$ fusiones (\cref{eje:2-fusiones}).
+
+\begin{definicion}[Pretokenización]
+La \emph{pretokenización} divide el texto en fragmentos mediante una expresión regular antes de aplicar BPE, y las fusiones se aplican dentro de cada fragmento~\cite[§2.6.9]{jm3}. En GPT-2, cada fragmento es típicamente una palabra con su espacio delante (\tok{\vs lugar}, \tok{\vs de}), un signo de puntuación o un grupo de dígitos; así se impide fusionar bytes de categorías distintas~\cite[§2.2]{gpt2}.
+\end{definicion}
+
+Sin pretokenización, BPE aprende tokens que mezclan palabras y puntuación, como «\tok{de\vs su\vs hacienda.\vs}». Una consecuencia de la pretokenización es que \tok{\vs hidalgo} y \tok{hidalgo} son tokens distintos: un espacio de más al final de un texto cambia su tokenización.
+
+\begin{observacion}[Tokens que contienen medio carácter]
+Con $\V_0=\mathcal{B}$, un token puede ser un fragmento de un carácter multibyte, por ejemplo el byte \hx{C3} solo. Por el \cref{teo:bpe-correcto}, la concatenación de todos los tokens de un texto es su cadena UTF-8, que se decodifica sin pérdida (\cref{teo:prefijo}). Pero un token aislado puede no ser UTF-8 válido, y una interfaz que decodifica cada token al recibirlo debe guardar en un búfer los bytes de un carácter incompleto (\cref{eje:2-medio}).
+\end{observacion}
+
+\begin{lecturas}
+\item Sennrich, Haddow y Birch~\cite{sennrich}, §3.2 «Byte Pair Encoding (BPE)», con el algoritmo~1.
+\item Jurafsky y Martin~\cite{jm3}, §2.4 «Subword Tokenization: Byte-Pair Encoding» (§2.4.1--2.4.3) y §2.6.9 sobre las expresiones regulares de la pretokenización.
+\item Stanford CS336~\cite{cs336}, tarea~1, §2.4 (entrenamiento de BPE) y §2.5 (implementación).
+\item Radford \emph{et al.}~\cite{gpt2}, §2.2 «Input Representation».
+\item Zhang \emph{et al.}~\cite{d2l}, §15.6.2 «Byte Pair Encoding».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-unk}
+¿Por qué el BPE a nivel de byte nunca produce un token desconocido? ¿Qué tamaño tiene su vocabulario inicial?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:2-fusiones}
+(a) Si BPE parte de $n$ símbolos, ¿cuántas fusiones hacen falta para llegar a un vocabulario de $m$ símbolos? (b) GPT-2 parte de 256 bytes, tiene un token especial de fin de texto, que no se obtiene por fusión, y su vocabulario mide $50\,257$. ¿Cuántas fusiones aprendió?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §15.6, ejercicio~3 (se añade el apartado b).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-rana}
+Aplique 3 fusiones de BPE al corpus «rana» $\times 1$, «lana» $\times 2$, «ana» $\times 1$, «plan» $\times 1$. Indique en cada paso el par elegido, su frecuencia y el número total de símbolos.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-codificar}
+Con las cuatro fusiones del \cref{tab:bpe-casa}, codifique «masas», «casa» y «cascas».
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-lex}
+Ante un empate de frecuencias se fusiona el par lexicográficamente mayor (se compara el primer símbolo y, si coincide, el segundo; una cadena es mayor que cualquiera de sus prefijos propios). Corpus: «paso» $\times 4$, «pasos» $\times 2$, «piso» $\times 3$, «pisos» $\times 3$. (a) Aplique 4 fusiones indicando conteos, empates, par elegido y número de símbolos. (b) Codifique «peso», «sopa» y «oso».
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §2.4, ejemplo \emph{bpe\_example} (corpus cambiado).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-compresion}
+Demuestre la \cref{prop:compresion} sin usar el \cref{lem:solape}, razonando directamente sobre las posiciones. Dé un contraejemplo cuando $a=b$ y calcule la longitud tras fusionar $(\tok{a},\tok{a})$ en «\tok{aaaa}» y en «\tok{aaaaa}».
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-medio}
+Un tokenizador BPE de bytes tiene como token el byte \hx{C3} solo. (a) ¿Qué ocurre al decodificarlo aislado? (b) Demuestre que decodificar la secuencia completa de tokens de un texto devuelve siempre el texto original. (c) Explique qué ve un usuario si una interfaz decodifica cada token al recibirlo y la «ñ» llega partida en dos tokens, y proponga un remedio.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{El modelo unigram, SentencePiece y el vocabulario}
+\label{tema:3}
+% =====================================================================
+
+BPE construye el vocabulario de abajo arriba y codifica de forma determinista. El modelo unigram de Kudo~\cite{kudo} sigue el camino inverso: parte de un vocabulario grande, asigna una probabilidad a cada token, segmenta eligiendo la segmentación más probable y entrena podando. Este tema define el modelo, demuestra la corrección del algoritmo de Viterbi que lo segmenta, describe la biblioteca SentencePiece~\cite{sentencepiece} y estudia el coste del vocabulario y los efectos de la tokenización sobre el comportamiento de los modelos. Se sigue~\cite[§3.2--3.4]{kudo}, \cite[§3]{sentencepiece} y~\cite[§2.4.3]{jm3}.
+
+\section{El modelo unigram}
+
+\begin{definicion}[Modelo unigram de segmentación]\label{def:unigram}
+Sea $\V$ un vocabulario de subpalabras y sea $p\colon\V\to(0,1]$ con $\sum_{t\in\V}p(t)=1$. Una \emph{segmentación} de una cadena $x$ es una secuencia $s=(t_1,\dots,t_m)$ de tokens de $\V$ con $t_1\Vert\dots\Vert t_m=x$; se denota $S(x)$ el conjunto de segmentaciones de $x$. El \emph{modelo unigram} asigna a cada segmentación la probabilidad
+\[
+P(s)=\prod_{i=1}^{m}p(t_i),
+\]
+y la segmentación elegida es $s^{*}=\arg\max_{s\in S(x)}P(s)$~\cite[§3.2]{kudo}.
+\end{definicion}
+
+El modelo es el de unigramas del módulo~1, ahora sobre subpalabras: los tokens se suponen independientes. Como cada factor es menor que~1, las segmentaciones con menos tokens tienden a ser más probables, igual que las palabras cortas en un modelo de bigramas.
+
+\begin{ejemplo}\label{ej:unigram}
+Sea $p(\tok{casa})=0{,}2$, $p(\tok{a})=0{,}2$, $p(\tok{as})=0{,}15$, $p(\tok{s})=0{,}1$, $p(\tok{cas})=0{,}1$, $p(\tok{c})=0{,}05$ (el resto de la masa corresponde a otros tokens). El \cref{tab:unigram} enumera las siete segmentaciones de «casas». La más probable es $s^{*}=(\tok{casa},\tok{s})$, con $P(s^{*})=0{,}02$.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Segmentaciones de «casas» con el vocabulario del \cref{ej:unigram}.}\label{tab:unigram}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Segmentación & Producto & $P(s)$ \\
+\midrule
+\tok{casa}\,\sep{}\,\tok{s} & $0{,}2\cdot 0{,}1$ & $0{,}02$ \\
+\tok{cas}\,\sep{}\,\tok{as} & $0{,}1\cdot 0{,}15$ & $0{,}015$ \\
+\tok{cas}\,\sep{}\,\tok{a}\,\sep{}\,\tok{s} & $0{,}1\cdot 0{,}2\cdot 0{,}1$ & $0{,}002$ \\
+\tok{c}\,\sep{}\,\tok{as}\,\sep{}\,\tok{as} & $0{,}05\cdot 0{,}15\cdot 0{,}15$ & $0{,}001125$ \\
+\tok{c}\,\sep{}\,\tok{a}\,\sep{}\,\tok{s}\,\sep{}\,\tok{as} y \tok{c}\,\sep{}\,\tok{as}\,\sep{}\,\tok{a}\,\sep{}\,\tok{s} & $0{,}05\cdot 0{,}2\cdot 0{,}1\cdot 0{,}15$ & $1{,}5\cdot 10^{-4}$ cada una \\
+\tok{c}\,\sep{}\,\tok{a}\,\sep{}\,\tok{s}\,\sep{}\,\tok{a}\,\sep{}\,\tok{s} & $0{,}05\cdot 0{,}2^{2}\cdot 0{,}1^{2}$ & $2\cdot 10^{-5}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Segmentación óptima: el algoritmo de Viterbi}
+
+El número de segmentaciones crece exponencialmente con la longitud: una cadena de $n$ caracteres tiene hasta $2^{n-1}$ (\cref{eje:3-viterbi}). La enumeración del \cref{tab:unigram} no es viable para textos reales, pero el problema tiene subestructura óptima.
+
+\begin{teorema}[Viterbi para el modelo unigram]\label{teo:viterbi}
+Sea $x=x_1\dots x_n$ y sea $\alpha(j)$ la probabilidad máxima de una segmentación del prefijo $x_{1:j}$, con $\alpha(0)=1$ y $\alpha(j)=0$ si el prefijo no admite segmentación. Entonces, para $j=1,\dots,n$,
+\[
+\alpha(j)=\max_{\substack{0\le i<j\\ x_{i+1:j}\in\V}}\ \alpha(i)\,p(x_{i+1:j}),
+\]
+y $\alpha(n)=\max_{s\in S(x)}P(s)$. Si $\ell$ es la longitud máxima de un token, el cálculo requiere $O(n\ell)$ productos.
+\end{teorema}
+
+\begin{proof}
+Sea $s=(t_1,\dots,t_m)$ una segmentación de $x_{1:j}$ y sea $t_m=x_{i+1:j}$ su último token. Entonces $(t_1,\dots,t_{m-1})$ es una segmentación de $x_{1:i}$ y $P(s)=P(t_1,\dots,t_{m-1})\,p(t_m)\le\alpha(i)\,p(x_{i+1:j})$. Esto prueba que $\alpha(j)$ no supera el máximo de la fórmula. Recíprocamente, para cada $i$ con $x_{i+1:j}\in\V$, si $s'$ es una segmentación de $x_{1:i}$ con $P(s')=\alpha(i)$, añadir el token $x_{i+1:j}$ da una segmentación de $x_{1:j}$ con probabilidad $\alpha(i)\,p(x_{i+1:j})$; luego $\alpha(j)$ alcanza el máximo. Por inducción sobre $j$ se obtiene la fórmula. Para cada $j$ solo hay que considerar los $i$ con $j-i\le\ell$, lo que da $O(\ell)$ productos por posición y $O(n\ell)$ en total. La segmentación óptima se recupera guardando el $i$ que alcanza cada máximo y recorriendo esos punteros desde $n$ hacia atrás.
+\end{proof}
+
+\begin{ejemplo}
+Para «casas» con el vocabulario del \cref{ej:unigram}:
+\[
+\begin{aligned}
+\alpha(1)&=p(\tok{c})=0{,}05, \qquad \alpha(2)=\alpha(1)\,p(\tok{a})=0{,}01,\\
+\alpha(3)&=\max\{p(\tok{cas}),\ \alpha(1)\,p(\tok{as}),\ \alpha(2)\,p(\tok{s})\}=\max\{0{,}1;\ 0{,}0075;\ 0{,}001\}=0{,}1,\\
+\alpha(4)&=\max\{p(\tok{casa}),\ \alpha(3)\,p(\tok{a})\}=\max\{0{,}2;\ 0{,}02\}=0{,}2,\\
+\alpha(5)&=\max\{\alpha(4)\,p(\tok{s}),\ \alpha(3)\,p(\tok{as})\}=\max\{0{,}02;\ 0{,}015\}=0{,}02,
+\end{aligned}
+\]
+que coincide con el \cref{tab:unigram}.
+\end{ejemplo}
+
+\section{Entrenamiento por EM y poda}
+
+Las probabilidades $p(t)$ no se observan, porque el corpus no viene segmentado. Kudo trata la segmentación como una variable oculta y maximiza la verosimilitud marginal~\cite[§3.2]{kudo}
+\[
+\mathcal{L}=\sum_{x\in\mathcal{D}}\ln\sum_{s\in S(x)}P(s),
+\]
+donde $\mathcal{D}$ es el corpus de frases. El algoritmo EM alterna dos pasos: el paso E calcula, con las probabilidades actuales, el número esperado de veces que aparece cada token en las segmentaciones de cada frase, y el paso M reestima $p(t)$ como esos recuentos esperados normalizados. Es la misma idea que el estimador de máxima verosimilitud por frecuencias relativas del módulo~1, con recuentos esperados en lugar de observados.
+
+El vocabulario se obtiene podando~\cite[§3.2]{kudo}:
+\begin{enumerate}[label=\arabic*.]
+  \item se parte de un vocabulario semilla grande: todos los caracteres y las subcadenas frecuentes del corpus;
+  \item con el vocabulario fijo, se optimizan las $p(t)$ por EM;
+  \item para cada token se estima cuánto bajaría $\mathcal{L}$ si se eliminara, y se conserva el $\eta\,\%$ de los tokens con mayor pérdida (por ejemplo, el $80\,\%$);
+  \item se repiten los pasos 2 y 3 hasta alcanzar el tamaño deseado.
+\end{enumerate}
+Los caracteres individuales nunca se eliminan, de modo que toda cadena sigue teniendo al menos una segmentación.
+
+\begin{observacion}[Regularización por subpalabras]
+Como el modelo define una distribución sobre $S(x)$, durante el entrenamiento de un modelo neuronal se puede muestrear una segmentación distinta en cada paso, con probabilidad proporcional a $P(s)^{\alpha}$. Un $\alpha$ pequeño da muestras casi uniformes; uno grande se acerca a la segmentación de Viterbi. Kudo muestra que este ruido hace más robustos los modelos de traducción~\cite[§3.3]{kudo}.
+\end{observacion}
+
+\begin{table}[h]
+\centering\small
+\caption{Comparación de BPE y del modelo unigram~\cite[§3.4]{kudo}.}\label{tab:bpe-unigram}
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & BPE & Unigram \\
+\midrule
+Construcción & de abajo arriba (fusiona) & de arriba abajo (poda) \\
+Resultado del entrenamiento & lista ordenada de fusiones & probabilidad de cada token \\
+Codificación & aplicar las fusiones en orden & Viterbi: segmentación más probable \\
+Varias segmentaciones & no; es determinista & sí; se pueden muestrear \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{SentencePiece}
+
+SentencePiece es una biblioteca que entrena tanto BPE como el modelo unigram directamente sobre frases sin pretokenizar~\cite{sentencepiece}. Trata el texto como una secuencia de caracteres Unicode en la que el espacio es un símbolo más, que se escribe con el metasímbolo \ESP\ (\hx{U+2581}); así, «Hello world.» puede segmentarse como \tok{[Hello] [\ESP wor] [ld] [.]}~\cite[§3.1]{sentencepiece}. Como el espacio forma parte de los tokens, decodificar consiste en concatenar y sustituir \ESP\ por un espacio, y la tokenización es \emph{sin pérdida}:
+\[
+\Dec(\Enc(\mathcal{N}(x)))=\mathcal{N}(x),
+\]
+donde $\mathcal{N}$ es la normalización del texto, por defecto una variante de la forma NFKC de Unicode~\cite[§3.4]{sentencepiece}. Al no depender de los espacios para pretokenizar, el método se aplica igual a idiomas que no separan las palabras, como el japonés. En la literatura, «SentencePiece» se usa a veces como sinónimo de tokenización unigram~\cite[§2.4.3]{jm3}.
+
+\section{El tamaño del vocabulario}
+
+\begin{proposicion}\label{prop:coste-vocab}
+Un modelo con vocabulario de tamaño $K$ y dimensión $d$ tiene $Kd$ parámetros en la matriz de embeddings de entrada y otros $Kd$ en la matriz de salida que produce los logits, salvo que ambas se compartan. El coste es lineal en $K$.
+\end{proposicion}
+
+\begin{proof}
+La matriz de entrada $E\in\R^{K\times d}$ tiene una fila por token (\cref{tema:4}); la de salida, $W\in\R^{d\times K}$, una columna por token. Cada una tiene $Kd$ entradas, y duplicar $K$ con $d$ fijo duplica ese número.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\caption{Coste de la matriz de embeddings en modelos con datos públicos.}\label{tab:vocab-modelos}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Modelo & $K$ & $d$ & $Kd$ \\
+\midrule
+GPT-2 pequeño (2019)~\cite{gpt2} & $50\,257$ & $768$ & $38\,597\,376$ \\
+Llama~2 7B (2023)~\cite{llama2} & $32\,000$ & $4096$ & $131\,072\,000$ \\
+Llama~3 8B (2024)~\cite{llama3} & $128\,256$ & $4096$ & $525\,336\,576$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+En Llama~3 8B, solo la matriz de entrada tiene unos $5{,}25\cdot 10^{8}$ parámetros, que en \texttt{bf16} (2 bytes por parámetro) ocupan $1{,}05$~GB. Según la información publicada, Grok-1 usa $131\,072$ tokens y Gemma, $256\,000$.
+
+\begin{definicion}[Compresión]
+La \emph{compresión} de un tokenizador sobre un texto es el cociente entre el número de bytes UTF-8 del texto y el número de tokens que produce, medido en bytes por token.
+\end{definicion}
+
+Por la \cref{prop:compresion}, sobre el propio corpus de entrenamiento cada fusión reduce el número de tokens, de modo que la compresión crece con $k$; el aumento es cada vez menor, porque los pares que se fusionan son cada vez menos frecuentes. El \cref{tab:compresion} muestra los resultados de la práctica del módulo, con un BPE de bytes entrenado sobre el fragmento de $2536$ bytes de \emph{El Quijote}. Estas cifras sobre el texto de entrenamiento son optimistas: en la misma práctica, entrenando con los dos primeros párrafos y 200 fusiones, la compresión es de $2{,}616$ bytes por token en el texto de entrenamiento y de $1{,}953$ en el tercer párrafo, que el tokenizador no vio.
+
+\begin{table}[h]
+\centering\small
+\caption{Compresión de un BPE de bytes sobre su propio corpus de entrenamiento (práctica del módulo).}\label{tab:compresion}
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+Fusiones & 0 & 10 & 25 & 50 & 100 & 200 & 300 \\
+\midrule
+Tokens & 2536 & 2047 & 1751 & 1483 & 1230 & 982 & 819 \\
+Bytes por token & $1{,}000$ & $1{,}239$ & $1{,}448$ & $1{,}710$ & $2{,}062$ & $2{,}582$ & $3{,}096$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Efectos de la tokenización}
+
+\begin{observacion}[Letras]
+El modelo recibe enteros, no letras. Para contar las «r» de «ferrocarril», segmentada por ejemplo como \tok{ferro}\,\sep{}\,\tok{carril}, tendría que conocer la ortografía interna de cada token, que no figura en la entrada y solo se aprende de forma indirecta.
+\end{observacion}
+
+\begin{observacion}[Números]
+Si los números se segmentan de forma irregular, el mismo dígito ocupa posiciones distintas dentro de los tokens según el número, lo que dificulta la aritmética~\cite[ejercicio~2.2]{jm3}. Por eso algunos tokenizadores pretrocean los números en grupos de hasta tres dígitos antes de aplicar BPE.
+\end{observacion}
+
+\begin{observacion}[Idiomas]
+Un tokenizador entrenado con poco texto de un idioma lo segmenta en muchos tokens. Con el tokenizador de la práctica, entrenado en español, «El perro ladra en la plaza.» (27 bytes) da 15 tokens; «The dog barks in the square.» (28 bytes), 21, y una frase rusa de 22 bytes, 22 tokens: ninguna fusión encaja con los bytes del alfabeto cirílico. Petrov \emph{et al.} midieron, en tokenizadores comerciales, diferencias de longitud de hasta 15 veces para un mismo texto traducido~\cite{petrov}. El mismo mensaje cuesta más y cabe menos en el contexto.
+\end{observacion}
+
+\begin{lecturas}
+\item Kudo~\cite{kudo}, §3.2 «Unigram language model», §3.3 «Subword sampling» y §3.4 «BPE vs. Unigram language model».
+\item Kudo y Richardson~\cite{sentencepiece}, §3.1 «Lossless Tokenization» y §3.4 «Customizable character normalization».
+\item Jurafsky y Martin~\cite{jm3}, §2.4.3 «BPE in practice».
+\item Petrov \emph{et al.}~\cite{petrov}, sobre las diferencias de longitud entre idiomas.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-palabras}
+Dé dos razones por las que un vocabulario de palabras completas es mala idea para un LLM multilingüe.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:3-letras}
+Un LLM falla al contar cuántas «r» tiene «ferrocarril». Explique el papel de la tokenización y cómo se puede facilitar la tarea.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:3-vf}
+Justifique si son verdaderas o falsas: (a) BPE puede devolver varias segmentaciones de la misma palabra; (b) el tokenizador se entrena a la vez que el Transformer; (c) duplicar $K$ duplica los parámetros de la matriz de embeddings.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-perdida}
+Con el vocabulario del \cref{ej:unigram}, calcule la pérdida $-\ln P(s^{*})$ de «casas». ¿Cuántos nats se pierden si se usa la segmentación $(\tok{cas},\tok{as})$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-param}
+Un modelo tiene $K=32\,000$, $d=4096$ y no comparte la matriz de entrada con la de salida. ¿Cuántos parámetros suman ambas? ¿Cuánto ocupan en \texttt{bf16}?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-numeros}
+Un tokenizador pretrocea los números en grupos de hasta tres dígitos, de izquierda a derecha, antes de aplicar BPE. (a) Segmente 1605, 2026, 123456 y 1234567. (b) Compare las segmentaciones de 999 y de $999+1$. (c) Explique por qué la agrupación de izquierda a derecha dificulta la suma y proponga otra agrupación que respete las unidades, decenas y centenas.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~2, ejercicio~2.2 (se sustituye el uso de un visualizador por una regla de agrupación explícita).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-viterbi}
+(a) Demuestre que una cadena de $n\ge 1$ caracteres admite exactamente $2^{n-1}$ segmentaciones en subcadenas no vacías. (b) Sea $\V$ un vocabulario que contiene todos los caracteres y cuyos tokens tienen longitud a lo sumo $\ell$. Demuestre que el número de segmentaciones con tokens de $\V$ está acotado por el número de composiciones de $n$ con partes en $\{1,\dots,\ell\}$, y compare con el coste $O(n\ell)$ del \cref{teo:viterbi}.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Embeddings y word2vec}
+\label{tema:4}
+% =====================================================================
+
+Un token es un entero sin estructura: el índice de «gato» no está más cerca del de «perro» que del de «avión». Un \emph{embedding} asigna a cada token un vector de $\R^{d}$, de modo que la geometría pueda reflejar el significado. Este tema define la matriz de embeddings, presenta la hipótesis distribucional y los vectores de coocurrencia, desarrolla el modelo skip-gram de word2vec con softmax y con muestreo negativo, y demuestra que este último factoriza de forma implícita una matriz de información mutua puntual. Se sigue~\cite[§5.2--5.5]{jm3}, la clase~2 de CS224N~\cite{cs224n} y los artículos de Mikolov \emph{et al.}~\cite{mikolov13a,mikolov13b} y de Levy y Goldberg~\cite{levy}.
+
+\section{La matriz de embeddings}
+
+\begin{definicion}[Matriz de embeddings]\label{def:embedding}
+Sea $\V$ un vocabulario de tamaño $K$ con índices $0,\dots,K-1$. Una \emph{matriz de embeddings} es una matriz $E\in\R^{K\times d}$; el \emph{embedding} del token $i$ es su fila $E_{i,:}\in\R^{1\times d}$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:onehot}
+Sea $e_i\in\R^{K}$ el vector \emph{one-hot} del token $i$, con un~1 en la posición $i$ y ceros en el resto. Entonces $e_i^{\top}E=E_{i,:}$.
+\end{proposicion}
+
+\begin{proof}
+La componente $j$ de $e_i^{\top}E$ es $\sum_{k}(e_i)_k E_{kj}=E_{ij}$, porque $(e_i)_k=0$ para $k\neq i$ y $(e_i)_i=1$.
+\end{proof}
+
+La \cref{prop:onehot} muestra que la capa de embeddings es una capa lineal sin sesgo aplicada a una entrada \emph{one-hot}. En la práctica no se multiplica, porque el producto costaría $Kd$ operaciones y la indexación $E[i]$ no cuesta ninguna; pero la equivalencia explica cómo se calcula el gradiente: solo las filas de los tokens presentes reciben gradiente distinto de cero (módulo~9).
+
+\begin{definicion}[Similitud coseno]
+Para $a,b\in\R^{d}$ no nulos, la \emph{similitud coseno} es $\cos(a,b)=\dfrac{a\cdot b}{\norm{a}\,\norm{b}}\in[-1,1]$.
+\end{definicion}
+
+Por la desigualdad de Cauchy--Schwarz (módulo~2), $\abs{\cos(a,b)}\le 1$, con igualdad si y solo si los vectores son proporcionales. El coseno no cambia al multiplicar un vector por una constante positiva (\cref{eje:4-coseno}), y por eso no penaliza que una palabra sea más frecuente que otra~\cite[§5.4]{jm3}.
+
+\section{La hipótesis distribucional}
+
+La \emph{hipótesis distribucional} afirma que las palabras que aparecen en contextos parecidos tienen significados parecidos; Se atribuye a Firth la formulación según la cual una palabra se conoce por las palabras que la acompañan, que la tarea~2 de CS224N toma como punto de partida de word2vec~\cite{cs224n}; véase también~\cite[§5.2]{jm3}. Si «gato» y «perro» aparecen junto a «come», «duerme» y «pelo», sus representaciones deben parecerse.
+
+\begin{definicion}[Matriz de coocurrencias]
+Fijada una ventana de $m$ palabras, la \emph{matriz de coocurrencias} $N\in\R^{K\times K}$ tiene por entrada $N(w,c)$ el número de veces que la palabra $c$ aparece a distancia a lo sumo $m$ de $w$ en el corpus. La fila $N(w,:)$ es una representación de $w$ por recuentos~\cite[§5.3]{jm3}.
+\end{definicion}
+
+Los recuentos están dominados por las palabras frecuentes («de», «que»), que aparecen junto a todas. La información mutua puntual del módulo~6 corrige ese efecto comparando la frecuencia observada de un par con la esperada si las palabras fueran independientes.
+
+\begin{definicion}[Información mutua puntual]\label{def:pmi}
+Sean $P(w,c)=N(w,c)/\abs{\mathcal{D}}$, $P(w)=\sum_c P(w,c)$ y $P(c)=\sum_w P(w,c)$, con $\abs{\mathcal{D}}=\sum_{w,c}N(w,c)$ el número de pares. La \emph{información mutua puntual} y su versión positiva son
+\[
+\PMI(w,c)=\ln\frac{P(w,c)}{P(w)\,P(c)},\qquad \PPMI(w,c)=\max\{\PMI(w,c),0\}.
+\]
+\end{definicion}
+
+La PMI vale~0 si $w$ y $c$ son independientes, es positiva si coinciden más de lo esperado y vale $-\infty$ si el par no se observa nunca; la PPMI evita ese valor. La información mutua del módulo~6 es la esperanza de la PMI bajo $P(w,c)$.
+
+\section{Skip-gram}
+
+Los vectores de recuentos tienen dimensión $K$ y casi todas sus entradas son nulas. Word2vec aprende directamente vectores densos de dimensión $d\ll K$ con una tarea de predicción~\cite{mikolov13a}.
+
+\begin{definicion}[Pares de skip-gram]
+Sea una frase $w_1,\dots,w_n$ y una ventana $m\ge 1$. Los \emph{pares de entrenamiento} de skip-gram son los pares ordenados (centro, contexto) $(w_t,w_{t+j})$ con $1\le\abs{j}\le m$ y $1\le t+j\le n$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:pares}
+Si $n\ge m+1$, una frase de $n$ palabras da $m(2n-m-1)$ pares con ventana $m$.
+\end{proposicion}
+
+\begin{proof}
+Para cada distancia $j\in\{1,\dots,m\}$ hay $n-j$ pares $(w_t,w_{t+j})$ hacia la derecha y otros $n-j$ hacia la izquierda. El total es $2\sum_{j=1}^{m}(n-j)=2\bigl(nm-\tfrac{m(m+1)}{2}\bigr)=m(2n-m-1)$.
+\end{proof}
+
+Por ejemplo, «el gato come pescado» ($n=4$) da $1\cdot(8-1-1)=6$ pares con $m=1$, $(\text{el},\text{gato})$, $(\text{gato},\text{el})$, $(\text{gato},\text{come})$, $(\text{come},\text{gato})$, $(\text{come},\text{pescado})$ y $(\text{pescado},\text{come})$, y $2\cdot(8-2-1)=10$ con $m=2$.
+
+\begin{definicion}[Skip-gram con softmax]\label{def:skipgram}
+Cada palabra $w$ tiene dos vectores: $v_w\in\R^{d}$ cuando es centro y $u_w\in\R^{d}$ cuando es contexto. El modelo es
+\[
+P(o\mid c)=\frac{\exp(u_o^{\top}v_c)}{\sum_{w\in\V}\exp(u_w^{\top}v_c)}=\softmax(U^{\top}v_c)_o,
+\]
+donde $U\in\R^{d\times K}$ tiene por columnas los $u_w$. La pérdida de un par es $J=-\ln P(o\mid c)$, la entropía cruzada entre el vector \emph{one-hot} $y$ de $o$ y la predicción $\hat y=\softmax(U^{\top}v_c)$~\cite{cs224n}.
+\end{definicion}
+
+\begin{proposicion}[Gradiente respecto al vector central]\label{prop:grad-vc}
+\[
+\frac{\partial J}{\partial v_c}=\sum_{w\in\V}P(w\mid c)\,u_w-u_o.
+\]
+\end{proposicion}
+
+\begin{proof}
+$J=-u_o^{\top}v_c+\ln\sum_{w}\exp(u_w^{\top}v_c)$. El gradiente del primer término es $-u_o$. Para el segundo, por la regla de la cadena, $\nabla_{v_c}\ln\sum_{w}\exp(u_w^{\top}v_c)=\dfrac{\sum_w\exp(u_w^{\top}v_c)\,u_w}{\sum_{w'}\exp(u_{w'}^{\top}v_c)}=\sum_w P(w\mid c)\,u_w$.
+\end{proof}
+
+El gradiente es «lo esperado menos lo observado»: el descenso de gradiente acerca $v_c$ al vector del contexto real y lo aleja de la media de los vectores de contexto que el modelo predice. Calcular esa media cuesta $O(Kd)$ por par, demasiado para $K\sim 10^{5}$ y miles de millones de pares.
+
+\section{Muestreo negativo}
+
+\begin{definicion}[Skip-gram con muestreo negativo]\label{def:sgns}
+Sean $w$ la palabra central, $c_{+}$ un contexto real y $c_{1},\dots,c_{k}$ palabras de ruido extraídas al azar. La pérdida de \emph{skip-gram con muestreo negativo} (SGNS) es
+\[
+L=-\ln\sigma(c_{+}\cdot w)-\sum_{i=1}^{k}\ln\sigma(-c_{i}\cdot w),
+\]
+donde $w$ denota el vector central y $c_+,c_i$ los vectores de contexto~\cite[§5.5.2]{jm3}. Mikolov \emph{et al.} extraen el ruido de la distribución unigram elevada a $3/4$ y renormalizada~\cite{mikolov13b}.
+\end{definicion}
+
+La softmax sobre $K$ palabras se sustituye por $k+1$ regresiones logísticas (módulo~8): distinguir el par real de $k$ pares falsos. El coste por par pasa a $O(kd)$, con $k$ entre 2 y 20.
+
+\begin{proposicion}[Gradientes de SGNS]\label{prop:grad-sgns}
+\[
+\frac{\partial L}{\partial c_{+}}=\bigl(\sigma(c_{+}\cdot w)-1\bigr)w,\qquad
+\frac{\partial L}{\partial c_{i}}=\sigma(c_{i}\cdot w)\,w,\qquad
+\frac{\partial L}{\partial w}=\bigl(\sigma(c_{+}\cdot w)-1\bigr)c_{+}+\sum_{i=1}^{k}\sigma(c_{i}\cdot w)\,c_{i}.
+\]
+\end{proposicion}
+
+La demostración es el \cref{eje:4-sgns}. Los signos confirman la intuición: el paso de descenso aumenta $c_{+}\cdot w$ y disminuye cada $c_{i}\cdot w$.
+
+\begin{ejemplo}\label{ej:sgns}
+Sean $w=v_{\text{gato}}=(1,0)$, $c_{+}=u_{\text{come}}=(0,1)$ y un único negativo $c_{1}=u_{\text{avión}}=(-1,0)$. Los productos son $c_{+}\cdot w=0$ y $c_{1}\cdot w=-1$, luego $\sigma(0)=0{,}5$ y $\sigma(-c_1\cdot w)=\sigma(1)=0{,}7311$. La pérdida es $L=-\ln 0{,}5-\ln 0{,}7311=0{,}6931+0{,}3133=1{,}006$.
+\end{ejemplo}
+
+\section{Muestreo negativo y PMI}
+
+\begin{teorema}[Levy y Goldberg]\label{teo:levy}
+Sea $N(w,c)$ el número de veces que el par $(w,c)$ aparece en el corpus, $N(w)$ y $N(c)$ sus marginales y $\abs{\mathcal{D}}$ el número total de pares, y supóngase que los $k$ negativos de cada par se extraen de la distribución unigram de contextos $P(c)=N(c)/\abs{\mathcal{D}}$. Si la dimensión es suficiente para que cada producto $x=u_c\cdot v_w$ pueda elegirse libremente, la pérdida total esperada de SGNS se minimiza en
+\[
+u_c\cdot v_w=\PMI(w,c)-\ln k
+\]
+para todo par con $N(w,c)>0$.
+\end{teorema}
+
+\begin{proof}
+La pérdida total esperada es la suma, sobre todos los pares, de los términos positivos más $k$ veces la esperanza del término negativo. Agrupando por $(w,c)$, el término que depende de $x=u_c\cdot v_w$ es
+\[
+\ell(x)=-N(w,c)\ln\sigma(x)-k\,N(w)\,P(c)\ln\sigma(-x),
+\]
+porque $w$ aparece como centro $N(w)$ veces y en cada una se espera extraer $c$ como negativo $k\,P(c)$ veces. Con $\frac{d}{dx}\ln\sigma(x)=\sigma(-x)$ y $\frac{d}{dx}\ln\sigma(-x)=-\sigma(x)$,
+\[
+\ell'(x)=-N(w,c)\,\sigma(-x)+k\,N(w)P(c)\,\sigma(x).
+\]
+Igualando a cero y usando $\sigma(x)/\sigma(-x)=e^{x}$, se obtiene $e^{x}=\dfrac{N(w,c)}{k\,N(w)P(c)}=\dfrac{1}{k}\cdot\dfrac{N(w,c)\,\abs{\mathcal{D}}}{N(w)\,N(c)}$, es decir, $x=\PMI(w,c)-\ln k$. Como $\ell''(x)=\bigl(N(w,c)+kN(w)P(c)\bigr)\sigma(x)\sigma(-x)>0$, $\ell$ es estrictamente convexa y el punto crítico es su mínimo~\cite{levy}.
+\end{proof}
+
+\begin{observacion}
+El \cref{teo:levy} une los dos enfoques de este tema: el modelo predictivo de word2vec aprende, en el óptimo, la misma información que la matriz de PMI de los métodos de recuentos, comprimida en vectores de dimensión $d$. Es la información mutua del módulo~6 convertida en geometría.
+\end{observacion}
+
+\section{Embeddings en un LLM}
+
+En un LLM, la matriz $E$ se aprende junto con el resto del modelo, sin entrenamiento previo con word2vec, y a menudo se comparte con la matriz de salida (\emph{weight tying})~\cite[§14.2.3]{jm3}. La intuición distribucional se mantiene: tras el entrenamiento, tokens con usos parecidos tienen embeddings cercanos. Pero un embedding de esta tabla es \emph{estático}: «banco» tiene el mismo vector en «banco de peces» y en «Banco de España». En el módulo~13 la atención mezcla los vectores según el contexto y produce representaciones contextuales.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=7mm,font=\small,
+  caja/.style={draw,rounded corners=1pt,minimum height=7mm,inner sep=4pt,align=center},
+  ->,>={Stealth[length=2mm]}]
+  \node[caja] (a) {texto};
+  \node[caja,right=of a] (b) {tokenizador\\(temas~2--3)};
+  \node[caja,right=of b] (c) {índice $i$};
+  \node[caja,right=of c] (d) {$E_{i,:}\in\R^{d}$};
+  \node[caja,right=of d] (e) {bloques\\(módulos~13--14)};
+  \node[caja,right=of e] (f) {logits\\$\in\R^{K}$};
+  \draw (a)--(b); \draw (b)--(c); \draw (c)--(d); \draw (d)--(e); \draw (e)--(f);
+\end{tikzpicture}
+\caption{Del texto a los logits en un LLM. El tokenizador es fijo; la matriz $E$ y los bloques se entrenan juntos.}
+\label{fig:tubo}
+\end{figure}
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, §5.2 «Vector Semantics: The Intuition», §5.3 «Simple count-based embeddings», §5.4 «Cosine for Measuring Similarity» y §5.5 «Word2vec».
+\item Stanford CS224N~\cite{cs224n}, clase~2 «Word Vectors» y tarea~2, pregunta~1.
+\item Mikolov \emph{et al.}~\cite{mikolov13a,mikolov13b}: skip-gram, muestreo negativo y submuestreo de palabras frecuentes.
+\item Levy y Goldberg~\cite{levy}: SGNS como factorización implícita de la matriz de PMI desplazada.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-onehot}
+Sea $E=\begin{pmatrix}1&0\\2&-1\\0&3\end{pmatrix}$. Calcule $e_1^{\top}E$ (con índices $0,1,2$) haciendo el producto completo y compruebe la \cref{prop:onehot}. ¿Cuántas multiplicaciones requeriría el producto si $K=50\,257$ y $d=768$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-pares}
+Liste los pares (centro, contexto) de skip-gram con ventana~1 para «la luna brilla». ¿Cuántos salen con ventana~2? Compruebe ambos resultados con la \cref{prop:pares}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-coseno}
+Cada palabra se representa por el número de veces que aparece junto a «tarta» y junto a «resultado»: cereza $=(40,3)$, fresa $=(20,4)$, digital $=(2,30)$. (a) Calcule $\cos(\text{cereza},\text{fresa})$ y $\cos(\text{cereza},\text{digital})$. ¿Qué par es más parecido? (b) Demuestre que $\cos(\lambda a,b)=\cos(a,b)$ para todo $\lambda>0$ y explique por qué esta propiedad es deseable.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~5, ejercicios~5.1 y~5.2 (palabras traducidas y recuentos cambiados).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-pmi}
+Un corpus da los siguientes recuentos de coocurrencia: «gato» con «come» 4 veces y con «maúlla» 4 veces; «perro» con «come» 4 veces y con «ladra» 4 veces. (a) Calcule $\PMI$ y $\PPMI$ de los seis pares (gato o perro con come, maúlla o ladra). (b) Según el \cref{teo:levy}, ¿qué producto $u_c\cdot v_w$ aprendería SGNS con $k=2$ para los pares observados?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-softmax}
+En el modelo de la \cref{def:skipgram}: (a) escriba $\partial J/\partial v_c$ en forma vectorial en función de $U$, $y$ e $\hat y$, y diga cuándo se anula; (b) calcule $\partial J/\partial u_w$ para $w=o$ y para $w\neq o$; (c) evalúe los gradientes con $\V=\{\text{come},\text{avión}\}$, $u_{\text{come}}=(0,1)$, $u_{\text{avión}}=(-1,0)$, $v_c=v_{\text{gato}}=(1,0)$ y $o=\text{come}$.
+\fuente{adaptado de Stanford CS224N~\cite{cs224n}, tarea~2, pregunta~1, apartados (b) y (e) (se añade el apartado numérico c).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-sgns}
+Con un solo negativo, $L=-\ln\sigma(c_{+}\cdot w)-\ln\sigma(-c_{-}\cdot w)$. (a) Deduzca $\partial L/\partial c_{+}$, $\partial L/\partial c_{-}$ y $\partial L/\partial w$, lo que demuestra la \cref{prop:grad-sgns} con $k=1$. (b) Evalúelos en el \cref{ej:sgns}. (c) Dé un paso de descenso de gradiente sobre $w$ con $\eta=0{,}1$ y compruebe que la pérdida baja.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~5, ejercicio~5.3 (se añaden los apartados numéricos b y c).}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Modelos secuenciales: \texorpdfstring{$n$}{n}-gramas, RNN y LSTM}
+\label{tema:5}
+% =====================================================================
+
+Con tokens y embeddings ya definidos, queda modelar la dependencia entre posiciones. Este tema repasa los tres modelos que precedieron al Transformer y demuestra por qué ninguno escala: los $n$-gramas no generalizan, las redes recurrentes sufren el desvanecimiento del gradiente y todas las arquitecturas recurrentes son secuenciales en el tiempo. Se sigue~\cite[cap.~14]{jm3}, la clase~4 de CS224N~\cite{cs224n}, \cite[cap.~10]{gbc} y \cite[§9.7 y §10.1]{d2l}; los resultados sobre el gradiente proceden de Bengio, Simard y Frasconi~\cite{bengio94} y de Pascanu, Mikolov y Bengio~\cite[§2--3]{pascanu}, y la LSTM, de Hochreiter y Schmidhuber~\cite{lstm}.
+
+\section{\texorpdfstring{$N$}{N}-gramas y dispersión}
+
+Un modelo de $n$-gramas (módulo~1) estima $P(x_t\mid x_{t-n+1:t-1})$ por frecuencias relativas y necesita una tabla de $K^{n}$ entradas.
+
+\begin{proposicion}\label{prop:dispersion}
+En un corpus de $N\ge n$ tokens aparecen a lo sumo $N-n+1$ $n$-gramas distintos. Por tanto, la fracción de casillas de la tabla con recuento positivo es a lo sumo $(N-n+1)/K^{n}$.
+\end{proposicion}
+
+\begin{proof}
+Un corpus de $N$ tokens tiene $N-n+1$ posiciones de comienzo para un $n$-grama, y cada posición aporta un solo $n$-grama. El número de $n$-gramas distintos no supera el de posiciones.
+\end{proof}
+
+\begin{ejemplo}
+El fragmento de \emph{El Quijote} de la práctica tiene $440$ palabras y $243$ distintas. Hay $243^{2}=59\,049$ bigramas posibles, pero solo aparecen $416$ distintos, el $0{,}70\,\%$, y $398$ de ellos una sola vez. Con un vocabulario de $5\cdot 10^{4}$ tokens, los trigramas posibles son $1{,}25\cdot 10^{14}$, muchos más que los tokens de cualquier corpus.
+\end{ejemplo}
+
+El defecto de fondo no es solo el tamaño: cada contexto es una casilla aislada y el modelo no sabe que «el gato come» y «el perro come» se parecen. El modelo neuronal de Bengio \emph{et al.}~\cite{bengio03}, estudiado en el módulo~9, resuelve la generalización con embeddings, pero conserva un contexto de longitud fija.
+
+\section{Redes recurrentes}
+
+\begin{definicion}[Red recurrente]\label{def:rnn}
+Sean $x_1,\dots,x_T\in\R^{d}$ los embeddings de una secuencia. Una \emph{red recurrente} (RNN) simple con estado de dimensión $h$ calcula
+\[
+h_t=\tanh(W h_{t-1}+U x_t+b),\qquad z_t=W_{\mathrm{s}}\,h_t+b_{\mathrm{s}},
+\]
+con $h_0=0$, $W\in\R^{h\times h}$, $U\in\R^{h\times d}$, $b\in\R^{h}$ y una capa de salida $W_{\mathrm{s}}\in\R^{K\times h}$ que produce los logits $z_t$ del token siguiente~\cite[§14.1--14.2]{jm3}.
+\end{definicion}
+
+Los mismos parámetros se usan en todas las posiciones. El estado $h_t$ resume todo el prefijo $x_{1:t}$, de modo que el contexto no tiene, en principio, longitud fija.
+
+\begin{proposicion}\label{prop:param-rnn}
+La parte recurrente de una RNN simple tiene $h(h+d)+h$ parámetros, independientemente de $T$.
+\end{proposicion}
+
+\begin{proof}
+$W$ tiene $h^{2}$ entradas, $U$ tiene $hd$ y $b$ tiene $h$; la suma es $h^{2}+hd+h=h(h+d)+h$. Ninguna depende de la longitud de la secuencia porque los parámetros se comparten entre posiciones.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,->,>={Stealth[length=2mm]},
+  st/.style={draw,circle,minimum size=8mm,inner sep=0pt},
+  io/.style={draw,rectangle,minimum size=6mm,inner sep=1pt}]
+  \node[st] (h0) at (0,0) {$h_0$};
+  \foreach \t/\x in {1/2.1,2/4.2,3/6.3}{
+    \node[st] (h\t) at (\x,0) {$h_{\t}$};
+    \node[io] (x\t) at (\x,-1.4) {$x_{\t}$};
+    \node[io] (z\t) at (\x,1.4) {$z_{\t}$};
+    \draw (x\t) -- node[right] {$U$} (h\t);
+    \draw (h\t) -- node[right] {$W_{\mathrm{s}}$} (z\t);}
+  \node (dots) at (8.2,0) {$\cdots$};
+  \node[st] (hT) at (10,0) {$h_{T}$};
+  \node[io] (xT) at (10,-1.4) {$x_{T}$};
+  \node[io] (zT) at (10,1.4) {$z_{T}$};
+  \draw (xT) -- node[right] {$U$} (hT);
+  \draw (hT) -- node[right] {$W_{\mathrm{s}}$} (zT);
+  \draw (h0) -- node[above] {$W$} (h1);
+  \draw (h1) -- node[above] {$W$} (h2);
+  \draw (h2) -- node[above] {$W$} (h3);
+  \draw (h3) -- (dots);
+  \draw (dots) -- node[above] {$W$} (hT);
+\end{tikzpicture}
+\caption{RNN desplegada en el tiempo. Los arcos horizontales forman una cadena de $T$ dependencias: para calcular $h_T$ hay que calcular antes $h_1,\dots,h_{T-1}$, y el gradiente recorre la misma cadena en sentido inverso.}
+\label{fig:rnn}
+\end{figure}
+
+\section{Retropropagación en el tiempo y desvanecimiento del gradiente}
+
+El gradiente de una RNN se calcula aplicando la retropropagación al grafo desplegado de la \cref{fig:rnn}; el procedimiento se llama \emph{retropropagación en el tiempo}~\cite[§9.7]{d2l}.
+
+\begin{lema}\label{lem:jacobiano}
+Sea $a_t=W h_{t-1}+U x_t+b$. El jacobiano de un paso es $\dfrac{\partial h_t}{\partial h_{t-1}}=D_t W$, con $D_t=\diag\bigl(1-\tanh^{2}(a_t)\bigr)$, y
+\[
+\frac{\partial h_T}{\partial h_0}=D_T W\,D_{T-1}W\cdots D_1 W.
+\]
+\end{lema}
+
+\begin{proof}
+Por la regla de la cadena (módulo~4), $\partial h_t/\partial h_{t-1}=\tanh'(a_t)\cdot\partial a_t/\partial h_{t-1}$, donde $\tanh'$ se aplica componente a componente y forma la matriz diagonal $D_t$, ya que $\tanh'(u)=1-\tanh^{2}(u)$, y $\partial a_t/\partial h_{t-1}=W$. El jacobiano de una composición es el producto de los jacobianos.
+\end{proof}
+
+\begin{teorema}[Cota exponencial del gradiente]\label{teo:desvanece}
+Sea $\norm{\cdot}$ la norma espectral. En la RNN de la \cref{def:rnn},
+\[
+\Bigl\lVert\frac{\partial h_T}{\partial h_0}\Bigr\rVert\le\norm{W}^{T}.
+\]
+En particular, si $\norm{W}\le\gamma<1$, el gradiente que llega a $h_0$ desde la pérdida en la posición $T$ decae al menos como $\gamma^{T}$.
+\end{teorema}
+
+\begin{proof}
+Las entradas de $D_t$ son $1-\tanh^{2}(\cdot)\in(0,1]$, y la norma espectral de una matriz diagonal es el máximo valor absoluto de su diagonal, luego $\norm{D_t}\le 1$. La norma espectral es submultiplicativa (módulo~3), de modo que, por el \cref{lem:jacobiano},
+$\norm{\partial h_T/\partial h_0}\le\prod_{t=1}^{T}\norm{D_t}\,\norm{W}\le\norm{W}^{T}$. Finalmente, si $L$ depende de $h_T$, $\partial L/\partial h_0=(\partial h_T/\partial h_0)^{\top}\partial L/\partial h_T$ y $\norm{\partial L/\partial h_0}\le\gamma^{T}\norm{\partial L/\partial h_T}$.
+\end{proof}
+
+\begin{corolario}\label{cor:explota}
+Para que el gradiente pueda crecer exponencialmente (\emph{explotar}) es necesario que $\norm{W}>1$. Con una activación de derivada acotada por $\gamma_{\phi}$ (por ejemplo, $\gamma_{\phi}=1/4$ para la sigmoide), la condición necesaria es $\norm{W}>1/\gamma_{\phi}$~\cite[§2.1]{pascanu}.
+\end{corolario}
+
+\begin{proof}
+Con una activación $\phi$ cualquiera, $\norm{D_t}\le\gamma_{\phi}$, y el argumento del \cref{teo:desvanece} da $\norm{\partial h_T/\partial h_0}\le(\gamma_{\phi}\norm{W})^{T}$. Si $\gamma_{\phi}\norm{W}\le 1$, la cota no crece con $T$; por contraposición, el crecimiento exponencial exige $\gamma_{\phi}\norm{W}>1$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\caption{Factor $w^{T}$ en la RNN escalar lineal $h_t=w\,h_{t-1}$.}\label{tab:wT}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+$w$ & $T=10$ & $T=50$ & $T=100$ \\
+\midrule
+$0{,}9$ & $0{,}3487$ & $5{,}154\cdot 10^{-3}$ & $2{,}656\cdot 10^{-5}$ \\
+$0{,}99$ & $0{,}9044$ & $0{,}6050$ & $0{,}3660$ \\
+$1{,}1$ & $2{,}594$ & $117{,}4$ & $13\,781$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El caso escalar lineal del \cref{tab:wT} muestra el fenómeno: con $w=0{,}9$, la señal de un token situado 100 posiciones atrás llega multiplicada por $2{,}7\cdot 10^{-5}$, y la red no aprende dependencias largas. Bengio, Simard y Frasconi demostraron que, para que una red recurrente almacene información de forma robusta frente al ruido, debe operar en una región en la que el gradiente se desvanece, de modo que aprender dependencias largas por descenso de gradiente es intrínsecamente difícil~\cite{bengio94}.
+
+\begin{definicion}[Recorte del gradiente]
+Dado un umbral $\tau>0$, el \emph{recorte por norma} sustituye el gradiente $g$ por
+\[
+\clip_{\tau}(g)=\begin{cases} g & \text{si } \norm{g}<\tau,\\ \tau\,g/\norm{g} & \text{si } \norm{g}\ge\tau.\end{cases}
+\]
+Pascanu \emph{et al.} proponen esta regla contra la explosión del gradiente y sugieren un umbral entre la mitad y diez veces la norma media del gradiente~\cite[§3.2]{pascanu}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:clip}
+$\norm{\clip_{\tau}(g)}\le\tau$, y $\clip_{\tau}(g)$ es un múltiplo positivo de $g$; en particular, $g\cdot\clip_{\tau}(g)\ge 0$ y el paso recortado sigue siendo de descenso.
+\end{proposicion}
+
+\begin{proof}
+Si $\norm{g}<\tau$, la conclusión es inmediata. Si no, $\clip_{\tau}(g)=\lambda g$ con $\lambda=\tau/\norm{g}\in(0,1]$, luego $\norm{\clip_{\tau}(g)}=\lambda\norm{g}=\tau$ y $g\cdot\clip_{\tau}(g)=\lambda\norm{g}^{2}\ge 0$.
+\end{proof}
+
+El recorte resuelve la explosión, pero no el desvanecimiento: un gradiente pequeño no se agranda.
+
+\section{La LSTM}
+
+\begin{definicion}[LSTM]\label{def:lstm}
+Una LSTM añade al estado oculto $h_t$ una \emph{celda de memoria} $c_t\in\R^{h}$ y tres \emph{puertas} con valores en $(0,1)^{h}$:
+\[
+\begin{aligned}
+f_t&=\sigma(W_f h_{t-1}+U_f x_t+b_f), & i_t&=\sigma(W_i h_{t-1}+U_i x_t+b_i),\\
+o_t&=\sigma(W_o h_{t-1}+U_o x_t+b_o), & \tilde c_t&=\tanh(W_c h_{t-1}+U_c x_t+b_c),\\
+c_t&=f_t\odot c_{t-1}+i_t\odot\tilde c_t, & h_t&=o_t\odot\tanh(c_t).
+\end{aligned}
+\]
+La puerta de \emph{olvido} $f_t$ decide qué parte de la memoria se conserva; la de \emph{entrada} $i_t$, qué parte del candidato $\tilde c_t$ se añade, y la de \emph{salida} $o_t$, qué parte de la memoria pasa al estado oculto~\cite{lstm}, \cite[§14.5]{jm3}, \cite[§10.1]{d2l}.
+\end{definicion}
+
+La puerta de olvido no figuraba en el artículo original de 1997; la introdujeron Gers, Schmidhuber y Cummins~\cite{gers}, y es la forma que usan los libros de texto actuales.
+
+\begin{proposicion}\label{prop:lstm-grad}
+El jacobiano de $c_t$ respecto a $c_{t-1}$ a través del camino directo, es decir, manteniendo fijas las puertas y el candidato, es $\diag(f_t)$. A lo largo de $T$ pasos, el producto de estos jacobianos es $\diag\bigl(\prod_{t=1}^{T}f_t\bigr)$, con el producto componente a componente.
+\end{proposicion}
+
+\begin{proof}
+Con $f_t$, $i_t$ y $\tilde c_t$ fijos, $c_t$ es una función afín de $c_{t-1}$ cuya parte lineal es $c_{t-1}\mapsto f_t\odot c_{t-1}$, de jacobiano $\diag(f_t)$. Un producto de matrices diagonales es la matriz diagonal del producto de las diagonales.
+\end{proof}
+
+La celda se actualiza \emph{sumando} y no multiplicando por una matriz $W$: si la red aprende $f_t\approx 1$, el gradiente recorre muchos pasos casi sin atenuarse. Con $f_t=0{,}98$ constante, el factor a 100 pasos es $0{,}98^{100}=0{,}1326$, frente a $2{,}7\cdot 10^{-5}$ en la RNN con $w=0{,}9$. Es la misma idea que la conexión residual del módulo~11. En la práctica, las LSTM aprovechan contextos de cientos de tokens.
+
+\begin{corolario}\label{cor:param-lstm}
+Una LSTM con estado de dimensión $h$ y entrada de dimensión $d$ tiene $4\bigl(h(h+d)+h\bigr)$ parámetros recurrentes, cuatro veces los de una RNN simple.
+\end{corolario}
+
+\begin{proof}
+Cada una de las cuatro transformaciones ($f_t$, $i_t$, $o_t$ y $\tilde c_t$) tiene una matriz $h\times h$, una $h\times d$ y un sesgo de dimensión $h$, como la RNN de la \cref{prop:param-rnn}.
+\end{proof}
+
+\section{Secuencialidad y el paso al Transformer}
+
+El segundo límite no tiene que ver con el gradiente. En una red recurrente, $h_t$ depende de $h_{t-1}$, de modo que calcular $h_T$ exige $T$ pasos que no pueden ejecutarse a la vez dentro de una secuencia (\cref{fig:rnn}). Una GPU tiene miles de núcleos que quedan ociosos durante esa cadena. El Transformer del módulo~13 calcula las representaciones de todas las posiciones de una capa a la vez, con productos de matrices, y conecta cualquier par de posiciones en un solo paso de atención, a cambio de un coste $O(n^{2})$ en la longitud.
+
+\begin{table}[h]
+\centering\small
+\caption{Modelos de secuencias y sus limitaciones.}\label{tab:modelos-seq}
+\begin{tabularx}{\textwidth}{@{}lll>{\raggedright\arraybackslash}X@{}}
+\toprule
+Modelo & Contexto & Paralelo & Problema principal \\
+\midrule
+$N$-grama & $n-1$ fijo & sí (contar) & tabla de $K^{n}$ casillas; no generaliza \\
+MLP (módulo~9) & fijo & sí & contexto corto y fijo \\
+RNN & ilimitado en teoría & no & desvanecimiento del gradiente; secuencial \\
+LSTM & cientos de tokens & no & secuencial; aprovecha mal la GPU \\
+Transformer & ventana de contexto & sí & atención $O(n^{2})$ (módulo~13) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, cap.~14 «RNNs and LSTMs»: §14.1--14.2 (RNN y modelos de lenguaje recurrentes) y §14.5 «The LSTM».
+\item Stanford CS224N~\cite{cs224n}, clase~4 «Language Models and RNNs».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, cap.~10 «Sequence Modeling: Recurrent and Recursive Nets», en particular las secciones sobre dependencias largas y LSTM.
+\item Zhang \emph{et al.}~\cite{d2l}, §9.7 «Backpropagation Through Time» y §10.1 «Long Short-Term Memory (LSTM)».
+\item Pascanu, Mikolov y Bengio~\cite{pascanu}, §2.1 «The mechanics» y §3.2 «Scaling down the gradients».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-dispersion}
+El fragmento de \emph{El Quijote} tiene $440$ palabras y $243$ distintas, y en él aparecen $416$ bigramas distintos, $398$ de ellos una sola vez. (a) Compruebe la \cref{prop:dispersion} con $n=2$. (b) ¿Qué porcentaje de los bigramas observados es único? (c) ¿Qué estimaría el EMV para un bigrama no observado y qué consecuencia tiene sobre la perplejidad?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-clip}
+Un gradiente vale $g=(3,-4,12)$ y el umbral de recorte es $\tau=5$. Calcule $\clip_{\tau}(g)$, compruebe su norma y verifique que tiene la misma dirección que $g$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-olvido}
+En una LSTM, supóngase que la puerta de olvido vale $f$ en todas las componentes y en todos los pasos. (a) Calcule el factor del camino directo a 100 pasos para $f=0{,}98$ y compárelo con el de una RNN escalar con $w=0{,}9$. (b) ¿Qué valor mínimo de $f$ garantiza que el factor sea al menos $0{,}5$ a 100 pasos?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-param}
+Para un estado de dimensión $h=256$ y una entrada de dimensión $d=256$, compare el número de parámetros recurrentes de una RNN simple, de una LSTM y de una GRU (que tiene tres transformaciones del mismo tamaño). Si el coste de un paso es proporcional al número de parámetros, ¿cuántas veces más cuesta un paso de LSTM que uno de RNN?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §10.1, ejercicio~3 (se fijan las dimensiones y se pide el cálculo explícito).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-wmin}
+En la RNN escalar lineal $h_t=w\,h_{t-1}$ con $0<w<1$, ¿qué valor mínimo de $w$ garantiza que el factor del gradiente a 100 pasos sea al menos $0{,}1$? Interprete el resultado.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-autovalores}
+Sea $M\in\R^{n\times n}$ simétrica, con valores propios $\lambda_1,\dots,\lambda_n$ y vectores propios ortonormales $v_1,\dots,v_n$, ordenados de modo que $\abs{\lambda_1}>\abs{\lambda_2}\ge\dots\ge\abs{\lambda_n}$. (a) Demuestre que $M^{k}$ tiene valores propios $\lambda_i^{k}$. (b) Sea $x=\sum_i a_i v_i$ con $a_1\neq 0$. Demuestre que la tangente del ángulo entre $M^{k}x$ y $v_1$ es a lo sumo $(\abs{\lambda_2}/\abs{\lambda_1})^{k}\,\norm{x-a_1v_1}/\abs{a_1}$. (c) Explique qué implica para el gradiente de una RNN lineal $h_t=Mh_{t-1}$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §9.7, ejercicio~1 (se precisa la cota del apartado b).}
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los resultados exactos se dan como fracción cuando existe.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-decod}
+\datos un decodificador que aplica la decodificación UTF-8 a cada byte por separado.
+\planteamiento un carácter no ASCII ocupa varios bytes (\cref{tab:utf8}) y ninguno de ellos es por sí solo una palabra del código.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) «año» se codifica como $(97,195,177,111)=(\hx{61},\hx{C3},\hx{B1},\hx{6F})$. El byte $97$ da «a», pero $\hx{C3}=\bits{11000011}$ es un byte inicial que anuncia un carácter de 2 bytes; aislado, la cadena está incompleta y la decodificación falla.
+  \item El error de fondo es suponer que un byte es un carácter, lo que solo es cierto en ASCII. Con «hola» el programa funciona, y por eso el fallo pasa inadvertido.
+  \item (b) La cadena $\hx{C3}\,\hx{28}$: el primer byte exige un segundo byte que empiece por \bits{10}, pero $\hx{28}=\bits{00101000}$ empieza por \bits{00}. Otra respuesta válida es $\hx{FF}\,\hx{FF}$, porque ningún byte UTF-8 empieza por \bits{11111}.
+\end{enumerate}
+\resultado \textbf{(a) «año» falla porque la «ñ» $=\hx{C3 B1}$ se parte y ninguna mitad es un carácter; (b) $\hx{C3 28}$ (o $\hx{FF FF}$) no es UTF-8 válido.}
+\comprobacion en Python, \texttt{b"\textbackslash xc3\textbackslash x28".decode()} lanza el error \emph{invalid continuation byte} y \texttt{b"\textbackslash xff\textbackslash xff".decode()}, \emph{invalid start byte}.
+\end{solucion}
+
+\begin{solucion}{eje:1-e}
+\datos «é» $=\hx{U+00E9}$.
+\planteamiento $\hx{E9}>\hx{7F}$, luego se usa la fila de 2 bytes, \bits{110xxxxx 10xxxxxx}, con 11 bits útiles.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Hexadecimal a binario: $\hx{E}=\bits{1110}$ y $\hx{9}=\bits{1001}$, luego $\hx{E9}=\bits{11101001}=233$.
+  \item Con 11 bits: \bits{00011101001}; en grupos de $5+6$: \bits{00011} y \bits{101001}.
+  \item Primer byte: $\bits{110}\,\bits{00011}=\bits{11000011}=\hx{C3}=195$.
+  \item Segundo byte: $\bits{10}\,\bits{101001}=\bits{10101001}=\hx{A9}=169$.
+\end{enumerate}
+\resultado \textbf{$\bits{11000011}\ \bits{10101001}=\hx{C3 A9}$.}
+\comprobacion al quitar las cabeceras \bits{110} y \bits{10} queda $\bits{00011}\,\bits{101001}=\hx{E9}$. En Python, \texttt{"é".encode()} da \texttt{b"\textbackslash xc3\textbackslash xa9"}.
+\end{solucion}
+
+\begin{solucion}{eje:1-contar}
+\datos «pingüino», «Ñandú» y «café» seguido de espacio y de \hx{U+2615}.
+\planteamiento sumar los bytes de cada carácter según su fila en el \cref{tab:utf8}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item «pingüino» tiene 8 caracteres: siete ASCII (p, i, n, g, i, n, o), que suman $7\cdot 1=7$ bytes, y «ü» (\hx{U+00FC}), con 2. Total: $7+2=9$.
+  \item «Ñandú» tiene 5 caracteres: «Ñ» (\hx{U+00D1}) con 2, «a», «n», «d» con $3\cdot 1=3$ y «ú» (\hx{U+00FA}) con 2. Total: $2+3+2=7$.
+  \item El tercer texto tiene 6 caracteres: «c», «a», «f» ($3$ bytes), «é» ($2$), el espacio ($1$) y \hx{U+2615}, que está en el intervalo \hx{U+0800}--\hx{U+FFFF} y ocupa $3$. Total: $3+2+1+3=9$.
+\end{enumerate}
+\resultado \textbf{9, 7 y 9 bytes.}
+\comprobacion bytes menos caracteres: $9-8=1$ («ü»), $7-5=2$ («Ñ» y «ú») y $9-6=3$ («é» aporta 1 y \hx{U+2615} aporta 2).
+\end{solucion}
+
+\begin{solucion}{eje:1-mano}
+\datos «¿» $=\hx{U+00BF}$; carácter chino \hx{U+8FDB}.
+\planteamiento \hx{BF} está en la fila de 2 bytes (11 bits útiles); \hx{8FDB} está en la de 3 bytes (16 bits útiles, patrón \bits{1110xxxx 10xxxxxx 10xxxxxx}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item «¿»: $\hx{BF}=\bits{10111111}=191$. Con 11 bits, \bits{00010111111}; en grupos de $5+6$, \bits{00010} y \bits{111111}.
+  \item Bytes: $\bits{110}\,\bits{00010}=\bits{11000010}=\hx{C2}$ y $\bits{10}\,\bits{111111}=\bits{10111111}=\hx{BF}$.
+  \item \hx{U+8FDB}: $\hx{8FDB}=\bits{1000\,1111\,1101\,1011}$ (16 bits); en grupos de $4+6+6$, \bits{1000}, \bits{111111} y \bits{011011}.
+  \item Bytes: $\bits{1110}\,\bits{1000}=\hx{E8}$, $\bits{10}\,\bits{111111}=\hx{BF}$ y $\bits{10}\,\bits{011011}=\bits{10011011}=\hx{9B}$.
+\end{enumerate}
+\resultado \textbf{«¿» $=\hx{C2 BF}$ (2 bytes); \hx{U+8FDB} $=\hx{E8 BF 9B}$ (3 bytes).}
+\comprobacion al quitar las cabeceras del segundo carácter queda $\bits{1000}\,\bits{111111}\,\bits{011011}=\hx{8FDB}$. Obsérvese que «¿» empieza por \hx{C2} y no por \hx{C3}, como las vocales con tilde, porque $\hx{BF}<\hx{C0}$.
+\end{solucion}
+
+\begin{solucion}{eje:1-filas}
+\datos el \cref{tab:utf8}; emoji \hx{U+1F600}.
+\planteamiento cardinal de cada intervalo y cociente entre la fila de 4 bytes y el total de valores escalares.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item 1 byte: $\hx{80}=128$. 2 bytes: $\hx{800}-\hx{80}=2048-128=1920$.
+  \item 3 bytes: $\hx{10000}-\hx{800}=65\,536-2048=63\,488$, de los que $2048$ son sustitutos.
+  \item 4 bytes: $\hx{110000}-\hx{10000}=1\,114\,112-65\,536=1\,048\,576=2^{20}$.
+  \item Valores escalares: $128+1920+(63\,488-2048)+1\,048\,576=1\,112\,064$.
+  \item Fracción con 4 bytes: $1\,048\,576/1\,112\,064=0{,}9429$.
+  \item $\hx{1F600}\ge\hx{10000}$, luego está en la última fila. Sus bytes son $\hx{F0 9F 98 80}$.
+\end{enumerate}
+\resultado \textbf{el $94{,}29\,\%$ de los valores escalares necesita 4 bytes}; el emoji ocupa 4 bytes porque su punto de código supera \hx{FFFF}.
+\comprobacion $128+1920+63\,488+1\,048\,576=1\,114\,112=\hx{110000}$, el número total de puntos de código. Casi todos los caracteres de uso frecuente están, sin embargo, en las tres primeras filas.
+\end{solucion}
+
+\begin{solucion}{eje:1-sobrelargo}
+\datos las filas del \cref{tab:utf8} sin la condición de usar la fila más corta.
+\planteamiento (a) exhibir dos cadenas de bytes distintas que se decodifiquen como el mismo carácter; (b) calcular el valor máximo que admite un byte inicial \hx{C0} o \hx{C1}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) «a» $=\hx{61}$ tiene, con 11 bits, la escritura \bits{00001100001}. En la fila de 2 bytes daría $\bits{110}\,\bits{00001}=\hx{C1}$ y $\bits{10}\,\bits{100001}=\hx{A1}$.
+  \item Las cadenas $(\hx{61})$ y $(\hx{C1},\hx{A1})$ son distintas y se decodificarían ambas como «a»: la decodificación no sería inyectiva.
+  \item Para un tokenizador de bytes, un mismo texto tendría varias representaciones con tokens distintos, y el modelo vería como diferentes dos entradas iguales. Además, un filtro que busque un carácter por sus bytes podría ser burlado con la forma sobrelarga.
+  \item (b) \hx{C0} $=\bits{11000000}$ y \hx{C1} $=\bits{11000001}$ aportan los 5 bits útiles \bits{0000x}. El valor de 11 bits resultante es como mucho $\bits{00001111111}=127$.
+  \item Todo valor $\le 127$ cabe en la fila de 1 byte, luego una cadena que empiece por \hx{C0} o \hx{C1} es necesariamente sobrelarga.
+\end{enumerate}
+\resultado \textbf{(a) $(\hx{61})$ y $(\hx{C1},\hx{A1})$ representarían ambas «a»; (b) \hx{C0} y \hx{C1} solo codifican valores menores que~128.}
+\comprobacion el byte inicial más pequeño válido de la fila de 2 bytes es \hx{C2}, que corresponde a $\hx{80}=128$, el primer punto de código de esa fila.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-unk}
+\datos BPE a nivel de byte; $\V_0=\mathcal{B}$.
+\planteamiento basta ver que todo texto se escribe con los símbolos de $\V_0$ y que las fusiones no los eliminan.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Todo texto, en cualquier idioma, se codifica en UTF-8 como una cadena de bytes (\cref{cor:vocab256}).
+  \item Un byte tiene 8 bits y toma $2^{8}=256$ valores, todos en $\V_0$.
+  \item Las fusiones solo añaden símbolos (\cref{prop:tam-vocab}); en el peor caso no se aplica ninguna y cada byte es un token (\cref{cor:no-unk}).
+\end{enumerate}
+\resultado \textbf{no hay tokens desconocidos porque los 256 bytes están en el vocabulario; el vocabulario inicial mide 256.}
+\comprobacion la frase rusa de la \cref{tema:3}, con 22 bytes, da 22 tokens con el tokenizador de la práctica: ninguna fusión aplica y aun así se codifica.
+\end{solucion}
+
+\begin{solucion}{eje:2-fusiones}
+\datos (a) $n$ símbolos iniciales y objetivo $m$; (b) $256$ bytes, $1$ token especial y $K=50\,257$.
+\planteamiento cada fusión añade un símbolo (\cref{prop:tam-vocab}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $n+k=m$, luego $k=m-n$.
+  \item (b) El vocabulario que no procede de fusiones tiene $256+1=257$ símbolos, luego $k=50\,257-257=50\,000$.
+\end{enumerate}
+\resultado \textbf{(a) $m-n$ fusiones; (b) $50\,000$ fusiones.}
+\comprobacion $256+50\,000+1=50\,257$. El número redondo indica que $k=50\,000$ se fijó como hiperparámetro.
+\end{solucion}
+
+\begin{solucion}{eje:2-rana}
+\datos «rana» $\times1$, «lana» $\times2$, «ana» $\times1$, «plan» $\times1$; 3 fusiones.
+\planteamiento contar pares ponderados por la frecuencia, fusionar el máximo y restar su frecuencia (\cref{prop:compresion}). No hay empates en cabeza.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Símbolos iniciales: $4\cdot 1+4\cdot 2+3\cdot 1+4\cdot 1=4+8+3+4=19$.
+  \item Paso 1: $N(\tok{a},\tok{n})=1+2+1+1=5$; $N(\tok{n},\tok{a})=1+2+1=4$; $N(\tok{l},\tok{a})=2+1=3$; $N(\tok{r},\tok{a})=N(\tok{p},\tok{l})=1$. Se fusiona $(\tok{a},\tok{n})$: \tok{r}\sep\tok{an}\sep\tok{a}; \tok{l}\sep\tok{an}\sep\tok{a}$\times2$; \tok{an}\sep\tok{a}; \tok{p}\sep\tok{l}\sep\tok{an}, con $19-5=14$ símbolos.
+  \item Paso 2: $N(\tok{an},\tok{a})=1+2+1=4$; $N(\tok{l},\tok{an})=2+1=3$; $N(\tok{r},\tok{an})=N(\tok{p},\tok{l})=1$. Se fusiona $(\tok{an},\tok{a})$: \tok{r}\sep\tok{ana}; \tok{l}\sep\tok{ana}$\times2$; \tok{ana}; \tok{p}\sep\tok{l}\sep\tok{an}, con $14-4=10$ símbolos.
+  \item Paso 3: $N(\tok{l},\tok{ana})=2$; $N(\tok{r},\tok{ana})=N(\tok{p},\tok{l})=N(\tok{l},\tok{an})=1$. Se fusiona $(\tok{l},\tok{ana})$: \tok{r}\sep\tok{ana}; \tok{lana}$\times2$; \tok{ana}; \tok{p}\sep\tok{l}\sep\tok{an}, con $10-2=8$ símbolos.
+\end{enumerate}
+\resultado \textbf{fusiones $\tok{a}+\tok{n}$ (5), $\tok{an}+\tok{a}$ (4) y $\tok{l}+\tok{ana}$ (2); símbolos $19\to 14\to 10\to 8$.}
+\comprobacion recuento directo del corpus final: $2+1\cdot 2+1+3=8$.
+\end{solucion}
+
+\begin{solucion}{eje:2-codificar}
+\datos fusiones en orden: (1) $\tok{a}+\tok{s}$, (2) $\tok{c}+\tok{as}$, (3) $\tok{cas}+\tok{a}$, (4) $\tok{cas}+\tok{as}$.
+\planteamiento aplicar las fusiones una a una, en el orden aprendido (\cref{def:cod-bpe}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item «masas» $=\tok{m}\sep\tok{a}\sep\tok{s}\sep\tok{a}\sep\tok{s}$. (1) da $\tok{m}\sep\tok{as}\sep\tok{as}$; (2) no aplica porque no hay \tok{c}; (3) y (4) no aplican porque no hay \tok{cas}. Resultado: $\tok{m}\,\sep{}\,\tok{as}\,\sep{}\,\tok{as}$.
+  \item «casa» $=\tok{c}\sep\tok{a}\sep\tok{s}\sep\tok{a}$. (1) da $\tok{c}\sep\tok{as}\sep\tok{a}$; (2), $\tok{cas}\sep\tok{a}$; (3), $\tok{casa}$; (4) no aplica. Resultado: un token.
+  \item «cascas» $=\tok{c}\sep\tok{a}\sep\tok{s}\sep\tok{c}\sep\tok{a}\sep\tok{s}$. (1) da $\tok{c}\sep\tok{as}\sep\tok{c}\sep\tok{as}$; (2), $\tok{cas}\sep\tok{cas}$; (3) no aplica porque tras \tok{cas} viene \tok{cas} y no \tok{a}; (4) tampoco, porque tras \tok{cas} no viene \tok{as}. Resultado: $\tok{cas}\,\sep{}\,\tok{cas}$.
+\end{enumerate}
+\resultado \textbf{«masas» $\to\tok{m}\sep{}\tok{as}\sep{}\tok{as}$ (3 tokens); «casa» $\to\tok{casa}$ (1); «cascas» $\to\tok{cas}\sep{}\tok{cas}$ (2).}
+\comprobacion al concatenar se recupera cada palabra, como garantiza el \cref{teo:bpe-correcto}.
+\end{solucion}
+
+\begin{solucion}{eje:2-lex}
+\datos «paso» $\times4$, «pasos» $\times2$, «piso» $\times3$, «pisos» $\times3$; desempate por el par lexicográficamente mayor.
+\planteamiento como en el \cref{ej:bpe-casa}, aplicando la regla de desempate cuando haga falta.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Símbolos iniciales: $4\cdot 4+2\cdot 5+3\cdot 4+3\cdot 5=16+10+12+15=53$.
+  \item Paso 1: $N(\tok{s},\tok{o})=4+2+3+3=12$; $N(\tok{p},\tok{a})=N(\tok{a},\tok{s})=N(\tok{p},\tok{i})=N(\tok{i},\tok{s})=6$; $N(\tok{o},\tok{s})=2+3=5$. Sin empate: se fusiona $(\tok{s},\tok{o})$ y quedan $53-12=41$ símbolos.
+  \item Paso 2: $(\tok{p},\tok{a})$, $(\tok{a},\tok{so})$, $(\tok{p},\tok{i})$ e $(\tok{i},\tok{so})$ empatan a 6; $(\tok{so},\tok{s})$ tiene 5. El primer símbolo mayor es \tok{p}; entre $(\tok{p},\tok{a})$ y $(\tok{p},\tok{i})$ gana \tok{i}. Se fusiona $(\tok{p},\tok{i})$: $41-6=35$.
+  \item Paso 3: $(\tok{p},\tok{a})$, $(\tok{a},\tok{so})$ y $(\tok{pi},\tok{so})$ empatan a 6. Como $\tok{pi}>\tok{p}>\tok{a}$, se fusiona $(\tok{pi},\tok{so})$: $35-6=29$.
+  \item Paso 4: $(\tok{p},\tok{a})$ y $(\tok{a},\tok{so})$ empatan a 6; $(\tok{piso},\tok{s})$ tiene 3 y $(\tok{so},\tok{s})$, 2. Gana $(\tok{p},\tok{a})$ porque $\tok{p}>\tok{a}$: $29-6=23$.
+  \item (b) Fusiones en orden: \tok{so}, \tok{pi}, \tok{piso}, \tok{pa}. «peso» $=\tok{p}\sep\tok{e}\sep\tok{s}\sep\tok{o}\to\tok{p}\sep\tok{e}\sep\tok{so}$. «sopa» $=\tok{s}\sep\tok{o}\sep\tok{p}\sep\tok{a}\to\tok{so}\sep\tok{p}\sep\tok{a}\to\tok{so}\sep\tok{pa}$. «oso» $=\tok{o}\sep\tok{s}\sep\tok{o}\to\tok{o}\sep\tok{so}$.
+\end{enumerate}
+\resultado \textbf{fusiones $\tok{s}+\tok{o}$ (12), $\tok{p}+\tok{i}$ (6), $\tok{pi}+\tok{so}$ (6) y $\tok{p}+\tok{a}$ (6); símbolos $53\to41\to35\to29\to23$; «peso» $\to\tok{p}\sep{}\tok{e}\sep{}\tok{so}$, «sopa» $\to\tok{so}\sep{}\tok{pa}$, «oso» $\to\tok{o}\sep{}\tok{so}$.}
+\comprobacion recuento del corpus final, \tok{pa}\sep\tok{so}$\times4$, \tok{pa}\sep\tok{so}\sep\tok{s}$\times2$, \tok{piso}$\times3$, \tok{piso}\sep\tok{s}$\times3$: $8+6+3+6=23$. Con la regla «el primer par que aparece», el paso~2 habría elegido $(\tok{p},\tok{a})$ y el tokenizador sería otro.
+\end{solucion}
+
+\begin{solucion}{eje:2-compresion}
+\datos secuencia de longitud $L$; par $(a,b)$ con $a\neq b$ y $c$ apariciones en las posiciones $i_1<\dots<i_c$ (cada $i_r$ es la posición de la $a$).
+\planteamiento probar que $i_{r+1}\ge i_r+2$, de modo que las sustituciones no comparten símbolos, y contar.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Si $i_{r+1}=i_r+1$, el símbolo de la posición $i_r+1$ sería $b$ (segundo del par $r$) y $a$ (primero del par $r+1$), luego $a=b$: contradicción. Así $i_{r+1}\ge i_r+2$.
+  \item Los intervalos $\{i_r,i_r+1\}$ son, por tanto, disjuntos, y la fusión de izquierda a derecha sustituye los $c$.
+  \item Cada sustitución cambia 2 símbolos por 1 y resta 1; en total, $L'=L-c$.
+  \item Contraejemplo con $a=b$: «\tok{aaa}» tiene $c=2$ pares $(\tok{a},\tok{a})$ que se solapan; la fusión da \tok{aa}\sep\tok{a}, de longitud $2=3-1\neq 3-2$.
+  \item «\tok{aaaa}» tiene 3 pares; la fusión da \tok{aa}\sep\tok{aa}, de longitud $2=4-2$. «\tok{aaaaa}» tiene 4 pares; la fusión da \tok{aa}\sep\tok{aa}\sep\tok{a}, de longitud $3=5-2$.
+\end{enumerate}
+\resultado \textbf{$L'=L-c$ si $a\neq b$}; con $a=b$ solo cuentan las apariciones no solapadas, $\lfloor r/2\rfloor$ en cada racha de $r$ símbolos iguales: longitudes 2 y 3 para «\tok{aaaa}» y «\tok{aaaaa}».
+\comprobacion en el \cref{tab:bpe-casa}, $30-8=22$, $22-5=17$, $17-3=14$ y $14-2=12$ coinciden con el recuento directo.
+\end{solucion}
+
+\begin{solucion}{eje:2-medio}
+\datos tokenizador BPE de bytes con el token \hx{C3}.
+\planteamiento usar el \cref{tab:utf8} para (a), el \cref{teo:bpe-correcto} y el \cref{teo:prefijo} para (b).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\hx{C3}=\bits{11000011}$ anuncia un carácter de 2 bytes; aislado, falta el byte de continuación y la cadena no es UTF-8 válida. La decodificación estricta da error y la tolerante devuelve el carácter de sustitución \hx{U+FFFD}.
+  \item (b) Sea $b=\Enc(x)$ la cadena UTF-8 del texto $x$ y sea $(t_1,\dots,t_m)$ su tokenización. Por el \cref{teo:bpe-correcto} con $\V_0=\mathcal{B}$, $t_1\Vert\dots\Vert t_m=b$.
+  \item Por el \cref{teo:prefijo}, $\Enc$ es inyectiva y $b$ es una cadena válida, luego $\Enc^{-1}(t_1\Vert\dots\Vert t_m)=\Enc^{-1}(b)=x$.
+  \item (c) Si la «ñ» $=\hx{C3 B1}$ llega en dos tokens y cada uno se decodifica al recibirlo, se muestran dos caracteres \hx{U+FFFD} en lugar de «ñ».
+  \item Remedio: acumular en un búfer los bytes de un carácter incompleto (se sabe que lo está por su byte inicial, paso~1 de la demostración del \cref{teo:prefijo}) y mostrarlo cuando llegue su último byte.
+\end{enumerate}
+\resultado \textbf{(a) error o \hx{U+FFFD}; (b) la concatenación de los tokens es la cadena UTF-8 original, que se decodifica sin pérdida; (c) el usuario ve dos \hx{U+FFFD}; se corrige con un búfer de bytes.}
+\comprobacion en Python, decodificar por separado los dos bytes de \texttt{"ñ".encode()} con \texttt{errors="replace"} da dos \hx{U+FFFD}, mientras que \texttt{"ñ".encode().decode()} devuelve «ñ».
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-palabras}
+\datos un LLM multilingüe con vocabulario de palabras completas.
+\planteamiento comparar lo que exige ese vocabulario con lo que necesita el modelo: un $K$ manejable y capacidad para representar cualquier texto.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Tamaño: cada forma flexionada («canto», «cantas», «cantaré»\dots) es un token, y con decenas de idiomas $K$ supera con creces el medio millón. Por la \cref{prop:coste-vocab}, las matrices de entrada y salida crecen en proporción.
+  \item Cobertura: una palabra nueva, una errata o un nombre propio raro no estarían en $\V$; habría que sustituirlos por un token «desconocido» y se perdería su información.
+  \item Además, «caballería» y «caballerías» tendrían filas independientes en $E$, y las formas raras recibirían muy pocos ejemplos de entrenamiento.
+\end{enumerate}
+\resultado \textbf{vocabulario gigantesco (matrices de embeddings y de salida enormes) y palabras fuera del vocabulario sin representación}; además, las formas emparentadas no comparten parámetros.
+\comprobacion las subpalabras resuelven los tres problemas: $K$ entre $3{,}2\cdot 10^{4}$ y $2{,}6\cdot 10^{5}$ y toda palabra se descompone en piezas conocidas (\cref{cor:no-unk}).
+\end{solucion}
+
+\begin{solucion}{eje:3-letras}
+\datos «ferrocarril» tiene 11 letras, 4 de ellas «r».
+\planteamiento el modelo recibe tokens, no letras; hay que ver qué información falta en la entrada.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El tokenizador divide la palabra en pocas piezas, por ejemplo \tok{ferro}\,\sep{}\,\tok{carril}, y el modelo recibe dos enteros.
+  \item Cada entero se convierte en una fila de $E$, que no contiene una lista explícita de letras.
+  \item Para contar, el modelo debe saber que \tok{ferro} contiene 2 «r» y \tok{carril} otras 2, y sumarlas. Esa ortografía solo se aprende de forma indirecta, de textos que deletrean palabras.
+  \item Remedio: escribir la palabra separada letra a letra; entonces cada letra es, casi siempre, un token.
+\end{enumerate}
+\resultado \textbf{falla porque no ve letras sino tokens; contar exige conocer la ortografía interna de cada token, que no está en la entrada.}
+\comprobacion con la palabra deletreada, el número de tokens que son «r» coincide con la respuesta, $4$.
+\end{solucion}
+
+\begin{solucion}{eje:3-vf}
+\planteamiento contrastar cada afirmación con la \cref{def:cod-bpe}, la \cref{obs:congelado} y la \cref{prop:coste-vocab}.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Falsa.} BPE aplica las fusiones en un orden fijo y es determinista; el modelo unigram es el que admite varias segmentaciones y permite muestrearlas.
+  \item \textbf{Falsa.} El tokenizador se entrena antes, con un algoritmo de conteo, y se congela.
+  \item \textbf{Verdadera.} La matriz tiene $Kd$ parámetros; con $d$ fijo, $(2K)d=2(Kd)$.
+\end{enumerate}
+\resultado \textbf{(a) falsa; (b) falsa; (c) verdadera.}
+\comprobacion en (c), con $d=4096$: $32\,000\cdot 4096=131\,072\,000$ y $64\,000\cdot 4096=262\,144\,000$, exactamente el doble.
+\end{solucion}
+
+\begin{solucion}{eje:3-perdida}
+\datos vocabulario del \cref{ej:unigram}; $s^{*}=(\tok{casa},\tok{s})$.
+\planteamiento $-\ln P(s)=-\sum_i\ln p(t_i)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $P(s^{*})=0{,}2\cdot 0{,}1=0{,}02$ y $-\ln 0{,}02=\ln 100-\ln 2=4{,}6052-0{,}6931=3{,}912$ nats.
+  \item $P(\tok{cas},\tok{as})=0{,}1\cdot 0{,}15=0{,}015$ y $-\ln 0{,}015=\ln 100-\ln 1{,}5=4{,}6052-0{,}4055=4{,}200$ nats.
+  \item Diferencia: $\ln(0{,}02/0{,}015)=\ln(4/3)=0{,}2877$ nats.
+\end{enumerate}
+\resultado \textbf{$-\ln P(s^{*})=3{,}912$ nats; con $(\tok{cas},\tok{as})$ se pierden $\ln(4/3)\approx 0{,}2877$ nats.}
+\comprobacion la diferencia es positiva porque $s^{*}$ es la segmentación de máxima probabilidad. Restar valores ya redondeados, $4{,}2-3{,}9=0{,}3$, daría una cifra demasiado gruesa.
+\end{solucion}
+
+\begin{solucion}{eje:3-param}
+\datos $K=32\,000$, $d=4096$, matrices separadas, 2 bytes por parámetro.
+\planteamiento cada matriz tiene $Kd$ parámetros (\cref{prop:coste-vocab}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Una matriz: $32\,000\cdot 4096=131\,072\,000$.
+  \item Dos matrices: $2\cdot 131\,072\,000=262\,144\,000$.
+  \item Memoria: $262\,144\,000\cdot 2=524\,288\,000$ bytes $=0{,}5243$~GB ($10^{9}$ bytes), o $0{,}4883$~GiB ($2^{30}$ bytes).
+\end{enumerate}
+\resultado \textbf{$262\,144\,000$ parámetros, que ocupan unos $0{,}52$~GB en \texttt{bf16}.}
+\comprobacion coincide con la fila de Llama~2 7B del \cref{tab:vocab-modelos}: $131$ millones por matriz.
+\end{solucion}
+
+\begin{solucion}{eje:3-numeros}
+\datos agrupación de los dígitos en bloques de hasta 3, de izquierda a derecha.
+\planteamiento aplicar la regla a cada número y observar a qué posición decimal corresponde cada dígito dentro de su token.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $1605\to\tok{160}\,\sep{}\,\tok{5}$; $2026\to\tok{202}\,\sep{}\,\tok{6}$; $123456\to\tok{123}\,\sep{}\,\tok{456}$; $1234567\to\tok{123}\,\sep{}\,\tok{456}\,\sep{}\,\tok{7}$.
+  \item (b) $999\to\tok{999}$, un token; $999+1=1000\to\tok{100}\,\sep{}\,\tok{0}$, dos tokens que no tienen ningún bloque en común con el anterior.
+  \item (c) Con la agrupación de izquierda a derecha, el último token de $1605$ son las unidades, pero el último de $123456$ son centenas, decenas y unidades: la posición decimal de un dígito depende de la longitud del número, y el acarreo de una suma puede cambiar la segmentación entera.
+  \item Una agrupación de derecha a izquierda, como la de los separadores de millares, alinea los bloques con las potencias de $10^{3}$: $1605\to\tok{1}\,\sep{}\,\tok{605}$, $1234567\to\tok{1}\,\sep{}\,\tok{234}\,\sep{}\,\tok{567}$.
+\end{enumerate}
+\resultado \textbf{(a) \tok{160}\sep{}\tok{5}, \tok{202}\sep{}\tok{6}, \tok{123}\sep{}\tok{456}, \tok{123}\sep{}\tok{456}\sep{}\tok{7}; (b) 1 token frente a 2; (c) la agrupación de izquierda a derecha desalinea las posiciones decimales; la de derecha a izquierda las respeta.}
+\comprobacion con la agrupación de derecha a izquierda, $999\to\tok{999}$ y $1000\to\tok{1}\,\sep{}\,\tok{000}$: el bloque de unidades, decenas y centenas ocupa siempre el último token.
+\end{solucion}
+
+\begin{solucion}{eje:3-viterbi}
+\datos cadena de $n$ caracteres; vocabulario con todos los caracteres y tokens de longitud a lo sumo $\ell$.
+\planteamiento (a) biyección entre segmentaciones y conjuntos de cortes; (b) asociar a cada segmentación la composición de $n$ dada por las longitudes de sus tokens.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Una segmentación en subcadenas no vacías queda determinada por el conjunto de los huecos entre caracteres consecutivos en los que se corta. Hay $n-1$ huecos y cada uno se corta o no, de forma independiente: $2^{n-1}$ segmentaciones.
+  \item (b) A cada segmentación con tokens de $\V$ se le asocia la secuencia de longitudes $(\ell_1,\dots,\ell_m)$, con $\ell_i\in\{1,\dots,\ell\}$ y $\sum\ell_i=n$. La aplicación es inyectiva, porque las longitudes determinan los puntos de corte; luego el número de segmentaciones es a lo sumo el número $c_{\ell}(n)$ de composiciones de $n$ con partes en $\{1,\dots,\ell\}$.
+  \item $c_{\ell}$ satisface $c_{\ell}(0)=1$ y $c_{\ell}(n)=\sum_{j=1}^{\min(\ell,n)}c_{\ell}(n-j)$, porque la última parte vale $j$. Con $\ell=2$ es la sucesión de Fibonacci, $c_2(n)=F_{n+1}$, que crece exponencialmente; por ejemplo, $c_2(20)=F_{21}=10\,946$.
+  \item Si $\V$ contiene todas las subcadenas de longitud a lo sumo $\ell$, la cota se alcanza, y enumerar las segmentaciones cuesta un tiempo exponencial en $n$. El \cref{teo:viterbi} encuentra la mejor con $O(n\ell)$ productos.
+\end{enumerate}
+\resultado \textbf{(a) $2^{n-1}$; (b) a lo sumo $c_{\ell}(n)$, que crece exponencialmente, frente al coste lineal $O(n\ell)$ de Viterbi.}
+\comprobacion con $n=5$ y $\ell=5$, $c_5(5)=2^{4}=16$ composiciones; con el vocabulario del \cref{ej:unigram}, solo 7 de las 16 segmentaciones de «casas» usan tokens de $\V$ (\cref{tab:unigram}).
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-onehot}
+\datos $E$ de tamaño $3\times 2$; $e_1=(0,1,0)^{\top}$.
+\planteamiento calcular el producto componente a componente y contar las multiplicaciones de un producto $e_i^{\top}E$ general.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Primera componente: $0\cdot 1+1\cdot 2+0\cdot 0=2$. Segunda: $0\cdot 0+1\cdot(-1)+0\cdot 3=-1$.
+  \item Luego $e_1^{\top}E=(2,-1)=E_{1,:}$, la fila de índice~1.
+  \item El producto general requiere $K$ multiplicaciones por cada una de las $d$ componentes: $Kd=50\,257\cdot 768=38\,597\,376$.
+\end{enumerate}
+\resultado \textbf{$e_1^{\top}E=(2,-1)$; el producto completo costaría $38\,597\,376$ multiplicaciones}, frente a ninguna con la indexación.
+\comprobacion la cifra coincide con el número de parámetros de la matriz de GPT-2 pequeño (\cref{tab:vocab-modelos}), como debe ser: hay una multiplicación por entrada de $E$.
+\end{solucion}
+
+\begin{solucion}{eje:4-pares}
+\datos «la luna brilla», $n=3$; ventanas $m=1$ y $m=2$.
+\planteamiento emparejar cada palabra con las que están a distancia a lo sumo $m$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $m=1$: $(\text{la},\text{luna})$; $(\text{luna},\text{la})$, $(\text{luna},\text{brilla})$; $(\text{brilla},\text{luna})$. Total: $1+2+1=4$.
+  \item $m=2$: se añaden $(\text{la},\text{brilla})$ y $(\text{brilla},\text{la})$. Total: $6$.
+  \item \cref{prop:pares}: $1\cdot(6-1-1)=4$ y $2\cdot(6-2-1)=6$; se cumple $n\ge m+1$ en ambos casos.
+\end{enumerate}
+\resultado \textbf{4 pares con ventana~1 y 6 con ventana~2.}
+\comprobacion con $m=2$ cada palabra se empareja con las otras dos: $3\cdot 2=6$ pares ordenados.
+\end{solucion}
+
+\begin{solucion}{eje:4-coseno}
+\datos cereza $=(40,3)$, fresa $=(20,4)$, digital $=(2,30)$.
+\planteamiento $\cos(a,b)=a\cdot b/(\norm{a}\norm{b})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Normas: $\norm{\text{cereza}}=\sqrt{1609}=40{,}11$; $\norm{\text{fresa}}=\sqrt{416}=20{,}40$; $\norm{\text{digital}}=\sqrt{904}=30{,}07$.
+  \item $\text{cereza}\cdot\text{fresa}=800+12=812$ y $\sqrt{1609\cdot 416}=\sqrt{669\,344}=818{,}1$; coseno $812/818{,}1=0{,}9925$.
+  \item $\text{cereza}\cdot\text{digital}=80+90=170$ y $\sqrt{1609\cdot 904}=\sqrt{1\,454\,536}=1206$; coseno $170/1206=0{,}1410$.
+  \item (b) Para $\lambda>0$: $(\lambda a)\cdot b=\lambda(a\cdot b)$ y $\norm{\lambda a}=\abs{\lambda}\norm{a}=\lambda\norm{a}$; luego $\cos(\lambda a,b)=\lambda(a\cdot b)/(\lambda\norm{a}\norm{b})=\cos(a,b)$.
+  \item La propiedad es deseable porque la longitud de un vector de recuentos crece con la frecuencia de la palabra, y la similitud no debe depender de cuán frecuente sea cada palabra.
+\end{enumerate}
+\resultado \textbf{$\cos(\text{cereza},\text{fresa})\approx 0{,}9925$ y $\cos(\text{cereza},\text{digital})\approx 0{,}1410$: cereza se parece mucho más a fresa.}
+\comprobacion $3\cdot\text{cereza}=(120,9)$ da el mismo coseno con fresa: $(2400+36)/\sqrt{14\,481\cdot 416}=2436/2454=0{,}9925$.
+\end{solucion}
+
+\begin{solucion}{eje:4-pmi}
+\datos $N(\text{gato},\text{come})=N(\text{gato},\text{maúlla})=N(\text{perro},\text{come})=N(\text{perro},\text{ladra})=4$; el resto, 0; $k=2$.
+\planteamiento calcular las probabilidades conjuntas y marginales y aplicar la \cref{def:pmi} y el \cref{teo:levy}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Total: $\abs{\mathcal{D}}=16$. Marginales: $P(\text{gato})=P(\text{perro})=8/16=1/2$; $P(\text{come})=8/16=1/2$; $P(\text{maúlla})=P(\text{ladra})=4/16=1/4$.
+  \item $\PMI(\text{gato},\text{come})=\ln\dfrac{4/16}{(1/2)(1/2)}=\ln 1=0$.
+  \item $\PMI(\text{gato},\text{maúlla})=\ln\dfrac{4/16}{(1/2)(1/4)}=\ln 2=0{,}6931$.
+  \item $\PMI(\text{gato},\text{ladra})=\ln 0=-\infty$, luego $\PPMI=0$. Por simetría, «perro» da $0$ con «come», $\ln 2$ con «ladra» y $-\infty$ con «maúlla».
+  \item (b) Para los pares observados, $u_c\cdot v_w=\PMI-\ln 2$: $0-0{,}6931=-0{,}6931$ con «come» y $0{,}6931-0{,}6931=0$ con «maúlla» o «ladra».
+\end{enumerate}
+\resultado \textbf{$\PMI=0$ con «come», $\ln 2\approx 0{,}6931$ con el verbo propio de cada animal y $-\infty$ ($\PPMI=0$) con el ajeno; SGNS con $k=2$ aprendería productos $-0{,}6931$ y $0$.}
+\comprobacion «come» acompaña a ambos animales con la misma frecuencia, de modo que no informa: su PMI es nula, mientras que «maúlla» duplica la frecuencia esperada con «gato» ($e^{\ln 2}=2$).
+\end{solucion}
+
+\begin{solucion}{eje:4-softmax}
+\datos $J=-\ln\hat y_o$ con $\hat y=\softmax(U^{\top}v_c)$; $u_{\text{come}}=(0,1)$, $u_{\text{avión}}=(-1,0)$, $v_c=(1,0)$, $o=\text{come}$.
+\planteamiento partir de la \cref{prop:grad-vc} y derivar $J=-u_o^{\top}v_c+\ln\sum_w\exp(u_w^{\top}v_c)$ respecto a cada $u_w$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\sum_w\hat y_w u_w=U\hat y$ y $u_o=Uy$, luego $\partial J/\partial v_c=U(\hat y-y)$. Se anula si y solo si $u_o=\sum_w\hat y_w u_w$, es decir, si el vector de contexto real coincide con la media de los vectores de contexto ponderada por la predicción.
+  \item (b) El término $-u_o^{\top}v_c$ solo depende de $u_o$ y da $-v_c$; el segundo da $\hat y_w v_c$. Luego $\partial J/\partial u_o=(\hat y_o-1)v_c$ y $\partial J/\partial u_w=\hat y_w v_c$ si $w\neq o$; en una sola fórmula, $(\hat y_w-y_w)v_c$.
+  \item (c) Puntuaciones: $u_{\text{come}}\cdot v_c=0$ y $u_{\text{avión}}\cdot v_c=-1$. Softmax: $\hat y=(e^{0},e^{-1})/(1+e^{-1})=(0{,}7311;\ 0{,}2689)$.
+  \item $\partial J/\partial v_c=0{,}7311\,(0,1)+0{,}2689\,(-1,0)-(0,1)=(-0{,}2689;\ -0{,}2689)$.
+  \item $\partial J/\partial u_{\text{come}}=(0{,}7311-1)(1,0)=(-0{,}2689;\ 0)$ y $\partial J/\partial u_{\text{avión}}=0{,}2689\,(1,0)=(0{,}2689;\ 0)$.
+\end{enumerate}
+\resultado \textbf{$\partial J/\partial v_c=U(\hat y-y)=(-0{,}2689;\,-0{,}2689)$; $\partial J/\partial u_w=(\hat y_w-y_w)v_c$, que vale $(-0{,}2689;\,0)$ para «come» y $(0{,}2689;\,0)$ para «avión».}
+\comprobacion la pérdida inicial es $-\ln 0{,}7311=0{,}3133$. Un paso con $\eta=0{,}1$ sobre $v_c$ da $v_c'=(1{,}0269;\ 0{,}0269)$, puntuaciones $0{,}0269$ y $-1{,}0269$, y pérdida $0{,}2991<0{,}3133$.
+\end{solucion}
+
+\begin{solucion}{eje:4-sgns}
+\datos $L=-\ln\sigma(c_{+}\cdot w)-\ln\sigma(-c_{-}\cdot w)$; $w=(1,0)$, $c_{+}=(0,1)$, $c_{-}=(-1,0)$; $\eta=0{,}1$.
+\planteamiento regla de la cadena con $\sigma'(x)=\sigma(x)(1-\sigma(x))$, de donde $\frac{d}{dx}[-\ln\sigma(x)]=\sigma(x)-1$, y $1-\sigma(-x)=\sigma(x)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Término positivo, con $s_{+}=c_{+}\cdot w$: su derivada respecto a $s_{+}$ es $\sigma(s_{+})-1$, y $\partial s_{+}/\partial c_{+}=w$. Luego $\partial L/\partial c_{+}=(\sigma(c_{+}\cdot w)-1)\,w$.
+  \item Término negativo, con $s_{-}=-c_{-}\cdot w$: su derivada es $\sigma(s_{-})-1=-\sigma(c_{-}\cdot w)$, y $\partial s_{-}/\partial c_{-}=-w$. Luego $\partial L/\partial c_{-}=\sigma(c_{-}\cdot w)\,w$.
+  \item Respecto a $w$ intervienen ambos términos: $\partial L/\partial w=(\sigma(c_{+}\cdot w)-1)\,c_{+}+\sigma(c_{-}\cdot w)\,c_{-}$.
+  \item (b) $c_{+}\cdot w=0$ y $c_{-}\cdot w=-1$; $\sigma(0)=0{,}5$ y $\sigma(-1)=1/(1+e)=0{,}2689$.
+  \item $\partial L/\partial c_{+}=-0{,}5\,(1,0)=(-0{,}5;\ 0)$; $\partial L/\partial c_{-}=0{,}2689\,(1,0)=(0{,}2689;\ 0)$; $\partial L/\partial w=-0{,}5\,(0,1)+0{,}2689\,(-1,0)=(-0{,}2689;\ -0{,}5)$.
+  \item (c) $w'=w-\eta\,\partial L/\partial w=(1+0{,}02689;\ 0+0{,}05)=(1{,}027;\ 0{,}05)$.
+  \item Nueva pérdida: $c_{+}\cdot w'=0{,}05$ da $-\ln\sigma(0{,}05)=0{,}6685$; $c_{-}\cdot w'=-1{,}027$ da $-\ln\sigma(1{,}027)=0{,}3061$. $L'=0{,}9746$.
+\end{enumerate}
+\resultado \textbf{$\partial L/\partial c_{+}=(-0{,}5;\,0)$, $\partial L/\partial c_{-}=(0{,}2689;\,0)$, $\partial L/\partial w=(-0{,}2689;\,-0{,}5)$; tras un paso, $L$ baja de $1{,}006$ a $0{,}9746$.}
+\comprobacion el paso acerca $w$ a $c_{+}$ (su segunda componente sube de 0 a $0{,}05$) y lo aleja de $c_{-}$, que apunta en el sentido negativo del primer eje. Un gradiente numérico por diferencias centradas da los mismos vectores.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-dispersion}
+\datos $N=440$ palabras, $K=243$ tipos, $416$ bigramas distintos, $398$ únicos.
+\planteamiento aplicar la \cref{prop:dispersion} con $n=2$ y recordar el EMV del módulo~1.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Cota: $N-n+1=439$ bigramas distintos como máximo, y se observan $416\le 439$. Fracción máxima: $439/243^{2}=439/59\,049=0{,}743\,\%$; la observada es $416/59\,049=0{,}704\,\%$.
+  \item (b) $398/416=0{,}9567$: el $95{,}67\,\%$ de los bigramas observados aparece una sola vez.
+  \item (c) El EMV asigna probabilidad~0 a todo bigrama no observado. Si el texto de evaluación contiene uno, su probabilidad es~0, la pérdida es infinita y la perplejidad también (módulo~1).
+\end{enumerate}
+\resultado \textbf{(a) $416\le 439$ y $0{,}704\,\%\le 0{,}743\,\%$; (b) $95{,}67\,\%$; (c) probabilidad nula y perplejidad infinita.}
+\comprobacion casi todos los recuentos positivos valen~1, de modo que la estimación de las pocas casillas no vacías tampoco es fiable: la dispersión no se arregla solo con suavizado.
+\end{solucion}
+
+\begin{solucion}{eje:5-clip}
+\datos $g=(3,-4,12)$, $\tau=5$.
+\planteamiento calcular $\norm{g}$ y, como supera $\tau$, reescalar.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\norm{g}=\sqrt{9+16+144}=\sqrt{169}=13\ge 5$.
+  \item $\clip_5(g)=\frac{5}{13}(3,-4,12)=(15/13,\,-20/13,\,60/13)=(1{,}154;\ -1{,}538;\ 4{,}615)$.
+  \item Norma: $\frac{5}{13}\cdot 13=5$.
+  \item El vector es $\lambda g$ con $\lambda=5/13>0$: misma dirección y sentido.
+\end{enumerate}
+\resultado \textbf{$\clip_5(g)=(15/13,\,-20/13,\,60/13)\approx(1{,}154;\,-1{,}538;\,4{,}615)$, de norma~5.}
+\comprobacion $(15^{2}+20^{2}+60^{2})/13^{2}=(225+400+3600)/169=4225/169=25$, y $\sqrt{25}=5$.
+\end{solucion}
+
+\begin{solucion}{eje:5-olvido}
+\datos $f$ constante; 100 pasos; RNN escalar con $w=0{,}9$.
+\planteamiento por la \cref{prop:lstm-grad}, el factor del camino directo es $f^{100}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $0{,}98^{100}=e^{100\ln 0{,}98}=e^{-2{,}020}=0{,}1326$. En la RNN, $0{,}9^{100}=2{,}656\cdot 10^{-5}$ (\cref{tab:wT}).
+  \item Cociente: $0{,}1326/2{,}656\cdot 10^{-5}=4993\approx 5{,}0\cdot 10^{3}$.
+  \item (b) $f^{100}\ge 0{,}5\iff 100\ln f\ge\ln 0{,}5=-0{,}6931\iff f\ge e^{-0{,}006931}=0{,}993092$.
+  \item Para dar un valor seguro con 4 cifras decimales se redondea hacia arriba: $f\ge 0{,}9931$.
+\end{enumerate}
+\resultado \textbf{(a) $0{,}1326$, unas $5\cdot 10^{3}$ veces más que en la RNN; (b) $f\ge 0{,}5^{1/100}\approx 0{,}99309$.}
+\comprobacion $0{,}9931^{100}=0{,}5004\ge 0{,}5$, mientras que $0{,}9930^{100}=0{,}4954<0{,}5$.
+\end{solucion}
+
+\begin{solucion}{eje:5-param}
+\datos $h=d=256$; la GRU tiene tres transformaciones como las de la RNN.
+\planteamiento \cref{prop:param-rnn} y \cref{cor:param-lstm}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item RNN: $h(h+d)+h=256\cdot 512+256=131\,072+256=131\,328$.
+  \item LSTM: $4\cdot 131\,328=525\,312$.
+  \item GRU: $3\cdot 131\,328=393\,984$.
+  \item Cociente LSTM/RNN: $525\,312/131\,328=4$.
+\end{enumerate}
+\resultado \textbf{RNN $131\,328$, GRU $393\,984$ y LSTM $525\,312$ parámetros; un paso de LSTM cuesta unas 4 veces más que uno de RNN.}
+\comprobacion los tres modelos siguen siendo secuenciales: el factor 4 aumenta el coste de cada paso, pero no cambia el número de pasos, $T$.
+\end{solucion}
+
+\begin{solucion}{eje:5-wmin}
+\datos $h_t=w\,h_{t-1}$, $0<w<1$; factor a 100 pasos $w^{100}\ge 0{,}1$.
+\planteamiento tomar logaritmos; $\ln$ es creciente y conserva la desigualdad.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $100\ln w\ge\ln 0{,}1=-2{,}3026$.
+  \item $\ln w\ge -0{,}023026$, luego $w\ge e^{-0{,}023026}=0{,}977237$.
+  \item Con 4 cifras decimales, redondear hacia abajo no basta: $0{,}9772^{100}=0{,}0996<0{,}1$, mientras que $0{,}9773^{100}=0{,}1006$. El valor seguro es $0{,}9773$.
+  \item Interpretación: con $w<0{,}9772$ llega menos del $10\,\%$ de la señal a 100 pasos, y con $w>1$ el factor explota ($1{,}1^{100}\approx 13\,781$). La franja útil, entre $0{,}977$ y~$1$, es estrechísima.
+\end{enumerate}
+\resultado \textbf{$w\ge 0{,}1^{1/100}\approx 0{,}97724$} (con 4 cifras decimales, redondeando hacia arriba, $0{,}9773$).
+\comprobacion $0{,}97724^{100}=e^{100\ln 0{,}97724}=e^{-2{,}3023}=0{,}1000$. Las LSTM y las conexiones residuales fijan ese factor cerca de~1 por diseño (\cref{prop:lstm-grad}).
+\end{solucion}
+
+\begin{solucion}{eje:5-autovalores}
+\datos $M$ simétrica con $Mv_i=\lambda_i v_i$, $\{v_i\}$ ortonormal, $\abs{\lambda_1}>\abs{\lambda_2}\ge\dots$; $x=\sum_i a_i v_i$ con $a_1\neq 0$.
+\planteamiento (a) inducción sobre $k$; (b) descomponer $M^{k}x$ en la base de vectores propios; (c) aplicar el resultado al jacobiano $\partial h_T/\partial h_0=M^{T}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $M^{1}v_i=\lambda_i v_i$. Si $M^{k-1}v_i=\lambda_i^{k-1}v_i$, entonces $M^{k}v_i=M(\lambda_i^{k-1}v_i)=\lambda_i^{k-1}\lambda_i v_i=\lambda_i^{k}v_i$. Como los $v_i$ forman una base, estos son todos los valores propios de $M^{k}$.
+  \item (b) Por linealidad, $M^{k}x=a_1\lambda_1^{k}v_1+r_k$ con $r_k=\sum_{i\ge 2}a_i\lambda_i^{k}v_i$, que es ortogonal a $v_1$.
+  \item La tangente del ángulo $\theta_k$ entre $M^{k}x$ y $v_1$ es $\norm{r_k}/\abs{a_1\lambda_1^{k}}$. Por la ortonormalidad, $\norm{r_k}^{2}=\sum_{i\ge 2}a_i^{2}\lambda_i^{2k}\le\abs{\lambda_2}^{2k}\sum_{i\ge 2}a_i^{2}=\abs{\lambda_2}^{2k}\norm{x-a_1v_1}^{2}$.
+  \item Luego $\tan\theta_k\le(\abs{\lambda_2}/\abs{\lambda_1})^{k}\,\norm{x-a_1v_1}/\abs{a_1}$, que tiende a~0. Para un $x$ aleatorio con distribución continua, $a_1\neq 0$ con probabilidad~1.
+  \item (c) En la RNN lineal $h_t=Mh_{t-1}$, $\partial h_T/\partial h_0=M^{T}$, y el gradiente que llega a $h_0$ es $M^{T}g$ con $g=\partial L/\partial h_T$. Por (b), se alinea con $v_1$ y su norma se comporta como $\abs{a_1}\abs{\lambda_1}^{T}$: se desvanece si $\abs{\lambda_1}<1$ y explota si $\abs{\lambda_1}>1$.
+\end{enumerate}
+\resultado \textbf{(a) $M^{k}v_i=\lambda_i^{k}v_i$; (b) $\tan\theta_k\le(\abs{\lambda_2}/\abs{\lambda_1})^{k}\norm{x-a_1v_1}/\abs{a_1}\to 0$; (c) el gradiente de una RNN lineal decae o crece como $\abs{\lambda_1}^{T}$.}
+\comprobacion para una matriz simétrica la norma espectral es $\abs{\lambda_1}$, de modo que (c) es coherente con la cota $\norm{W}^{T}$ del \cref{teo:desvanece}. Con $M=\diag(0{,}9;\,0{,}5)$ y $x=(1,1)$, $M^{10}x=(0{,}3487;\ 0{,}000977)$ y $\tan\theta_{10}=0{,}0028=(0{,}5/0{,}9)^{10}$.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{bengio03}
+Y.~Bengio, R.~Ducharme, P.~Vincent y C.~Jauvin.
+\newblock A neural probabilistic language model.
+\newblock \emph{Journal of Machine Learning Research}, 3:1137--1155, 2003.
+\newblock \url{https://www.jmlr.org/papers/v3/bengio03a.html}
+
+\bibitem{bengio94}
+Y.~Bengio, P.~Simard y P.~Frasconi.
+\newblock Learning long-term dependencies with gradient descent is difficult.
+\newblock \emph{IEEE Transactions on Neural Networks}, 5(2):157--166, 1994.
+
+\bibitem{cs224n}
+D.~Yang y Y.~Choi.
+\newblock CS224N: Natural Language Processing with Deep Learning.
+\newblock Stanford University, invierno de 2026. Clase~2, «Word Vectors»; clase~4, «Language Models and RNNs»; tarea~2.
+\newblock \url{https://web.stanford.edu/class/cs224n/}
+
+\bibitem{cs336}
+Stanford CS336.
+\newblock Language Modeling from Scratch.
+\newblock Stanford University, primavera de 2026. Tarea~1 (\emph{basics}): tokenizador BPE.
+\newblock \url{https://github.com/stanford-cs336/assignment1-basics}
+
+\bibitem{gage}
+P.~Gage.
+\newblock A new algorithm for data compression.
+\newblock \emph{The C Users Journal}, 12(2):23--38, 1994.
+
+\bibitem{gemini}
+Gemini Team, Google.
+\newblock Gemini: A family of highly capable multimodal models.
+\newblock Informe técnico, 2023.
+\newblock \url{https://arxiv.org/abs/2312.11805}
+
+\bibitem{gers}
+F.~A. Gers, J.~Schmidhuber y F.~Cummins.
+\newblock Learning to forget: continual prediction with LSTM.
+\newblock \emph{Neural Computation}, 12(10):2451--2471, 2000.
+
+\bibitem{gbc}
+I.~Goodfellow, Y.~Bengio y A.~Courville.
+\newblock \emph{Deep Learning}.
+\newblock MIT Press, 2016. Cap.~10, «Sequence Modeling: Recurrent and Recursive Nets».
+\newblock \url{https://www.deeplearningbook.org/}
+
+\bibitem{lstm}
+S.~Hochreiter y J.~Schmidhuber.
+\newblock Long short-term memory.
+\newblock \emph{Neural Computation}, 9(8):1735--1780, 1997.
+
+\bibitem{jm3}
+D.~Jurafsky y J.~H. Martin.
+\newblock \emph{Speech and Language Processing}, 3.ª ed., borrador del 19 de agosto de 2026.
+\newblock Cap.~2, «Words and Tokens»; cap.~5, «Embeddings»; cap.~14, «RNNs and LSTMs».
+\newblock \url{https://web.stanford.edu/~jurafsky/slp3/}
+
+\bibitem{kudo}
+T.~Kudo.
+\newblock Subword regularization: improving neural network translation models with multiple subword candidates.
+\newblock En \emph{Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (ACL)}, págs.~66--75, 2018.
+\newblock \url{https://aclanthology.org/P18-1007/}
+
+\bibitem{sentencepiece}
+T.~Kudo y J.~Richardson.
+\newblock SentencePiece: a simple and language independent subword tokenizer and detokenizer for neural text processing.
+\newblock En \emph{Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing: System Demonstrations}, págs.~66--71, 2018.
+\newblock \url{https://aclanthology.org/D18-2012/}
+
+\bibitem{levy}
+O.~Levy e Y.~Goldberg.
+\newblock Neural word embedding as implicit matrix factorization.
+\newblock En \emph{Advances in Neural Information Processing Systems 27 (NIPS)}, 2014.
+
+\bibitem{llama3}
+Llama Team, AI @ Meta.
+\newblock The Llama 3 herd of models.
+\newblock Informe técnico, 2024.
+\newblock \url{https://arxiv.org/abs/2407.21783}
+
+\bibitem{mikolov13a}
+T.~Mikolov, K.~Chen, G.~Corrado y J.~Dean.
+\newblock Efficient estimation of word representations in vector space.
+\newblock \emph{arXiv:1301.3781}, 2013.
+\newblock \url{https://arxiv.org/abs/1301.3781}
+
+\bibitem{mikolov13b}
+T.~Mikolov, I.~Sutskever, K.~Chen, G.~Corrado y J.~Dean.
+\newblock Distributed representations of words and phrases and their compositionality.
+\newblock En \emph{Advances in Neural Information Processing Systems 26 (NIPS)}, 2013.
+\newblock \url{https://arxiv.org/abs/1310.4546}
+
+\bibitem{pascanu}
+R.~Pascanu, T.~Mikolov e Y.~Bengio.
+\newblock On the difficulty of training recurrent neural networks.
+\newblock En \emph{Proceedings of the 30th International Conference on Machine Learning (ICML)}, PMLR~28, 2013.
+\newblock \url{https://proceedings.mlr.press/v28/pascanu13.html}
+
+\bibitem{petrov}
+A.~Petrov, E.~La Malfa, P.~H.~S. Torr y A.~Bibi.
+\newblock Language model tokenizers introduce unfairness between languages.
+\newblock En \emph{Advances in Neural Information Processing Systems 36 (NeurIPS)}, 2023.
+\newblock \url{https://arxiv.org/abs/2305.15425}
+
+\bibitem{gpt2}
+A.~Radford, J.~Wu, R.~Child, D.~Luan, D.~Amodei e I.~Sutskever.
+\newblock Language models are unsupervised multitask learners.
+\newblock Informe técnico, OpenAI, 2019.
+
+\bibitem{sennrich}
+R.~Sennrich, B.~Haddow y A.~Birch.
+\newblock Neural machine translation of rare words with subword units.
+\newblock En \emph{Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (ACL)}, págs.~1715--1725, 2016.
+\newblock \url{https://aclanthology.org/P16-1162/}
+
+\bibitem{llama2}
+H.~Touvron \emph{et al.}
+\newblock Llama 2: open foundation and fine-tuned chat models.
+\newblock Informe técnico, 2023.
+\newblock \url{https://arxiv.org/abs/2307.09288}
+
+\bibitem{rfc3629}
+F.~Yergeau.
+\newblock UTF-8, a transformation format of ISO 10646.
+\newblock RFC~3629, Internet Engineering Task Force, noviembre de 2003.
+\newblock \url{https://www.rfc-editor.org/rfc/rfc3629}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023. §9.7, §10.1 y §15.6.
+\newblock \url{https://d2l.ai/}
+
+\end{thebibliography}
+
+
+\end{document}

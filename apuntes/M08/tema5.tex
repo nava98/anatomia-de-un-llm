@@ -1,0 +1,170 @@
+% =====================================================================
+\chapter{Generalización: sesgo y varianza}
+\label{tema:5}
+% =====================================================================
+
+Un modelo que reproduce bien los datos de entrenamiento puede predecir mal datos nuevos. Este tema estudia ese fenómeno, el sobreajuste, y lo explica mediante la descomposición del error en sesgo, varianza y ruido. Se sigue el capítulo~8 de los apuntes de CS229~\cite[§8.1--8.2]{cs229}, las secciones~2.9, 7.2 y~7.3 de Hastie, Tibshirani y Friedman~\cite{esl}, las secciones~1.1 y~3.2 de Bishop~\cite{bishop} y la sección~3.6 de Zhang \emph{et al.}~\cite{d2l}.
+
+\section{Error de entrenamiento y error de generalización}
+
+El experimento clásico de Bishop~\cite[§1.1]{bishop} consiste en ajustar polinomios de grado creciente a pocos puntos ruidosos de una función suave. En la práctica del módulo se toman $n=10$ puntos $x_i$ uniformes en $[0,1]$, con $y_i=\sin(2\pi x_i)+\varepsilon_i$ y $\varepsilon_i\sim\N(0;\,0{,}2^{2})$, se ajusta por mínimos cuadrados un polinomio de grado $p$ (funciones base $1,x,\dots,x^{p}$, \cref{tema:2}) y se mide el error cuadrático medio (ECM) sobre los datos de entrenamiento y sobre 200 puntos nuevos. El \cref{tab:polinomios} recoge el resultado.
+
+\begin{table}[h]
+\centering\small
+\caption{Ajuste polinómico de 10 puntos de $\sin(2\pi x)$ con ruido. La última fila usa la regresión ridge del \cref{tema:6}.}\label{tab:polinomios}
+\begin{tabular}{@{}cccccl@{}}
+\toprule
+Grado $p$ & $\lambda$ & Parámetros & ECM entrenamiento & ECM validación & Diagnóstico \\
+\midrule
+1 & 0 & 2 & $0{,}1183$ & $0{,}2888$ & infraajuste \\
+3 & 0 & 4 & $0{,}0024$ & $0{,}0419$ & equilibrio \\
+9 & 0 & 10 & $0{,}0000$ & $34{,}17$ & sobreajuste \\
+9 & $0{,}001$ & 10 & $0{,}0144$ & $0{,}0652$ & regularizado \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Con $p=9$ hay tantos parámetros como datos y el polinomio pasa exactamente por los diez puntos (\cref{prop:interpolacion}), pero oscila violentamente entre ellos: sus coeficientes alcanzan valores del orden de $5\cdot 10^{6}$.
+
+\begin{definicion}[Infraajuste y sobreajuste]
+Un modelo \emph{infraajusta} si su error de entrenamiento es alto: la clase de hipótesis no puede representar la relación entre $x$ e $y$. Un modelo \emph{sobreajusta} si su error de entrenamiento es pequeño y su error de validación es mucho mayor: el modelo ha reproducido el ruido particular de la muestra.
+\end{definicion}
+
+\begin{proposicion}[Clases encajadas]\label{prop:encajadas}
+Si $\Hc_1\subseteq\Hc_2$, el mínimo del riesgo empírico sobre $\Hc_2$ es menor o igual que sobre $\Hc_1$. En particular, el error de entrenamiento de mínimos cuadrados no aumenta al subir el grado del polinomio.
+\end{proposicion}
+
+\begin{proof}
+El ínfimo de una función sobre un conjunto es menor o igual que sobre cualquier subconjunto. Un polinomio de grado $p$ es uno de grado $p+1$ con coeficiente director nulo, luego las clases de polinomios están encajadas.
+\end{proof}
+
+\begin{proposicion}[Interpolación]\label{prop:interpolacion}
+Si $x_1,\dots,x_n$ son distintos, existe un único polinomio de grado a lo sumo $n-1$ que pasa por los $n$ puntos $(x_i,y_i)$; su error de entrenamiento es nulo.
+\end{proposicion}
+
+\begin{proof}
+Los coeficientes $\theta$ deben cumplir $V\theta=y$, con $V_{ij}=x_i^{\,j-1}$ la matriz de Vandermonde de $n\times n$, cuyo determinante es $\prod_{i<j}(x_j-x_i)\ne 0$. El sistema tiene solución única.
+\end{proof}
+
+La \cref{prop:encajadas} explica por qué el error de entrenamiento no sirve para elegir el grado: siempre favorece al modelo más flexible. El \cref{tab:polinomios} muestra que el error de validación, en cambio, primero baja y después sube.
+
+\section{La descomposición sesgo-varianza}
+
+Para entender la forma en U del error de validación, se considera el conjunto de entrenamiento $S$ como aleatorio y se estudia cómo varía la predicción $\hat f_S(x)$ en un punto fijo $x$~\cite[§8.1.1]{cs229}, \cite[§7.3]{esl}.
+
+\begin{teorema}[Descomposición sesgo-varianza]\label{teo:sesgo-varianza}
+Sea $y=f(x)+\varepsilon$, donde $f$ es determinista y $\varepsilon$ tiene media nula y varianza $\sigma^{2}$. Sea $\hat f_S$ un modelo entrenado con un conjunto aleatorio $S$, independiente de $\varepsilon$, y sea $\bar f(x)=\E_S[\hat f_S(x)]$. Para cada $x$ fijo,
+\[
+\E_{S,\varepsilon}\bigl[(y-\hat f_S(x))^{2}\bigr]
+=\underbrace{\sigma^{2}}_{\text{ruido}}
++\underbrace{\bigl(f(x)-\bar f(x)\bigr)^{2}}_{\text{sesgo}^{2}}
++\underbrace{\E_S\bigl[(\hat f_S(x)-\bar f(x))^{2}\bigr]}_{\text{varianza}}.
+\]
+\end{teorema}
+
+\begin{proof}
+Se omite $x$ y se escribe $\hat f=\hat f_S(x)$. Primero, $y-\hat f=\varepsilon+(f-\hat f)$, de modo que
+\[
+\E\bigl[(y-\hat f)^{2}\bigr]=\E[\varepsilon^{2}]+2\,\E\bigl[\varepsilon(f-\hat f)\bigr]+\E\bigl[(f-\hat f)^{2}\bigr].
+\]
+Por independencia, $\E[\varepsilon(f-\hat f)]=\E[\varepsilon]\,\E[f-\hat f]=0$, y $\E[\varepsilon^{2}]=\sigma^{2}$. Después, $f-\hat f=(f-\bar f)+(\bar f-\hat f)$, y
+\[
+\E\bigl[(f-\hat f)^{2}\bigr]=(f-\bar f)^{2}+2(f-\bar f)\,\E[\bar f-\hat f]+\E\bigl[(\bar f-\hat f)^{2}\bigr],
+\]
+donde $f-\bar f$ es constante y $\E[\bar f-\hat f]=\bar f-\bar f=0$.
+\end{proof}
+
+\begin{definicion}[Sesgo y varianza de un modelo]
+En las condiciones del \cref{teo:sesgo-varianza}, el \emph{sesgo} en $x$ es $\bar f(x)-f(x)$, el error sistemático del modelo promediado sobre los posibles conjuntos de entrenamiento, y la \emph{varianza} es $\Var_S(\hat f_S(x))$, la sensibilidad de la predicción al conjunto concreto. El \emph{ruido} $\sigma^{2}$ es el error irreducible: ningún modelo puede eliminarlo (\cref{teo:regresion}).
+\end{definicion}
+
+Un modelo demasiado simple tiene sesgo alto (no puede seguir a $f$) y varianza baja; uno demasiado flexible tiene sesgo bajo y varianza alta. El error total se minimiza con una complejidad intermedia, lo que se conoce como \emph{compromiso sesgo-varianza}~\cite[§2.9]{esl}.
+
+\begin{ejemplo}[Encoger reduce el error]\label{ej:encoger}
+Se estima la media $\mu=2$ de una población con varianza $\sigma^{2}=4$ a partir de $n=4$ observaciones independientes, con estimadores de la forma $\hat\mu=a\bar x$. Como $\E[\hat\mu]=a\mu$ y $\Var(\hat\mu)=a^{2}\sigma^{2}/n$, el error cuadrático medio es $(a-1)^{2}\mu^{2}+a^{2}\sigma^{2}/n$ (\cref{eje:5-encoger}). El \cref{tab:encoger} muestra que encoger un poco hacia cero introduce sesgo, pero reduce más la varianza: es la idea de la regularización.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Sesgo y varianza del estimador $a\bar x$ del \cref{ej:encoger}.}\label{tab:encoger}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+$a$ & Sesgo$^{2}$ & Varianza & ECM \\
+\midrule
+$1$ (media muestral) & $0$ & $1$ & $1{,}00$ \\
+$0{,}8$ & $0{,}16$ & $0{,}64$ & $0{,}80$ \\
+$0{,}5$ & $1$ & $0{,}25$ & $1{,}25$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proposicion}[Varianza de los mínimos cuadrados]\label{prop:var-mc}
+En el modelo lineal gaussiano con diseño $X$ fijo de rango $m$, el estimador de mínimos cuadrados es insesgado, $\E[\hat\theta]=\theta$, y $\Cov(\hat\theta)=\sigma^{2}(X^{\top}X)^{-1}$.
+\end{proposicion}
+
+\begin{proof}
+$\hat\theta=(X^{\top}X)^{-1}X^{\top}y=\theta+(X^{\top}X)^{-1}X^{\top}\varepsilon$, con $\E[\varepsilon]=0$ y $\Cov(\varepsilon)=\sigma^{2}I$. Para una matriz constante $A$, $\Cov(A\varepsilon)=A\Cov(\varepsilon)A^{\top}$; con $A=(X^{\top}X)^{-1}X^{\top}$ se obtiene $\sigma^{2}(X^{\top}X)^{-1}X^{\top}X(X^{\top}X)^{-1}=\sigma^{2}(X^{\top}X)^{-1}$.
+\end{proof}
+
+Cada parámetro adicional aporta varianza; el \cref{eje:5-varianza} cuantifica la aportación sobre los puntos de entrenamiento.
+
+\section{Diagnóstico y remedios}
+
+El \cref{tab:diagnostico} traduce la descomposición en reglas prácticas.
+
+\begin{table}[h]
+\centering\small
+\caption{Diagnóstico a partir de los errores de entrenamiento y validación.}\label{tab:diagnostico}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.34\textwidth}>{\raggedright\arraybackslash}p{0.15\textwidth}>{\raggedright\arraybackslash}p{0.42\textwidth}@{}}
+\toprule
+Síntoma & Diagnóstico & Remedios \\
+\midrule
+Error alto en entrenamiento y en validación & sesgo alto & modelo más rico, más características, menos regularización, entrenar más \\
+Error bajo en entrenamiento y alto en validación & varianza alta & más datos, más regularización, modelo más simple, parada temprana \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Doble descenso]
+En modelos muy sobreparametrizados, como las redes neuronales, se observa que, tras el pico de error que aparece cuando el número de parámetros se acerca al de datos, el error de validación vuelve a bajar al seguir aumentando el tamaño del modelo. El fenómeno, llamado \emph{doble descenso}, no contradice el \cref{teo:sesgo-varianza}, pero muestra que el número de parámetros no es siempre una buena medida de la complejidad efectiva~\cite[§8.2]{cs229}.
+\end{observacion}
+
+\begin{observacion}[Conexión con los LLM]
+Un LLM preentrenado con billones de tokens suele ver cada texto una sola vez, y sus curvas de pérdida de entrenamiento y validación casi coinciden: el régimen dominante no es el de sobreajuste. El sobreajuste reaparece cuando se ajusta un modelo grande con pocos datos, por ejemplo en el ajuste fino supervisado (módulo~20).
+\end{observacion}
+
+\begin{lecturas}
+\item Ng y Ma~\cite{cs229}, cap.~8: §8.1 «Bias-variance tradeoff», §8.1.1 «A mathematical decomposition (for regression)» y §8.2 «The double descent phenomenon».
+\item Hastie, Tibshirani y Friedman~\cite{esl}, §2.9 «Model Selection and the Bias-Variance Tradeoff», §7.2 «Bias, Variance and Model Complexity» y §7.3 «The Bias-Variance Decomposition».
+\item Bishop~\cite{bishop}, §1.1 «Example: Polynomial Curve Fitting» y §3.2 «The Bias-Variance Decomposition».
+\item Zhang \emph{et al.}~\cite{d2l}, §3.6 «Generalization».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-vf}
+Justifique si son verdaderas o falsas: (a) al aumentar el grado del polinomio, el error de entrenamiento nunca sube; (b) al aumentar la regularización, la varianza del modelo sube; (c) el término de ruido $\sigma^{2}$ disminuye al aumentar el número de datos; (d) un modelo con error de entrenamiento nulo tiene error de generalización nulo.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:5-diagnostico}
+El modelo A tiene una exactitud de $0{,}60$ en entrenamiento y $0{,}58$ en validación; el modelo B, de $0{,}99$ y $0{,}70$. Diagnostique cada uno con el \cref{tab:diagnostico} y proponga un remedio.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-mano}
+Un procedimiento de aprendizaje se entrena con tres conjuntos de entrenamiento igualmente probables y produce, en un punto $x_0$, las predicciones $1{,}8$, $2{,}4$ y $2{,}1$. El valor verdadero es $f(x_0)=2{,}5$ y el ruido tiene varianza $\sigma^{2}=0{,}09$. Calcule el sesgo$^{2}$, la varianza y el error cuadrático esperado en $x_0$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-interpolar}
+(a) Halle el polinomio de grado a lo sumo~2 que pasa por $(0,1)$, $(1,0)$ y $(2,3)$, y calcule el determinante de la matriz de Vandermonde. (b) ¿En qué condiciones la regresión polinómica tiene error de entrenamiento exactamente nulo? (c) ¿Qué ocurre si dos de los $x_i$ coinciden y sus $y_i$ son distintos?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §3.6, ejercicio~1.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-encoger}
+Sean $x_1,\dots,x_n$ independientes con media $\mu$ y varianza $\sigma^{2}$, y sea $\hat\mu=a\bar x$. (a) Demuestre que $\ECM(\hat\mu)=\E[(\hat\mu-\mu)^{2}]=(a-1)^{2}\mu^{2}+a^{2}\sigma^{2}/n$. (b) Halle el $a$ que minimiza el ECM. (c) Evalúelo con $\mu=2$, $\sigma^{2}=4$ y $n=4$, y compare con la media muestral.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-varianza}
+En el modelo lineal gaussiano con diseño fijo $X\in\R^{n\times m}$ de rango $m$, sea $\hat y=X\hat\theta$. (a) Demuestre que $\Cov(\hat y)=\sigma^{2}P$, con $P$ la matriz de proyección de la \cref{prop:proyeccion}. (b) Deduzca que $\frac1n\sum_{i=1}^{n}\Var(\hat y_i)=\sigma^{2}m/n$. (c) Interprete el resultado: ¿cómo crece la varianza media con el número de parámetros? (d) Evalúelo para el \cref{ej:recta} con $\sigma^{2}=0{,}05$.
+\fuente{adaptado de Hastie, Tibshirani y Friedman~\cite{esl}, §7.3, error de predicción medio del ajuste lineal por mínimos cuadrados.}
+\end{ejercicio}

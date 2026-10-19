@@ -1,0 +1,187 @@
+% =====================================================================
+\chapter{Jerarquía de memoria y modelo roofline}
+\label{tema:2}
+% =====================================================================
+
+Calcular es barato; traer los datos es caro. Este tema describe la jerarquía de memoria de un acelerador, define la intensidad aritmética de una operación y demuestra la cota del modelo \emph{roofline}, que decide si una operación está limitada por el cómputo o por la memoria. Después aplica el modelo al producto de matrices, al producto de matriz por vector y a la generación de texto, y analiza el \emph{tiling} como técnica para aumentar la intensidad. Se siguen el artículo de Williams, Waterman y Patterson~\cite{roofline}, el capítulo~4 de Hennessy y Patterson~\cite{hp}, el capítulo «All About Rooflines» de \emph{How to Scale Your Model}~\cite{scaling}, la clase~6 de CS336~\cite{cs336} y el resultado de Hong y Kung~\cite{hongkung}.
+
+\section{La jerarquía de memoria}
+
+Cada nivel de memoria de un acelerador es más grande y más lento que el anterior. La \cref{tab:jerarquia} resume los niveles de la A100; las cifras son aproximadas y proceden de la hoja de especificaciones y de la guía de ajuste de NVIDIA~\cite{a100}.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.3cm} >{\raggedright\arraybackslash}p{3.3cm} >{\raggedright\arraybackslash}p{2.6cm} >{\raggedright\arraybackslash}X@{}}
+\toprule
+Nivel & Capacidad & Ancho de banda & Uso \\
+\midrule
+Registros & 256~KB por SM & máximo & operandos de cada instrucción \\
+SRAM (L1 y memoria compartida) & 192~KB por SM ($\approx 20$~MB en total) & decenas de TB/s agregados & bloques de datos gestionados por el programa (\emph{tiling}) \\
+Caché L2 & 40~MB & intermedio & compartida por todos los SM \\
+HBM & 80~GB & $\approx 2$~TB/s & pesos, activaciones y estado del optimizador \\
+NVLink (entre GPU de un nodo) & --- & 600~GB/s & comunicación del paralelismo \\
+Red entre nodos (InfiniBand) & --- & decenas de GB/s por GPU & el enlace más lento \\
+\bottomrule
+\end{tabularx}
+\caption{Jerarquía de memoria y de comunicación de una A100 SXM de 80~GB (valores aproximados).}
+\label{tab:jerarquia}
+\end{table}
+
+La HBM (\emph{High Bandwidth Memory}) es una pila de chips de DRAM montada junto al procesador: grande, pero lejana. La SRAM está dentro de cada SM: diminuta, pero muy rápida. Un \emph{kernel} eficiente carga un bloque de datos de la HBM a la SRAM, realiza con él todas las operaciones posibles y solo entonces escribe el resultado.
+
+\section{Intensidad aritmética y modelo roofline}
+
+\begin{definicion}[Intensidad aritmética]
+Sea un \emph{kernel} que realiza $F$ FLOP y transfiere $Q$ bytes entre la memoria principal (HBM) y el procesador. Su \emph{intensidad aritmética} es $I=F/Q$, en FLOP por byte.
+\end{definicion}
+
+\begin{definicion}[Modelo roofline]
+Sea un dispositivo con rendimiento máximo $\Ppico$ (FLOP/s) y ancho de banda de memoria $\Bmem$ (bytes/s). Su \emph{intensidad crítica} es $\Icrit=\Ppico/\Bmem$. El \emph{modelo roofline}~\cite{roofline} asigna a un \emph{kernel} de intensidad $I$ el rendimiento alcanzable
+\[
+P(I)=\min\bigl(\Ppico,\;I\,\Bmem\bigr).
+\]
+Se dice que el \emph{kernel} está \emph{limitado por la memoria} si $I<\Icrit$ y \emph{limitado por el cómputo} si $I>\Icrit$.
+\end{definicion}
+
+\begin{teorema}[Cota del roofline]\label{teo:roofline}
+Sea un \emph{kernel} que realiza $F$ FLOP y transfiere $Q$ bytes en un dispositivo con parámetros $\Ppico$ y $\Bmem$. Su tiempo de ejecución cumple
+\[
+t\ \ge\ \max\Bigl(\frac{F}{\Ppico},\ \frac{Q}{\Bmem}\Bigr),
+\qquad\text{y por tanto}\qquad
+\frac{F}{t}\ \le\ \min\bigl(\Ppico,\ I\,\Bmem\bigr),\quad I=\frac{F}{Q}.
+\]
+\end{teorema}
+
+\begin{proof}
+En un tiempo $t$ el dispositivo no puede realizar más de $\Ppico t$ FLOP, luego $F\le\Ppico t$, es decir, $t\ge F/\Ppico$. Del mismo modo, la memoria no puede servir más de $\Bmem t$ bytes, luego $t\ge Q/\Bmem$. Ambas desigualdades se cumplen a la vez, así que $t\ge\max(F/\Ppico,Q/\Bmem)$. Dividiendo $F$ por los dos miembros,
+\[
+\frac{F}{t}\le\frac{F}{\max(F/\Ppico,\,Q/\Bmem)}=\min\Bigl(\Ppico,\ \frac{F\,\Bmem}{Q}\Bigr)=\min(\Ppico,\ I\,\Bmem).\qedhere
+\]
+\end{proof}
+
+La cota se alcanza solo si el cálculo y la transferencia se solapan por completo; si se ejecutasen en serie, el tiempo sería la suma $F/\Ppico+Q/\Bmem$, que es como mucho el doble del máximo. En ejes logarítmicos, $P(I)$ es una rampa de pendiente~1 seguida de un techo horizontal: de ahí el nombre (\cref{fig:roofline}).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=2.5cm,y=1.6cm,font=\small]
+  \draw[->] (0,0) -- (4.3,0) node[right] {$I$ (FLOP/byte)};
+  \draw[->] (0,0) -- (0,3.3) node[above] {$P$ (TFLOP/s)};
+  \foreach \x/\l in {0/1,1/10,2/100,3/1000,4/10\,000}{\draw (\x,0.05)--(\x,-0.05) node[below] {$\l$};}
+  \foreach \y/\l in {0/1,1/10,2/100,3/1000}{\draw (0.04,\y)--(-0.04,\y) node[left] {$\l$};}
+  \draw[very thick] (0,0.301) -- (2.193,2.494) -- (4.1,2.494);
+  \draw[dashed,regla] (2.193,0) node[below=11pt,black] {$\Icrit=156$} -- (2.193,2.494);
+  \node[above] at (3.2,2.494) {techo de cómputo: $312$};
+  \node[rotate=32.6,above=3pt] at (0.95,1.25) {$P=I\cdot\Bmem$};
+  \foreach \x/\y/\t/\pos in {0/0.301/matriz${}\times{}$vector/right,0.398/0.699/GELU/right,1.931/2.232/$n=256$/below right,3.135/2.494/$n=4096$/below}{
+    \fill (\x,\y) circle (1.6pt) node[\pos,font=\scriptsize] {\t};}
+\end{tikzpicture}
+\caption{Modelo roofline de la A100 en bf16 ($\Ppico=312$~TFLOP/s, $\Bmem=2$~TB/s), en ejes logarítmicos. Se marcan el producto de matriz por vector ($I\approx 1$), una activación GELU ($I=2{,}5$, \cref{eje:2-gelu}) y dos productos de matrices cuadradas ($I=n/3$).}
+\label{fig:roofline}
+\end{figure}
+
+\begin{ejemplo}[Intensidad crítica de la A100]\label{ej:icrit}
+Con $\Ppico=312\cdot 10^{12}$~FLOP/s en bf16 y $\Bmem\approx 2\cdot 10^{12}$~bytes/s (la cifra exacta es $2{,}039$~TB/s~\cite{a100}; se redondea a~2 en todo el módulo), $\Icrit=312/2=156$~FLOP/byte. Un \emph{kernel} debe hacer al menos 156 operaciones por cada byte que lee o escribe para aprovechar el cómputo.
+\end{ejemplo}
+
+\section{Producto de matrices y producto de matriz por vector}
+
+\begin{proposicion}[Intensidad del producto de matrices]\label{prop:intensidad-matmul}
+Sea $C=AB$ con $A\in\R^{m\times k}$, $B\in\R^{k\times n}$, y sean $s$ los bytes por número. Si cada matriz se lee o escribe una sola vez, la intensidad es
+\[
+I=\frac{2mkn}{s\,(mk+kn+mn)}.
+\]
+En particular, para matrices cuadradas ($m=k=n$), $I=2n/(3s)$, que en bf16 ($s=2$) vale $n/3$.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:flop-matmul}, $F=2mkn$. Hay que leer $A$ ($mk$ números) y $B$ ($kn$ números) y escribir $C$ ($mn$ números), luego $Q=s(mk+kn+mn)$. Con $m=k=n$, $Q=3sn^{2}$ e $I=2n^{3}/(3sn^{2})=2n/(3s)$.
+\end{proof}
+
+\begin{corolario}[Producto de matriz por vector]\label{cor:matvec}
+Si $n=1$ (un solo vector) y $m,k\gg 1$, la intensidad es $I\approx 2/s$, que en bf16 vale $1$~FLOP/byte. Con $b$ vectores ($n=b\ll m,k$), $I\approx 2b/s$, que en bf16 vale $b$.
+\end{corolario}
+
+\begin{proof}
+Con $n=b$, $I=2mkb/(s(mk+kb+mb))$. Dividiendo numerador y denominador por $mk$, $I=2b/(s(1+b/m+b/k))$, que tiende a $2b/s$ cuando $b/m$ y $b/k$ son pequeños.
+\end{proof}
+
+En el producto de matriz por vector cada peso leído se usa en una sola multiplicación. En la A100, $P\le 1\cdot 2=2$~TFLOP/s, un $0{,}6\,\%$ del máximo. Por eso la generación de texto token a token está limitada por la memoria (módulo~19): con lote~1, cada token exige un producto de matriz por vector con cada matriz de pesos.
+
+\begin{ejemplo}[Cota de velocidad de generación]\label{ej:decode}
+Un modelo de $7\cdot 10^{9}$ parámetros en bf16 ocupa $1{,}4\cdot 10^{10}$ bytes. Generar un token con lote~1 obliga a leer todos los pesos al menos una vez, de modo que, por el \cref{teo:roofline}, el tiempo por token es al menos $1{,}4\cdot 10^{10}/(2\cdot 10^{12})=7$~ms: como mucho unos $143$ tokens por segundo, sea cual sea el rendimiento de cómputo. Con un lote de $b$ peticiones, los pesos se leen una vez para los $b$ tokens y la intensidad se multiplica por $b$ (\cref{cor:matvec}): agrupar peticiones es la palanca principal de la inferencia.
+\end{ejemplo}
+
+\section{Tiling y cota inferior de tráfico}
+
+Un producto de matrices grande no cabe en la SRAM. El tráfico efectivo con la HBM depende de cómo se recorra.
+
+\begin{proposicion}[Tráfico del producto por bloques]\label{prop:tiling}
+Sean $A,B\in\R^{n\times n}$ y sea $b$ un divisor de $n$. El algoritmo que, para cada bloque $b\times b$ de $C$, recorre los $n/b$ pares de bloques $b\times b$ de $A$ y de $B$ que contribuyen a él, los carga en la SRAM y acumula su producto, transfiere
+\[
+Q(b)=s\Bigl(\frac{2n^{3}}{b}+n^{2}\Bigr)\ \text{bytes},
+\]
+necesita una SRAM con capacidad para $3b^{2}$ números y tiene intensidad $I(b)=2n^{3}/Q(b)\approx b/s$ si $n\gg b$.
+\end{proposicion}
+
+\begin{proof}
+Hay $(n/b)^{2}$ bloques de $C$. Para cada uno se cargan $n/b$ bloques de $A$ y $n/b$ bloques de $B$, de $b^{2}$ números cada uno: $2(n/b)b^{2}=2nb$ números. En total se leen $(n/b)^{2}\cdot 2nb=2n^{3}/b$ números y se escriben los $n^{2}$ de $C$, una vez cada uno. Multiplicando por $s$ se obtiene $Q(b)$. En cada momento la SRAM contiene un bloque de $A$, uno de $B$ y el acumulador de $C$: $3b^{2}$ números. Por último, $I(b)=2n^{3}/(s(2n^{3}/b+n^{2}))=b/(s(1+b/(2n)))$, que tiende a $b/s$.
+\end{proof}
+
+La intensidad crece linealmente con el tamaño del bloque. Si la SRAM admite $M$ números, la condición $3b^{2}\le M$ da $b\le\sqrt{M/3}$ y un tráfico del orden de $n^{3}/\sqrt{M}$. Hong y Kung demostraron que este orden es óptimo:
+
+\begin{teorema}[Hong y Kung, 1981]\label{teo:hongkung}
+Todo algoritmo que calcula el producto de dos matrices $n\times n$ por el método clásico de $n^{3}$ productos con una memoria rápida de $M$ números transfiere $\Omega\bigl(n^{3}/\sqrt{M}\bigr)$ números entre la memoria rápida y la lenta.
+\end{teorema}
+
+La demostración, mediante el juego de los guijarros rojos y azules, puede consultarse en~\cite{hongkung}. El \cref{eje:2-tiling} pide aplicar la \cref{prop:tiling} a la SRAM de un SM.
+
+\begin{observacion}
+La \cref{prop:tiling} describe un solo nivel de la jerarquía. En una GPU hay varios: registros, SRAM y caché L2. La caché L2 (40~MB en la A100) permite que bloques de hilos vecinos reutilicen los mismos bloques de $A$ y $B$, de modo que el tráfico real con la HBM es menor que el que da la proposición con el $b$ de la SRAM. El principio es el mismo en cada nivel: cuanto mayor es el bloque que cabe, mayor es la reutilización.
+\end{observacion}
+
+\section{Utilización efectiva}
+
+\begin{definicion}[Utilización de FLOP del modelo]\label{def:mfu}
+Sea un entrenamiento que procesa $\tau$ tokens por segundo con un modelo de $N$ parámetros en $n_{\mathrm{d}}$ dispositivos de rendimiento máximo $\Ppico$. Su \emph{utilización de FLOP del modelo} es~\cite[§4.1 y apéndice~B]{palm}
+\[
+\MFU=\frac{6N\tau}{n_{\mathrm{d}}\,\Ppico}.
+\]
+\end{definicion}
+
+El numerador cuenta solo los FLOP «útiles» del \cref{cor:6nd}; la recomputación de activaciones (\cref{tema:5}) no suma. Los entrenamientos grandes bien optimizados se sitúan típicamente entre el 30~\% y el 60~\% de MFU (PaLM 540B declaró un 46{,}2~\%~\cite[§4.1]{palm}); el resto se pierde en comunicación, en operaciones limitadas por la memoria y en esperas.
+
+\begin{lecturas}
+\item Williams, Waterman y Patterson~\cite{roofline}, artículo original del modelo roofline.
+\item Hennessy y Patterson~\cite{hp}, cap.~4, apartado sobre el modelo roofline.
+\item Austin \emph{et al.}~\cite{scaling}, parte~1, capítulo «All About Rooflines», incluidos sus problemas resueltos.
+\item CS336~\cite{cs336}, clase~6 (\emph{kernels}, \emph{tiling} y fusión).
+\item CMU 15-418/618~\cite{cmu418}, clase «Locality, communication, and contention».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-matvec}
+Explique con el modelo roofline por qué multiplicar una matriz $4096\times 4096$ en bf16 por un vector usa una fracción mínima del máximo de la A100. Calcule la intensidad y el rendimiento alcanzable con un vector y con 64 vectores a la vez.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-matmul}
+Producto de dos matrices $2048\times 2048$ en bf16 en una A100. Calcule los FLOP, los bytes mínimos transferidos, la intensidad, el tiempo de cómputo $F/\Ppico$ y el tiempo de memoria $Q/\Bmem$. ¿Qué limita?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-gelu}
+Una activación GELU en bf16 lee y escribe cada elemento (2~bytes en cada sentido) y realiza unos 10 FLOP por elemento. Calcule su intensidad y su rendimiento alcanzable en la A100. ¿Qué técnica evita este coste?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-int8}
+Se guardan los pesos en int8 (1 byte) y se mantienen las activaciones y el cálculo en bf16: la operación es el producto de $X\in\R^{B\times D}$ (bf16) por $W\in\R^{D\times F}$ (int8), con salida $B\times F$ en bf16. (a) Escriba los FLOP y los bytes transferidos. (b) Suponiendo $B\ll D,F$, ¿a partir de qué tamaño de lote $B$ es la operación limitada por el cómputo en la A100? Compárelo con pesos en bf16. (c) Con $D=F=4096$, halle el valor exacto.
+\fuente{adaptado de Austin \emph{et al.}~\cite{scaling}, capítulo «All About Rooflines», problema~2 (\emph{int8 + bf16 matmul}), con los datos de la A100.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cuadrada}
+Demuestre que el producto de dos matrices $n\times n$ en bf16, leyendo y escribiendo cada matriz una sola vez, tiene intensidad $I=n/3$, y halle el menor $n$ para el que está limitado por el cómputo en la A100.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-tiling}
+(a) Generalice la \cref{prop:tiling} a bloques rectangulares: si los bloques de $C$ son de $b_m\times b_n$ y se recorre la dimensión interna en trozos de $b_k$, demuestre que se leen $n^{3}(b_m+b_n)/(b_mb_n)$ números de $A$ y $B$. (b) Deduzca que, para un área fija $b_mb_n$, el tráfico es mínimo con bloques cuadrados. (c) Con una SRAM de 192~KiB y datos en bf16, halle el mayor bloque cuadrado $b$ potencia de~2 que cumple $3b^{2}s\le 192$~KiB y la intensidad aproximada que se obtiene respecto a la SRAM.
+\end{ejercicio}

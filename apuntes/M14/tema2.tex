@@ -1,0 +1,148 @@
+% =====================================================================
+\chapter{Flujo residual y posición de la normalización}
+\label{tema:2}
+% =====================================================================
+
+En el módulo~11 se estudiaron las conexiones residuales y la normalización para una red genérica. Este tema las aplica al bloque del \cref{tema:1}: desarrolla el flujo residual de un Transformer como suma de $2L$ aportaciones, compara las variantes pre-norm y post-norm y justifica la normalización final y la inicialización escalada. Se sigue~\cite[§7.2]{jm3}, la discusión de la práctica~1 de CS336~\cite[§3.4]{cs336}, el análisis de Xiong \emph{et al.}~\cite{xiong}, la §2.3 de~\cite{gpt2} y la interpretación de Elhage \emph{et al.}~\cite{elhage}.
+
+\section{El flujo residual}
+
+Para simplificar la notación, se numeran las $2L$ subcapas del Transformer en el orden en que se aplican: la subcapa $k=2\ell-1$ es la atención del bloque $\ell$ y la subcapa $k=2\ell$ es su MLP. Sea $F_k$ la función que calcula la subcapa $k$ \emph{incluida su normalización de entrada}: $F_{2\ell-1}=\MHA\circ\Norm_1$ y $F_{2\ell}=\MLP\circ\Norm_2$.
+
+\begin{definicion}[Flujo residual]\label{def:flujo}
+El \emph{flujo residual} es la sucesión de matrices $R^{0}=H^{0}$ y $R^{k}=R^{k-1}+F_k(R^{k-1})$, $k=1,\dots,2L$. Se cumple $R^{2\ell}=H^{\ell}$ y $R^{2\ell-1}=A^{\ell}$, la matriz intermedia del bloque $\ell$. La fila $t$ de $R^{k}$ es el vector del flujo del token $t$.
+\end{definicion}
+
+\begin{proposicion}[Desarrollo telescópico]\label{prop:telescopica}
+En un Transformer pre-norm,
+\[
+H^{L}=H^{0}+\sum_{k=1}^{2L}F_k\bigl(R^{k-1}\bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+De la \cref{def:flujo}, $R^{k}-R^{k-1}=F_k(R^{k-1})$. Sumando para $k=1,\dots,2L$, los términos intermedios se cancelan: $R^{2L}-R^{0}=\sum_{k}F_k(R^{k-1})$. Basta usar $R^{2L}=H^{L}$ y $R^{0}=H^{0}$.
+\end{proof}
+
+La \cref{prop:telescopica} sustenta la lectura del flujo como un \emph{canal de comunicación}~\cite{elhage}: ninguna subcapa sobrescribe el flujo; cada una lee de él (tras normalizar) y le \emph{suma} su salida. De ahí se siguen tres consecuencias.
+\begin{enumerate}
+  \item Una subcapa puede escribir en una dirección de $\R^{d}$ que lee otra subcapa muchas capas después. Esta descomposición es la base de la interpretabilidad mecanicista (módulo~23).
+  \item Toda subcapa debe producir vectores de $\R^{d}$, pues su salida se suma al flujo. Esa es la función de $W_O$ en la atención y de $\Wdown$ en el MLP.
+  \item Si una subcapa aprende a escribir casi cero, el modelo se comporta como uno con una subcapa menos.
+\end{enumerate}
+
+\begin{ejemplo}[Lectura de aportaciones]\label{ej:aportaciones}
+Sea $d=2$ y $h^{0}=(1,0)$ el vector de un token. Si la atención del primer bloque escribe $(0;\;0{,}5)$ y el MLP escribe $(-0{,}2;\;0{,}3)$, entonces $a^{1}=(1;\;0{,}5)$ y $h^{1}=(0{,}8;\;0{,}8)$. Cada aportación se recupera restando vectores consecutivos del flujo, y su componente en una dirección unitaria $u$ es el producto escalar con $u$.
+\end{ejemplo}
+
+\begin{proposicion}[Jacobiano del flujo]\label{prop:jac-flujo}
+Sea $J_k$ el jacobiano de $F_k$ evaluado en $R^{k-1}$, con todas las matrices vectorizadas. Entonces
+\[
+\frac{\partial H^{L}}{\partial H^{0}}=\prod_{k=2L}^{1}\bigl(I+J_k\bigr)=I+\sum_{k=1}^{2L}J_k+\sum_{k>k'}J_kJ_{k'}+\cdots+J_{2L}\cdots J_1,
+\]
+donde el producto se ordena de izquierda a derecha con $k$ decreciente.
+\end{proposicion}
+
+\begin{proof}
+Por la regla de la cadena, $\partial R^{k}/\partial R^{k-1}=I+J_k$ y $\partial H^{L}/\partial H^{0}=\prod_{k}\partial R^{k}/\partial R^{k-1}$ en el orden indicado. El desarrollo se obtiene multiplicando los $2L$ binomios, eligiendo en cada factor $I$ o $J_k$; los productos se mantienen en orden decreciente de $k$ porque las matrices no conmutan.
+\end{proof}
+
+El término $I$ del desarrollo es el \emph{camino identidad}: el gradiente de la pérdida respecto de $H^{L}$ llega a $H^{0}$ sumado, sin atravesar ninguna normalización ni producto de jacobianos. Es la versión para el Transformer del teorema del jacobiano residual del módulo~11.
+
+\section{Pre-norm frente a post-norm}
+
+\begin{definicion}[Post-norm]\label{def:postnorm}
+El \emph{bloque post-norm} del Transformer original~\cite[§3.1]{vaswani} aplica la normalización después de la suma residual:
+\[
+A=\Norm_1\bigl(H+\MHA(H)\bigr),\qquad H'=\Norm_2\bigl(A+\MLP(A)\bigr).
+\]
+\end{definicion}
+
+\begin{proposicion}[No hay camino identidad en post-norm]\label{prop:postnorm}
+En un Transformer post-norm con normalización RMSNorm sin ganancia, $\Norm(x)=x/\RMS(x)$, se cumple $\RMS(h^{\ell}_t)=1$ para toda fila $t$ y toda capa $\ell\ge 1$, y el jacobiano de la salida respecto de la entrada es
+\[
+\frac{\partial H^{L}}{\partial H^{0}}=\prod_{k=2L}^{1}N_k\,(I+J_k),
+\]
+donde $N_k$ es el jacobiano de la normalización $k$. Cada $N_k$ es singular.
+\end{proposicion}
+
+\begin{proof}
+La salida de cada bloque es la salida de una normalización, luego tiene RMS igual a~1. La regla de la cadena aplicada a $R^{k}=\Norm(R^{k-1}+F_k(R^{k-1}))$ da el factor $N_k(I+J_k)$. Para una fila $x\in\R^{d}$, el jacobiano de $x\mapsto x/\RMS(x)$ es $\frac{1}{\RMS(x)}\bigl(I-\frac{xx\T}{d\,\RMS(x)^{2}}\bigr)$ (módulo~11, tema~3), que anula el vector $x$: en efecto, $\bigl(I-\frac{xx\T}{\norm{x}^{2}}\bigr)x=0$ porque $d\,\RMS(x)^{2}=\norm{x}^{2}$. Luego cada $N_k$ es singular.
+\end{proof}
+
+En post-norm, toda la señal, y todo el gradiente, atraviesa $2L$ normalizaciones; no existe un término $I$ aislado como en la \cref{prop:jac-flujo}. Xiong \emph{et al.}~\cite[§3.3, teorema~1]{xiong} cuantifican la diferencia en la inicialización: bajo hipótesis de concentración de las normas, la norma del gradiente de los pesos de la última capa es del orden de $d\sqrt{\ln d}$ en post-norm, sin dependencia de $L$, y del orden de $d\sqrt{\ln d/L}$ en pre-norm. Gradientes grandes en las capas altas obligan a un calentamiento (\emph{warmup}) largo de la tasa de aprendizaje en post-norm; pre-norm se entrena de forma estable con un calentamiento corto o nulo.
+
+\begin{table}[ht]
+\centering\small
+\caption{Comparación de las dos posiciones de la normalización.}\label{tab:prepost}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Aspecto & Post-norm (2017) & Pre-norm (GPT-2, LLaMA) \\
+\midrule
+Ecuación & $\Norm(x+F(x))$ & $x+F(\Norm(x))$ \\
+Camino identidad & no (\cref{prop:postnorm}) & sí (\cref{prop:jac-flujo}) \\
+Norma del flujo & fija & crece con la profundidad \\
+Calentamiento & imprescindible & tolerante \\
+Normalización final & innecesaria & necesaria \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{El precio de pre-norm: crecimiento del flujo}
+
+\begin{proposicion}[Crecimiento del flujo en un Transformer]\label{prop:crecimiento}
+Supóngase que, en la inicialización, las aportaciones $F_k(R^{k-1})_t$ de una fila son vectores aleatorios de media nula, incorrelados entre sí y con $h^{0}_t$, con $\E\norm{F_k(R^{k-1})_t}^{2}=s^{2}$. Entonces
+\[
+\E\norm{h^{L}_t}^{2}=\E\norm{h^{0}_t}^{2}+2L\,s^{2}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:telescopica}, $h^{L}_t=h^{0}_t+\sum_{k=1}^{2L}F_k(R^{k-1})_t$. Al desarrollar $\norm{h^{L}_t}^{2}$ como producto escalar de la suma consigo misma, los términos cruzados tienen esperanza nula por la incorrelación y la media nula; quedan las $1+2L$ normas al cuadrado.
+\end{proof}
+
+La \cref{prop:crecimiento} tiene dos consecuencias prácticas. Primera: como la norma del flujo crece, el vector $h^{L}_t$ debe normalizarse antes del unembedding; de lo contrario, la escala de los logits dependería de la profundidad. Es la normalización final $\Norm_f$ de la \cref{def:transformer}, que GPT-2 introdujo junto con la posición pre-norm~\cite[§2.3]{gpt2} y que Jurafsky y Martin señalan como la capa adicional que exige pre-norm~\cite[§7.2.3]{jm3}. Segunda: GPT-2 multiplica en la inicialización los pesos de las capas que escriben en el flujo ($W_O$ y la última matriz del MLP) por $1/\sqrt{N}$, con $N=2L$ el número de capas residuales; así cada $s^{2}$ se divide por $2L$ y la norma esperada del flujo final queda acotada independientemente de la profundidad.
+
+\begin{ejemplo}\label{ej:crecimiento}
+En GPT-2 \emph{small}, $L=12$ y hay $N=24$ capas residuales. Si $\E\norm{h^{0}_t}^{2}=1$ y cada subcapa aporta $s^{2}=1$, la \cref{prop:crecimiento} da $\E\norm{h^{12}_t}^{2}=25$. Con el factor $1/\sqrt{24}\approx 0{,}2041$ en los pesos de salida, $s^{2}=1/24$ y $\E\norm{h^{12}_t}^{2}=1+24/24=2$.
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+Casi todos los modelos de lenguaje abiertos posteriores a GPT-2 usan pre-norm; la práctica de CS336 la describe como una de las pocas modificaciones de consenso respecto del Transformer original~\cite[§7.3]{cs336}. LLaMA sustituye LayerNorm por RMSNorm~\cite{rmsnorm}, que no centra el vector ni tiene sesgo, y normaliza la entrada de cada subcapa para mejorar la estabilidad del entrenamiento~\cite[§2.2]{llama}.
+\end{observacion}
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, §7.2 «Transformer Blocks» y §7.2.2 «Layer Norm».
+\item Xiong \emph{et al.}~\cite{xiong}, §3.3 «Understanding the Transformer at initialization».
+\item Radford \emph{et al.}~\cite{gpt2}, §2.3 «Model».
+\item Elhage \emph{et al.}~\cite{elhage}, apartado sobre el flujo residual como canal de comunicación.
+\item Hashimoto y Liang~\cite{cs336}, §3.4 «Pre-Norm Transformer Block».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-prepost}
+Escriba las ecuaciones de un bloque pre-norm y de uno post-norm. Sustituya la primera ecuación en la segunda en cada caso y determine en cuál existe un camino desde la entrada $x$ hasta la salida que no atraviesa ninguna normalización.
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, §3.4 y §7.3, ecuaciones~(25) a~(28) y problema \texttt{pre\_norm\_ablation}; el experimento de entrenamiento se sustituye por el análisis de las ecuaciones.}
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:2-final}
+Explique por qué un Transformer pre-norm necesita una normalización final antes del unembedding y uno post-norm no.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-rms}
+Con los datos del \cref{ej:aportaciones} y RMSNorm sin ganancia, $\Norm(x)=x/\RMS(x)$ con $\RMS(x)=\sqrt{\frac1d\sum_i x_i^{2}}$, calcule: (a) la entrada normalizada de la atención, $\Norm(h^{0})$; (b) la entrada normalizada del MLP, $\Norm(a^{1})$; (c) $\Norm(h^{1})$; (d) la componente de cada aportación en la dirección $u=(0,1)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-crecimiento}
+Un modelo pre-norm tiene $L=32$ bloques. En la inicialización, $\E\norm{h^{0}_t}^{2}=1$ y cada subcapa aporta $s^{2}=0{,}5$. (a) Calcule $\E\norm{h^{L}_t}^{2}$ y el cociente entre la norma cuadrática media final y la inicial. (b) ¿Por qué factor deberían escalarse los pesos de salida de las subcapas para que $\E\norm{h^{L}_t}^{2}=1{,}5$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cota}
+Supóngase que los jacobianos de la \cref{prop:jac-flujo} cumplen $\norm{J_k}_2\le\varepsilon$ para todo $k$. Demuestre que
+\[
+\Bigl\lVert\frac{\partial H^{L}}{\partial H^{0}}-I\Bigr\rVert_2\le(1+\varepsilon)^{2L}-1,
+\]
+y deduzca que, si $2L\varepsilon\le 1$, la desviación respecto de la identidad es a lo sumo $(e-1)\,2L\varepsilon$. Interprete el resultado.
+\end{ejercicio}

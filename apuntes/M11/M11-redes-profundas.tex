@@ -1,0 +1,138 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase II — Módulo 11
+%  Entrenar redes profundas
+%  Compilar: latexmk -r ../latexmkrc M11-redes-profundas.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 11}
+
+\hypersetup{pdftitle={Módulo 11. Entrenar redes profundas},pdfauthor={Anatomía de un LLM}}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\uno}{\mathbf{1}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\RMS}{\operatorname{RMS}}
+\newcommand{\LN}{\operatorname{LN}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+\newcommand{\Norm}{\operatorname{Norm}}
+\newcommand{\ReLU}{\operatorname{ReLU}}
+\newcommand{\Bern}{\operatorname{Bernoulli}}
+\newcommand{\fl}{\operatorname{fl}}
+\newcommand{\ulp}{\operatorname{ulp}}
+\newcommand{\smin}{\sigma_{\min}}
+\newcommand{\Loss}{\mathcal{L}}
+\newcommand{\NaN}{\text{\fontseries{m}\ttfamily NaN}}
+\newcommand{\Inf}{\text{\fontseries{m}\ttfamily inf}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase II \textperiodcentered\ Aprendizaje automático y redes neuronales}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 11\par}\vspace{0.3cm}
+{\LARGE Entrenar redes profundas\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Un modelo de lenguaje actual apila decenas de bloques idénticos y se entrena en aritmética de 16 bits durante billones de tokens. Las dos circunstancias son hostiles al descenso de gradiente. La profundidad convierte el gradiente de las primeras capas en un producto de muchas matrices jacobianas, cuya norma tiende a crecer o a decrecer exponencialmente; la precisión reducida hace que sumas, exponenciales y cuadrados desborden, se anulen o pierdan los sumandos pequeños. Este módulo estudia, con el mismo grado de formalización que los anteriores, las piezas que hacen posible el entrenamiento a pesar de ello: la inicialización calibrada, las conexiones residuales, la normalización por capa en sus variantes LayerNorm y RMSNorm, la posición pre-norm de la normalización, el dropout, el recorte del gradiente por norma global, la aritmética de coma flotante con la precisión mixta y la evaluación estable de la función log-sum-exp. Todas ellas aparecen en el bloque del Transformer que se construye en la fase~III.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item expresar el gradiente de una red profunda como producto de jacobianos, acotar su norma mediante valores singulares y explicar el desvanecimiento y la explosión del gradiente, incluida la condición de Pascanu, Mikolov y Bengio para redes recurrentes;
+  \item demostrar la ley de propagación de la varianza y deducir de ella las inicializaciones de Xavier y de He;
+  \item demostrar que el jacobiano de una red residual contiene la identidad, acotar inferiormente su menor valor singular y describir el flujo residual de un Transformer;
+  \item calcular LayerNorm y RMSNorm, demostrar sus invariancias y la ortogonalidad del gradiente que atraviesa RMSNorm, y justificar la posición pre-norm en los modelos de lenguaje;
+  \item demostrar que el dropout invertido es insesgado, calcular la varianza que introduce y aplicar el recorte de gradiente por norma global;
+  \item deducir el rango, la precisión y la unidad de redondeo de fp32, fp16, bf16 y fp8 a partir de sus bits, explicar la absorción de sumandos y los tres ingredientes de la precisión mixta;
+  \item evaluar log-sum-exp, softmax y entropía cruzada de forma estable y diagnosticar el origen de una pérdida que se vuelve \NaN.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~3, los valores singulares, la norma espectral y la descomposición espectral de una matriz simétrica (temas~1 y~2). Del módulo~4, la regla de la cadena para funciones vectoriales y la matriz jacobiana, que se usan en todos los temas. Del módulo~5, esperanza, varianza, independencia y la distribución de Bernoulli (temas~1, 2 y~4). Del módulo~7, el descenso de gradiente estocástico, Adam y el calentamiento de la tasa de aprendizaje (temas~3 y~4). Del módulo~9, el perceptrón multicapa y las funciones de activación; del módulo~10, la retropropagación en grafos computacionales. La softmax y la entropía cruzada del módulo~1 se retoman en el tema~6.
+
+\section*{Organización}
+\begin{center}
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Gradientes que se desvanecen o explotan & \cite{gbc}, \cite{d2l}, \cite{pascanu}, \cite{glorot} \\
+2 & Conexiones residuales & \cite{resnet}, \cite{resnet-id}, \cite{d2l}, \cite{bishopdl} \\
+3 & Normalización: LayerNorm, RMSNorm y pre-norm & \cite{layernorm}, \cite{rmsnorm}, \cite{xiong}, \cite{bishopdl} \\
+4 & Dropout y recorte del gradiente & \cite{srivastava}, \cite{gbc}, \cite{pascanu}, \cite{cs231n} \\
+5 & Aritmética de coma flotante y precisión mixta & \cite{ieee754}, \cite{goldberg}, \cite{micikevicius}, \cite{cs336} \\
+6 & Estabilidad numérica de softmax y entropía cruzada & \cite{gbc}, \cite{d2l}, \cite{cs336} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. El análisis del gradiente en profundidad sigue la sección~8.2.5 y el capítulo~10 (§10.7 y §10.11) de Goodfellow, Bengio y Courville~\cite{gbc}, las secciones~5.4 y~9.7 de Zhang \emph{et al.}~\cite{d2l} y el artículo de Pascanu, Mikolov y Bengio~\cite{pascanu}; la inicialización, los artículos de Glorot y Bengio~\cite{glorot} y de He \emph{et al.}~\cite{he-init}. Las conexiones residuales y la normalización siguen la sección~8.6 de~\cite{d2l} y las secciones~7.4 y~9.5 de Bishop y Bishop~\cite{bishopdl}, junto con los artículos originales de He \emph{et al.}~\cite{resnet,resnet-id}, Ba, Kiros y Hinton~\cite{layernorm}, Zhang y Sennrich~\cite{rmsnorm} y Xiong \emph{et al.}~\cite{xiong}. El dropout sigue la sección~7.12 de~\cite{gbc}, la sección~5.6 de~\cite{d2l}, las notas de CS231n~\cite{cs231n} y el artículo de Srivastava \emph{et al.}~\cite{srivastava}. La aritmética de coma flotante sigue la norma IEEE~754~\cite{ieee754}, el tutorial de Goldberg~\cite{goldberg} y el libro de Higham~\cite{higham}; la precisión mixta, los artículos de Micikevicius \emph{et al.}~\cite{micikevicius,fp8}. Varios ejercicios proceden de las prácticas del curso CS336 de Stanford~\cite{cs336,cs336b} y del curso CS224N~\cite{cs224n}; el curso 11-785 de CMU~\cite{cmu11785} cubre el mismo temario. Sobre Claude, Gemini y Grok solo se usa información pública: Anthropic y Google no documentan la normalización ni la precisión con que entrenan sus modelos; el código publicado de Grok-1~\cite{grok1} sí permite consultarlas.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$h_\ell\in\R^{d}$, $z_\ell=W_\ell h_{\ell-1}$ & activación y preactivación de la capa $\ell$, con $\ell=1,\dots,L$ \\
+$J_\ell=\partial h_\ell/\partial h_{\ell-1}$ & jacobiano de la capa (o de la rama residual, tema~2) \\
+$\Loss$, $g=\nabla_\theta\Loss$ & pérdida y gradiente respecto de los parámetros \\
+$\norm{A}_2$, $\smin(A)$ & norma espectral (mayor valor singular) y menor valor singular \\
+$\Var$, $\E$ & varianza y esperanza \\
+$\mu$, $\sigma^{2}$, $\RMS(x)$ & media, varianza y raíz cuadrática media de un vector \\
+$\gamma,\beta$; $g$ & ganancia y sesgo de LayerNorm; ganancia de RMSNorm \\
+$\epsilon$ & constante de estabilidad dentro de una raíz \\
+$p$, $m_i\sim\Bern(1-p)$ & probabilidad de apagado del dropout y máscara \\
+$c$ & umbral del recorte del gradiente \\
+$e$, $m$ & bits de exponente y de mantisa de un formato de coma flotante \\
+$\varepsilon=2^{-m}$, $u=\varepsilon/2$ & épsilon de máquina y unidad de redondeo \\
+$\fl(x)$ & número representable más cercano a $x$ \\
+$\LSE(z)$ & log-sum-exp, $\ln\sum_i e^{z_i}$ \\
+$u\odot w$, $\uno$ & producto elemento a elemento; vector de unos \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

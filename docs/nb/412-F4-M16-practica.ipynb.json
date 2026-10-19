@@ -1,0 +1,637 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "29ef9a89",
+   "metadata": {},
+   "source": [
+    "# Módulo 16 · Práctica: leyes de escalado en miniatura\n",
+    "\n",
+    "Los laboratorios no entrenan su modelo grande a ciegas: primero entrenan decenas de modelos pequeños, ajustan una **ley de potencia** y extrapolan. Aquí harás lo mismo a escala de portátil, con un lenguaje sintético cuya entropía conocemos exactamente.\n",
+    "\n",
+    "| Parte | Qué haces |\n",
+    "| --- | --- |\n",
+    "| 0 | Preparación |\n",
+    "| 1 | Datos: deduplicación exacta y aproximada (MinHash) |\n",
+    "| 2 | Un lenguaje sintético con pérdida irreducible conocida |\n",
+    "| 3 | Entrenar 7 modelos de distinto tamaño |\n",
+    "| 4 | Ajustar leyes de potencia en log-log |\n",
+    "| 5 | Cómputo óptimo con la fórmula de Chinchilla |\n",
+    "| 6 | ¿Emergencia o espejismo de la métrica? |\n",
+    "| 7 | Retos |\n",
+    "\n",
+    "Las celdas `# TU CÓDIGO` son ejercicios; la celda `# Comprobación` de detrás te dice si están bien. Todo corre en CPU en menos de 3 minutos."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "d0131376",
+   "metadata": {},
+   "source": [
+    "## Parte 0 · Preparación"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "05c0a56f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import hashlib, re, time\n",
+    "import numpy as np\n",
+    "import matplotlib.pyplot as plt\n",
+    "import torch, torch.nn as nn, torch.nn.functional as F\n",
+    "torch.set_num_threads(1)   # resultados reproducibles y sin pelear por la CPU\n",
+    "print(torch.__version__)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8ed9f393",
+   "metadata": {},
+   "source": [
+    "## Parte 1 · Deduplicación exacta y aproximada\n",
+    "\n",
+    "Un rastreo web está lleno de copias: avisos legales, plantillas, noticias replicadas. Primero quitamos los duplicados **exactos** con un hash. Después buscamos **casi duplicados** con la similitud de Jaccard entre conjuntos de *shingles* (grupos de k palabras consecutivas):\n",
+    "\n",
+    "$$J(A,B)=\\frac{|A\\cap B|}{|A\\cup B|}$$"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "8da5c579",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "docs = [\n",
+    "    \"El gato duerme en el sofá del salón toda la tarde.\",\n",
+    "    \"El gato duerme en el sofá del salón toda la tarde.\",\n",
+    "    \"El gato duerme en el sofá del salón durante toda la tarde.\",\n",
+    "    \"Mañana lloverá en el norte y hará sol en el sur.\",\n",
+    "    \"Mañana lloverá en el norte y hará sol en todo el sur.\",\n",
+    "    \"La energía cinética de un cuerpo es un medio de su masa por la velocidad al cuadrado.\",\n",
+    "    \"Compra ya!!! Oferta oferta oferta oferta oferta\",\n",
+    "    \"Los modelos de lenguaje predicen el siguiente token a partir del contexto.\",\n",
+    "]\n",
+    "\n",
+    "def normalizar(t):\n",
+    "    return re.sub(r\"[^\\wáéíóúñü ]\", \"\", t.lower()).split()\n",
+    "\n",
+    "def shingles(t, k=3):\n",
+    "    w = normalizar(t)\n",
+    "    return {\" \".join(w[i:i + k]) for i in range(len(w) - k + 1)}\n",
+    "\n",
+    "print(shingles(docs[0]))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1eaf7a07",
+   "metadata": {},
+   "source": [
+    "**Ejercicio 1.** Cuenta los documentos distintos usando `hashlib.sha1(d.encode()).hexdigest()` como huella. Guarda el número en `n_unicos`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "abe02cb9",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# TU CÓDIGO\n",
+    "n_unicos = None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "658f7ac1",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert n_unicos == 7, \"Debe haber 7 documentos distintos: solo el segundo es copia exacta del primero\"\n",
+    "print(\"Correcto:\", n_unicos)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "6c4b6937",
+   "metadata": {},
+   "source": [
+    "**Ejercicio 2.** Escribe `jaccard(A, B)` para dos conjuntos."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "d71fa6a7",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def jaccard(A, B):\n",
+    "    # TU CÓDIGO\n",
+    "    return None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0583424e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "S = [shingles(d) for d in docs]\n",
+    "assert abs(jaccard(S[0], S[2]) - 7/12) < 1e-12, \"J(doc0, doc2) debe ser 7/12\"\n",
+    "assert jaccard(S[0], S[3]) == 0, \"Documentos sin shingles comunes: J = 0\"\n",
+    "print(\"Correcto: J(0,2) =\", round(jaccard(S[0], S[2]), 4))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "7fd61235",
+   "metadata": {},
+   "source": [
+    "**MinHash.** Con n funciones hash hᵢ, la firma de un conjunto es (minₓ h₁(x), …, minₓ hₙ(x)). La probabilidad de que dos firmas coincidan en una posición es exactamente J(A, B). Así se estima J comparando firmas cortas, sin cruzar todos los shingles.\n",
+    "\n",
+    "**Ejercicio 3.** Completa `firma` (usa la función `h(s, i)` ya dada) y estima J como la fracción de posiciones iguales."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "d44f1729",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def h(s, semilla):\n",
+    "    return int.from_bytes(hashlib.blake2b(f\"{semilla}|{s}\".encode(), digest_size=8).digest(), \"little\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "574e6b92",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def firma(conjunto, n=128):\n",
+    "    # TU CÓDIGO: array de n mínimos, uno por semilla 0..n-1\n",
+    "    return None\n",
+    "\n",
+    "def j_estimada(A, B, n=128):\n",
+    "    # TU CÓDIGO\n",
+    "    return None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "af9b0805",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "est = j_estimada(S[0], S[2])\n",
+    "assert firma(S[0]).shape == (128,), \"La firma debe tener 128 componentes\"\n",
+    "assert abs(est - 7/12) < 0.1, f\"Estimación {est} demasiado lejos de 7/12\"\n",
+    "assert j_estimada(S[0], S[3]) == 0\n",
+    "print(\"Correcto: J real 0,583 · J estimada\", est)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "041b5a97",
+   "metadata": {},
+   "source": [
+    "**LSH por bandas.** Partimos la firma en b bandas de r filas; dos documentos son candidatos si coinciden en alguna banda entera. La probabilidad es $1-(1-s^r)^b$, una curva en S con umbral aproximado $(1/b)^{1/r}$.\n",
+    "\n",
+    "**Ejercicio 4.** Implementa `p_candidato(s, r, b)`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "64270cef",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def p_candidato(s, r, b):\n",
+    "    # TU CÓDIGO\n",
+    "    return None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "6ec648fd",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert abs(p_candidato(0.5, 5, 20) - 0.4701) < 1e-3\n",
+    "assert abs(p_candidato(0.8, 5, 20) - 0.9996) < 1e-3\n",
+    "s = np.linspace(0, 1, 200)\n",
+    "plt.plot(s, p_candidato(s, 5, 20)); plt.axvline((1/20)**(1/5), ls=\"--\", c=\"gray\")\n",
+    "plt.xlabel(\"similitud de Jaccard s\"); plt.ylabel(\"P(candidato)\"); plt.title(\"LSH, r = 5, b = 20\"); plt.show()\n",
+    "print(\"Correcto. Umbral ≈\", round((1/20)**(1/5), 3))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c1302515",
+   "metadata": {},
+   "source": [
+    "## Parte 2 · Un lenguaje sintético con entropía conocida\n",
+    "\n",
+    "Con texto real no sabemos cuánta pérdida es irreducible. Por eso inventamos un «lenguaje» de 32 tokens: el siguiente token depende de los **dos anteriores** según una tabla «profesora» fija. Los contextos siguen una ley de Zipf, como las palabras reales. La entropía condicional $E=H(X_t\\mid X_{t-2},X_{t-1})$ es el suelo exacto de la pérdida: el término E de Chinchilla."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "fac7dc0a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "V = 32; C = V * V\n",
+    "g = torch.Generator().manual_seed(0)\n",
+    "rango = torch.arange(1, C + 1).float()\n",
+    "p_ctx = rango ** -1.2; p_ctx /= p_ctx.sum()\n",
+    "p_ctx = p_ctx[torch.randperm(C, generator=g)]              # Zipf, en orden aleatorio\n",
+    "P_prof = F.softmax(2.0 * torch.randn(C, V, generator=g), 1)  # P(siguiente | contexto)\n",
+    "E_real = -(p_ctx[:, None] * P_prof * P_prof.log()).sum().item()\n",
+    "ctx = torch.arange(C); A_ctx, B_ctx = ctx // V, ctx % V\n",
+    "print(f\"Pérdida irreducible E = {E_real:.4f} nats (uniforme: ln 32 = {np.log(32):.4f})\")\n",
+    "\n",
+    "# Un único flujo de datos de entrenamiento: 1.200 pasos × 256 ejemplos\n",
+    "PASOS, LOTE = 1200, 256\n",
+    "c = torch.multinomial(p_ctx, PASOS * LOTE, replacement=True, generator=g)\n",
+    "y = torch.multinomial(P_prof[c], 1, generator=g)[:, 0]\n",
+    "Atr, Btr, ytr = A_ctx[c].view(PASOS, LOTE), B_ctx[c].view(PASOS, LOTE), y.view(PASOS, LOTE)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b318038f",
+   "metadata": {},
+   "source": [
+    "## Parte 3 · Entrenar 7 modelos de tamaño creciente\n",
+    "\n",
+    "Cada modelo es un MLP: embeddings de los dos tokens (d = 8), una capa oculta de anchura h con GELU y logits. Variamos h de 4 a 256. Guardamos la pérdida **exacta** (esperanza bajo el lenguaje verdadero, sin ruido de muestreo) tras ver D = 19.200; 38.400; …; 307.200 tokens."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "10911e2d",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "class MiniLM(nn.Module):\n",
+    "    def __init__(self, h, d=8):\n",
+    "        super().__init__()\n",
+    "        self.emb = nn.Embedding(V, d); self.l1 = nn.Linear(2 * d, h); self.l2 = nn.Linear(h, V)\n",
+    "    def forward(self, a, b):\n",
+    "        return self.l2(F.gelu(self.l1(torch.cat([self.emb(a), self.emb(b)], 1))))\n",
+    "\n",
+    "def perdida_exacta(m):\n",
+    "    with torch.no_grad():\n",
+    "        return -(p_ctx[:, None] * P_prof * F.log_softmax(m(A_ctx, B_ctx), 1)).sum().item()\n",
+    "\n",
+    "anchuras = [4, 8, 16, 32, 64, 128, 256]\n",
+    "controles = [75, 150, 300, 600, 1200]\n",
+    "resultados = []          # filas (N, D, L)\n",
+    "t0 = time.time()\n",
+    "for hh in anchuras:\n",
+    "    torch.manual_seed(0)\n",
+    "    m = MiniLM(hh); N = sum(p.numel() for p in m.parameters())\n",
+    "    opt = torch.optim.Adam(m.parameters(), lr=1e-2)\n",
+    "    for s in range(PASOS):\n",
+    "        loss = F.cross_entropy(m(Atr[s], Btr[s]), ytr[s])\n",
+    "        opt.zero_grad(); loss.backward(); opt.step()\n",
+    "        if s + 1 in controles:\n",
+    "            resultados.append((N, (s + 1) * LOTE, perdida_exacta(m)))\n",
+    "    print(f\"h={hh:4d}  N={N:6d}  L final={resultados[-1][2]:.4f}  ({time.time()-t0:.0f} s)\")\n",
+    "R = np.array(resultados)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "40e493fa",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "for D in np.unique(R[:, 1]):\n",
+    "    sel = R[:, 1] == D\n",
+    "    plt.loglog(R[sel, 0], R[sel, 2] - E_real, \"o-\", label=f\"D = {int(D):,}\".replace(\",\", \".\"))\n",
+    "plt.xlabel(\"parámetros N\"); plt.ylabel(\"L − E (nats)\"); plt.legend(); plt.title(\"Exceso de pérdida frente a N\"); plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "3110f431",
+   "metadata": {},
+   "source": [
+    "## Parte 4 · Ajustar una ley de potencia\n",
+    "\n",
+    "Si $L-E = k\\,N^{-\\alpha}$, entonces $\\log(L-E)=\\log k-\\alpha\\log N$: una **recta** en log-log. Basta una regresión lineal (módulo 8).\n",
+    "\n",
+    "**Ejercicio 5.** Con los modelos de D máximo, ajusta α y k con `np.polyfit` sobre los logaritmos."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "574061e9",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "fin = R[R[:, 1] == R[:, 1].max()]\n",
+    "Nf, Lf = fin[:, 0], fin[:, 2]\n",
+    "# TU CÓDIGO\n",
+    "alfa, k = None, None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "7670c485",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert alfa is not None and 0.1 < alfa < 0.6, f\"α = {alfa}: esperaba un exponente entre 0,1 y 0,6\"\n",
+    "pred = E_real + k * Nf ** -alfa\n",
+    "assert np.max(np.abs(np.log(pred - E_real) - np.log(Lf - E_real))) < 0.2, \"La recta no se ajusta bien\"\n",
+    "print(f\"Correcto: L ≈ {E_real:.3f} + {k:.2f}·N^(−{alfa:.3f})\")\n",
+    "Ng = np.logspace(np.log10(Nf.min()), 5, 50)\n",
+    "plt.loglog(Nf, Lf - E_real, \"o\", label=\"medido\"); plt.loglog(Ng, k * Ng ** -alfa, \"--\", label=\"ajuste y extrapolación\")\n",
+    "plt.xlabel(\"N\"); plt.ylabel(\"L − E\"); plt.legend(); plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "ecb7bb0e",
+   "metadata": {},
+   "source": [
+    "**Ajuste conjunto al estilo Chinchilla.** Ahora usamos toda la rejilla (N, D) y ajustamos $L=E+A/N^{\\alpha}+B/D^{\\beta}$ con E fijo, minimizando el error cuadrático de log L como hace el enfoque 3 del artículo (que usa además la pérdida de Huber). Lo hacemos con descenso de gradiente en PyTorch."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "665aefb3",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "Nt, Dt, Lt = (torch.tensor(R[:, i], dtype=torch.float64) for i in range(3))\n",
+    "par = torch.tensor([3.0, 0.5, 3.0, 0.3], dtype=torch.float64, requires_grad=True)  # log A, α, log B, β\n",
+    "opt = torch.optim.Adam([par], lr=0.02)\n",
+    "for it in range(3000):\n",
+    "    lA, a_, lB, b_ = par\n",
+    "    pred = E_real + torch.exp(lA - a_ * Nt.log()) + torch.exp(lB - b_ * Dt.log())\n",
+    "    err = ((pred.log() - Lt.log()) ** 2).mean()\n",
+    "    opt.zero_grad(); err.backward(); opt.step()\n",
+    "lA, a_, lB, b_ = par.detach().numpy()\n",
+    "print(f\"A = {np.exp(lA):.1f}  α = {a_:.3f}  B = {np.exp(lB):.2f}  β = {b_:.3f}  (ECM en log: {err.item():.2e})\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "ebd1f808",
+   "metadata": {},
+   "source": [
+    "Fíjate: el ajuste conjunto no tiene por qué dar el mismo α que la recta del ejercicio 5, porque ahí el término de datos B/D^β estaba mezclado con el de parámetros. Esta es una fuente real de discrepancia entre artículos (Kaplan frente a Chinchilla)."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b64ecf06",
+   "metadata": {},
+   "source": [
+    "## Parte 5 · Cómputo óptimo con la fórmula de Chinchilla\n",
+    "\n",
+    "Usamos el ajuste publicado (Hoffmann et al., 2022, enfoque 3): $E=1{,}69$, $A=406{,}4$, $B=410{,}7$, $\\alpha=0{,}34$, $\\beta=0{,}28$, y la restricción $C=6ND$. Con Lagrange se obtiene\n",
+    "\n",
+    "$$N_{\\rm opt}=G\\left(\\frac{C}{6}\\right)^{\\beta/(\\alpha+\\beta)},\\qquad G=\\left(\\frac{\\alpha A}{\\beta B}\\right)^{1/(\\alpha+\\beta)},\\qquad D_{\\rm opt}=\\frac{C}{6N_{\\rm opt}}.$$\n",
+    "\n",
+    "**Ejercicio 6.** Implementa `optimo(C)` y compruébalo con una búsqueda por fuerza bruta."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "fd1a3c4b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "E_ch, A_ch, B_ch, a_ch, b_ch = 1.69, 406.4, 410.7, 0.34, 0.28\n",
+    "def L_ch(N, D):\n",
+    "    return E_ch + A_ch / N ** a_ch + B_ch / D ** b_ch"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ab9d21f2",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def optimo(C):\n",
+    "    # TU CÓDIGO: devuelve (N_opt, D_opt)\n",
+    "    return None, None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4970ff27",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "C = 5.76e23                                   # presupuesto de Gopher y Chinchilla\n",
+    "Ns = np.logspace(9, 12, 300001); idx = np.argmin(L_ch(Ns, C / (6 * Ns)))\n",
+    "N_o, D_o = optimo(C)\n",
+    "assert abs(np.log(N_o / Ns[idx])) < 1e-3, \"No coincide con la fuerza bruta\"\n",
+    "assert abs(6 * N_o * D_o - C) / C < 1e-9, \"Debe cumplirse C = 6ND\"\n",
+    "print(f\"Correcto: N_opt = {N_o:.3g}, D_opt = {D_o:.3g}, D/N = {D_o/N_o:.0f}, L = {L_ch(N_o, D_o):.4f}\")\n",
+    "print(f\"Chinchilla real (70e9, 1,4e12): L = {L_ch(70e9, 1.4e12):.4f} · Gopher (280e9, 300e9): L = {L_ch(280e9, 300e9):.4f}\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a0c001e1",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "Cs = np.logspace(19, 26, 50); No = np.array([optimo(c)[0] for c in Cs])\n",
+    "plt.loglog(Cs, No, label=\"ajuste enfoque 3\"); plt.loglog(Cs, np.sqrt(Cs / 120), \"--\", label=\"regla D = 20N\")\n",
+    "plt.xlabel(\"C (FLOP)\"); plt.ylabel(\"N óptimo\"); plt.legend(); plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "7915f4d0",
+   "metadata": {},
+   "source": [
+    "**Ejercicio 7 · Sobreentrenar para abaratar la inferencia.** Con $C=10^{22}$ FLOP, toma la mitad del $N_{\\rm opt}$. ¿Cuántos tokens $D_2$ necesitas para igualar la pérdida óptima? Calcula también el cómputo extra de entrenamiento `C2 / C`.\n",
+    "\n",
+    "Pista: despeja D de $L^*=E+A/N^\\alpha+B/D^\\beta$."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "c76068f1",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "C = 1e22\n",
+    "N1, D1 = optimo(C); L1 = L_ch(N1, D1)\n",
+    "N2 = N1 / 2\n",
+    "# TU CÓDIGO\n",
+    "D2 = None\n",
+    "C2 = None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "77d8560d",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert abs(L_ch(N2, D2) - L1) < 1e-9, \"Con N2 y D2 debes obtener la misma pérdida\"\n",
+    "assert abs(C2 / C - 1.208) < 0.005, f\"C2/C = {C2/C:.3f}\"\n",
+    "T = (C2 - C) / (2 * (N1 - N2))   # inferencia: 2N FLOP por token\n",
+    "print(f\"Correcto: D2 = {D2:.3g} tokens ({D2/N2:.0f} por parámetro), C2/C = {C2/C:.3f}\")\n",
+    "print(f\"Se amortiza tras servir unos {T:.2g} tokens de inferencia\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "f3b0a2ce",
+   "metadata": {},
+   "source": [
+    "## Parte 6 · ¿Emergencia o espejismo?\n",
+    "\n",
+    "Supón que la probabilidad de acertar **cada token** de una respuesta mejora suavemente con la escala. Si la métrica exige acertar los k tokens a la vez (exact match), la exactitud es $p^k$: una curva que parece «despegar» de golpe. Es el argumento de Schaeffer et al. (2023).\n",
+    "\n",
+    "**Ejercicio 8.** Calcula `exacta = p**k` para k = 10 y observa las dos curvas."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f17aee4d",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "logN = np.linspace(7, 12, 60)\n",
+    "p = 1 - 0.5 * 10 ** (-(logN - 7) / 3)   # mejora suave por token\n",
+    "k = 10\n",
+    "# TU CÓDIGO\n",
+    "exacta = None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "79e890de",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert exacta is not None and np.allclose(exacta, p ** 10)\n",
+    "plt.plot(logN, p, label=\"por token (suave)\"); plt.plot(logN, exacta, label=\"respuesta exacta, k = 10\")\n",
+    "plt.xlabel(\"log10 N (ficticio)\"); plt.ylabel(\"exactitud\"); plt.legend(); plt.show()\n",
+    "print(\"Correcto. Exactitud exacta: de\", round(exacta[0], 4), \"a\", round(exacta[-1], 3))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "63e54450",
+   "metadata": {},
+   "source": [
+    "## Parte 7 · Retos\n",
+    "\n",
+    "1. **Ajuste en D.** Repite el ejercicio 5 con el modelo más grande, ajustando $L-E$ frente a D. ¿Qué β sale?\n",
+    "2. **Frontera de cómputo.** Para cada punto calcula $C=6ND$ y dibuja L frente a C. Traza la envolvente inferior: ¿qué tamaño es óptimo en cada presupuesto?\n",
+    "3. **Sin conocer E.** Ajusta también E. ¿Cuánto se aleja de `E_real`? ¿Por qué es difícil estimar la pérdida irreducible?\n",
+    "4. **Repetir datos.** Entrena el modelo de h = 256 con solo 150 lotes distintos repetidos 8 épocas. Compáralo con 1.200 lotes únicos (Muennighoff et al., 2023)."
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "dc1e3773",
+   "metadata": {},
+   "source": [
+    "---\n",
+    "### Soluciones de referencia\n",
+    "Inténtalo antes de mirar."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "75c73bb6",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# --- Ejercicio 1 ---\n",
+    "# n_unicos = len({hashlib.sha1(d.encode()).hexdigest() for d in docs})\n",
+    "# --- Ejercicio 2 ---\n",
+    "# def jaccard(A, B):\n",
+    "#     return len(A & B) / len(A | B)\n",
+    "# --- Ejercicio 3 ---\n",
+    "# def firma(conjunto, n=128):\n",
+    "#     return np.array([min(h(s, i) for s in conjunto) for i in range(n)], dtype=np.uint64)\n",
+    "#\n",
+    "# def j_estimada(A, B, n=128):\n",
+    "#     return np.mean(firma(A, n) == firma(B, n))\n",
+    "# --- Ejercicio 4 ---\n",
+    "# def p_candidato(s, r, b):\n",
+    "#     return 1 - (1 - np.asarray(s) ** r) ** b\n",
+    "# --- Ejercicio 5 ---\n",
+    "# fin = R[R[:, 1] == R[:, 1].max()]\n",
+    "# Nf, Lf = fin[:, 0], fin[:, 2]\n",
+    "# pend, corte = np.polyfit(np.log(Nf), np.log(Lf - E_real), 1)\n",
+    "# alfa, k = -pend, np.exp(corte)\n",
+    "# --- Ejercicio 6 ---\n",
+    "# def optimo(C):\n",
+    "#     G = (a_ch * A_ch / (b_ch * B_ch)) ** (1 / (a_ch + b_ch))\n",
+    "#     N = G * (C / 6) ** (b_ch / (a_ch + b_ch))\n",
+    "#     return N, C / (6 * N)\n",
+    "# --- Ejercicio 7 ---\n",
+    "# C = 1e22\n",
+    "# N1, D1 = optimo(C); L1 = L_ch(N1, D1)\n",
+    "# N2 = N1 / 2\n",
+    "# D2 = (B_ch / (L1 - E_ch - A_ch / N2 ** a_ch)) ** (1 / b_ch)\n",
+    "# C2 = 6 * N2 * D2\n",
+    "# --- Ejercicio 8 ---\n",
+    "# logN = np.linspace(7, 12, 60)\n",
+    "# p = 1 - 0.5 * 10 ** (-(logN - 7) / 3)\n",
+    "# k = 10\n",
+    "# exacta = p ** k"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}

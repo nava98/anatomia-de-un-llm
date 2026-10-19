@@ -1,0 +1,148 @@
+% =====================================================================
+\chapter{Optimización directa de preferencias (DPO)}
+\label{tema:5}
+% =====================================================================
+
+La optimización directa de preferencias (DPO) de Rafailov \emph{et al.}~\cite{dpo} elimina el modelo de recompensa explícito y el bucle de refuerzo de RLHF. La idea es invertir la forma cerrada del \cref{teo:optimo-kl} para expresar la recompensa en función de la política y sustituirla en el modelo de Bradley--Terry, donde la función de partición se cancela. Este tema reproduce la derivación completa, los resultados de equivalencia de la §5.1 del artículo y el gradiente de la §4. El material se complementa con la clase invitada sobre DPO del curso CS234~\cite{cs234} y con la tarea~5 de CS336~\cite{cs336a5s}.
+
+\section{De la política óptima a la recompensa}
+
+\begin{lema}[Reparametrización]\label{lem:reparam}
+Sea $\pi_r^{*}$ la política óptima del objetivo \eqref{eq:obj-kl} para la recompensa $r$ y la referencia $\piref$, y supóngase $\piref(y\mid x)>0$. Entonces, para todo $(x,y)$,
+\[
+r(x,y)=\beta\log\frac{\pi_r^{*}(y\mid x)}{\piref(y\mid x)}+\beta\log Z(x).
+\]
+\end{lema}
+
+\begin{proof}
+Por el \cref{teo:optimo-kl}, $\pi_r^{*}(y\mid x)=\piref(y\mid x)\,e^{r(x,y)/\beta}/Z(x)$. Tomando logaritmos, $\log\pi_r^{*}=\log\piref+r/\beta-\log Z$; multiplicando por $\beta$ y despejando $r$ se obtiene la igualdad.
+\end{proof}
+
+El término incómodo, $\beta\log Z(x)$, depende solo de la instrucción $x$ y no de la respuesta. Todo lo que sigue explota este hecho.
+
+\section{Clases de equivalencia de recompensas}
+
+\begin{definicion}[Recompensas equivalentes]\label{def:equiv}
+Dos recompensas $r$ y $r'$ son \emph{equivalentes} si existe una función $f$ tal que $r'(x,y)=r(x,y)+f(x)$ para todo $(x,y)$. Es una relación de equivalencia; sus clases se llaman \emph{clases de recompensas}.
+\end{definicion}
+
+\begin{lema}[Las recompensas equivalentes inducen las mismas preferencias]\label{lem:equiv-pref}
+Si $r$ y $r'$ son equivalentes, inducen la misma distribución de preferencias de Bradley--Terry, y también de Plackett--Luce, sobre las respuestas a cada instrucción.
+\end{lema}
+
+\begin{proof}
+Para Bradley--Terry, $r'(x,y_1)-r'(x,y_2)=r(x,y_1)+f(x)-r(x,y_2)-f(x)=r(x,y_1)-r(x,y_2)$. Para Plackett--Luce (\cref{def:pl}), cada factor $e^{r'_{i_k}}/\sum_{m\ge k}e^{r'_{i_m}}$ tiene numerador y denominador multiplicados por $e^{f(x)}$, que se cancela.
+\end{proof}
+
+\begin{lema}[Las recompensas equivalentes inducen la misma política óptima]\label{lem:equiv-pol}
+Si $r$ y $r'$ son equivalentes, $\pi_{r'}^{*}=\pi_r^{*}$.
+\end{lema}
+
+\begin{proof}
+$\piref\,e^{r'/\beta}=\piref\,e^{r/\beta}e^{f(x)/\beta}$ y $Z'(x)=Z(x)e^{f(x)/\beta}$, porque $e^{f(x)/\beta}$ no depende de $y$ y sale de la suma. Al dividir, el factor se cancela.
+\end{proof}
+
+\begin{teorema}[Representación de las clases de recompensas]\label{teo:representacion}
+Toda clase de recompensas contiene un representante de la forma $\hat r(x,y)=\beta\log\bigl(\pi(y\mid x)/\piref(y\mid x)\bigr)$ para alguna política $\pi$, y esa política es única: es la política óptima común de la clase.
+\end{teorema}
+
+\begin{proof}
+\emph{Existencia.} Sea $r$ un elemento de la clase y $\pi=\pi_r^{*}$. Por el \cref{lem:reparam}, $\hat r(x,y)=\beta\log(\pi/\piref)=r(x,y)-\beta\log Z(x)$, que es equivalente a $r$ con $f(x)=-\beta\log Z(x)$. \emph{Unicidad.} Si $\beta\log(\pi_1/\piref)$ y $\beta\log(\pi_2/\piref)$ están en la misma clase, difieren en una función de $x$: $\log\pi_1(y\mid x)-\log\pi_2(y\mid x)=g(x)$, luego $\pi_1=e^{g(x)}\pi_2$. Sumando en $y$, $1=e^{g(x)}$, de modo que $g=0$ y $\pi_1=\pi_2$. Que esa política es la óptima de la clase se sigue del \cref{lem:equiv-pol} y de la existencia.
+\end{proof}
+
+El teorema~1 de~\cite{dpo} enuncia este resultado: parametrizar las recompensas como $\beta\log(\pi/\piref)$ no pierde generalidad, porque toda clase de recompensas compatible con el modelo de preferencias puede escribirse así. Es el sentido preciso del subtítulo del artículo: el modelo de lenguaje es, en secreto, un modelo de recompensa.
+
+\section{La pérdida DPO}
+
+\begin{proposicion}[Preferencias en función de la política óptima]\label{prop:pref-pol}
+Si las preferencias siguen el modelo de Bradley--Terry con recompensa $r$ y $\pi^{*}=\pi^{*}_r$, entonces
+\[
+P(y_w\pref y_l\mid x)=\sigma\Bigl(\beta\log\frac{\pi^{*}(y_w\mid x)}{\piref(y_w\mid x)}-\beta\log\frac{\pi^{*}(y_l\mid x)}{\piref(y_l\mid x)}\Bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+Se sustituye el \cref{lem:reparam} en $P(y_w\pref y_l\mid x)=\sigma\bigl(r(x,y_w)-r(x,y_l)\bigr)$. Ambas respuestas comparten $x$, así que los términos $\beta\log Z(x)$ se cancelan en la diferencia.
+\end{proof}
+
+\begin{definicion}[Pérdida DPO]\label{def:dpo}
+Sea $\pi_\theta$ una política parametrizada y $\hat r_\theta(x,y)=\beta\log\bigl(\pi_\theta(y\mid x)/\piref(y\mid x)\bigr)$ su \emph{recompensa implícita}. La pérdida DPO sobre un conjunto de comparaciones $\mathcal{D}$ es
+\[
+\LDPO(\theta)=-\E_{(x,y_w,y_l)\sim\mathcal{D}}\Bigl[\log\sigma\Bigl(\beta\log\frac{\pi_\theta(y_w\mid x)}{\piref(y_w\mid x)}-\beta\log\frac{\pi_\theta(y_l\mid x)}{\piref(y_l\mid x)}\Bigr)\Bigr].
+\]
+\end{definicion}
+
+La derivación completa se resume en cuatro pasos: (1) el objetivo con KL tiene la solución cerrada del \cref{teo:optimo-kl}; (2) se despeja la recompensa (\cref{lem:reparam}); (3) se sustituye en Bradley--Terry y se cancela $Z(x)$ (\cref{prop:pref-pol}); (4) se reemplaza $\pi^{*}$ por $\pi_\theta$ y se maximiza la verosimilitud de las preferencias. El paso~(4) es legítimo por el \cref{teo:representacion}: ajustar $\pi_\theta$ equivale a ajustar una recompensa dentro de una familia que, sin restricciones de capacidad, contiene todas las clases. Con otras palabras, $\LDPO$ es la pérdida $\LRM$ de la \cref{prop:bt-mv} con $r_\phi$ sustituida por $\hat r_\theta$, y si $\hat r_\theta$ minimiza $\LRM$, entonces $\pi_\theta$ es la política óptima del objetivo con KL para esa recompensa.
+
+En la implementación, $\log\pi_\theta(y\mid x)=\sum_t\log\pi_\theta(y_t\mid x,y_{<t})$ se obtiene sumando las log-probabilidades por token de la respuesta (\cref{prop:mdp-tokens}), y las de $\piref$ se calculan una vez con el modelo congelado.
+
+\begin{proposicion}[Gradiente de DPO]\label{prop:grad-dpo}
+Sea $h=\hat r_\theta(x,y_w)-\hat r_\theta(x,y_l)$. Entonces
+\[
+\nabla_\theta\LDPO=-\beta\,\E_{\mathcal{D}}\Bigl[\sigma(-h)\bigl(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\bigr)\Bigr].
+\]
+\end{proposicion}
+
+\begin{proof}
+Para un término, $L=-\log\sigma(h)$, y $dL/dh=-(1-\sigma(h))=-\sigma(-h)$ como en la \cref{prop:bt-mv}. Como $\piref$ está congelado, $\nabla_\theta h=\beta\bigl(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\bigr)$. La regla de la cadena y la linealidad de la esperanza dan el resultado.
+\end{proof}
+
+El gradiente aumenta la log-probabilidad de la respuesta preferida y reduce la de la rechazada. El peso $\sigma(-h)$ es la probabilidad que la recompensa implícita asigna al orden equivocado: es grande cuando el modelo ordena mal el par y casi nulo cuando ya lo ordena bien. Rafailov \emph{et al.} observan que sin este peso el método degenera~\cite[§4]{dpo}.
+
+\begin{ejemplo}[Un paso de DPO]\label{ej:dpo}
+Sea $\beta=0{,}1$. Las log-probabilidades de la respuesta preferida son $-5$ con la política y $-6$ con la referencia; las de la rechazada, $-7$ y $-6{,}5$. Las recompensas implícitas son $\hat r_w=0{,}1\cdot(-5+6)=0{,}10$ y $\hat r_l=0{,}1\cdot(-7+6{,}5)=-0{,}05$, el margen es $h=0{,}15$ y la pérdida vale $-\ln\sigma(0{,}15)=0{,}621$, por debajo del valor inicial $\ln 2=0{,}693$ que corresponde a $\pi_\theta=\piref$. El peso del gradiente es $\beta\,\sigma(-0{,}15)=0{,}046$.
+\end{ejemplo}
+
+\section{DPO frente a RLHF con PPO}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+ & RLHF con PPO & DPO \\
+\midrule
+Redes en memoria & 4 (política, referencia, recompensa, crítico) & 2 (política, referencia) \\
+Muestreo al entrenar & sí (\emph{on-policy}) & no (datos fijos, \emph{offline}) \\
+Pérdida & objetivo recortado y penalización KL & clasificación binaria \\
+Óptimo teórico & $\pi^{*}$ del objetivo con KL & $\pi^{*}$ del objetivo con KL \\
+\bottomrule
+\end{tabularx}
+\caption{Comparación entre RLHF con PPO y DPO.}
+\label{tab:dpo-ppo}
+\end{table}
+
+Ambos métodos persiguen el mismo óptimo (\cref{tab:dpo-ppo}), pero no son equivalentes en la práctica. DPO solo ve las respuestas del conjunto de datos, generadas en general por otra política, y no explora; PPO evalúa con el modelo de recompensa las respuestas que la política genera en cada momento. Además, DPO controla solo la diferencia $h$: puede reducir a la vez las probabilidades de ambas respuestas siempre que la rechazada baje más, y puede sobreoptimizar su recompensa implícita, por ejemplo favoreciendo respuestas más largas (\cref{tema:6}). El apéndice~A.3 de~\cite{dpo} extiende la pérdida a ordenaciones completas con el modelo de Plackett--Luce.
+
+\begin{lecturas}
+\item R.~Rafailov \emph{et al.}~\cite{dpo}: §4 «Direct Preference Optimization», §5.1 «Your Language Model Is Secretly a Reward Model» y apéndices~A.1--A.6.
+\item CS234~\cite{cs234}, clase~9, clase invitada sobre DPO.
+\item CS336~\cite{cs336a5s}, suplemento de la tarea~5, §6.3: implementación de la pérdida DPO.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-vf}
+Justifique si son verdaderas o falsas: (a) DPO necesita entrenar un modelo de recompensa explícito; (b) DPO muestrea respuestas de la política durante el entrenamiento; (c) la función de partición $Z(x)$ se cancela porque vale~1; (d) al inicio del entrenamiento, con $\pi_\theta=\piref$, la pérdida DPO vale $\ln 2$ para cualquier par.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-paso}
+Con $\beta=0{,}5$, la respuesta preferida tiene $\log\pi_\theta-\log\piref=+0{,}4$ y la rechazada $-0{,}6$. Calcule las recompensas implícitas, el margen, la pérdida y el peso $\beta\,\sigma(-h)$ del gradiente.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-cs336}
+Con $\beta=0{,}2$, la respuesta preferida tiene log-probabilidades por token $(-0{,}5;\ -1{,}2;\ -0{,}3)$ con la política y $(-0{,}6;\ -1{,}5;\ -0{,}4)$ con la referencia; la rechazada, $(-1{,}0;\ -2{,}0)$ y $(-0{,}8;\ -1{,}7)$. Calcule las log-probabilidades de cada secuencia, las recompensas implícitas, el margen, la pérdida y el peso del gradiente.
+\fuente{adaptado de CS336, primavera de 2026, suplemento de la tarea~5 «Instruction Tuning and RLHF», §6.3, problema \texttt{dpo\_\allowbreak{}loss}~\cite{cs336a5s}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-tabular}
+Sea una sola instrucción con dos respuestas posibles, $\piref=(\tfrac12,\tfrac12)$ y $\beta=0{,}5$. En los datos, la respuesta~1 se prefiere a la~2 con probabilidad $p=0{,}8$ (y la~2 a la~1 con probabilidad $0{,}2$). (a) Demuestre que la pérdida DPO esperada, como función del margen $h=\hat r(y_1)-\hat r(y_2)$, es $-p\log\sigma(h)-(1-p)\log\sigma(-h)$ y que se minimiza en $h=\log\bigl(p/(1-p)\bigr)$. (b) Deduzca la política $\pi_\theta$ que minimiza la pérdida y compárela con $\pi^{*}$ del \cref{teo:optimo-kl} para la recompensa $r=(\log 4,\,0)$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-gradiente}
+Deduzca el gradiente de la \cref{prop:grad-dpo} a partir de la \cref{def:dpo}, usando $\sigma'(z)=\sigma(z)(1-\sigma(z))$ y $1-\sigma(z)=\sigma(-z)$. Compruebe que en $\pi_\theta=\piref$ el peso es $\beta/2$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-invariancia}
+Demuestre que si $r'(x,y)=r(x,y)+f(x)$, la política óptima y la pérdida de Bradley--Terry no cambian. Explique por qué este hecho es exactamente el que permite eliminar $Z(x)$ en la derivación de DPO y compruébelo numéricamente con los datos del \cref{eje:3-beta} ($\beta=1$) y $f=5$.
+\end{ejercicio}

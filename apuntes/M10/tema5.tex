@@ -1,0 +1,121 @@
+% =====================================================================
+\chapter{Memoria, segundo orden y método adjunto}
+\label{tema:5}
+% =====================================================================
+
+El modo inverso compra su eficiencia en operaciones con memoria: necesita los valores de la pasada hacia delante. Este tema cuantifica esa memoria y estudia el recálculo por puntos de control, que la reduce a cambio de cómputo; obtiene productos hessiana-vector combinando los dos modos, y muestra que los adjuntos son multiplicadores de Lagrange, lo que conecta la retropropagación con el método adjunto del control óptimo y de la física. Se siguen los capítulos~4 y~12 de~\cite{gw}, el artículo de Chen \emph{et al.}~\cite{chen}, el de Pearlmutter~\cite{pearlmutter}, la §3.3 de~\cite{baydin} y la tarea~2 de CS336~\cite{cs336a2}.
+
+\section{La memoria del modo inverso}
+
+\begin{proposicion}[Memoria de una cadena de capas]\label{prop:memoria}
+Sea $f=f_L\circ\dots\circ f_1$ una red de $L$ capas cuyas activaciones intermedias $h_k=f_k(h_{k-1})$ ocupan $a$ unidades de memoria cada una, y supóngase que el VJP de la capa $k$ necesita $h_{k-1}$. Evaluar $f$ requiere memoria $O(a)$, mientras que el modo inverso de la \cref{fig:algoritmo} requiere guardar $h_0,\dots,h_{L-1}$, es decir, memoria $La$.
+\end{proposicion}
+
+\begin{proof}
+Para evaluar $f$ basta conservar la activación actual: $h_k$ se calcula a partir de $h_{k-1}$, que puede descartarse a continuación. En el modo inverso, el VJP de la capa $L$ se ejecuta en primer lugar y necesita $h_{L-1}$, y el de la capa~1, que se ejecuta en último lugar, necesita $h_0$. Como todas las pasadas hacia atrás ocurren después de la pasada hacia delante completa, las $L$ activaciones deben estar disponibles a la vez.
+\end{proof}
+
+En un LLM, $a$ es proporcional al número de tokens del lote por la dimensión del modelo, y la memoria de las activaciones supera a menudo la de los pesos (módulo~17).
+
+\section{Recálculo por puntos de control}
+
+La idea del recálculo (\emph{gradient checkpointing} o \emph{rematerialization}) consiste en guardar solo algunas activaciones, los \emph{puntos de control}, y recalcular las demás cuando la pasada hacia atrás las necesita~\cite{chen}, \cite[cap.~12]{gw}.
+
+\begin{proposicion}[Un nivel de puntos de control]\label{prop:checkpoint}
+En la situación de la \cref{prop:memoria}, divídanse las $L$ capas en $L/k$ tramos de $k$ capas consecutivas y guárdese durante la pasada hacia delante solo la entrada de cada tramo. En la pasada hacia atrás, al llegar a cada tramo se repite su pasada hacia delante desde el punto de control, guardando sus $k$ activaciones, y se retropropaga por él. Entonces:
+\begin{enumerate}
+  \item la memoria de activaciones es $M(k)=(L/k+k)\,a$, mínima para $k=\sqrt L$, con valor $2\sqrt L\,a$;
+  \item el cómputo adicional es una pasada hacia delante más.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) En todo momento se mantienen los $L/k$ puntos de control y, como mucho, las activaciones de un tramo, $k$ en total. La función $M(k)/a=L/k+k$, con $k>0$ real, tiene derivada $-L/k^{2}+1$, que se anula en $k=\sqrt L$, y segunda derivada $2L/k^{3}>0$: es un mínimo, de valor $\sqrt L+\sqrt L=2\sqrt L$. (ii) Cada capa se evalúa dos veces hacia delante, una en la pasada original y otra al recalcular su tramo.
+\end{proof}
+
+Con las cuentas de la \cref{prop:flops}, una pasada hacia delante extra cuesta $2N$ FLOPs por token, y el paso de entrenamiento pasa de $6N$ a $8N$: un 33\,\% más de cómputo a cambio de reducir la memoria de $L$ a $2\sqrt L$ activaciones. Aplicando la idea de forma recursiva, la memoria baja a $O(\log L)$ con un cómputo de $O(L\log L)$ evaluaciones de capa~\cite{chen}; Griewank y Walther estudian los esquemas óptimos de este tipo~\cite[cap.~12]{gw}.
+
+\begin{observacion}[Conexión con los LLM]
+El recálculo de activaciones por bloques del Transformer es una técnica habitual en el entrenamiento de modelos grandes: los puntos de control son las entradas de los bloques y lo que se recalcula son las activaciones internas de la atención y de la red prealimentada. La tarea~2 de CS336~\cite{cs336a2} pide analizar exactamente este compromiso (\cref{eje:5-cs336}).
+\end{observacion}
+
+\section{Productos hessiana-vector}
+
+Las derivadas de segundo orden se obtienen aplicando la AD a un programa que, a su vez, calcula derivadas.
+
+\begin{proposicion}[Directo sobre inverso]\label{prop:hvp}
+Sea $f\colon\R^{n}\to\R$ de clase $C^{2}$ dada por una traza cuyas operaciones elementales son de clase $C^{2}$, y sean $x,v\in\R^{n}$. Si se ejecuta el modo inverso (que calcula $\nabla f$) en aritmética dual, con entradas $x+v\varepsilon$, la parte dual del resultado es el producto hessiana-vector $H_f(x)\,v$. Su coste es a lo sumo una constante, independiente de $n$, por $\ops(f)$.
+\end{proposicion}
+
+\begin{proof}
+El modo inverso es un programa $g$, compuesto de operaciones elementales y de sus derivadas, que calcula $g(x)=\nabla f(x)$. Por el \cref{teo:duales}, aplicado a $g$, la parte dual de $g(x+v\varepsilon)$ es $J_g(x)\,v$, y $J_g=J_{\nabla f}=H_f$. Por el \cref{teo:barato}, $\ops(g)\le\omega\,\ops(f)$, y por la \cref{prop:coste-dual} la pasada dual cuesta a lo sumo $\omega_{\mathrm{dir}}\ops(g)\le\omega_{\mathrm{dir}}\,\omega\,\ops(f)$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:hvp}
+Sea $f(x_1,x_2)=x_1^{2}x_2$ en $(1,2)$ con $v=(1,0)\T$. El modo inverso calcula $\nabla f=(2x_1x_2,\,x_1^{2})$. Con $x_1=1+\varepsilon$ y $x_2=2$, se obtiene $\bigl(2(1+\varepsilon)\cdot 2,\,(1+\varepsilon)^{2}\bigr)=(4+4\varepsilon,\,1+2\varepsilon)$. Luego $\nabla f(1,2)=(4,1)$ y $Hv=(4,2)$, que es la primera columna de $H=\begin{psmallmatrix}2x_2&2x_1\\2x_1&0\end{psmallmatrix}=\begin{psmallmatrix}4&2\\2&0\end{psmallmatrix}$.
+\end{ejemplo}
+
+La técnica es la de Pearlmutter~\cite{pearlmutter} y permite usar información de curvatura sin formar el hessiano, que para $n=10^{9}$ tendría $10^{18}$ entradas. El hessiano completo requiere $n$ productos hessiana-vector, uno por columna, y cuesta del orden de $n\cdot\ops(f)$, frente al $O(\ops(f))$ del gradiente.
+
+\section{Los adjuntos como multiplicadores de Lagrange}
+
+\begin{teorema}[Método adjunto]\label{teo:lagrange}
+Sea una traza de $f\colon\R^{n}\to\R$ y considérese la lagrangiana
+\[
+\mathcal L(x,v_1,\dots,v_\ell,\lambda_1,\dots,\lambda_\ell)=v_\ell-\sum_{i=1}^{\ell}\lambda_i\Bigl(v_i-\varphi_i\bigl((v_j)_{j\pre i}\bigr)\Bigr),
+\]
+donde $v_{k-n}=x_k$. Si los $v_i$ toman los valores de la traza y los multiplicadores se eligen de modo que $\partial\mathcal L/\partial v_i=0$ para $i=1,\dots,\ell$, entonces $\lambda_i=\bar v_i$ para todo $i$ y $\nabla f(x)=\nabla_x\mathcal L$.
+\end{teorema}
+
+\begin{proof}
+Para $i\ge 1$, el término $v_i$ aparece con coeficiente $-\lambda_i$ en su propia restricción, con coeficiente~1 en $v_\ell$ si $i=\ell$, y dentro de $\varphi_r$ para cada $r$ con $i\pre r$. Por tanto,
+\[
+\frac{\partial\mathcal L}{\partial v_i}=\ind[i=\ell]-\lambda_i+\sum_{r\,:\,i\pre r}\lambda_r\,\frac{\partial\varphi_r}{\partial v_i}.
+\]
+Anularla da $\lambda_\ell=1$ (la operación $\ell$ no es argumento de ninguna otra) y $\lambda_i=\sum_{r:i\pre r}\lambda_r\,\partial\varphi_r/\partial v_i$ para $i<\ell$, que es la recurrencia de la \cref{def:adjunto}, resuelta en orden decreciente. Luego $\lambda_i=\bar v_i$.
+
+Sobre los valores de la traza todas las restricciones se cumplen, y $\mathcal L=v_\ell=f(x)$ para todo $x$ y toda elección de $\lambda$. Derivando respecto a $x_k$ esta identidad, con $v_i=v_i(x)$, se obtiene $\partial f/\partial x_k=\partial\mathcal L/\partial x_k+\sum_{i\ge 1}(\partial\mathcal L/\partial v_i)(\partial v_i/\partial x_k)=\partial\mathcal L/\partial x_k$, porque los multiplicadores anulan cada $\partial\mathcal L/\partial v_i$. Finalmente, $\partial\mathcal L/\partial x_k=\sum_{r:k-n\pre r}\lambda_r\partial\varphi_r/\partial v_{k-n}=\bar v_{k-n}$.
+\end{proof}
+
+\begin{ejemplo}[Una recurrencia en el tiempo]\label{ej:recurrencia}
+Sea $x_{t+1}=a\,x_t$ para $t=0,1,2$, con $x_0=1$ y $a=2$, y sea $L=\tfrac12x_3^{2}$. Hacia delante, $x=(1,2,4,8)$ y $L=32$. Los multiplicadores cumplen $\lambda_3=\partial L/\partial x_3=x_3=8$ y $\lambda_t=\lambda_{t+1}\,\partial x_{t+1}/\partial x_t=a\lambda_{t+1}$: $\lambda_2=16$, $\lambda_1=32$. El parámetro $a$ interviene en las tres transiciones, y $dL/da=\sum_t\lambda_{t+1}\,\partial x_{t+1}/\partial a=\lambda_3x_2+\lambda_2x_1+\lambda_1x_0=32+32+32=96$. En efecto, $L=\tfrac12a^{6}$ y $dL/da=3a^{5}=96$.
+\end{ejemplo}
+
+El ejemplo es la retropropagación a través del tiempo de una red recurrente: un mismo parámetro actúa en cada paso y su gradiente es la suma de las contribuciones de todos ellos. En control óptimo, en diseño aerodinámico y en la asimilación de datos meteorológicos (el método 4D-Var), el mismo esquema se aplica a ecuaciones diferenciales, integrando una ecuación adjunta hacia atrás en el tiempo para obtener el gradiente de un coste respecto a millones de condiciones iniciales o parámetros.
+
+\begin{observacion}[Historia]
+Linnainmaa describió el modo inverso en 1970 como herramienta para analizar errores de redondeo acumulados~\cite{linnainmaa}; Rumelhart, Hinton y Williams lo popularizaron en 1986 para entrenar redes neuronales~\cite{rumelhart}. Baydin \emph{et al.} reconstruyen esta historia y sus redescubrimientos~\cite[§3.3]{baydin}.
+\end{observacion}
+
+\begin{lecturas}
+\item Griewank y Walther~\cite{gw}, cap.~4 «Memory Issues and Complexity Bounds» y cap.~12 «Reversal Schedules and Checkpointing».
+\item Chen \emph{et al.}~\cite{chen}, «Training Deep Nets with Sublinear Memory Cost».
+\item Pearlmutter~\cite{pearlmutter}, «Fast exact multiplication by the Hessian».
+\item Baydin \emph{et al.}~\cite{baydin}, §3.3 «Origins of AD and Backpropagation».
+\item Stanford CS336~\cite{cs336a2}, tarea~2, sección~3.2.1 sobre recálculo de activaciones.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-d2l}
+¿Por qué la segunda derivada es mucho más costosa de calcular que la primera? Distinga entre un producto hessiana-vector y el hessiano completo de $f\colon\R^{n}\to\R$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.5 «Automatic Differentiation», ejercicio~1.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-hvp}
+Sea $f(x_1,x_2)=x_1^{2}x_2+x_2^{3}$. Calcule $\nabla f(1,2)$ y el producto $H_f(1,2)\,v$ con $v=(0,1)\T$ aplicando aritmética dual a la expresión del gradiente, como en el \cref{ej:hvp}. Compruébelo con el hessiano.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-adjunto}
+Sea la recurrencia $x_{t+1}=a\,x_t+b$ para $t=0,1,2$, con $x_0=1$, $a=2$ y $b=1$, y sea $L=x_3$. Calcule la trayectoria, los multiplicadores $\lambda_t$ del \cref{teo:lagrange} y las derivadas $dL/da$ y $dL/db$. Compruébelas con la expresión cerrada de $x_3$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-checkpoint}
+Demuestre la \cref{prop:checkpoint} y calcule la memoria óptima para $L=16$ y $L=100$, comparándola con la del modo inverso sin puntos de control. ¿Cuántos FLOPs por parámetro y por token cuesta entonces un paso de entrenamiento?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-cs336}
+Un Transformer tiene $N_b=16$ bloques idénticos. Se mide la memoria en «bloques»: guardar las activaciones internas de un bloque cuesta~1 y guardar un punto de control cuesta $c=1/4$. Con un nivel de recálculo en tramos de $k$ bloques, la memoria pico es $M(k)=(N_b/k)\,c+k$. (a) Calcule $M(k)$ para $k\in\{1,2,4,8,16\}$ y el óptimo continuo. (b) Si se permite anidar los puntos de control sin límite de cómputo, describa una estrategia que reduzca la memoria a $O(\log N_b)$ y estime su cómputo.
+\fuente{adaptado de Stanford CS336, primavera de 2026~\cite{cs336a2}, tarea~2, sección~3.2.1, problema \texttt{gradient\_checkpointing}, apartados~(a) y~(b).}
+\end{ejercicio}

@@ -1,0 +1,170 @@
+% =====================================================================
+\chapter{Estabilidad numérica de softmax y entropía cruzada}
+\label{tema:6}
+% =====================================================================
+
+La capa de salida de un modelo de lenguaje calcula una softmax sobre decenas de miles de logits, y la pérdida de entrenamiento es su entropía cruzada (módulo~1). Ambas contienen exponenciales, que en coma flotante desbordan o se anulan con argumentos moderados. Este tema determina esos límites, introduce la función log-sum-exp y su evaluación estable, deduce de ella la forma correcta de calcular la entropía cruzada a partir de los logits y termina con la propagación de \NaN\ y un procedimiento para diagnosticar una pérdida que deja de ser finita. Se sigue~\cite[§4.1]{gbc}, \cite[§4.5.2]{d2l} y las prácticas de CS336~\cite{cs336}.
+
+\section{Límites de la exponencial}
+
+\begin{proposicion}\label{prop:exp-rango}
+En un formato con mayor número finito $x_{\max}$ y menor normal $x_{\min}$, el valor exacto $e^{t}$ es finito y normal si y solo si $\ln x_{\min}\le t\le\ln x_{\max}$. Los intervalos son, aproximadamente,
+\[
+\text{fp32 y bf16: }[-87{,}3;\ 88{,}7],\qquad \text{fp16: }[-9{,}70;\ 11{,}09].
+\]
+\end{proposicion}
+
+\begin{proof}
+La exponencial es estrictamente creciente, de modo que $x_{\min}\le e^{t}\le x_{\max}$ equivale a tomar logaritmos en ambas desigualdades. Con la \cref{tab:formatos}: $\ln(3{,}40\cdot 10^{38})=88{,}72$, $\ln 2^{-126}=-87{,}34$, $\ln 65\,504=11{,}09$ y $\ln 2^{-14}=-9{,}70$; el máximo de bf16 da $\ln(3{,}39\cdot 10^{38})=88{,}72$ con tres decimales.
+\end{proof}
+
+Por debajo del límite inferior, el resultado es subnormal, con menos bits de precisión, y algo más abajo se anula. Goodfellow \emph{et al.}~\cite[§4.1]{gbc} describen las dos formas en que falla la softmax ingenua $e^{z_i}/\sum_je^{z_j}$: si algún logit es grande, el numerador y el denominador desbordan y el cociente $\infty/\infty$ es \NaN; si todos son muy negativos, ambos se anulan y $0/0$ es \NaN.
+
+\section{La función log-sum-exp}
+
+\begin{definicion}[Log-sum-exp]\label{def:lse}
+Para $z\in\R^{n}$, $\LSE(z)=\ln\sum_{i=1}^{n}e^{z_i}$. La softmax del módulo~1 se escribe $\softmax(z)_i=e^{z_i-\LSE(z)}$.
+\end{definicion}
+
+\begin{proposicion}[Propiedades de log-sum-exp]\label{prop:lse}
+Sea $z\in\R^{n}$ y $c\in\R$.
+\begin{enumerate}
+  \item $\LSE(z+c\uno)=\LSE(z)+c$ y $\softmax(z+c\uno)=\softmax(z)$.
+  \item $\max_iz_i\le\LSE(z)\le\max_iz_i+\ln n$; la cota superior se alcanza si y solo si todas las componentes son iguales.
+  \item $\nabla\LSE(z)=\softmax(z)$.
+  \item $\nabla^{2}\LSE(z)=\diag(p)-pp\T$ con $p=\softmax(z)$, que es semidefinida positiva; en consecuencia, $\LSE$ es convexa.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\sum_ie^{z_i+c}=e^{c}\sum_ie^{z_i}$; se toma el logaritmo. Para la softmax, $e^{z_i+c-\LSE(z)-c}=e^{z_i-\LSE(z)}$. (iii) $\partial\LSE/\partial z_k=e^{z_k}/\sum_ie^{z_i}=\softmax(z)_k$. Los apartados (ii) y (iv) son los \cref{eje:6-cotas,eje:6-convexa}.
+\end{proof}
+
+\begin{proposicion}[Evaluación estable]\label{prop:lse-estable}
+Sea $c=\max_iz_i$. Entonces
+\[
+\LSE(z)=c+\ln S,\qquad \softmax(z)_i=\frac{e^{z_i-c}}{S},\qquad S=\sum_{i=1}^{n}e^{z_i-c}\in[1,n].
+\]
+En esta forma ninguna exponencial desborda, porque todos sus argumentos son $\le 0$, y el denominador nunca se anula, porque contiene el término $e^{0}=1$.
+\end{proposicion}
+
+\begin{proof}
+Las fórmulas son la \cref{prop:lse}(i) con la constante $-c$. Cada $z_i-c\le 0$ da $e^{z_i-c}\in(0,1]$, y el término con $z_i=c$ vale exactamente~1; por tanto $1\le S\le n$, y $\ln S\in[0,\ln n]$ se calcula sin problemas.
+\end{proof}
+
+\begin{ejemplo}\label{ej:lse}
+Para $z=(1000,999,998)$, la evaluación ingenua da $e^{1000}=\infty$ en fp32 y la softmax es \NaN. Con $c=1000$, $S=1+e^{-1}+e^{-2}=1{,}503$, $\LSE(z)=1000+\ln 1{,}503=1000{,}408$ y $\softmax(z)=(0{,}665;\,0{,}245;\,0{,}090)$, la misma que para $z=(2,1,0)$ en el módulo~1, de acuerdo con la \cref{prop:lse}(i). En fp16 basta $z=(12,10,0)$ para desbordar, porque $e^{12}=162\,755>65\,504$.
+\end{ejemplo}
+
+\section{Entropía cruzada a partir de los logits}
+
+\begin{proposicion}[Log-softmax y entropía cruzada]\label{prop:ce}
+Sea $z\in\R^{n}$ el vector de logits y $y\in\{1,\dots,n\}$ la clase correcta. Entonces
+\[
+\ln\softmax(z)_i=z_i-\LSE(z),\qquad \ell(z,y)=-\ln\softmax(z)_y=\LSE(z)-z_y\ge 0,
+\]
+\[
+\nabla_z\ell=\softmax(z)-e_y,
+\]
+donde $e_y$ es el vector canónico.
+\end{proposicion}
+
+\begin{proof}
+La primera igualdad es el logaritmo de la \cref{def:lse}; la segunda, su caso $i=y$, y no es negativa por la \cref{prop:lse}(ii), ya que $\LSE(z)\ge\max_iz_i\ge z_y$. El gradiente se sigue de la \cref{prop:lse}(iii) y de $\nabla_zz_y=e_y$.
+\end{proof}
+
+La fórmula $\ell=\LSE(z)-z_y$, calculada con la \cref{prop:lse-estable}, no evalúa nunca el logaritmo de un número que pueda haberse anulado. Por eso las funciones de pérdida de las bibliotecas, como \texttt{F.cross\_entropy} de PyTorch, reciben logits y no probabilidades~\cite[§4.5.2]{d2l}, y la composición \texttt{torch.log(torch.softmax(z))} debe evitarse.
+
+\begin{ejemplo}\label{ej:log-cero}
+En fp16, con $z=(0,-20)$, la softmax ingenua da $e^{-20}/(1+e^{-20})$ con $e^{-20}=2{,}1\cdot 10^{-9}$, menor que el menor subnormal $2^{-24}=6\cdot 10^{-8}$: se redondea a~0, y $\ln 0=-\infty$. La fórmula de la \cref{prop:ce} da $\ln\softmax(z)_2=-20-\ln(1+e^{-20})=-20{,}000$, el valor correcto.
+\end{ejemplo}
+
+\section{Propagación de \texorpdfstring{\NaN}{NaN} y diagnóstico}
+
+La norma IEEE~754~\cite{ieee754} define como \NaN\ los resultados de las operaciones inválidas ${\infty-\infty}$, ${0\cdot\infty}$, ${0/0}$, ${\infty/\infty}$ y $\sqrt{x}$ con $x<0$, y establece que toda operación aritmética con un operando \NaN\ da \NaN; además, toda comparación con \NaN\ es falsa. En particular, $\NaN\cdot 0=\NaN$: multiplicar por cero no limpia el valor.
+
+\begin{observacion}[Contagio]\label{obs:contagio}
+Si la pérdida de un paso es \NaN, la retropropagación multiplica ese valor por todos los jacobianos locales, de modo que el gradiente de todo parámetro del que depende la pérdida es \NaN, y la actualización convierte esos parámetros en \NaN. A partir de ese paso la red ya no produce números. Por eso el diagnóstico debe hacerse en el primer paso en que aparece un valor no finito.
+\end{observacion}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Síntoma & Causa probable & Remedio \\
+\midrule
+La pérdida crece varios órdenes de magnitud y luego da \NaN & tasa de aprendizaje alta; gradientes que explotan (\cref{tema:1}) & bajar la tasa, calentamiento, recorte del gradiente (\cref{tema:4}) \\
+\Inf\ repentino en fp16 & desbordamiento por encima de $65\,504$ & bf16, o escalado dinámico de la pérdida (\cref{tema:5}) \\
+\NaN\ en una softmax o un logaritmo & exponencial desbordada, $\ln 0$ & \cref{prop:lse-estable}; entropía cruzada con logits \\
+\NaN\ en una normalización & división por $\RMS(x)=0$ & $\epsilon>0$ dentro de la raíz (\cref{tema:3}) \\
+Picos aislados de la pérdida & lote anómalo & recorte, descartar el lote, volver a un punto de control \\
+\bottomrule
+\end{tabularx}
+\caption{Diagnóstico de una pérdida no finita.}
+\label{tab:diagnostico}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  pre/.style={draw,thick,diamond,aspect=2.2,inner sep=1pt,align=center},
+  acc/.style={draw,thick,rounded corners=2pt,align=center,text width=3.4cm,minimum height=8mm}]
+  \node[acc] (a) at (0,0) {¿pérdida \NaN\ o \Inf?};
+  \node[pre] (b) at (0,-1.7) {¿crecía\\antes?};
+  \node[acc] (c) at (-3.6,-3.6) {gradientes que explotan: bajar la tasa, recortar, calentar};
+  \node[pre] (d) at (2.6,-3.4) {¿fp16?};
+  \node[acc] (e) at (0.4,-5.6) {desbordamiento: bf16 o escalado de la pérdida};
+  \node[acc] (f) at (4.8,-5.6) {buscar $\ln$, división o exponencial sin proteger};
+  \draw[->,thick] (a) -- (b);
+  \draw[->,thick] (b.west) -| node[above,pos=0.3] {sí} (c.north);
+  \draw[->,thick] (b.east) -| node[above,pos=0.3,xshift=5mm] {no, salto brusco} (d.north);
+  \draw[->,thick] (d.west) -| node[above,pos=0.3] {sí} (e.north);
+  \draw[->,thick] (d.east) -| node[above,pos=0.3] {no} (f.north);
+\end{tikzpicture}
+\caption{Árbol de decisión para una pérdida no finita. En todos los casos conviene registrar la norma del gradiente por capa y los histogramas de activaciones.}
+\label{fig:diagnostico}
+\end{figure}
+
+\begin{observacion}[Lo que se observa en la práctica]
+En la práctica del módulo se provoca el fallo a propósito: una red residual sin normalizar entrenada con tasa de aprendizaje~10 pasa de una pérdida de $2{,}6$ a $10^{30}$ y llega a \NaN\ en el paso~24. Con recorte del gradiente a norma~1, la pérdida se mantiene finita durante los 60 pasos.
+\end{observacion}
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §4.1 «Overflow and Underflow».
+\item Zhang \emph{et al.}~\cite{d2l}, §4.5.2 «Softmax Revisited».
+\item Stanford CS336~\cite{cs336}, práctica~1 (\emph{basics}), problema \texttt{softmax} (§3.4.4) y entropía cruzada estable.
+\item IEEE~754-2019~\cite{ieee754}, tratamiento de las excepciones y de los valores \NaN.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-diagnostico}
+Indique la causa más probable y un remedio para cada caso: (a) en fp16 la pérdida es normal y en un paso concreto se vuelve \Inf, sin crecimiento previo; (b) la pérdida pasa de $2{,}3$ a $10^{6}$ en pocos pasos y luego a \NaN; (c) la pérdida es \NaN\ desde el primer paso en una red que usa \texttt{torch.log(torch.softmax(z))}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-lse}
+Calcule $\LSE(1000,999,998)$ y la softmax correspondiente con tres decimales, y compruebe las cotas de la \cref{prop:lse}(ii).
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-softmax}
+Sean las puntuaciones $v=(100,101,103)$ en fp32. (a) ¿Qué devuelve la softmax ingenua y por qué? (b) Demuestre que $\softmax(v-c\uno)=\softmax(v)$ para toda constante $c$. (c) Calcule la softmax con $c=\max_iv_i$.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, primavera de 2026, práctica~1 (\emph{basics}), versión~26.0.3, §3.4.4, problema \texttt{softmax}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-rango}
+Calcule el menor y el mayor argumento $t$ para los que $e^{t}$ no se desborda ni da un resultado subnormal en fp32, fp16 y bf16. ¿Qué formato limita más los logits de una softmax ingenua?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §4.5, ejercicio~1 (se omiten los formatos FP64, TF32 e INT8).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-ce}
+(a) Para los logits $z=(2,1,0)$ y la clase correcta $y=3$, calcule la entropía cruzada $\ell(z,y)$ y su gradiente con la \cref{prop:ce}. (b) En fp16, con $z=(0,-20)$, calcule $\ln\softmax(z)_2$ de forma ingenua y de forma estable.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-cotas}
+Demuestre la \cref{prop:lse}(ii): $\max_iz_i\le\LSE(z)\le\max_iz_i+\ln n$, con igualdad en la cota superior si y solo si todas las componentes de $z$ son iguales. Compruébelo con $z=(3,3)$ y con $z=(2,1,0)$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-convexa}
+(a) Demuestre que $\nabla^{2}\LSE(z)=\diag(p)-pp\T$ con $p=\softmax(z)$. (b) Demuestre que, para todo $v\in\R^{n}$, $v\T(\diag(p)-pp\T)v=\sum_ip_i(v_i-\bar v)^{2}\ge 0$, con $\bar v=\sum_ip_iv_i$, y concluya que $\LSE$ y la entropía cruzada $\ell(\cdot,y)$ son convexas en los logits. (c) Compruebe que $\uno$ está en el núcleo del hessiano y relaciónelo con la \cref{prop:lse}(i).
+\end{ejercicio}

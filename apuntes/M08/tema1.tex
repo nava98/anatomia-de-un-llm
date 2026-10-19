@@ -1,0 +1,183 @@
+% =====================================================================
+\chapter{El problema del aprendizaje supervisado}
+\label{tema:1}
+% =====================================================================
+
+Este tema fija el marco común a todo el módulo: los datos se suponen extraídos de una distribución desconocida, un modelo es una función elegida dentro de una clase de hipótesis y su calidad se mide con el riesgo, la pérdida esperada sobre datos nuevos. La presentación sigue la introducción de la parte~I de los apuntes de CS229~\cite{cs229}, la teoría de la decisión estadística de Hastie, Tibshirani y Friedman~\cite[§2.4]{esl}, la formulación del capítulo~2 de las notas de MIT~6.390~\cite{mit6390} y el análisis de las pérdidas de Bishop~\cite[§1.5.5]{bishop}.
+
+\section{Datos, hipótesis y pérdida}
+
+\begin{definicion}[Problema supervisado]\label{def:supervisado}
+Sean $\X$ un \emph{espacio de entradas} y $\Y$ un \emph{espacio de salidas}. Un \emph{problema de aprendizaje supervisado} consta de una distribución de probabilidad $\D$ sobre $\X\times\Y$, desconocida, y de un \emph{conjunto de entrenamiento} $S=\{(x_1,y_1),\dots,(x_n,y_n)\}$ formado por $n$ pares independientes con distribución $\D$. El problema se llama de \emph{regresión} si $\Y=\R$ y de \emph{clasificación} si $\Y$ es finito; en este caso sus elementos se llaman \emph{clases}.
+\end{definicion}
+
+En casi todo el módulo $\X=\R^{d}$: cada entrada es un vector de $d$ \emph{características}. Un modelo de lenguaje preentrenado resuelve un problema de clasificación en el que $x$ es el contexto, $y$ es el token siguiente y $\Y=\V$ es el vocabulario, con $K=\abs{\V}$ clases.
+
+\begin{definicion}[Hipótesis y clase de hipótesis]
+Una \emph{hipótesis} es una función $f\colon\X\to\widehat{\Y}$, donde $\widehat{\Y}$ es el espacio de predicciones ($\widehat{\Y}=\R$ en regresión; $\widehat{\Y}=\Y$ o el símplex de distribuciones sobre $\Y$ en clasificación). Una \emph{clase de hipótesis} es un conjunto $\Hc=\{f_\theta:\theta\in\Theta\}$ de hipótesis indexadas por un vector de \emph{parámetros} $\theta$.
+\end{definicion}
+
+\begin{definicion}[Pérdida, riesgo y riesgo empírico]\label{def:riesgo}
+Una \emph{función de pérdida} es una aplicación $\ell\colon\widehat{\Y}\times\Y\to[0,\infty)$; $\ell(\hat y,y)$ mide el coste de predecir $\hat y$ cuando la respuesta es $y$. Las tres pérdidas de este módulo son:
+\begin{enumerate}
+  \item la \emph{cuadrática}, $\ell(\hat y,y)=(\hat y-y)^{2}$, para regresión;
+  \item la \emph{0-1}, $\ell(\hat y,y)=\ind[\hat y\ne y]$, para clasificación con predicción de una clase;
+  \item la \emph{logarítmica}, $\ell(q,y)=-\ln q_y$, para clasificación con predicción de una distribución $q$ sobre $\Y$.
+\end{enumerate}
+El \emph{riesgo} o \emph{error de generalización} de $f$ es $R(f)=\E_{(x,y)\sim\D}\bigl[\ell(f(x),y)\bigr]$, y su \emph{riesgo empírico} sobre $S$ es
+\[
+\Remp(f)=\frac{1}{n}\sum_{i=1}^{n}\ell\bigl(f(x_i),y_i\bigr).
+\]
+El principio de \emph{minimización del riesgo empírico} elige $\hat f=\argmin_{f\in\Hc}\Remp(f)$.
+\end{definicion}
+
+El objetivo es un riesgo pequeño, pero $\D$ es desconocida y solo $\Remp$ puede calcularse. Toda la teoría de la generalización (temas~5 y~6) estudia la diferencia entre ambos.
+
+\section{El predictor óptimo}
+
+Antes de restringirse a una clase $\Hc$, conviene saber cuál es la mejor predicción posible si $\D$ fuese conocida~\cite[§2.4]{esl}.
+
+\begin{teorema}[Función de regresión]\label{teo:regresion}
+Sea $\Y=\R$ con $\E[y^{2}]<\infty$, y sea $f^{*}(x)=\E[y\mid x]$. Para toda $f$ con $\E[f(x)^{2}]<\infty$, el riesgo cuadrático cumple
+\[
+R(f)=\E\bigl[(y-f(x))^{2}\bigr]=\E\bigl[(y-f^{*}(x))^{2}\bigr]+\E\bigl[(f^{*}(x)-f(x))^{2}\bigr].
+\]
+En consecuencia, $f^{*}$ minimiza el riesgo cuadrático, y el riesgo mínimo es $\E\bigl[\Var(y\mid x)\bigr]$.
+\end{teorema}
+
+\begin{proof}
+Se escribe $y-f(x)=\bigl(y-f^{*}(x)\bigr)+\bigl(f^{*}(x)-f(x)\bigr)$ y se desarrolla el cuadrado. El término cruzado es $2\,\E\bigl[(y-f^{*}(x))(f^{*}(x)-f(x))\bigr]$. Condicionando a $x$, el segundo factor es constante y $\E[y-f^{*}(x)\mid x]=\E[y\mid x]-f^{*}(x)=0$; por la ley de la esperanza total, el término cruzado es nulo. El segundo sumando es no negativo y se anula si $f=f^{*}$. Por último, $\E[(y-f^{*}(x))^{2}\mid x]=\Var(y\mid x)$.
+\end{proof}
+
+\begin{proposicion}[Clasificador de Bayes]\label{prop:bayes}
+Sea $\Y$ finito y $\ell$ la pérdida 0-1. El clasificador $f^{*}(x)=\argmax_{k\in\Y}P(y=k\mid x)$ minimiza el riesgo, y su riesgo es $R(f^{*})=1-\E\bigl[\max_k P(y=k\mid x)\bigr]$.
+\end{proposicion}
+
+\begin{proof}
+Para $x$ fijo, la pérdida esperada de predecir la clase $k$ es $\E[\ind[y\ne k]\mid x]=1-P(y=k\mid x)$, que es mínima cuando $P(y=k\mid x)$ es máxima. Como el riesgo es la esperanza en $x$ de esta cantidad, minimizarla para cada $x$ minimiza el riesgo.
+\end{proof}
+
+\begin{proposicion}[La pérdida logarítmica premia la probabilidad verdadera]\label{prop:logloss}
+Sea $\Y$ finito, $p(\cdot\mid x)$ la distribución condicional verdadera y $q$ cualquier distribución sobre $\Y$. Entonces
+\[
+\E\bigl[-\ln q_y\mid x\bigr]=H\bigl(p(\cdot\mid x)\bigr)+D_{\mathrm{KL}}\bigl(p(\cdot\mid x)\,\Vert\,q\bigr),
+\]
+de modo que el riesgo logarítmico se minimiza, para cada $x$, con $q=p(\cdot\mid x)$.
+\end{proposicion}
+
+\begin{proof}
+$\E[-\ln q_y\mid x]=-\sum_k p_k\ln q_k=-\sum_k p_k\ln p_k+\sum_k p_k\ln(p_k/q_k)$, con $p_k=p(k\mid x)$. El primer sumando es la entropía y el segundo la divergencia de Kullback-Leibler, que es no negativa y solo se anula si $q=p$ (desigualdad de Gibbs, módulo~6).
+\end{proof}
+
+\begin{observacion}[Conexión con los LLM]
+La \cref{prop:logloss} justifica el preentrenamiento: al minimizar la entropía cruzada del token siguiente, el modelo óptimo es la distribución condicional verdadera $P(x_t\mid x_{1:t-1})$, y el exceso de pérdida sobre la entropía del texto es una divergencia KL. La pérdida 0-1, en cambio, solo premiaría acertar el token más probable y no enseñaría al modelo a repartir la probabilidad.
+\end{observacion}
+
+\begin{ejemplo}\label{ej:bayes}
+Sea $x\in\{0,1\}$ e $y\in\{0,1,2\}$ con la distribución conjunta del \cref{tab:conjunta}. Entonces $P(x=0)=0{,}4$, $\E[y\mid x=0]=(0{,}1+0{,}2)/0{,}4=0{,}75$ y $\E[y\mid x=1]=(0{,}2+0{,}6)/0{,}6=4/3$. El clasificador de Bayes predice la clase~0 si $x=0$ y la clase~2 si $x=1$, y su riesgo 0-1 es $1-(0{,}2+0{,}3)=0{,}5$.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Distribución conjunta $P(x,y)$ del \cref{ej:bayes}.}\label{tab:conjunta}
+\begin{tabular}{@{}lccc|c@{}}
+\toprule
+ & $y=0$ & $y=1$ & $y=2$ & $P(x)$ \\
+\midrule
+$x=0$ & $0{,}2$ & $0{,}1$ & $0{,}1$ & $0{,}4$ \\
+$x=1$ & $0{,}1$ & $0{,}2$ & $0{,}3$ & $0{,}6$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Riesgo empírico y optimismo}
+
+\begin{proposicion}\label{prop:insesgado}
+Sea $f$ una hipótesis fija, elegida sin mirar $S$, con $\Var(\ell(f(x),y))=v<\infty$. Entonces $\E_S[\Remp(f)]=R(f)$ y $\Var_S(\Remp(f))=v/n$.
+\end{proposicion}
+
+\begin{proof}
+$\Remp(f)$ es la media de $n$ variables independientes con esperanza $R(f)$ y varianza $v$. Por linealidad de la esperanza y aditividad de la varianza de variables independientes (módulo~5), $\E[\Remp(f)]=R(f)$ y $\Var(\Remp(f))=n v/n^{2}=v/n$.
+\end{proof}
+
+\begin{proposicion}[Optimismo del error de entrenamiento]\label{prop:optimismo}
+Sea $\Hc$ una clase de hipótesis y supóngase que $\hat f\in\argmin_{f\in\Hc}\Remp(f)$ existe. Entonces
+\[
+\E_S\bigl[\Remp(\hat f)\bigr]\le\inf_{f\in\Hc}R(f)\le\E_S\bigl[R(\hat f)\bigr].
+\]
+\end{proposicion}
+
+\begin{proof}
+Para cada $f\in\Hc$ fija, $\Remp(\hat f)\le\Remp(f)$; tomando esperanzas y usando la \cref{prop:insesgado}, $\E[\Remp(\hat f)]\le R(f)$. Como vale para toda $f$, se cumple también para el ínfimo. La segunda desigualdad se debe a que $\hat f\in\Hc$, luego $R(\hat f)\ge\inf_{f\in\Hc}R(f)$ para cada $S$.
+\end{proof}
+
+La \cref{prop:optimismo} explica por qué el error de entrenamiento no sirve para evaluar un modelo: en media, subestima el riesgo del modelo ajustado. Hace falta un conjunto de datos que no haya intervenido en el ajuste.
+
+\section{Entrenamiento, validación y prueba}
+
+\begin{definicion}[Partición de los datos]
+Los datos etiquetados disponibles se dividen al azar en tres subconjuntos disjuntos: el de \emph{entrenamiento}, con el que se ajustan los parámetros $\theta$; el de \emph{validación}, con el que se eligen los \emph{hiperparámetros} (grado de un polinomio, coeficiente de regularización, número de épocas), y el de \emph{prueba}, con el que se estima una sola vez el riesgo del modelo final~\cite[§2.8]{mit6390}.
+\end{definicion}
+
+Si se elige un hiperparámetro mirando el conjunto de prueba, ese conjunto pasa a formar parte del ajuste y, por la \cref{prop:optimismo}, la estimación final resulta optimista. La \cref{fig:particion} resume el protocolo; la validación cruzada (\cref{tema:6}) lo refina cuando hay pocos datos.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,node distance=6mm and 9mm,
+  caja/.style={draw,thick,rounded corners=2pt,align=center,minimum height=8mm,inner sep=4pt},
+  flecha/.style={-{Stealth[length=2mm]},thick}]
+  \node[caja] (d) {Datos\\etiquetados};
+  \node[caja,right=of d,yshift=16mm] (tr) {Entrenamiento\\(60\,\%)};
+  \node[caja,right=of d] (va) {Validación\\(20\,\%)};
+  \node[caja,right=of d,yshift=-16mm] (te) {Prueba\\(20\,\%)};
+  \node[caja,right=of tr] (aj) {Ajustar $\theta$};
+  \node[caja,right=of va] (hp) {Elegir\\hiperparámetros};
+  \node[caja,right=of te] (ev) {Estimar $R(\hat f)$\\una sola vez};
+  \draw[flecha] (d) -- (tr.west);
+  \draw[flecha] (d) -- (va.west);
+  \draw[flecha] (d) -- (te.west);
+  \draw[flecha] (tr) -- (aj);
+  \draw[flecha] (va) -- (hp);
+  \draw[flecha] (te) -- (ev);
+  \draw[flecha] (aj) -- (hp);
+  \draw[flecha,dashed] (hp.east) -- ++(7mm,0) |- node[pos=0.25,right] {reajustar} (aj.east);
+  \draw[flecha] (hp) -- (ev);
+\end{tikzpicture}
+\caption{Protocolo de entrenamiento, validación y prueba. Las proporciones son las de la práctica del módulo.}
+\label{fig:particion}
+\end{figure}
+
+\begin{observacion}[Conexión con los LLM]
+Los laboratorios reservan textos de validación para vigilar la pérdida durante el preentrenamiento y usan bancos de pruebas (\emph{benchmarks}) independientes como conjunto de prueba. Si un banco de pruebas aparece en los datos de entrenamiento, se habla de \emph{contaminación}, y la estimación deja de ser fiable (módulo~22).
+\end{observacion}
+
+\begin{lecturas}
+\item Ng y Ma~\cite{cs229}, introducción de la parte~I «Supervised learning».
+\item Hastie, Tibshirani y Friedman~\cite{esl}, §2.4 «Statistical Decision Theory».
+\item Bishop~\cite{bishop}, §1.5.5 «Loss functions for regression».
+\item MIT 6.390~\cite{mit6390}, cap.~2, §2.1 «Problem formulation», §2.2 «Regression as an optimization problem» y §2.8 «Evaluating learning algorithms».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-tipos}
+Indique si cada problema es de regresión o de clasificación y, en el segundo caso, cuántas clases tiene: (a) predecir el precio de una vivienda; (b) reconocer un dígito manuscrito; (c) predecir el token siguiente con un vocabulario de $128\,256$ tokens; (d) decidir si un correo es deseado o no deseado. ¿Qué pérdida de la \cref{def:riesgo} usaría en cada caso si el modelo debe devolver probabilidades?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-particion}
+Un conjunto de $1797$ imágenes de dígitos se divide en un 20\,\% de prueba, un 20\,\% de validación y el resto de entrenamiento, redondeando al entero más próximo. ¿Cuántos ejemplos tiene cada parte? Explique por qué no debe elegirse el coeficiente de regularización con la exactitud en prueba.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-bayes}
+Con la distribución del \cref{tab:conjunta}: (a) calcule el riesgo cuadrático mínimo $\E[\Var(y\mid x)]$; (b) calcule el riesgo cuadrático del mejor predictor constante $f(x)=c$; (c) compruebe que la diferencia entre ambos es $\E\bigl[(f^{*}(x)-c)^{2}\bigr]$, como afirma el \cref{teo:regresion}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-constante}
+Dados los números $x=(1,2,4,9,14)$: (a) halle la constante $b$ que minimiza $\sum_i(x_i-b)^{2}$; (b) halle la que minimiza $\sum_i\abs{x_i-b}$; (c) evalúe ambas sumas en ambas constantes y explique cuál de las dos es menos sensible al valor~14.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §3.1, ejercicio~1, apartados (a) y (c).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-logloss}
+Sea $p=(p_1,\dots,p_K)$ una distribución con todas sus componentes positivas. (a) Demuestre, con multiplicadores de Lagrange, que $q\mapsto-\sum_k p_k\ln q_k$ alcanza su mínimo en el símplex exactamente en $q=p$. (b) Demuestre que el riesgo cuadrático o de Brier, $\sum_k p_k\norm{q-e_k}^{2}$, es igual a $\norm{q-p}^{2}+1-\norm{p}^{2}$ y, por tanto, también se minimiza en $q=p$. (c) Calcule el valor de ambos riesgos en $q=p$ para $p=(0{,}5;\,0{,}25;\,0{,}25)$.
+\end{ejercicio}

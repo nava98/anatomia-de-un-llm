@@ -1,0 +1,224 @@
+% =====================================================================
+\chapter{Mezcla de expertos}
+\label{tema:4}
+% =====================================================================
+
+Un Transformer denso aplica a cada token todos sus parámetros. Una capa de \emph{mezcla de expertos} (MoE) sustituye el MLP por varios MLP alternativos y por un enrutador que elige unos pocos para cada token, de modo que los parámetros crecen con el número de expertos y el cómputo por token solo con el número de expertos elegidos. Este tema formula la capa, distingue parámetros totales y activos, estudia el problema del balanceo de carga y sus soluciones, y reconstruye los recuentos publicados de varios modelos. Se sigue la clase~4 de CS336~\cite{cs336}, los artículos de Shazeer \emph{et al.}~\cite[§2 y §4]{shazeer2017}, Fedus \emph{et al.}~\cite[§2]{switch} y Jiang \emph{et al.}~\cite[§2]{mixtral}, y los informes de DeepSeek-V2 y DeepSeek-V3~\cite[§2.2]{deepseekv2},~\cite[§2.1.2]{deepseekv3}.
+
+\section{La capa de mezcla de expertos}
+
+\begin{definicion}[Capa MoE con enrutado top-$k$]\label{def:moe}
+Sean $E_1,\dots,E_N:\R^{1\times d}\to\R^{1\times d}$ MLP con la misma forma (los \emph{expertos}), $W_r\in\R^{d\times N}$ la matriz del \emph{enrutador} y $1\le k\le N$. Para un token $x$, sean $z=xW_r\in\R^{N}$ sus logits y $\mathcal T(x)$ el conjunto de los índices de los $k$ logits mayores. La salida de la capa es
+\[
+y=\sum_{i\in\mathcal T(x)}g_i(x)\,E_i(x),\qquad g_i(x)=\frac{e^{z_i}}{\sum_{j\in\mathcal T(x)}e^{z_j}} .
+\]
+Los expertos que no están en $\mathcal T(x)$ no se evalúan. Esta es la formulación de Mixtral, $G(x)=\softmax(\TopK(xW_r))$~\cite[§2.1]{mixtral}.
+\end{definicion}
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\small,box/.style={draw,rounded corners=2pt,minimum width=14mm,minimum height=7mm},off/.style={box,draw=black!35,text=black!40},>={Stealth[length=2mm]}]
+  \node[box] (x) at (0,0) {$x$};
+  \node[box,minimum width=22mm] (r) at (2.6,1.5) {enrutador $xW_r$};
+  \node[box,minimum width=16mm] (t) at (5.4,1.5) {top-$k$};
+  \node[box] (e1) at (5.4,0.3) {$E_1$};
+  \node[off] (e2) at (5.4,-0.6) {$E_2$};
+  \node[box] (e3) at (5.4,-1.5) {$E_3$};
+  \node[off] (e4) at (5.4,-2.4) {$E_4$};
+  \node[draw,circle,inner sep=1pt] (s) at (7.8,-0.6) {$\Sigma$};
+  \node[box] (y) at (9.4,-0.6) {$y$};
+  \draw[->] (x) |- (r);
+  \draw[->] (r) -- (t);
+  \draw[->] (x) |- (e1); \draw[->,black!35] (x) |- (e2); \draw[->] (x) |- (e3); \draw[->,black!35] (x) |- (e4);
+  \draw[->] (e1) -- node[above,sloped] {$g_1$} (s);
+  \draw[->] (e3) -- node[below,sloped] {$g_3$} (s);
+  \draw[->,dashed] (t) -| (s);
+  \draw[->] (s) -- (y);
+\end{tikzpicture}
+\caption{Capa MoE con $N=4$ y $k=2$: el enrutador elige los expertos 1 y 3, que son los únicos que se evalúan, y la salida es su combinación con pesos $g_1+g_3=1$.}
+\label{fig:moe}
+\end{figure}
+
+Hay variantes en el orden de las operaciones. Shazeer \emph{et al.} también normalizan solo entre los elegidos, pero añaden ruido gaussiano a los logits, con una desviación aprendida, $H(x)_i=(xW_r)_i+\xi_i\,\softplus\bigl((xW_{\mathrm{ruido}})_i\bigr)$ con $\xi_i\sim\mathcal N(0,1)$, para favorecer la exploración y el balanceo~\cite[§2.1]{shazeer2017}. El Switch Transformer usa $k=1$ y pondera la salida por la probabilidad de la softmax sobre los $N$ expertos, sin renormalizar~\cite[§2.1]{switch}. La clase~4 de CS336 recoge que DeepSeek-V1 y V2, Grok y Qwen aplican la softmax antes del top-$k$, y que Mixtral, DBRX y DeepSeek-V3 normalizan después~\cite{cs336}.
+
+\begin{proposicion}[Renormalización]\label{prop:renorm}
+Sean $p=\softmax(z)$ las probabilidades sobre los $N$ expertos y $g$ los pesos de la \cref{def:moe}. Para $i\in\mathcal T(x)$, $g_i=p_i/\sum_{j\in\mathcal T(x)}p_j\ge p_i$, con igualdad para todo $i$ si y solo si $k=N$. Además, el orden de los expertos elegidos es el mismo con $g$ que con $p$.
+\end{proposicion}
+
+\begin{proof}
+Dividiendo numerador y denominador de $g_i$ por $Z=\sum_{j=1}^{N}e^{z_j}$, $g_i=(e^{z_i}/Z)/\sum_{j\in\mathcal T}(e^{z_j}/Z)=p_i/\sum_{j\in\mathcal T}p_j$. Como $0<\sum_{j\in\mathcal T}p_j\le 1$, $g_i\ge p_i$, y la suma vale~1 si y solo si $\mathcal T$ contiene todos los índices, porque cada $p_j>0$. El orden se conserva porque $g$ es $p$ multiplicada por una constante positiva.
+\end{proof}
+
+\begin{ejemplo}[Enrutador con cuatro expertos]\label{ej:router}
+Sean $z=(2;\,1;\,0{,}5;\,-1)$ y $k=2$. Los elegidos son los expertos 1 y 2, con $g_1=e^{2}/(e^{2}+e^{1})=1/(1+e^{-1})=0{,}7311$ y $g_2=0{,}2689$, de modo que $y=0{,}7311\,E_1(x)+0{,}2689\,E_2(x)$. Con la softmax sobre los cuatro, $p_1=0{,}6095$ y $p_2=0{,}2242$, que suman $0{,}8337$; dividiendo por esa suma se recuperan $g_1$ y $g_2$, como afirma la \cref{prop:renorm}.
+\end{ejemplo}
+
+\section{Parámetros totales y activos}
+
+\begin{proposicion}[Parámetros totales y activos]\label{prop:activos}
+Sea un modelo con $L$ capas MoE de $N$ expertos de $P_E$ parámetros cada uno, $k$ de ellos activos por token, y sea $P_0$ el número de parámetros compartidos por todos los tokens (atención, \emph{embeddings}, normalizaciones y enrutadores). Entonces
+\[
+\Ntot=P_0+LNP_E,\qquad \Nact=P_0+LkP_E .
+\]
+El cómputo por token en la pasada hacia delante es de unos $2\Nact$ FLOPs y el de entrenamiento con $D$ tokens, $C\approx 6\Nact D$, mientras que la memoria de los pesos es proporcional a $\Ntot$.
+\end{proposicion}
+
+\begin{proof}
+Cada token usa todos los parámetros compartidos y, en cada una de las $L$ capas, los de $k$ expertos. Los FLOPs se siguen de la regla de dos operaciones por parámetro de matriz y token en la pasada hacia delante y seis en total con la retropropagación (módulos~14 y~16), aplicada a los parámetros que intervienen en el cálculo de ese token. Para la memoria, como el enrutador puede elegir cualquier experto en cualquier token, todos deben estar cargados.
+\end{proof}
+
+\begin{ejemplo}[Mixtral 8x7B]\label{ej:mixtral}
+Mixtral tiene $d=4096$, $\dff=14\,336$ (SwiGLU, tres matrices), $L=32$, un vocabulario de $32\,000$ tokens, 32 cabezas de consulta y 8 de clave y valor de dimensión 128, y $N=8$ expertos con $k=2$~\cite[tabla~1]{mixtral}. Con \emph{embeddings} de entrada y salida separados y RMSNorm con un vector de ganancias por norma:
+\begin{enumerate}[label=\arabic*.]
+  \item un experto: $P_E=3\cdot 4096\cdot 14\,336=176\,160\,768$; los $8\cdot 32$ expertos suman $45\,097\,156\,608$;
+  \item atención por capa: $2\cdot 4096^{2}+2\cdot 4096\cdot 1024=41\,943\,040$; en 32 capas, $1\,342\,177\,280$;
+  \item \emph{embeddings} y salida: $2\cdot 32\,000\cdot 4096=262\,144\,000$; enrutadores: $32\cdot 4096\cdot 8=1\,048\,576$; normas: $65\cdot 4096=266\,240$;
+  \item $\Ntot=46\,702\,792\,704$ y $\Nact=12\,879\,925\,248$, un $27{,}58\,\%$.
+\end{enumerate}
+El artículo da $47\,000$ y $13\,000$ millones~\cite{mixtral}. El nombre «8x7B» no significa $56\cdot 10^{9}$ parámetros: la atención y los \emph{embeddings} se comparten.
+\end{ejemplo}
+
+\section{Balanceo de carga}
+
+Si un experto empieza siendo algo mejor, el enrutador le envía más tokens, recibe más gradiente, mejora más y acaba acaparando el tráfico; los demás apenas se entrenan. Shazeer \emph{et al.} ya observaron este colapso y lo combatieron con una pérdida sobre el coeficiente de variación de la importancia de cada experto, $\mathrm{Importance}(X)=\sum_{x\in X}G(x)$~\cite[§4]{shazeer2017}. La formulación más usada es la del Switch Transformer.
+
+\begin{definicion}[Pérdida de balanceo]\label{def:bal}
+Sea un lote $\mathcal B$ de tokens. Para cada experto $i$, sean $f_i$ la fracción de las asignaciones del lote que recibe y $P_i=\frac{1}{\abs{\mathcal B}}\sum_{x\in\mathcal B}p_i(x)$ la probabilidad media que le da el enrutador. La \emph{pérdida de balanceo} es
+\[
+\Lbal=N\sum_{i=1}^{N}f_iP_i,
+\]
+y se suma a la entropía cruzada con un coeficiente $\alpha$; el Switch Transformer usa $\alpha=10^{-2}$~\cite[§2.2, ecs.~4--6]{switch}.
+\end{definicion}
+
+Las fracciones $f_i$ proceden de una selección discreta y no son derivables; el gradiente fluye solo a través de $P_i$. La clase~4 de CS336 lo resume así: la derivada respecto de $p_i(x)$ es proporcional al número de tokens asignados al experto~$i$, de modo que un experto más usado ve reducida su probabilidad con más fuerza~\cite{cs336}.
+
+\begin{teorema}[Cotas de la pérdida de balanceo]\label{teo:bal}
+Si $f=P$ (el tráfico real coincide con la probabilidad media), entonces $1\le\Lbal\le N$. La cota inferior se alcanza si y solo si $P_i=1/N$ para todo $i$, y la superior, si y solo si un experto recibe todo el tráfico.
+\end{teorema}
+
+\begin{proof}
+Con $f=P$, $\Lbal=N\sum_iP_i^{2}$, con $P_i\ge 0$ y $\sum_iP_i=1$. Por la desigualdad de Cauchy--Schwarz aplicada a $(1,\dots,1)$ y $(P_1,\dots,P_N)$,
+\[
+1=\Bigl(\sum_{i=1}^{N}1\cdot P_i\Bigr)^{2}\le\Bigl(\sum_{i=1}^{N}1\Bigr)\Bigl(\sum_{i=1}^{N}P_i^{2}\Bigr)=N\sum_{i=1}^{N}P_i^{2},
+\]
+con igualdad si y solo si los dos vectores son proporcionales, es decir, si todos los $P_i$ son iguales a $1/N$. Para la cota superior, $0\le P_i\le 1$ implica $P_i^{2}\le P_i$, luego $\sum_iP_i^{2}\le\sum_iP_i=1$ y $\Lbal\le N$; la igualdad exige $P_i^{2}=P_i$ para todo $i$, es decir, $P_i\in\{0,1\}$, y como suman~1, un único $P_i$ vale~1.
+\end{proof}
+
+\begin{table}[ht]
+\centering\small
+\caption{Valores de $\Lbal$ con $N=4$.}\label{tab:bal}
+\begin{tabular}{@{}lllc@{}}
+\toprule
+Situación & $f$ & $P$ & $\Lbal$ \\
+\midrule
+Reparto uniforme & $(\frac14,\frac14,\frac14,\frac14)$ & $(\frac14,\frac14,\frac14,\frac14)$ & $1$ \\
+Desequilibrio & $(0{,}5;\ 0{,}3;\ 0{,}1;\ 0{,}1)$ & $(0{,}4;\ 0{,}3;\ 0{,}2;\ 0{,}1)$ & $1{,}28$ \\
+Colapso & $(1,0,0,0)$ & $(1,0,0,0)$ & $4$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Balanceo sin pérdida auxiliar]
+DeepSeek-V3 sustituye casi por completo la pérdida auxiliar por un sesgo $b_i$ por experto que solo interviene en la selección: los expertos se eligen según $s_i(x)+b_i$, pero se ponderan con $s_i(x)$, y al final de cada paso $b_i$ disminuye en una cantidad fija $\gamma$ si el experto ha estado sobrecargado y aumenta en $\gamma$ si ha estado infrautilizado~\cite[§2.1.2]{deepseekv3}. Mantiene, con un coeficiente muy pequeño, una pérdida de balanceo por secuencia. DeepSeek-V3 usa además afinidades sigmoides, $s_i(x)=\sigma(u\,e_i\T)$, en lugar de una softmax.
+\end{observacion}
+
+\section{Capacidad y descarte de tokens}
+
+En un acelerador, cada experto procesa un tensor de tamaño fijo, de modo que el número de tokens que puede recibir por lote está acotado.
+
+\begin{definicion}[Capacidad de un experto]\label{def:capacidad}
+Con un lote de $B_{\mathrm{t}}$ tokens, $N$ expertos, $k$ asignaciones por token y un \emph{factor de capacidad} $c\ge 1$, la \emph{capacidad} de cada experto es
+\[
+C_{\mathrm{exp}}=c\cdot\frac{k\,B_{\mathrm{t}}}{N}
+\]
+tokens~\cite[§2.2, ec.~3]{switch}. Las asignaciones que exceden la capacidad se \emph{descartan}: para ellas, ese experto no se evalúa.
+\end{definicion}
+
+Un token descartado en todos sus expertos sale de la capa con su vector intacto, porque el bloque calcula $h+\FFN(\cdot)$ y la contribución del MLP es nula: no se pierde la información del token, sino la transformación de esa capa. Con $B_{\mathrm{t}}=1024$, $N=8$, $k=1$ y $c=1{,}25$, la capacidad es $1{,}25\cdot 128=160$ tokens por experto. Un factor mayor descarta menos tokens, pero reserva más memoria y cómputo para posiciones de relleno. La clase~4 de CS336 señala una consecuencia práctica: como el descarte se decide por lote, las peticiones de otros usuarios pueden provocar el descarte de los tokens propios, lo que añade no determinismo a la inferencia~\cite{cs336}.
+
+\section{Expertos de grano fino y compartidos}
+
+DeepSeekMoE divide cada experto en $m$ expertos más pequeños y activa $m$ veces más, de modo que los parámetros y el cómputo no cambian, y reserva algunos expertos \emph{compartidos} que procesan todos los tokens~\cite[§2.2.1]{deepseekv2}. DeepSeek-V2 usa 2 expertos compartidos y 160 enrutados, de los que activa~6; DeepSeek-V3, 1 compartido y 256 enrutados, de los que activa~8~\cite{deepseekv2,deepseekv3}.
+
+\begin{proposicion}[Combinaciones de expertos]\label{prop:combinaciones}
+Si cada uno de $N$ expertos se divide en $m$ expertos de tamaño $1/m$ y se activan $mk$ de ellos, el número de combinaciones posibles pasa de $\binom{N}{k}$ a $\binom{mN}{mk}$, con los mismos parámetros totales y activos.
+\end{proposicion}
+
+\begin{proof}
+Los parámetros totales son $mN\cdot P_E/m=NP_E$ y los activos, $mk\cdot P_E/m=kP_E$. El número de subconjuntos de $mk$ elementos de un conjunto de $mN$ es $\binom{mN}{mk}$.
+\end{proof}
+
+Con $N=8$, $k=2$ y $m=4$, se pasa de $\binom82=28$ combinaciones a $\binom{32}{8}=10\,518\,300$. La clase~4 de CS336 recoge que las ablaciones de DeepSeek muestran ganancias de los expertos de grano fino y de los compartidos, mientras que las de OLMoE confirman las primeras pero no las segundas~\cite{cs336}.
+
+\section{Casos públicos}
+
+\begin{table}[ht]
+\centering\small
+\caption{Modelos MoE con información publicada por sus autores.}\label{tab:moe}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Modelo & Expertos y enrutado & Parámetros \\
+\midrule
+Shazeer \emph{et al.} (2017)~\cite{shazeer2017} & hasta $131\,072$ expertos entre capas LSTM, top-$k$ con ruido & hasta $1{,}37\cdot 10^{11}$ en la capa MoE \\
+Switch-C (2021)~\cite{switch} & $2048$ expertos, top-1 & $1{,}571\cdot 10^{12}$ (tabla~9) \\
+Mixtral 8x7B (2024)~\cite{mixtral} & 8 expertos, top-2 & $4{,}7\cdot 10^{10}$ totales, $1{,}3\cdot 10^{10}$ activos \\
+Grok-1 (2024)~\cite{grok1} & 8 expertos, 2 por token & $3{,}14\cdot 10^{11}$ \\
+DeepSeek-V2 (2024)~\cite{deepseekv2} & 2 compartidos y 160 enrutados, 6 activos & $2{,}36\cdot 10^{11}$ totales, $2{,}1\cdot 10^{10}$ activos \\
+DeepSeek-V3 (2024)~\cite{deepseekv3} & 1 compartido y 256 enrutados, 8 activos & $6{,}71\cdot 10^{11}$ totales, $3{,}7\cdot 10^{10}$ activos \\
+Gemini 1.5 Pro (2024)~\cite{gemini15} & «Transformer de mezcla de expertos dispersa» & no publicado \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Lo que no es público]
+El informe de Gemini~1.5 describe el modelo como un Transformer MoE disperso, pero no da el número de expertos ni el de parámetros~\cite[§3.1]{gemini15}. Anthropic no ha publicado la arquitectura de Claude, y xAI no ha publicado la de las versiones de Grok posteriores a Grok-1. Nada de lo que se dice en este tema debe atribuirse a esos modelos.
+\end{observacion}
+
+\begin{observacion}[Paralelismo de expertos]
+Las MoE añaden una forma de paralelismo a las del módulo~17: cada dispositivo guarda un subconjunto de expertos y los tokens viajan al dispositivo de su experto y vuelven mediante una comunicación de todos con todos (\emph{all-to-all}). DeepSeek-V2 limita el número de dispositivos a los que puede ir cada token para acotar esa comunicación~\cite[§2.2.2]{deepseekv2}.
+\end{observacion}
+
+\begin{lecturas}
+\item Stanford CS336~\cite{cs336}, clase~4, «Mixture of experts».
+\item Shazeer \emph{et al.}~\cite{shazeer2017}, §2 «The Structure of the Mixture-of-Experts Layer» y §4 «Balancing Expert Utilization».
+\item Fedus \emph{et al.}~\cite{switch}, §2.1 «Simplifying Sparse Routing» y §2.2 «Efficient Sparse Routing».
+\item Jiang \emph{et al.}~\cite{mixtral}, §2.1 «Sparse Mixture of Experts».
+\item DeepSeek-AI~\cite{deepseekv2}, §2.2 «DeepSeekMoE», y~\cite{deepseekv3}, §2.1.2.
+\item Seminario CS25~\cite{cs25}, sesión de N.~Tazi sobre el entrenamiento a gran escala y las arquitecturas MoE.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-memoria}
+(a) Explique por qué una MoE con $N=8$ y $k=2$ necesita más memoria que un modelo denso con los mismos parámetros activos, y cuantifique el cociente para los parámetros de los MLP. (b) ¿Qué ocurre con un token cuya única asignación llega a un experto lleno? ¿Se pierde su información?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:4-vf}
+Justifique si son verdaderas o falsas: (a) el informe técnico de Gemini~1.5 indica que el modelo tiene 8 expertos; (b) en el Switch Transformer cada token se envía a un único experto; (c) DeepSeek-V3 no usa ninguna pérdida de balanceo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-router}
+Logits del enrutador $z=(0{,}5;\ 2;\ 1{,}2;\ 0)$ y $k=2$. Determine los expertos elegidos y sus pesos con la \cref{def:moe}, y los pesos que tendrían con la softmax sobre los cuatro expertos sin renormalizar.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-bal}
+(a) Con $N=4$, $f=(0{,}4;\ 0{,}1;\ 0{,}35;\ 0{,}15)$ y $P=(0{,}35;\ 0{,}15;\ 0{,}35;\ 0{,}15)$, calcule $\Lbal$. (b) Con un lote de 2048 tokens, $N=16$, $k=1$ y factor de capacidad $1{,}0$, calcule la capacidad por experto y explique qué ocurre si el reparto no es perfecto.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-grok}
+El código publicado de Grok-1 fija $d=6144$, $L=64$, 48 cabezas de consulta y 8 de clave y valor con $\dhd=128$, 8 expertos con 2 activos, vocabulario de $131\,072$ tokens, \emph{embeddings} de entrada y salida compartidos y un MLP con tres matrices cuya dimensión intermedia es $\dff=\lfloor 8d\cdot 2/3\rfloor$. Reconstruya $P_E$, $\Ntot$ y $\Nact$, despreciando las normalizaciones, y compare con las cifras del archivo \texttt{README}: $3{,}14\cdot 10^{11}$ parámetros y 2 expertos por token.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-cota}
+Demuestre que, si $f$ y $P$ son dos distribuciones de probabilidad sobre $N$ expertos cualesquiera (no necesariamente iguales), $0\le\Lbal\le N$, y que ambas cotas son alcanzables. ¿Por qué el mínimo útil es el del \cref{teo:bal} y no~0?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-grad}
+Sea un lote de $T$ tokens con enrutado top-1, $f_i=\frac1T\sum_{x}\uno[\arg\max_jp_j(x)=i]$ y $P_i=\frac1T\sum_xp_i(x)$. (a) Tratando $f$ como constante, demuestre que
+\[
+\frac{\partial(\alpha\Lbal)}{\partial p_i(x)}=\frac{\alpha N}{T^{2}}\sum_{x'}\uno\bigl[\arg\max_jp_j(x')=i\bigr].
+\]
+(b) Con $T=8$, $N=4$, $\alpha=10^{-2}$ y asignaciones $(4,2,1,1)$, evalúe la derivada para cada experto. (c) Explique por qué esta realimentación tiende a equilibrar la carga.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, clase~4 («Mixture of experts»), derivada de la pérdida de balanceo del Switch Transformer.}
+\end{ejercicio}

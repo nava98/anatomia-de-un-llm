@@ -1,0 +1,135 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase IV — Módulo 17
+%  Hardware y sistemas distribuidos
+%  Compilar: latexmk -r ../latexmkrc M17-hardware.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 17}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\FLOP}{\mathrm{FLOP}}
+\newcommand{\Ppico}{P_{\mathrm{pico}}}
+\newcommand{\Bmem}{B_{\mathrm{mem}}}
+\newcommand{\Icrit}{I^{\ast}}
+\newcommand{\fl}{\operatorname{fl}}
+\newcommand{\ulp}{\operatorname{ulp}}
+\newcommand{\MFU}{\mathrm{MFU}}
+\newcommand{\PUE}{\mathrm{PUE}}
+\newcommand{\GELU}{\operatorname{GELU}}
+\newcommand{\kB}{k_{\mathrm{B}}}
+\usetikzlibrary{patterns}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 17. Hardware y sistemas distribuidos},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase IV \textperiodcentered\ Escala, sistemas y arquitecturas modernas}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 17\par}\vspace{0.3cm}
+{\LARGE Hardware y sistemas distribuidos\par}
+\vspace{0.2cm}
+{\large Aceleradores, memoria, precisión y paralelismo en el entrenamiento de modelos de lenguaje\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+El módulo~16 estableció que entrenar un modelo de $N$ parámetros con $D$ tokens cuesta $C\approx 6ND$ operaciones en coma flotante. Para Chinchilla ($N=7\cdot 10^{10}$, $D=1{,}4\cdot 10^{12}$) eso son unas $5{,}9\cdot 10^{23}$ operaciones: un procesador que ejecutase $10^{11}$ operaciones por segundo tardaría unos $1{,}9\cdot 10^{5}$ años, mientras que un millar de aceleradores modernos bien coordinados lo hace en un par de meses. Este módulo estudia de dónde procede esa diferencia y cuál es su precio. Se analiza por qué los aceleradores están especializados en el producto de matrices, por qué el rendimiento suele estar limitado por el movimiento de datos y no por el cálculo, cómo se reescriben los algoritmos para respetar la jerarquía de memoria, qué formatos numéricos se usan y con qué garantías, cómo se reparte el entrenamiento entre miles de dispositivos y cuánto cuesta en tiempo, dinero y energía. Sobre el hardware y la infraestructura de Claude, Gemini y Grok solo se usa información pública; las cifras de hardware proceden de hojas de especificaciones publicadas y son aproximadas.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item contar las operaciones de un producto de matrices y de una pasada de entrenamiento, justificar la regla de $6$ operaciones por parámetro y token, y explicar el funcionamiento de los núcleos tensoriales y de las matrices sistólicas;
+  \item situar cada nivel de la jerarquía de memoria por capacidad y ancho de banda, definir la intensidad aritmética, demostrar la cota del modelo \emph{roofline} y decidir si una operación está limitada por el cómputo o por la memoria;
+  \item analizar el tráfico de memoria de la atención estándar y de FlashAttention, y demostrar la exactitud de la softmax en línea en la que se basa;
+  \item describir los formatos fp32, fp16, bf16 y fp8, acotar el error de redondeo y justificar cada elemento de la receta de entrenamiento en precisión mixta;
+  \item definir las operaciones colectivas, calcular el coste del \emph{all-reduce} en anillo y analizar el paralelismo de datos, de tensores y de etapas, así como la partición de estados de ZeRO;
+  \item estimar el coste, la duración, la energía y la refrigeración de un entrenamiento, y comparar la energía por operación con el límite de Landauer.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~2 se usa el producto de matrices y su interpretación por bloques; del módulo~6, la entropía de Shannon (para el límite de Landauer); del módulo~7, el optimizador Adam y su estado; del módulo~10, la retropropagación y el coste de memoria de las activaciones; del módulo~11, los formatos de coma flotante; de los módulos~13 y~14, la atención y el bloque Transformer, y del módulo~16, la regla $C\approx 6ND$ y la asignación de Chinchilla $D\approx 20N$.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Cómputo matricial y aceleradores & \cite{hp}, \cite{cs336}, \cite{jouppi}, \cite{kaplan} \\
+2 & Jerarquía de memoria y modelo \emph{roofline} & \cite{roofline}, \cite{hp}, \cite{scaling}, \cite{hongkung} \\
+3 & Algoritmos conscientes de la E/S: FlashAttention & \cite{flash}, \cite{milakov}, \cite{cs336} \\
+4 & Precisión numérica y precisión mixta & \cite{higham}, \cite{micikevicius}, \cite{fp8}, \cite{mit65940} \\
+5 & Entrenamiento distribuido & \cite{cs336}, \cite{megatron}, \cite{gpipe}, \cite{narayanan}, \cite{zero} \\
+6 & Coste, energía y límites físicos & \cite{kaplan}, \cite{palm}, \cite{horowitz}, \cite{landauer} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La organización sigue el bloque de sistemas del curso CS336 de Stanford, «Language Modeling from Scratch»~\cite{cs336}: la clase sobre GPU y TPU, la clase~6 sobre programación de núcleos de cálculo (\emph{kernels}) con Triton y la clase~7 sobre paralelismo, junto con la tarea~2 (\emph{systems})~\cite{cs336a2}, de la que proceden varios ejercicios. La arquitectura de los aceleradores sigue los capítulos~4 («Data-Level Parallelism in Vector, SIMD, and GPU Architectures») y~7 («Domain-Specific Architectures») de Hennessy y Patterson~\cite{hp} y las clases de CMU 15-418/618~\cite{cmu418} sobre procesadores paralelos y GPU. El modelo \emph{roofline} se toma del artículo original de Williams, Waterman y Patterson~\cite{roofline} y del capítulo «All About Rooflines» del libro \emph{How to Scale Your Model}~\cite{scaling}. La parte numérica sigue a Higham~\cite{higham} y las clases de cuantización de MIT 6.5940~\cite{mit65940}. Los métodos se toman de sus artículos originales: Micikevicius \emph{et al.}~\cite{micikevicius} para la precisión mixta, Dao \emph{et al.}~\cite{flash} para FlashAttention, Shoeybi \emph{et al.}~\cite{megatron} y Narayanan \emph{et al.}~\cite{narayanan} para el paralelismo de tensores y de etapas, Huang \emph{et al.}~\cite{gpipe} para GPipe y Rajbhandari \emph{et al.}~\cite{zero} para ZeRO. Como dispositivo de referencia se usa la GPU NVIDIA A100 SXM de 80~GB~\cite{a100}. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$F$, $Q$ & número de operaciones en coma flotante (FLOP) y bytes transferidos de un núcleo de cálculo \\
+$\Ppico$, $\Bmem$ & rendimiento máximo (FLOP/s) y ancho de banda de memoria (bytes/s) del dispositivo \\
+$I=F/Q$, $\Icrit=\Ppico/\Bmem$ & intensidad aritmética e intensidad crítica (FLOP/byte) \\
+$s$ & bytes por número (2 en bf16 y fp16, 4 en fp32) \\
+$M$ & capacidad de la memoria rápida (SRAM), en elementos \\
+$n$, $d$ & en el tema~3, longitud de la secuencia y dimensión de cada cabeza de atención \\
+$N$, $D$, $C\approx 6ND$ & parámetros del modelo, tokens de entrenamiento y cómputo total \\
+$p$, $\varepsilon=2^{-p}$, $u=\varepsilon/2$ & bits de mantisa, épsilon de la máquina y unidad de redondeo \\
+$\fl(x)$, $\ulp(x)$ & redondeo al número representable más cercano y separación entre representables junto a $x$ \\
+$n_{\mathrm{d}}$ & número de dispositivos (GPU) \\
+$S$, $W$ & tamaño de un tensor comunicado (bytes) y ancho de banda de enlace (bytes/s) \\
+$p_{\mathrm{e}}$, $m$ & etapas del pipeline y número de microlotes \\
+$\Psi$ & número de parámetros en el análisis de ZeRO \\
+$\MFU$, $\PUE$ & utilización de FLOP del modelo y eficiencia energética del centro de datos \\
+$\kB$, $T$ & constante de Boltzmann y temperatura absoluta \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

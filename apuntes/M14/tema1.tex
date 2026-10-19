@@ -1,0 +1,195 @@
+% =====================================================================
+\chapter{Arquitectura del Transformer decoder-only}
+\label{tema:1}
+% =====================================================================
+
+Este tema describe la arquitectura completa de un Transformer decoder-only: la entrada (tokens y embeddings), la pila de bloques y la capa de salida que produce los logits. Se demuestran dos propiedades estructurales: cada bloque conserva la forma $n\times d$ y la salida en la posición $t$ solo depende de los tokens $x_{1:t}$. Se sigue~\cite[§7.2--§7.5]{jm3}, \cite[§12.1.7 y §12.3.1]{bishopdl}, el artículo original~\cite[§3]{vaswani} y la descripción de la práctica~1 de CS336~\cite[§3.1 y §3.4]{cs336}.
+
+\section{Entrada: tokens y embeddings}
+
+Un tokenizador (módulo~12) transforma el texto en una secuencia de enteros $x_{1:n}=(x_1,\dots,x_n)$ con $x_t\in\{1,\dots,V\}$.
+
+\begin{definicion}[Embedding de tokens]\label{def:embedding}
+Sea $W_E\in\R^{V\times d}$ una matriz de parámetros cuya fila $j$, $e_j\in\R^{d}$, es el \emph{embedding} del token $j$. La entrada de la red es la matriz $H^{0}\in\R^{n\times d}$ cuya fila $t$ es
+\[
+h^{0}_t=e_{x_t}\;(+\,p_t),
+\]
+donde $p_t\in\R^{d}$ es un vector de posición que solo se suma en los modelos con posiciones absolutas (\cref{tema:4}). Equivalentemente, $H^{0}=OW_E$, siendo $O\in\{0,1\}^{n\times V}$ la matriz cuyas filas son las codificaciones \emph{one-hot} de los tokens.
+\end{definicion}
+
+La forma matricial $OW_E$ muestra que el embedding es una capa lineal sin sesgo aplicada a vectores \emph{one-hot}; en la práctica se implementa como una indexación de filas, que no hace ninguna multiplicación~\cite[§7.4]{jm3}.
+
+\section{El bloque decoder-only}
+
+Se recuerda la atención del módulo~13. Para una matriz $Z\in\R^{n\times d}$ y $h$ cabezas de dimensión $d_k=d/h$, la cabeza $i$ calcula $Q_i=ZW_Q^{(i)}$, $K_i=ZW_K^{(i)}$, $V_i=ZW_V^{(i)}$, con $W_Q^{(i)},W_K^{(i)},W_V^{(i)}\in\R^{d\times d_k}$, y
+\[
+\operatorname{head}_i(Z)=\softmax\Bigl(\frac{Q_iK_i\T}{\sqrt{d_k}}+M\Bigr)V_i,\qquad
+M_{tu}=\begin{cases}0,& u\le t,\\ -\infty,& u>t,\end{cases}
+\]
+donde la softmax se aplica por filas. La atención multicabeza concatena las cabezas y proyecta: $\MHA(Z)=[\operatorname{head}_1(Z)\;\cdots\;\operatorname{head}_h(Z)]\,W_O$, con $W_O\in\R^{d\times d}$. Agrupando por columnas las $h$ matrices $W_Q^{(i)}$ se obtiene una sola matriz $W_Q\in\R^{d\times d}$, y lo mismo para $W_K$ y $W_V$.
+
+\begin{definicion}[Bloque pre-norm]\label{def:bloque}
+Sean $\Norm_1,\Norm_2:\R^{d}\to\R^{d}$ dos normalizaciones (RMSNorm en LLaMA, LayerNorm en GPT-2), aplicadas fila a fila, y sea $\MLP:\R^{d}\to\R^{d}$ un perceptrón aplicado fila a fila (\cref{tema:3}). El \emph{bloque decoder-only pre-norm} es la aplicación $B:\R^{n\times d}\to\R^{n\times d}$, $H\mapsto H'$, dada por
+\[
+A=H+\MHA\bigl(\Norm_1(H)\bigr),\qquad H'=A+\MLP\bigl(\Norm_2(A)\bigr).
+\]
+\end{definicion}
+
+\begin{definicion}[Transformer decoder-only]\label{def:transformer}
+Un \emph{Transformer decoder-only} de $L$ capas es la composición
+\[
+H^{\ell}=B_\ell\bigl(H^{\ell-1}\bigr)\quad(\ell=1,\dots,L),\qquad Z=\Norm_f\bigl(H^{L}\bigr)\,W_U\in\R^{n\times V},
+\]
+donde $H^{0}$ es la entrada de la \cref{def:embedding}, cada $B_\ell$ es un bloque con parámetros propios, $\Norm_f$ es la \emph{normalización final} y $W_U\in\R^{d\times V}$ es la matriz de \emph{unembedding}. La fila $t$ de $Z$ son los logits de la distribución del token siguiente: $P(x_{t+1}=j\mid x_{1:t})=\softmax(z_t)_j$.
+\end{definicion}
+
+La \cref{fig:bloque} representa la arquitectura. Las dos subcapas tienen papeles complementarios: la atención es la única operación que combina filas distintas, es decir, que mezcla información \emph{entre} tokens; las normalizaciones y el MLP actúan sobre cada fila por separado~\cite[§7.2]{jm3}.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=6.5mm,minimum width=34mm,align=center},
+  suma/.style={draw,thick,circle,inner sep=1pt}]
+  \node[caja] (emb) at (0,0) {Embedding $W_E$ ($V\times d$)};
+  \node[caja] (n1) at (0,1.5) {$\Norm_1$};
+  \node[caja] (att) at (0,2.5) {Atención causal multicabeza};
+  \node[suma] (s1) at (0,3.5) {$+$};
+  \node[caja] (n2) at (0,4.5) {$\Norm_2$};
+  \node[caja] (mlp) at (0,5.5) {MLP (SwiGLU)};
+  \node[suma] (s2) at (0,6.5) {$+$};
+  \node[caja] (nf) at (0,7.8) {$\Norm_f$};
+  \node[caja] (un) at (0,8.8) {Unembedding $W_U$ ($d\times V$)};
+  \node (out) at (0,9.9) {logits $Z\in\R^{n\times V}$};
+  \node (in) at (0,-1.0) {tokens $x_{1:n}$};
+  \draw[->,thick] (in) -- (emb);
+  \draw[->,thick] (emb) -- node[right,pos=0.45] {$H^{\ell-1}$} (n1);
+  \draw[->,thick] (n1) -- (att);
+  \draw[->,thick] (att) -- (s1);
+  \draw[->,thick] (s1) -- (n2);
+  \draw[->,thick] (n2) -- (mlp);
+  \draw[->,thick] (mlp) -- (s2);
+  \draw[->,thick] (s2) -- node[right] {$H^{\ell}$} (nf);
+  \draw[->,thick] (nf) -- (un);
+  \draw[->,thick] (un) -- (out);
+  \draw[->,thick] (0,0.9) -- (-2.75,0.9) |- (s1);
+  \draw[->,thick] (0,4.0) -- (-2.75,4.0) |- (s2);
+  \node[draw,dashed,rounded corners=3pt,fit=(n1)(att)(s1)(n2)(mlp)(s2),inner xsep=26pt,inner ysep=8pt] (blk) {};
+  \node[anchor=west] at (blk.east) {$\times L$};
+  \node[rotate=90,font=\footnotesize,above] at (-2.75,2.2) {identidad};
+\end{tikzpicture}
+\caption{Transformer decoder-only pre-norm. El recuadro discontinuo es un bloque (\cref{def:bloque}), que se repite $L$ veces. Las líneas de la izquierda son las conexiones residuales: el camino desde el embedding hasta $\Norm_f$ solo atraviesa sumas.}
+\label{fig:bloque}
+\end{figure}
+
+\begin{proposicion}[Conservación de la forma]\label{prop:forma}
+Si $H\in\R^{n\times d}$, entonces $B(H)\in\R^{n\times d}$. En consecuencia, todos los flujos $H^{0},\dots,H^{L}$ tienen forma $n\times d$, y solo la entrada ($n$ enteros $\to n\times d$) y la salida ($n\times d\to n\times V$) cambian de dimensión.
+\end{proposicion}
+
+\begin{proof}
+Las normalizaciones actúan fila a fila de $\R^{d}$ en $\R^{d}$. Cada cabeza produce una matriz $n\times d_k$; la concatenación de las $h$ cabezas tiene forma $n\times hd_k=n\times d$, y el producto por $W_O\in\R^{d\times d}$ conserva esa forma. El MLP transforma cada fila de $\R^{d}$ en $\R^{d}$. Las dos sumas residuales suman matrices $n\times d$. Por inducción sobre $\ell$, todo $H^{\ell}$ es $n\times d$.
+\end{proof}
+
+La \cref{prop:forma} es la razón por la que los bloques pueden apilarse en cualquier número: $L$ es un hiperparámetro libre, que va de $12$ en GPT-2 \emph{small} a $80$ en Llama~2~70B~\cite{gpt2,llama2}.
+
+\section{Causalidad}
+
+\begin{proposicion}[Causalidad del decoder]\label{prop:causal}
+En un Transformer decoder-only, la fila $t$ de $H^{\ell}$, para todo $\ell$, y la fila $t$ de los logits $Z$ solo dependen de los tokens $x_1,\dots,x_t$.
+\end{proposicion}
+
+\begin{proof}
+Se dice que una matriz $H$ \emph{es causal} si cada fila $h_t$ es función de $x_{1:t}$. Se razona por inducción sobre $\ell$. La matriz $H^{0}$ es causal porque $h^{0}_t=e_{x_t}+p_t$ solo depende de $x_t$. Supóngase que $H^{\ell-1}$ es causal.
+\begin{enumerate}
+  \item Toda operación aplicada fila a fila ($\Norm_1$, $\Norm_2$, $\MLP$, las proyecciones $ZW$) transforma matrices causales en matrices causales, porque la fila $t$ del resultado solo depende de la fila $t$ de la entrada.
+  \item En cada cabeza, los pesos de la fila $t$ son $\alpha_{tu}=\softmax(s_t+M_t)_u$, con $s_{tu}=q_t\cdot k_u/\sqrt{d_k}$. Para $u>t$, el exponente es $-\infty$ y $\alpha_{tu}=e^{-\infty}/\sum_{u'}e^{s_{tu'}+M_{tu'}}=0$; para $u\le t$, $\alpha_{tu}$ solo depende de $q_t$ y de $k_1,\dots,k_t$. La salida $\sum_{u\le t}\alpha_{tu}v_u$ solo depende de las filas $1,\dots,t$ de una matriz causal, luego de $x_{1:t}$.
+  \item La suma de matrices causales es causal.
+\end{enumerate}
+Así $A$ y $H^{\ell}=B_\ell(H^{\ell-1})$ son causales. Finalmente, $Z=\Norm_f(H^{L})W_U$ se obtiene con operaciones fila a fila.
+\end{proof}
+
+\begin{corolario}[Una pasada, $n$ predicciones]\label{cor:paralelo}
+Una sola evaluación del Transformer sobre $x_{1:n}$ proporciona las $n$ distribuciones $P(\cdot\mid x_{1:t})$, $t=1,\dots,n$. La pérdida de entrenamiento de una secuencia, la entropía cruzada media del módulo~1,
+\[
+\Loss=-\frac{1}{n-1}\sum_{t=1}^{n-1}\ln\softmax(z_t)_{x_{t+1}},
+\]
+se calcula, por tanto, con una única pasada hacia delante y una única pasada hacia atrás.
+\end{corolario}
+
+\begin{proof}
+Por la \cref{prop:causal}, la fila $z_t$ calculada con toda la secuencia coincide con la que se obtendría con la secuencia truncada $x_{1:t}$. Es, por tanto, el vector de logits de $P(\cdot\mid x_{1:t})$ de la \cref{def:transformer}.
+\end{proof}
+
+Esta propiedad es la que hace eficiente el entrenamiento de los Transformer frente a las redes recurrentes: las $n$ posiciones se procesan en paralelo como un producto de matrices~\cite[§7.3]{jm3}. En la generación, en cambio, los tokens se producen de uno en uno, y la \cref{prop:causal} permite reutilizar las claves y los valores ya calculados (la caché KV del módulo~19).
+
+\section{Salida: unembedding y embeddings atados}
+
+La capa de salida transforma cada vector $h\in\R^{d}$ en $V$ logits mediante $z=hW_U$. Si se escribe $u_j\in\R^{d}$ para la columna $j$ de $W_U$, el logit del token $j$ es el producto escalar $z_j=h\cdot u_j$: el modelo puntúa cada token por la alineación de $h$ con un vector \emph{plantilla} de ese token~\cite[§7.5]{jm3}.
+
+\begin{definicion}[Embeddings atados]\label{def:atados}
+Un Transformer tiene los \emph{embeddings atados} (\emph{weight tying}) si $W_U=W_E\T$, es decir, si la plantilla de salida de cada token coincide con su embedding de entrada: $z_j=h\cdot e_j$.
+\end{definicion}
+
+Press y Wolf~\cite{presswolf} mostraron que atar los embeddings reduce la perplejidad de varios modelos de lenguaje y el número de parámetros. El Transformer original comparte la misma matriz entre los embeddings y la capa previa a la softmax, y multiplica los embeddings por $\sqrt{d}$~\cite[§3.4]{vaswani}. GPT-2 también ata los embeddings; LLaMA y Llama~2 usan dos matrices independientes~\cite{llamacode}.
+
+\begin{proposicion}[Ahorro del atado]\label{prop:ahorro}
+Atar los embeddings reduce el número de parámetros en exactamente $Vd$. Para un vector $h$ fijo, el token de mayor logit es el $j$ que maximiza $\norm{e_j}\cos\angle(h,e_j)$.
+\end{proposicion}
+
+\begin{proof}
+Sin atar, $W_E$ y $W_U$ aportan $Vd$ parámetros cada una; atadas, se comparte una sola matriz de $Vd$ parámetros. Por otra parte, $z_j=h\cdot e_j=\norm{h}\norm{e_j}\cos\angle(h,e_j)$, y el factor $\norm{h}>0$ es común a todos los $j$.
+\end{proof}
+
+\begin{table}[ht]
+\centering\small
+\caption{Elecciones de arquitectura de tres modelos con detalles públicos.}\label{tab:modelos}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Elemento & Transformer (2017) & GPT-2 (2019) & LLaMA / Llama~2 (2023) \\
+\midrule
+Normalización & LayerNorm, post-norm & LayerNorm, pre-norm & RMSNorm, pre-norm \\
+MLP & ReLU, $\dff=4d$ & GELU, $\dff=4d$ & SwiGLU, $\dff\approx\tfrac83 d$ \\
+Posición & sinusoidal (sumada) & aprendida (sumada) & RoPE (en $q$ y $k$) \\
+Sesgos & sí & sí & no \\
+Embeddings & atados & atados & sin atar \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Conexión con los LLM]
+La \cref{tab:modelos} resume las diferencias entre las tres arquitecturas de referencia~\cite{vaswani,gpt2,llama}. Mistral, Qwen y Gemma siguen el esquema de LLaMA con variaciones. Gemini~1.5 y Grok-1 sustituyen el MLP de cada bloque por una mezcla de expertos (módulo~18)~\cite{gemini15,grok1}; Anthropic no ha publicado la arquitectura detallada de Claude.
+\end{observacion}
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, §7.2 «Transformer Blocks», §7.3, §7.4 y §7.5 «The Language Modeling Head».
+\item Bishop y Bishop~\cite{bishopdl}, §12.1.7 «Transformer layers» y §12.3.1 «Decoder transformers».
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.1 y §3.4 «Embeddings and Softmax».
+\item Hashimoto y Liang~\cite{cs336}, §3.1 «Transformer LM» y §3.5 «The Full Transformer LM».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-formas}
+Un Transformer decoder-only tiene $V=100$, $d=8$, $h=2$, $\dff=32$ y recibe una secuencia de $n=5$ tokens. Indique la forma de: (a) la entrada; (b) $H^{0}$; (c) $Q_i$ en una cabeza; (d) la matriz de pesos de atención de una cabeza; (e) la capa intermedia del MLP; (f) los logits. ¿Cuántas distribuciones del token siguiente produce una pasada?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-atados}
+En un modelo con embeddings atados, ¿qué matriz se comparte y con qué forma? ¿Por qué es razonable que la entrada y la salida usen los mismos vectores? ¿Cuántos parámetros ahorra en GPT-2 \emph{small} ($V=50\,257$, $d=768$)?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-logits}
+Un modelo con embeddings atados tiene $V=3$ y $d=2$, con $e_1=(1,0)$, $e_2=(0,1)$ y $e_3=(1,1)$. El vector normalizado de la última posición es $h=(2,1)$. Calcule los logits y la distribución del token siguiente. ¿Qué token es el más probable y por qué, según la \cref{prop:ahorro}?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-mascara}
+(a) Con $n=4$, ¿cuántos pesos de atención de una cabeza pueden ser no nulos? ¿Qué fracción de la matriz $n\times n$ representan cuando $n=1024$? (b) En la fila $t=3$ las puntuaciones escaladas son $s_3=(1,2,0,5)$. Calcule los pesos de atención con la máscara causal.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-infinito}
+¿Por qué la máscara causal usa $-\infty$ y no $0$ en las posiciones futuras? Compruébelo calculando los pesos de la fila del \cref{eje:1-mascara} si se sumara $0$ en lugar de $-\infty$.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.2.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-perm-mascara}
+Sea $M\in\{0,-\infty\}^{n\times n}$ la máscara causal y sea $P$ la matriz de la permutación $\pi$ de $\{1,\dots,n\}$, es decir, $(PA)_{t\cdot}=A_{\pi(t)\cdot}$. Demuestre que $PMP\T=M$ si y solo si $\pi$ es la identidad. Interprete el resultado: ¿qué información sobre el orden aporta la máscara por sí sola?
+\end{ejercicio}

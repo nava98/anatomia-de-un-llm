@@ -1,0 +1,152 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase V — Módulo 23
+%  Interpretabilidad y seguridad
+%  Compilar: latexmk -r ../latexmkrc M23-interpretabilidad.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 23}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\WU}{W_{U}}
+\newcommand{\WE}{W_{E}}
+\newcommand{\WOV}{W_{OV}}
+\newcommand{\WQK}{W_{QK}}
+\newcommand{\relu}{\operatorname{ReLU}}
+\newcommand{\RMS}{\operatorname{RMS}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+\newcommand{\rango}{\operatorname{rango}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\signo}{\operatorname{signo}}
+\newcommand{\ECE}{\operatorname{ECE}}
+\newcommand{\MCE}{\operatorname{MCE}}
+\newcommand{\IG}{\operatorname{IG}}
+\newcommand{\FVU}{\operatorname{FVU}}
+\newcommand{\passk}[1]{\operatorname{pass@}#1}
+\newcommand{\Bin}{\operatorname{Bin}}
+\newcommand{\Unif}{\operatorname{Unif}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+% Anclas de hyperref únicas en todo el documento (los contadores se reinician en cada tema)
+\providecommand{\theHdefinicion}{}\renewcommand{\theHdefinicion}{\thechapter.\arabic{definicion}}
+\providecommand{\theHteorema}{}\renewcommand{\theHteorema}{\thechapter.\arabic{definicion}}
+\providecommand{\theHproposicion}{}\renewcommand{\theHproposicion}{\thechapter.\arabic{definicion}}
+\providecommand{\theHlema}{}\renewcommand{\theHlema}{\thechapter.\arabic{definicion}}
+\providecommand{\theHcorolario}{}\renewcommand{\theHcorolario}{\thechapter.\arabic{definicion}}
+\providecommand{\theHejemplo}{}\renewcommand{\theHejemplo}{\thechapter.\arabic{definicion}}
+\providecommand{\theHobservacion}{}\renewcommand{\theHobservacion}{\thechapter.\arabic{definicion}}
+
+\hypersetup{pdftitle={Módulo 23. Interpretabilidad y seguridad},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase V \textperiodcentered\ Alineamiento, aprendizaje por refuerzo, agentes e interpretabilidad}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 23\par}\vspace{0.3cm}
+{\LARGE Interpretabilidad y seguridad\par}
+\vspace{0.2cm}
+{\large Circuitos, superposición, atribución, evaluación y ataques adversarios\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Los módulos anteriores han construido un modelo de lenguaje pieza a pieza y lo han ajustado para que siga instrucciones y preferencias. Este último módulo invierte la dirección del análisis: dado un modelo ya entrenado, se pregunta qué ha aprendido, cómo lo calcula y cómo puede comprobarse que se comporta de forma segura. La \emph{interpretabilidad mecanicista} intenta explicar el cálculo de una red en términos de piezas comprensibles (direcciones del espacio de activaciones, cabezas de atención, circuitos), de forma parecida a la ingeniería inversa de un programa del que solo se dispone del binario. La \emph{evaluación} mide la conducta desde fuera, con conjuntos de pruebas, medidas de calibración y ataques deliberados. Ambas son complementarias: una evaluación de conducta no distingue un acierto por las razones correctas de un acierto por razones equivocadas, y la interpretabilidad, sin evaluaciones, no dice qué conductas importan.
+
+El módulo empieza por la estructura lineal del Transformer, que permite repartir los logits entre sus componentes; sigue con las sondas y los métodos de atribución; estudia la superposición, que explica por qué las neuronas individuales son difíciles de interpretar, y los autoencoders dispersos que intentan deshacerla; analiza circuitos concretos y las intervenciones causales que los validan, y termina con la evaluación estadística de modelos, la calibración, las alucinaciones y la seguridad frente a ataques. Sobre Claude, Gemini y Grok solo se usa información pública: Anthropic ha publicado trabajos de interpretabilidad sobre Claude~3 Sonnet y Claude~3.5 Haiku, Google DeepMind ha publicado autoencoders dispersos para los modelos abiertos Gemma~2, y no constan, en la información pública consultada, trabajos equivalentes sobre Grok.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item demostrar que los logits de un Transformer sin normalización final se descomponen como suma de aportaciones de cada componente, definir los circuitos QK y OV, obtener la expansión en caminos de un Transformer de una capa y explicar la \emph{logit lens} y el efecto de RMSNorm sobre la atribución;
+  \item definir una sonda lineal, demostrar la convexidad de su entrenamiento, interpretar sus resultados con tareas de control y distinguir decodificabilidad de uso causal;
+  \item definir los gradientes integrados y los valores de Shapley, enunciar sus axiomas y demostrar la propiedad de completitud;
+  \item demostrar los resultados de casi ortogonalidad en alta dimensión, analizar el modelo de juguete de superposición y calcular la dimensión por característica;
+  \item formular la pérdida de un autoencoder disperso, deducir el umbral suave que produce la penalización $L^{1}$ y evaluar un diccionario con sus métricas habituales;
+  \item describir las cabezas de inducción, el circuito de identificación del objeto indirecto y el algoritmo de Fourier del \emph{grokking}, y deducir la actualización de rango uno de ROME;
+  \item calcular e interpretar pass@$k$ con su estimador insesgado, intervalos de confianza de exactitud y el error de calibración esperado, y relacionar las reglas de puntuación con las alucinaciones;
+  \item formular un ataque adversario por optimización, estimar tasas de fallo a partir de pocos datos y describir los marcos públicos de evaluación de seguridad.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1 se usan la entropía cruzada y la softmax; de los módulos~2 y~3, el producto escalar, las proyecciones, el rango y la SVD; del módulo~4, los gradientes y la regla de la cadena; del módulo~5, la esperanza, la varianza, la distribución binomial y el teorema central del límite; del módulo~7, la convexidad; del módulo~8, la regresión logística y la regularización $L^{1}$; de los módulos~13 a~15, la atención, el flujo residual y el mini-GPT; del módulo~18, RMSNorm, y de los módulos~21 y~22, el aprendizaje por preferencias, la contaminación de evaluaciones y el aprendizaje en contexto.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & El flujo residual y la descomposición lineal & \cite{elhage21}, \cite{nostalgebraist}, \cite{belrose}, \cite{jm3} \\
+2 & Sondas y métodos de atribución & \cite{alain}, \cite{hewitt-liang}, \cite{hewitt-manning}, \cite{sundararajan}, \cite{lundberg} \\
+3 & Superposición & \cite{elhage22}, \cite{bhk}, \cite{ball} \\
+4 & Autoencoders dispersos & \cite{bricken}, \cite{templeton}, \cite{gemmascope}, \cite{d2l} \\
+5 & Circuitos e intervenciones causales & \cite{olsson}, \cite{wang-ioi}, \cite{meng}, \cite{nanda}, \cite{turner} \\
+6 & Evaluación, calibración y seguridad & \cite{hendrycks}, \cite{helm}, \cite{chen}, \cite{guo}, \cite{kalai25}, \cite{zou} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La selección de temas sigue la clase invitada de interpretabilidad (Been Kim) y la clase~11, «Benchmarking and Evaluation», del curso CS224N de Stanford~\cite{cs224n}, y la semana dedicada a robustez adversaria del curso CS~2881r de Harvard~\cite{cs2881}. La parte de interpretabilidad mecanicista se apoya en las publicaciones de Anthropic en \emph{Transformer Circuits}: el marco matemático de Elhage \emph{et al.}~\cite{elhage21}, las cabezas de inducción de Olsson \emph{et al.}~\cite{olsson}, los modelos de juguete de superposición~\cite{elhage22} y los autoencoders dispersos de Bricken \emph{et al.}~\cite{bricken} y Templeton \emph{et al.}~\cite{templeton}; también en el programa de circuitos de Olah \emph{et al.}~\cite{olah-zoom}. Las sondas siguen a Alain y Bengio~\cite{alain}, Hewitt y Manning~\cite{hewitt-manning} y Hewitt y Liang~\cite{hewitt-liang}; la atribución, a Sundararajan, Taly y Yan~\cite{sundararajan} y a Lundberg y Lee~\cite{lundberg}; las intervenciones, a Meng \emph{et al.}~\cite{meng}, Wang \emph{et al.}~\cite{wang-ioi} y Nanda \emph{et al.}~\cite{nanda}. La evaluación se basa en MMLU~\cite{hendrycks}, HELM~\cite{helm}, HumanEval~\cite{chen}, el estudio de calibración de Guo \emph{et al.}~\cite{guo} y el análisis de las alucinaciones de Kalai \emph{et al.}~\cite{kalai25}; la seguridad, en Zou \emph{et al.}~\cite{zou}, Ganguli \emph{et al.}~\cite{ganguli} y Hubinger \emph{et al.}~\cite{hubinger}. Los resultados de geometría en alta dimensión remiten a Blum, Hopcroft y Kannan~\cite{bhk}, libro del curso CS~4850 de Cornell, y los de estadística, al curso 18.05 del MIT~\cite{mit1805}. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$d$, $d_h$, $L$ & dimensión del flujo residual, dimensión de cada cabeza y número de capas \\
+$x_0$, $x_\ell$, $x_{\mathrm{fin}}$ & embedding, flujo residual tras la capa $\ell$ y flujo final \\
+$a_\ell$, $m_\ell$ & salidas de la atención y del MLP de la capa $\ell$ \\
+$\WE\in\R^{d\times K}$, $\WU\in\R^{K\times d}$ & matrices de embedding y de desembedding; $K=\abs{\V}$ \\
+$\WQK=W_Q\T W_K$, $\WOV=W_OW_V$ & circuitos QK y OV de una cabeza \\
+$\sigma(z)=1/(1+e^{-z})$ & función logística \\
+$\IG_i(x;x')$, $\phi_i$ & gradiente integrado y valor de Shapley de la entrada $i$ \\
+$n$, $m$, $S$, $I_i$ & número de características, dimensión oculta, dispersión e importancia (modelo de juguete) \\
+$W_i$, $\hat W_i=W_i/\norm{W_i}$, $D_i$ & dirección de la característica $i$ y dimensión por característica \\
+$f\in\R^{F}$, $d_j$, $\lambda$ & código del autoencoder disperso, dirección del latente $j$ y coeficiente de dispersión \\
+$\passk{k}$, $n$, $c$ & probabilidad de éxito con $k$ intentos; muestras generadas y correctas por problema (tema~6) \\
+$\mathrm{conf}_b$, $\mathrm{acc}_b$ & confianza media y exactitud del intervalo $b$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

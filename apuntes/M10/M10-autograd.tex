@@ -1,0 +1,127 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase II — Módulo 10
+%  Diferenciación automática
+%  Compilar: latexmk -r ../latexmkrc M10-autograd.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 10}
+
+% Notación propia del módulo
+\newcommand{\sen}{\operatorname{sen}}
+\newcommand{\Du}{\mathbb{D}}
+\newcommand{\ops}{\operatorname{ops}}
+\newcommand{\ind}{\mathbb{1}}
+\newcommand{\T}{^{\top}}
+\newcommand{\pre}{\prec}
+\newcommand{\uep}{\mathbf{u}}
+
+\hypersetup{pdftitle={Módulo 10. Diferenciación automática},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase II \textperiodcentered\ Aprendizaje automático y redes neuronales}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 10\par}\vspace{0.3cm}
+{\LARGE Diferenciación automática\par}
+\vspace{0.2cm}
+{\large De la regla de la cadena a \texttt{loss.backward()}\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Un paso de entrenamiento de un modelo de lenguaje exige la derivada de la pérdida respecto a cada uno de sus parámetros. El modelo Grok-1, cuyos pesos publicó xAI en 2024, tiene $314\,000$ millones; calcular cada derivada por diferencias finitas requeriría otras tantas evaluaciones de la red. En el módulo~9 se obtuvieron a mano las ecuaciones de la retropropagación de un perceptrón de dos capas, pero ese procedimiento no escala: cada cambio de arquitectura obligaría a deducirlas de nuevo. La \emph{diferenciación automática} convierte la regla de la cadena en un algoritmo que se aplica a cualquier programa compuesto de operaciones elementales y que devuelve el gradiente exacto, salvo errores de redondeo, con un coste comparable al de evaluar la función una sola vez. Este módulo estudia sus dos modos, demuestra por qué el modo inverso es el adecuado para entrenar redes, analiza su coste en operaciones y en memoria, y termina con la implementación de un pequeño sistema de diferenciación automática y con su contrapartida industrial, PyTorch.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item representar un cálculo como un grafo computacional y como una traza de evaluación, y distinguir la diferenciación automática de la numérica y de la simbólica, acotando el error de las diferencias finitas;
+  \item definir los números duales, demostrar que propagan exactamente la derivada y aplicar el modo directo para obtener productos jacobiano-vector;
+  \item enunciar y demostrar la corrección del modo inverso, construir un orden topológico y retropropagar a mano por un grafo arbitrario;
+  \item demostrar el principio del gradiente barato, comparar el coste de los dos modos mediante la asociatividad del producto de jacobianos y deducir los productos vector-jacobiano de la capa lineal y de la softmax, así como la regla $C\approx 6ND$;
+  \item analizar la memoria del modo inverso y el recálculo por puntos de control, obtener productos hessiana-vector e interpretar los adjuntos como multiplicadores de Lagrange;
+  \item describir la estructura de un sistema de diferenciación automática escalar y de PyTorch, y usar correctamente tensores, \texttt{backward}, \texttt{nn.Module} y los optimizadores.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~4 se usan la regla de la cadena multivariable, el jacobiano, el hessiano, el desarrollo de Taylor y las diferencias centradas; del módulo~7, el descenso de gradiente, el decaimiento de pesos y los multiplicadores de Lagrange; del módulo~8, la entropía cruzada con softmax, y del módulo~9, el perceptrón multicapa, su contador de parámetros y las ecuaciones de la retropropagación. Del módulo~1 se usa la softmax y su gradiente. Se suponen nociones básicas de programación en Python.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Grafos computacionales y métodos de diferenciación & \cite{baydin}, \cite{gw}, \cite{gbc}, \cite{mit18337} \\
+2 & El modo directo y los números duales & \cite{baydin}, \cite{gw}, \cite{mit18337}, \cite{mit18s096} \\
+3 & El modo inverso y la retropropagación & \cite{baydin}, \cite{gw}, \cite{gbc}, \cite{cs231n}, \cite{d2l} \\
+4 & Coste del gradiente y productos vector-jacobiano & \cite{gw}, \cite{baydin}, \cite{grosse}, \cite{kaplan} \\
+5 & Memoria, segundo orden y método adjunto & \cite{gw}, \cite{chen}, \cite{pearlmutter}, \cite{cs336a2} \\
+6 & Implementación: un autograd escalar y PyTorch & \cite{karpathy}, \cite{paszke}, \cite{pytorch}, \cite{cmu11785} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La estructura general sigue el artículo de revisión de Baydin, Pearlmutter, Radul y Siskind~\cite{baydin}, en particular sus secciones~2 y~3, y la notación de la traza de evaluación es la del libro de Griewank y Walther~\cite{gw}, texto de referencia de la disciplina, del que se toman también las cotas de coste (cap.~4) y el recálculo por puntos de control (cap.~12). El punto de vista de las redes neuronales procede de la §6.5 de Goodfellow, Bengio y Courville~\cite{gbc}, de las notas «Backpropagation, Intuitions» de CS231n~\cite{cs231n}, de las §2.5 y §5.3 de Zhang \emph{et al.}~\cite{d2l} y de la lección~6 del curso CSC421 de Toronto~\cite{grosse}. Los números duales se presentan como en las notas del curso 18.337 del MIT~\cite{mit18337} y en las clases de 18.S096~\cite{mit18s096}. Los problemas de coste y de memoria de los temas~4 y~5 están adaptados de las tareas~1 y~2 del curso CS336 de Stanford~\cite{cs336a1,cs336a2}, y la implementación del tema~6 sigue a micrograd~\cite{karpathy}, a la tarea complementaria de autograd del curso 11-785 de Carnegie Mellon~\cite{cmu11785}, al artículo de PyTorch~\cite{paszke} y a su documentación~\cite{pytorch}. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$f\colon\R^{n}\to\R^{m}$ & función que se deriva, con $n$ entradas y $m$ salidas \\
+$v_{1-n},\dots,v_0$ & variables de entrada de la traza de evaluación \\
+$v_1,\dots,v_\ell$ & variables intermedias, $v_i=\varphi_i(v_j)_{j\pre i}$ \\
+$j\pre i$ & $v_j$ es un argumento de la operación elemental $\varphi_i$ \\
+$\dot v_i$ & tangente: derivada de $v_i$ en una dirección fijada de las entradas \\
+$\bar v_i=\partial y/\partial v_i$ & adjunto de $v_i$ respecto a la salida escalar $y$ \\
+$J_f(x)\in\R^{m\times n}$ & jacobiano de $f$ en $x$ \\
+$\Du$, $a+b\varepsilon$ & números duales, con $\varepsilon^{2}=0$ \\
+$\ops(f)$ & número de operaciones aritméticas para evaluar $f$ \\
+$N$, $D$ & número de parámetros de un modelo y de tokens de entrenamiento \\
+$\uep$ & unidad de redondeo de la aritmética en coma flotante \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Como en el módulo~9, los vectores que fluyen por una red se escriben como \emph{filas} y las capas actúan por la derecha, $X\mapsto XW$; los gradientes respecto a una matriz tienen la forma de la matriz. En los temas~2 y~3, en cambio, el jacobiano actúa sobre vectores columna, $\dot y=J\dot x$, como en~\cite{baydin} y~\cite{gw}. El código se escribe en Python y los nombres de PyTorch aparecen en \texttt{letra mecanográfica}.
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

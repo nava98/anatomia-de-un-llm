@@ -1,0 +1,205 @@
+% =====================================================================
+\chapter{Implementación: un autograd escalar y PyTorch}
+\label{tema:6}
+% =====================================================================
+
+Todo lo anterior cabe en unas decenas de líneas de Python. Este tema describe un sistema de diferenciación automática en modo inverso que opera con escalares, como micrograd~\cite{karpathy}, demuestra que basta un puñado de reglas locales, explica por qué los sistemas reales trabajan con tensores y presenta las piezas de PyTorch que se usan en el resto del curso: tensores con \texttt{requires\_grad}, \texttt{backward}, \texttt{nn.Module} y los optimizadores. Se siguen el artículo de Paszke \emph{et al.}~\cite{paszke}, la nota «Autograd mechanics» de la documentación de PyTorch~\cite{pytorch}, la §2.5 de~\cite{d2l} y la tarea complementaria de autograd del curso 11-785 de Carnegie Mellon~\cite{cmu11785}.
+
+\section{Un autograd escalar}
+
+\begin{definicion}[Nodo de un autograd escalar]\label{def:valor}
+Un \emph{nodo} es un objeto con cuatro atributos: su valor \texttt{dato}; su adjunto \texttt{grad}, inicializado a~0; la lista \texttt{\_prev} de los nodos de los que se ha calculado, y una función \texttt{\_backward} que, leída la variable \texttt{grad} del propio nodo, suma a la \texttt{grad} de cada nodo de \texttt{\_prev} su contribución según la regla local. Cada operación entre nodos crea un nodo nuevo y le asigna su \texttt{\_backward}.
+\end{definicion}
+
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Operación & Hacia delante & Regla local (\texttt{\_backward}) \\
+\midrule
+$s=a+b$ & $a+b$ & $\bar a\mathrel{+}=\bar s$; $\bar b\mathrel{+}=\bar s$ \\
+$p=a\cdot b$ & $a\cdot b$ & $\bar a\mathrel{+}=b\,\bar p$; $\bar b\mathrel{+}=a\,\bar p$ \\
+$q=a^{k}$, $k$ fijo & $a^{k}$ & $\bar a\mathrel{+}=k\,a^{k-1}\,\bar q$ \\
+$t=\tanh a$ & $\tanh a$ & $\bar a\mathrel{+}=(1-t^{2})\,\bar t$ \\
+$e=\exp a$ & $e^{a}$ & $\bar a\mathrel{+}=e\,\bar e$ \\
+$l=\ln a$ & $\ln a$ & $\bar a\mathrel{+}=\bar l/a$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+El método \texttt{backward()} del nodo de salida construye un orden topológico con la \cref{prop:dfs}, pone su propio \texttt{grad} a~1 y llama a \texttt{\_backward} de cada nodo en orden inverso. Por el \cref{teo:inverso}, al terminar cada \texttt{grad} contiene la derivada de la salida respecto a ese nodo. El núcleo del sistema se muestra en la \cref{fig:valor}.
+
+\begin{figure}[htbp]
+\centering
+\begin{minipage}{0.8\textwidth}
+{\small
+\begin{verbatim}
+class Valor:
+    def __init__(self, dato, _prev=()):
+        self.dato, self.grad = dato, 0.0
+        self._prev, self._backward = _prev, lambda: None
+
+    def __mul__(self, otro):
+        sal = Valor(self.dato * otro.dato, (self, otro))
+        def _backward():
+            self.grad += otro.dato * sal.grad
+            otro.grad += self.dato * sal.grad
+        sal._backward = _backward
+        return sal
+
+    def backward(self):
+        orden, vistos = [], set()
+        def visitar(v):
+            if v not in vistos:
+                vistos.add(v)
+                for u in v._prev:
+                    visitar(u)
+                orden.append(v)
+        visitar(self)
+        self.grad = 1.0
+        for v in reversed(orden):
+            v._backward()
+\end{verbatim}
+}
+\end{minipage}
+\caption{Núcleo de un autograd escalar: el nodo, la regla local del producto y el método \texttt{backward}, que construye un orden topológico (\cref{prop:dfs}) y lo recorre al revés.}
+\label{fig:valor}
+\end{figure}
+
+Las demás operaciones de la tabla se escriben como \texttt{\_\_mul\_\_}. Si una misma variable aparece en los dos factores, como en \texttt{x * x}, las dos líneas de \texttt{\_backward} suman cada una su contribución a \texttt{x.grad}, y el resultado es $2x$, como exige la acumulación del \cref{tema:3}.
+
+\begin{proposicion}[Operaciones derivadas]\label{prop:derivadas}
+Si la resta, la negación y la división se definen como $-a=(-1)\cdot a$, $a-b=a+(-1)\cdot b$ y $a/b=a\cdot b^{-1}$, el sistema calcula correctamente sus derivadas sin reglas propias. Por ejemplo, para $f=a/b$ se obtiene $\bar a=1/b$ y $\bar b=-a/b^{2}$.
+\end{proposicion}
+
+\begin{proof}
+Cada operación derivada es una composición de operaciones de la tabla, y el \cref{teo:inverso} se aplica a cualquier traza. Para $f=a\cdot q$ con $q=b^{-1}$: el nodo producto da $\bar a=q=1/b$ y $\bar q=a$; el nodo potencia, con $k=-1$, da $\bar b=-b^{-2}\,\bar q=-a/b^{2}$.
+\end{proof}
+
+\begin{ejemplo}[Entropía cruzada con piezas elementales]\label{ej:ce-micro}
+Con logits $z=(2,1,0)$ y clase correcta~0, se construye $L=-\ln\bigl(e^{z_0}/(e^{z_0}+e^{z_1}+e^{z_2})\bigr)$ con nodos \texttt{exp}, suma, potencia $-1$, producto y \texttt{ln}. La llamada \texttt{L.backward()} da $L\approx 0{,}4076$ y $\nabla_{\!z}L\approx(-0{,}3348;\,0{,}2447;\,0{,}0900)$, que es $\softmax(z)-e_0$, el resultado del \cref{cor:ce} obtenido sin deducirlo.
+\end{ejemplo}
+
+Con estos nodos se construye una red: una neurona calcula $\tanh\bigl(\sum_iw_ix_i+b\bigr)$; una capa es una lista de neuronas, y un perceptrón multicapa, una lista de capas. Un perceptrón $3\to 4\to 4\to 1$ tiene $(3\cdot 4+4)+(4\cdot 4+4)+(4\cdot 1+1)=41$ parámetros. Cada paso de descenso de gradiente tiene tres fases: calcular la pérdida; poner a cero todos los \texttt{grad} y llamar a \texttt{backward}; y actualizar cada parámetro con $p\gets p-\eta\,\bar p$. Si se omite la puesta a cero, los adjuntos de pasos sucesivos se suman por la acumulación de la \cref{def:adjunto}.
+
+\begin{observacion}[Límite del enfoque escalar]
+Un producto de dos matrices $1000\times 1000$ ejecuta $10^{9}$ multiplicaciones y casi otras tantas sumas: un autograd escalar crearía del orden de $2\cdot 10^{9}$ nodos, cada uno con su objeto de Python. Los sistemas reales usan \emph{tensores}: un nodo por operación sobre arrays enteros, con un VJP vectorizado como los de la \cref{prop:vjp-lineal} y la \cref{prop:vjp-softmax}, que se ejecuta en una GPU. La tarea complementaria del curso 11-785~\cite[§1 y §3.2]{cmu11785} subraya este cambio de granularidad: el autograd trabaja a nivel de operación, no de capa, y cada operación necesita su función hacia atrás.
+\end{observacion}
+
+\section{PyTorch}
+
+PyTorch~\cite{paszke} es, en esencia, el sistema anterior con tensores, ejecución en GPU y cientos de operaciones con su VJP. Es la herramienta del curso a partir de este módulo. El código de referencia publicado para los modelos LLaMA de Meta usa PyTorch~\cite{llama}; el informe técnico de Gemini indica que se entrenó con JAX y Pathways~\cite{gemini}, y el código de los pesos abiertos de Grok-1, un modelo de 314\,000 millones de parámetros, también es de JAX~\cite{grok}. Anthropic no ha publicado los detalles de su pila de software para Claude.
+
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Pieza de PyTorch & Función & Equivalente escalar \\
+\midrule
+\texttt{Tensor} con \texttt{requires\_grad} & array que registra sus operaciones & \texttt{Valor} \\
+\texttt{grad\_fn}, \texttt{backward()} & nodo del grafo y modo inverso & \texttt{\_backward}, \texttt{backward()} \\
+\texttt{nn.Module} & agrupa parámetros, define \texttt{forward} & neurona, capa, MLP \\
+\texttt{torch.optim} (SGD, AdamW) & aplica la actualización & $p\gets p-\eta\,\bar p$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+La nota «Autograd mechanics» de la documentación~\cite{pytorch} precisa varios comportamientos que se siguen de la teoría de los temas anteriores.
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Grafo dinámico.} El grafo se reconstruye desde cero en cada iteración, al ejecutar el código; por eso se puede usar el control de flujo de Python, y las derivadas son las de la traza ejecutada (\cref{tema:1}).
+  \item \emph{Acumulación.} Durante \texttt{backward()}, solo los tensores \emph{hoja} (los creados por el usuario) con \texttt{requires\_grad=True} reciben gradiente, y este se \emph{suma} a su atributo \texttt{.grad}. Por eso cada paso empieza con \texttt{opt.zero\_grad()}.
+  \item \emph{Tensores guardados.} Cada operación guarda los tensores que necesita su VJP. Tras la pasada hacia atrás, esos tensores se liberan; una segunda llamada a \texttt{backward()} sobre el mismo grafo produce un error, salvo que la primera se haya hecho con \texttt{retain\_graph=True}.
+  \item \emph{Desactivar el registro.} Dentro de \texttt{with torch.no\_grad():} las operaciones no crean nodos ni guardan tensores; se usa para evaluar en validación y para actualizar los parámetros sin registrar la actualización.
+\end{enumerate}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},node distance=6mm,
+  n/.style={draw,rounded corners=2pt,minimum height=7mm,inner sep=3pt,font=\small}]
+  \node[n] (a) {lote $X,Y$};
+  \node[n,right=of a] (b) {\texttt{logits = modelo(X)}};
+  \node[n,right=of b] (c) {\texttt{loss = F.cross\_entropy(logits, Y)}};
+  \node[n,below=9mm of c] (d) {\texttt{opt.zero\_grad()}};
+  \node[n,left=of d] (e) {\texttt{loss.backward()}};
+  \node[n,left=of e] (f) {\texttt{opt.step()}};
+  \draw[->] (a)--(b); \draw[->] (b)--(c); \draw[->] (c)--(d); \draw[->] (d)--(e); \draw[->] (e)--(f);
+  \draw[->] (f.west) -| ([xshift=-4mm]a.west) -- (a.west);
+\end{tikzpicture}
+\caption{Un paso de entrenamiento en PyTorch: pasada hacia delante, pérdida, puesta a cero de los gradientes, modo inverso y actualización.}
+\label{fig:bucle}
+\end{figure}
+
+\begin{ejemplo}[El modelo de caracteres del módulo~9]\label{ej:mlp-caracteres}
+El modelo de lenguaje neuronal de caracteres del módulo~9, con vocabulario $V=28$, contexto de $B=3$ caracteres, embeddings de dimensión $d=10$ y una capa oculta de $H=64$ unidades ReLU, se escribe así:
+
+\par\noindent\begin{minipage}{\linewidth}
+{\small
+\begin{verbatim}
+class MLPCaracteres(nn.Module):
+    def __init__(self, V, d=10, B=3, H=64):
+        super().__init__()
+        self.emb = nn.Embedding(V, d)       # matriz C
+        self.oculta = nn.Linear(B * d, H)   # W1, b1
+        self.salida = nn.Linear(H, V)       # W2, b2
+    def forward(self, X):
+        E = self.emb(X).view(X.shape[0], -1)
+        return self.salida(F.relu(self.oculta(E)))
+\end{verbatim}
+}
+\end{minipage}
+
+Tiene $28\cdot 10+(30\cdot 64+64)+(64\cdot 28+28)=280+1984+1820=4084$ parámetros, como en el módulo~9, y la función de retropropagación escrita allí a mano desaparece. En la práctica del módulo, con descenso de gradiente de lote completo ($\eta=0{,}5$, decaimiento $\lambda=0{,}005$) durante 1000 pasos, la perplejidad de validación baja a $10{,}31$, frente a $12{,}42$ del modelo de bigramas; difiere del $10{,}45$ del módulo~9 porque \texttt{nn.Linear} se inicializa de otra forma.
+\end{ejemplo}
+
+\begin{observacion}[Dos detalles de convención]
+\texttt{nn.Linear(n, m)} guarda su peso con forma $(m,n)$ y calcula $XW\T+b$, de modo que \texttt{weight} es la traspuesta de la $W$ del módulo~9. Y \texttt{F.cross\_entropy} recibe logits, no probabilidades: aplica internamente una log-softmax estable (módulo~11) y su VJP es el del \cref{cor:ce}.
+\end{observacion}
+
+\section{Acumulación de gradientes}
+
+La acumulación en \texttt{.grad}, que obliga a llamar a \texttt{zero\_grad()}, es también una herramienta.
+
+\begin{proposicion}[Microlotes]\label{prop:microlotes}
+Sea $\mathcal L(\theta)=\frac1{|S|}\sum_{s\in S}\ell_s(\theta)$ la pérdida media sobre un lote $S$, partido en $k$ microlotes disjuntos $S_1,\dots,S_k$ del mismo tamaño. Si, sin poner a cero los gradientes entre ellos, se llama a \texttt{backward()} sobre $\mathcal L_r/k$ para cada $r$, con $\mathcal L_r=\frac1{|S_r|}\sum_{s\in S_r}\ell_s$, el gradiente acumulado es $\nabla\mathcal L(\theta)$.
+\end{proposicion}
+
+\begin{proof}
+Tras las $k$ llamadas, el acumulador vale $\sum_r\nabla(\mathcal L_r/k)=\frac1k\sum_r\nabla\mathcal L_r$ por linealidad de la derivada. Como $|S_r|=|S|/k$, $\frac1k\mathcal L_r=\frac1{|S|}\sum_{s\in S_r}\ell_s$, y sumando sobre $r$ se obtiene $\mathcal L$.
+\end{proof}
+
+Así se entrenan los LLM con lotes de millones de tokens que no caben a la vez en la memoria de una GPU: se procesan microlotes sucesivos, se acumulan sus gradientes y se da un solo paso del optimizador. Si los microlotes tuvieran tamaños distintos, habría que ponderar cada $\mathcal L_r$ por $|S_r|/|S|$ en lugar de por $1/k$.
+
+\begin{lecturas}
+\item Karpathy~\cite{karpathy}, micrograd, ficheros \texttt{engine.py} y \texttt{nn.py}.
+\item Paszke \emph{et al.}~\cite{paszke}, «PyTorch: An Imperative Style, High-Performance Deep Learning Library».
+\item Documentación de PyTorch~\cite{pytorch}, nota «Autograd mechanics», apartados «How autograd encodes the history» y «Locally disabling gradient computation».
+\item Zhang \emph{et al.}~\cite{d2l}, §2.5 «Automatic Differentiation», §2.5.1--2.5.4.
+\item CMU 11-785~\cite{cmu11785}, tarea complementaria «An Introduction to Autograd», §2 y §3.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-zero}
+En PyTorch, ¿qué ocurre si se olvida \texttt{opt.zero\_grad()} en el bucle de entrenamiento? ¿Para qué sirve \texttt{torch.no\_grad()} al evaluar en validación?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:6-dos-veces}
+Con $x=3$ (\texttt{requires\_grad=True}) e $y=x\cdot x$, se ejecuta \texttt{y.backward()} dos veces seguidas. (a) ¿Qué ocurre? (b) ¿Y si en la primera llamada se pasa el argumento \texttt{retain\_graph=True}? ¿Cuánto vale \texttt{x.grad} al final y por qué?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.5 «Automatic Differentiation», ejercicio~2.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-cmu}
+Escriba la función hacia atrás de cada una de las operaciones siguientes, que recibe el adjunto $g$ (o $G$) de la salida y devuelve los de las entradas: $a-b$, $a\cdot b$, $a/b$, $\ln a$, $\exp a$ y el producto de matrices $AB$. Aplíquelas, en una cinta recorrida al revés, a $f=\ln(a/b)-\exp(a\cdot b)$ en $(a,b)=(2,1)$ y compruebe el resultado derivando $f$.
+\fuente{adaptado de CMU 11-785, otoño de 2021~\cite{cmu11785}, tarea complementaria «An Introduction to Autograd», §3.2.1 (funciones \texttt{sub\_backward}, \texttt{mul\_backward}, \texttt{divide\_backward}, \texttt{log\_backward}, \texttt{exp\_backward} y \texttt{matmul\_backward}).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-parametros}
+Cuente los parámetros de \texttt{MLPCaracteres} con $V=28$, $d=8$, $B=3$ y $H=64$, separando embeddings, capa oculta y capa de salida.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-paso}
+Una neurona $o=\tanh(wx+b)$ con $x=1$, $w=0{,}5$ y $b=0$ se entrena con la pérdida $L=\tfrac12(o-y)^{2}$ e $y=1$. Calcule $L$, $\partial L/\partial w$ y $\partial L/\partial b$, aplique un paso de descenso con $\eta=0{,}5$ y compruebe que la pérdida disminuye.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-microlotes}
+(a) Demuestre la \cref{prop:microlotes} y explique qué ocurre si se llama a \texttt{backward()} sobre $\mathcal L_r$ en lugar de sobre $\mathcal L_r/k$. (b) Compruébela con el modelo $\ell_s(w)=\tfrac12(wx_s-y_s)^{2}$, los datos $x=(1,2,3,4)$, $y=(2,3,7,8)$, $w=1$ y dos microlotes de dos ejemplos.
+\end{ejercicio}

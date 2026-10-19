@@ -1,0 +1,186 @@
+% =====================================================================
+\chapter{Precisión numérica y precisión mixta}
+\label{tema:4}
+% =====================================================================
+
+Los núcleos tensoriales son mucho más rápidos en 16 u 8 bits que en 32, y cada bit que se ahorra reduce también la memoria y el tráfico. El precio es un mayor error de redondeo y un rango más estrecho. Este tema formaliza los formatos de coma flotante, acota el error de redondeo y de la suma acumulada, y justifica con esas cotas cada elemento de la receta de entrenamiento en precisión mixta. Se siguen los capítulos~2 a~4 de Higham~\cite{higham}, el artículo de Micikevicius \emph{et al.}~\cite[§3]{micikevicius}, la propuesta de formatos fp8~\cite{fp8}, las clases de cuantización de MIT 6.5940~\cite{mit65940} y el §2.1 de la tarea~2 de CS336~\cite{cs336a2}. El módulo~11 introdujo estos formatos de forma descriptiva; aquí se demuestran sus propiedades.
+
+\section{Formatos de coma flotante}
+
+\begin{definicion}[Formato binario de coma flotante]\label{def:formato}
+Un formato binario con $e$ bits de exponente y $p$ bits de mantisa representa los números \emph{normales}
+\[
+x=(-1)^{\sigma}\,(1{,}f_1f_2\dots f_p)_2\cdot 2^{E},\qquad E_{\min}\le E\le E_{\max},
+\]
+con $\sigma\in\{0,1\}$ y $f_i\in\{0,1\}$. En los formatos IEEE~754 el exponente se guarda con un sesgo $b=2^{e-1}-1$, y $E_{\min}=1-b$, $E_{\max}=b$; los códigos de exponente extremos se reservan para el cero, los números subnormales, los infinitos y los NaN.
+\end{definicion}
+
+\begin{proposicion}[Rango y separación]\label{prop:rango}
+En el formato de la \cref{def:formato}:
+\begin{enumerate}
+  \item el mayor número representable es $(2-2^{-p})\,2^{E_{\max}}$ y el menor normal positivo, $2^{E_{\min}}$;
+  \item en cada intervalo $[2^{E},2^{E+1})$ con $E_{\min}\le E\le E_{\max}$ hay $2^{p}$ números representables equiespaciados, separados por $\ulp=2^{E-p}$;
+  \item la separación entre $1$ y el siguiente representable es el \emph{épsilon de la máquina}, $\varepsilon=2^{-p}$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) La mantisa máxima es $(1{,}11\dots1)_2=2-2^{-p}$ y el exponente máximo es $E_{\max}$; la mantisa mínima de un normal es $1$ y el exponente mínimo, $E_{\min}$. (ii) Con $E$ fijo, la mantisa recorre los $2^{p}$ valores $1+k\,2^{-p}$, $k=0,\dots,2^{p}-1$, y $x=(1+k2^{-p})2^{E}=2^{E}+k\,2^{E-p}$: puntos equiespaciados con paso $2^{E-p}$. (iii) Es el caso $E=0$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Formato & bits (s-e-m) & máximo & menor normal & $\varepsilon=2^{-p}$ & uso típico \\
+\midrule
+fp32 & 1-8-23 & $3{,}40\cdot 10^{38}$ & $1{,}18\cdot 10^{-38}$ & $1{,}19\cdot 10^{-7}$ & copia maestra, acumulación \\
+fp16 & 1-5-10 & $65\,504$ & $6{,}10\cdot 10^{-5}$ & $9{,}77\cdot 10^{-4}$ & productos \\
+bf16 & 1-8-7 & $3{,}39\cdot 10^{38}$ & $1{,}18\cdot 10^{-38}$ & $7{,}81\cdot 10^{-3}$ & productos, activaciones \\
+fp8 E5M2 & 1-5-2 & $57\,344$ & $6{,}10\cdot 10^{-5}$ & $0{,}25$ & gradientes \\
+fp8 E4M3 & 1-4-3 & $448$ & $1{,}56\cdot 10^{-2}$ & $0{,}125$ & pesos, activaciones \\
+\bottomrule
+\end{tabular}
+\caption{Formatos de coma flotante usados en el entrenamiento. El formato E4M3 no sigue del todo IEEE~754: no tiene infinitos y reutiliza el código de exponente máximo, lo que eleva su máximo de 240 a 448~\cite{fp8}.}
+\label{tab:formatos}
+\end{table}
+
+El rango depende de los bits de exponente y la precisión, de los de mantisa. bf16 conserva los 8 bits de exponente de fp32 y, por tanto, su rango; fp16 tiene 3 bits más de mantisa, pero su rango es mucho menor. Por debajo del menor normal, los números subnormales extienden el rango con pérdida de precisión: en fp16 el menor positivo es $2^{-24}\approx 5{,}96\cdot 10^{-8}$.
+
+\section{Error de redondeo}
+
+\begin{definicion}[Redondeo y unidad de redondeo]
+Sea $\fl(x)$ el número representable más cercano a $x\in\R$ (redondeo al más cercano, con empates al par). La \emph{unidad de redondeo} del formato es $u=\varepsilon/2=2^{-p-1}$.
+\end{definicion}
+
+\begin{teorema}[Error relativo de redondeo]\label{teo:redondeo}
+Si $x$ está en el rango normal del formato, $\fl(x)=x(1+\delta)$ con $\abs{\delta}\le u$.
+\end{teorema}
+
+\begin{proof}
+Sea $x>0$ (el caso negativo es simétrico) con $2^{E}\le x<2^{E+1}$. Por la \cref{prop:rango}, los representables en ese intervalo están separados por $2^{E-p}$, y $2^{E+1}$ también es representable. El más cercano a $x$ está a distancia como mucho la mitad de la separación: $\abs{\fl(x)-x}\le 2^{E-p-1}$. Como $x\ge 2^{E}$, $\abs{\fl(x)-x}/x\le 2^{E-p-1}/2^{E}=2^{-p-1}=u$.
+\end{proof}
+
+La norma IEEE~754 exige que las operaciones básicas se redondeen correctamente: $\fl(a\circ b)=(a\circ b)(1+\delta)$, $\abs{\delta}\le u$, para $\circ\in\{+,-,\times,/\}$~\cite[cap.~2]{higham}. Es el \emph{modelo estándar} de la aritmética en coma flotante.
+
+\begin{lema}[Estancamiento]\label{lem:estancamiento}
+Sea $s>0$ representable con $2^{E}\le s<2^{E+1}$ y sea $0\le a<2^{E-p-1}=\ulp(s)/2$. Entonces $\fl(s+a)=s$.
+\end{lema}
+
+\begin{proof}
+El siguiente representable después de $s$ es $s+2^{E-p}$ (si $s+2^{E-p}=2^{E+1}$, también lo es). Como $s\le s+a<s+2^{E-p-1}$, el número $s+a$ está más cerca de $s$ que de $s+2^{E-p}$, y no hay representables entre ambos. Luego $\fl(s+a)=s$.
+\end{proof}
+
+\begin{corolario}[Actualizaciones perdidas]\label{cor:actualizacion}
+En bf16, si un peso vale $w=1$, toda actualización $0\le\Delta w<2^{-8}\approx 0{,}0039$ se pierde: $\fl(1+\Delta w)=1$.
+\end{corolario}
+
+\begin{proof}
+Es el \cref{lem:estancamiento} con $s=1$, $E=0$ y $p=7$: $\ulp(1)/2=2^{-8}$.
+\end{proof}
+
+\begin{lema}[Producto de factores de redondeo]\label{lem:gamma}
+Sean $\delta_1,\dots,\delta_k$ con $\abs{\delta_i}\le u$ y $ku<1$. Entonces
+\[
+\Bigl\lvert\prod_{i=1}^{k}(1+\delta_i)-1\Bigr\rvert\le\gamma_k,\qquad\gamma_k=\frac{ku}{1-ku}.
+\]
+\end{lema}
+
+\begin{proof}
+El producto está entre $(1-u)^{k}$ y $(1+u)^{k}$. Por arriba, como $1+u\le e^{u}$ y $e^{x}\le 1/(1-x)$ para $0\le x<1$ (equivale a $e^{-x}\ge 1-x$), se tiene $(1+u)^{k}\le e^{ku}\le 1/(1-ku)$, luego $(1+u)^{k}-1\le ku/(1-ku)=\gamma_k$. Por abajo, la desigualdad de Bernoulli da $(1-u)^{k}\ge 1-ku$, luego $1-(1-u)^{k}\le ku\le\gamma_k$.
+\end{proof}
+
+\begin{teorema}[Error de la suma recursiva]\label{teo:suma}
+Sea $\hat s_n$ el resultado de sumar $x_1,\dots,x_n$ en coma flotante en el orden $\hat s_1=x_1$, $\hat s_k=\fl(\hat s_{k-1}+x_k)$. Si $(n-1)u<1$ y no hay desbordamiento,
+\[
+\abs{\hat s_n-s_n}\le\gamma_{n-1}\sum_{i=1}^{n}\abs{x_i},\qquad s_n=\sum_{i=1}^{n}x_i.
+\]
+\end{teorema}
+
+\begin{proof}
+Por el modelo estándar, $\hat s_k=(\hat s_{k-1}+x_k)(1+\delta_k)$ con $\abs{\delta_k}\le u$, para $k=2,\dots,n$. Desarrollando la recurrencia,
+\[
+\hat s_n=x_1\prod_{k=2}^{n}(1+\delta_k)+\sum_{i=2}^{n}x_i\prod_{k=i}^{n}(1+\delta_k).
+\]
+Cada producto tiene como mucho $n-1$ factores; por el \cref{lem:gamma}, cada uno es $1+\theta_i$ con $\abs{\theta_i}\le\gamma_{n-1}$. Por tanto $\hat s_n-s_n=\sum_i x_i\theta_i$ y $\abs{\hat s_n-s_n}\le\gamma_{n-1}\sum_i\abs{x_i}$.
+\end{proof}
+
+La cota crece con $n$. En fp16, $u=2^{-11}\approx 4{,}9\cdot 10^{-4}$ y con $n=1000$ sumandos $\gamma_{999}\approx 0{,}95$: la cota no garantiza ni una cifra. En fp32, $u=2^{-24}\approx 6\cdot 10^{-8}$ y $\gamma_{999}\approx 6\cdot 10^{-5}$. Esta es la razón por la que los núcleos tensoriales acumulan los productos escalares en fp32 aunque los factores estén en 16 bits (\cref{eje:4-acumular}).
+
+\section{La receta de la precisión mixta}
+
+Micikevicius \emph{et al.}~\cite[§3]{micikevicius} proponen tres técnicas, que siguen siendo la base de la práctica actual.
+
+\begin{enumerate}[label=(\arabic*)]
+  \item \emph{Copia maestra de los pesos en fp32} (§3.1). Los productos usan una copia en 16 bits, pero la actualización $w\gets w-\eta g$ se aplica a una copia en fp32. Por el \cref{cor:actualizacion}, una actualización pequeña frente al peso se perdería en 16 bits; los autores observan que esto ocurre cuando el peso es unas $2^{11}$ veces mayor que la actualización.
+  \item \emph{Escalado de la pérdida} (§3.2). En fp16, los valores menores que $2^{-24}$ se anulan, y parte de los gradientes de activación caen por debajo. Se multiplica la pérdida por una constante $c$ antes de la retropropagación y se dividen los gradientes por $c$ antes de actualizar.
+  \item \emph{Acumulación en fp32} (§3.3). Los productos escalares acumulan en fp32, y las reducciones grandes (softmax, normalizaciones, pérdida) se calculan en fp32.
+\end{enumerate}
+
+\begin{proposicion}[El escalado por potencias de 2 es exacto]\label{prop:escalado}
+Sea $c=2^{k}$ con $k\in\mathbb{Z}$, y sea $x$ tal que $x$ y $cx$ están en el rango normal. Entonces $\fl(cx)=c\,\fl(x)$. En particular, multiplicar y después dividir por $c$ un número representable no introduce error.
+\end{proposicion}
+
+\begin{proof}
+Si $x=\pm(1{,}f)_2\,2^{E}$, entonces $cx=\pm(1{,}f)_2\,2^{E+k}$: la mantisa no cambia y solo se desplaza el exponente. El conjunto de representables en $[2^{E+k},2^{E+k+1})$ es el de $[2^{E},2^{E+1})$ multiplicado por $2^{k}$ (\cref{prop:rango}), de modo que el más cercano a $cx$ es $c$ veces el más cercano a $x$.
+\end{proof}
+
+Como la retropropagación es lineal en la semilla $\partial\mathcal{L}/\partial\mathcal{L}=1$, multiplicar la pérdida por $c$ multiplica por $c$ todos los gradientes, y por la \cref{prop:escalado} la división final por $c=2^{k}$ los restituye sin error adicional, salvo en los valores que se hayan desbordado o anulado. En la práctica se usa un escalado \emph{dinámico}: se duplica $c$ periódicamente y se reduce a la mitad, descartando el paso, cuando aparece un infinito. Con bf16, cuyo rango es el de fp32, el escalado no es necesario, y esa es la razón principal de que bf16 sea hoy el formato habitual de entrenamiento.
+
+\begin{observacion}[Memoria de la receta]
+Con Adam y precisión mixta, cada parámetro ocupa 2~bytes (pesos en 16 bits) $+$ 2 (gradiente en 16 bits) $+$ 12 (copia maestra, primer y segundo momento en fp32) $=16$~bytes~\cite[§3.1]{zero}. El \cref{tema:5} estudia cómo repartir esos 16~bytes entre dispositivos.
+\end{observacion}
+
+\section{Cuantización}
+
+El entrenamiento en fp8 y la inferencia en int8 o int4 llevan la idea al extremo. Con tan pocos bits de mantisa, cada tensor necesita su propio factor de escala.
+
+\begin{definicion}[Cuantización lineal simétrica]\label{def:cuantizacion}
+Sea $x\in\R^{L}$ y $b\ge 2$ un número de bits. La \emph{cuantización lineal simétrica} de $x$ con $b$ bits usa el paso $\Delta=\max_i\abs{x_i}/(2^{b-1}-1)$ y los enteros $q_i=\operatorname{round}(x_i/\Delta)\in\{-(2^{b-1}-1),\dots,2^{b-1}-1\}$. La \emph{descuantización} es $\hat x_i=\Delta\,q_i$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:cuantizacion}
+Con la \cref{def:cuantizacion}, $\abs{\hat x_i-x_i}\le\Delta/2$ para todo $i$.
+\end{proposicion}
+
+\begin{proof}
+Como $\abs{x_i/\Delta}\le 2^{b-1}-1$, el entero más cercano $q_i$ está en el rango admitido y cumple $\abs{q_i-x_i/\Delta}\le 1/2$. Multiplicando por $\Delta$, $\abs{\Delta q_i-x_i}\le\Delta/2$.
+\end{proof}
+
+El error depende del valor máximo del tensor: un solo valor atípico grande aumenta $\Delta$ y degrada la representación de todos los demás. Por eso se cuantiza por canales o por bloques, y se tratan aparte los valores atípicos~\cite{mit65940}. El módulo~19 retoma la cuantización para la inferencia.
+
+\begin{lecturas}
+\item Higham~\cite{higham}, cap.~2 «Floating Point Arithmetic», cap.~3 «Basics» (constantes $\gamma_k$) y cap.~4 «Summation».
+\item Micikevicius \emph{et al.}~\cite{micikevicius}, §3.1--3.3.
+\item Micikevicius \emph{et al.}~\cite{fp8}, formatos E4M3 y E5M2.
+\item MIT 6.5940~\cite{mit65940}, clases~5 y~6, «Quantization».
+\item CS336~\cite{cs336a2}, tarea~2, §2.1 (precisión mixta en PyTorch).
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-receta}
+Para cada uno de los siguientes elementos del entrenamiento, indique en qué formato se guarda o calcula en la receta de precisión mixta con bf16 y justifíquelo: (a) los factores de los productos de matrices; (b) el acumulador de esos productos; (c) la copia de los pesos que actualiza el optimizador; (d) los momentos de Adam; (e) la suma de la softmax. ¿Por qué no se necesita escalar la pérdida?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-formatos}
+A partir de la \cref{prop:rango}, calcule el máximo, el menor normal y $\varepsilon$ de fp16 (sesgo 15), bf16 (sesgo 127) y fp8 E5M2 (sesgo 15), y compruebe la \cref{tab:formatos}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-maestra}
+Un peso vale $w=1$. (a) ¿Qué resultado da $\fl(1+0{,}001)$ en bf16? ¿Y en fp16? ¿Y en fp32? (b) ¿A partir de qué valor modifica una actualización positiva el peso $w=1$ en bf16? (c) ¿Qué resultado da $\fl(1+0{,}004)$ en bf16, y cuál es el error relativo de la actualización aplicada?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-acumular}
+Se suma $1000$ veces el número $0{,}01$ en un acumulador. En fp16, $0{,}01$ se representa como $0{,}0100021$ y el acumulador vale exactamente $8$ tras la suma número~750. (a) ¿Qué separación hay entre números fp16 consecutivos en $[8,16)$? (b) ¿Cuánto aporta realmente cada suma a partir de ahí, y cuál es el resultado final? (c) ¿Y si el acumulador es fp32, aunque los sumandos sean fp16?
+\fuente{adaptado de CS336~\cite{cs336a2}, tarea~2, §2.1.5, problema \texttt{mixed\_precision\_accumulation}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-cuantizacion}
+Cuantice $x=(-1{,}234;\ 0{,}5;\ 0{,}0123;\ 2{,}54)$ en int8 simétrico ($b=8$). Calcule $\Delta$, los enteros $q_i$, los valores descuantizados y los errores, y compruebe la \cref{prop:cuantizacion}.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-estancamiento}
+Se suma indefinidamente $a=\fl_{16}(0{,}01)=0{,}0100021$ en un acumulador fp16 que parte de $8$ (como en el \cref{eje:4-acumular}). (a) Demuestre que en cada intervalo $[2^{E},2^{E+1})$ con $E=3,4$ cada suma aporta exactamente $\ulp=2^{E-10}$. (b) Demuestre, con el \cref{lem:estancamiento}, que al llegar a $32$ el acumulador ya no cambia. (c) Deduzca cuántas sumas hacen falta en total, contando las 750 iniciales, para que el acumulador se estanque.
+\end{ejercicio}

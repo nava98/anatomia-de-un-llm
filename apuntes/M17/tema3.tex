@@ -1,0 +1,190 @@
+% =====================================================================
+\chapter{Algoritmos conscientes de la E/S: FlashAttention}
+\label{tema:3}
+% =====================================================================
+
+El \cref{tema:2} mostró que una operación de baja intensidad aritmética está limitada por la memoria, por rápido que sea el cómputo. Este tema aplica esa idea a la atención, cuya implementación directa escribe y lee de la HBM una matriz de tamaño cuadrático en la longitud de la secuencia. Se presentan la fusión de \emph{kernels}, el análisis de entrada y salida (E/S) de la atención estándar, la softmax en línea y el algoritmo FlashAttention, que calcula la atención exacta sin materializar esa matriz. Se siguen el artículo de Dao \emph{et al.}~\cite[§2--3]{flash}, el de Milakov y Gimelshein~\cite{milakov}, la clase~6 de CS336~\cite{cs336} y el §4 de la tarea~2 de ese curso~\cite{cs336a2}. En este tema, $n$ es la longitud de la secuencia, $d$ la dimensión de cada cabeza y $M$ la capacidad de la SRAM, medida en elementos.
+
+\section{Fusión de kernels}
+
+\begin{definicion}[Operación elemento a elemento]
+Una operación $y=g(x)$ sobre un tensor de $L$ elementos es \emph{elemento a elemento} si cada $y_i$ depende solo de $x_i$. Ejemplos: las activaciones GELU y SiLU, la suma de un sesgo, la multiplicación por un escalar.
+\end{definicion}
+
+\begin{proposicion}[Efecto de la fusión]\label{prop:fusion}
+Sea una cadena de $r$ operaciones elemento a elemento $g_r\circ\dots\circ g_1$ sobre un tensor de $L$ elementos de $s$ bytes, cada una con $f$ FLOP por elemento. Ejecutada como $r$ \emph{kernels} separados transfiere $2rLs$ bytes; fusionada en un solo \emph{kernel} transfiere $2Ls$ bytes. La intensidad pasa de $f/(2s)$ a $rf/(2s)$.
+\end{proposicion}
+
+\begin{proof}
+Cada \emph{kernel} separado lee su entrada de la HBM y escribe su salida en ella: $2Ls$ bytes, y $r$ \emph{kernels} suman $2rLs$. El \emph{kernel} fusionado lee $x$ una vez, aplica las $r$ funciones en registros y escribe el resultado una vez: $2Ls$ bytes. En ambos casos $F=rfL$, luego las intensidades son $rfL/(2rLs)=f/(2s)$ y $rfL/(2Ls)=rf/(2s)$.
+\end{proof}
+
+Los compiladores como \texttt{torch.compile} y los lenguajes como Triton automatizan esta fusión~\cite{cs336}. La atención no es una cadena elemento a elemento, porque la softmax normaliza por filas, pero la idea es la misma: no escribir resultados intermedios en la HBM.
+
+\section{La atención estándar y su tráfico de memoria}
+
+Sean $Q,K,V\in\R^{n\times d}$. La atención de una cabeza (módulo~13) calcula
+\[
+S=QK\T\in\R^{n\times n},\qquad P=\softmax(S)\ \text{(por filas)},\qquad O=PV\in\R^{n\times d},
+\]
+donde el factor $1/\sqrt{d}$ se supone incorporado en $Q$.
+
+\begin{proposicion}[Tráfico de la atención estándar]\label{prop:atencion-estandar}
+La implementación en tres \emph{kernels} (calcular y escribir $S$; leer $S$ y escribir $P$; leer $P$ y $V$ y escribir $O$) transfiere $4n^{2}+4nd$ elementos entre la HBM y el procesador, y necesita $n^{2}$ elementos de memoria adicional para $S$ o $P$.
+\end{proposicion}
+
+\begin{proof}
+El primer \emph{kernel} lee $Q$ y $K$ ($2nd$) y escribe $S$ ($n^{2}$). El segundo lee $S$ ($n^{2}$) y escribe $P$ ($n^{2}$). El tercero lee $P$ ($n^{2}$) y $V$ ($nd$) y escribe $O$ ($nd$). La suma es $2nd+n^{2}+2n^{2}+n^{2}+2nd=4n^{2}+4nd$. La matriz $S$ (o $P$, que puede sobrescribirla) ocupa $n^{2}$ elementos.
+\end{proof}
+
+Cuando $n\gg d$, el término $4n^{2}$ domina. La softmax tiene intensidad baja (unos pocos FLOP por elemento), de modo que el segundo \emph{kernel} está limitado por la memoria. Con $n=4096$ en bf16, $S$ ocupa $4096^{2}\cdot 2$~bytes $=32$~MiB por cabeza; con 32 cabezas, 1~GiB por capa y por secuencia. Además, la retropropagación necesita $P$, que debe guardarse (\cref{eje:3-pytorch}).
+
+\section{La softmax en línea}
+
+La softmax de una fila $x\in\R^{n}$ se calcula de forma estable restando el máximo (módulo~1): $\softmax(x)_i=e^{x_i-m}/\ell$, con $m=\max_j x_j$ y $\ell=\sum_j e^{x_j-m}$. Las dos cantidades $m$ y $\ell$ pueden obtenerse por bloques~\cite{milakov}.
+
+\begin{definicion}[Estadísticos de un bloque]
+Sea $\mathcal{B}\subseteq\{1,\dots,n\}$ no vacío. Sus \emph{estadísticos} son
+\[
+m_{\mathcal{B}}=\max_{j\in\mathcal{B}}x_j,\qquad \ell_{\mathcal{B}}=\sum_{j\in\mathcal{B}}e^{x_j-m_{\mathcal{B}}}.
+\]
+\end{definicion}
+
+\begin{lema}[Combinación de estadísticos]\label{lem:combinacion}
+Sean $\mathcal{B}_1$ y $\mathcal{B}_2$ bloques disjuntos con estadísticos $(m_1,\ell_1)$ y $(m_2,\ell_2)$, y sea $m=\max(m_1,m_2)$. Entonces los estadísticos de $\mathcal{B}_1\cup\mathcal{B}_2$ son
+\[
+m_{\mathcal{B}_1\cup\mathcal{B}_2}=m,\qquad \ell_{\mathcal{B}_1\cup\mathcal{B}_2}=\ell_1e^{m_1-m}+\ell_2e^{m_2-m}.
+\]
+Además, ningún factor $e^{m_i-m}$ es mayor que~1.
+\end{lema}
+
+\begin{proof}
+El máximo de una unión es el máximo de los máximos. Para la suma, $\ell_1e^{m_1-m}=\sum_{j\in\mathcal{B}_1}e^{x_j-m_1}e^{m_1-m}=\sum_{j\in\mathcal{B}_1}e^{x_j-m}$, y análogamente para $\mathcal{B}_2$. Como los bloques son disjuntos, la suma de ambas expresiones es $\sum_{j\in\mathcal{B}_1\cup\mathcal{B}_2}e^{x_j-m}$. Por último, $m\ge m_i$ implica $m_i-m\le 0$ y $e^{m_i-m}\le 1$.
+\end{proof}
+
+\begin{proposicion}[Combinación de salidas]\label{prop:combinacion-salida}
+Sean $v_1,\dots,v_n\in\R^{d}$ y, para cada bloque, $o_{\mathcal{B}}=\ell_{\mathcal{B}}^{-1}\sum_{j\in\mathcal{B}}e^{x_j-m_{\mathcal{B}}}v_j$ la salida de la atención restringida al bloque. Con la notación del \cref{lem:combinacion} y $\ell=\ell_1e^{m_1-m}+\ell_2e^{m_2-m}$,
+\[
+o_{\mathcal{B}_1\cup\mathcal{B}_2}=\frac{\ell_1e^{m_1-m}\,o_{\mathcal{B}_1}+\ell_2e^{m_2-m}\,o_{\mathcal{B}_2}}{\ell}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Por definición, $\ell_io_{\mathcal{B}_i}=\sum_{j\in\mathcal{B}_i}e^{x_j-m_i}v_j$; multiplicando por $e^{m_i-m}$ se obtiene $\sum_{j\in\mathcal{B}_i}e^{x_j-m}v_j$. Sumando para $i=1,2$, el numerador es $\sum_{j\in\mathcal{B}_1\cup\mathcal{B}_2}e^{x_j-m}v_j$, y por el \cref{lem:combinacion} el denominador es $\ell_{\mathcal{B}_1\cup\mathcal{B}_2}$. El cociente es, por definición, $o_{\mathcal{B}_1\cup\mathcal{B}_2}$.
+\end{proof}
+
+\begin{ejemplo}[Softmax en dos bloques]\label{ej:online}
+Sea $x=(1,3,2,0)$ con bloques $\{1,2\}$ y $\{3,4\}$. Bloque~1: $m_1=3$, $\ell_1=e^{-2}+1=1{,}1353$. Bloque~2: $m_2=2$, $\ell_2=1+e^{-2}=1{,}1353$. Combinados: $m=3$ y $\ell=1{,}1353\cdot 1+1{,}1353\cdot e^{-1}=1{,}5530$, que coincide con $\sum_je^{x_j-3}=e^{-2}+1+e^{-1}+e^{-3}$. La softmax es $(0{,}0871;\ 0{,}6439;\ 0{,}2369;\ 0{,}0321)$.
+\end{ejemplo}
+
+\section{El algoritmo FlashAttention}
+
+FlashAttention~\cite[algoritmo~1]{flash} divide $Q$ en $T_r$ bloques de $B_r$ filas y $K$, $V$ en $T_c$ bloques de $B_c$ filas, con
+\[
+B_c=\Bigl\lceil\frac{M}{4d}\Bigr\rceil,\qquad B_r=\min\Bigl(\Bigl\lceil\frac{M}{4d}\Bigr\rceil,\ d\Bigr),\qquad T_r=\frac{n}{B_r},\qquad T_c=\frac{n}{B_c},
+\]
+de forma que los bloques en uso caben en una SRAM de tamaño $O(M)$. Para cada fila de $Q$ mantiene en la HBM la salida parcial normalizada y los estadísticos $(m,\ell)$, y los actualiza con el \cref{lem:combinacion} y la \cref{prop:combinacion-salida} cada vez que procesa un nuevo bloque de claves (\cref{fig:flash-alg,fig:flash-bloques}).
+
+\begin{figure}[h]
+\centering
+\fbox{\begin{minipage}{0.88\textwidth}\small
+\textbf{FlashAttention, pasada hacia delante} (entrada: $Q,K,V\in\R^{n\times d}$ en HBM; SRAM de $M$ elementos).
+\begin{enumerate}[label=\arabic*.,leftmargin=1.6em]
+  \item Inicializar en HBM $O=0\in\R^{n\times d}$, $\ell=0\in\R^{n}$, $m=-\infty\in\R^{n}$.
+  \item Para $j=1,\dots,T_c$: cargar $K_j,V_j$ en SRAM.
+  \begin{enumerate}[label=\alph*.,leftmargin=1.4em]
+    \item Para $i=1,\dots,T_r$: cargar $Q_i$, $O_i$, $\ell_i$, $m_i$ en SRAM.
+    \item Calcular en SRAM $S_{ij}=Q_iK_j\T$ ($B_r\times B_c$), sus estadísticos por fila $(\tilde m_{ij},\tilde\ell_{ij})$ y $\tilde P_{ij}=\exp(S_{ij}-\tilde m_{ij})$.
+    \item Combinar $(m_i,\ell_i)$ con $(\tilde m_{ij},\tilde\ell_{ij})$ (\cref{lem:combinacion}) y $O_i$ con $\tilde\ell_{ij}^{-1}\tilde P_{ij}V_j$ (\cref{prop:combinacion-salida}).
+    \item Escribir en HBM los nuevos $O_i$, $\ell_i$, $m_i$.
+  \end{enumerate}
+  \item Devolver $O$; guardar $(m,\ell)$ para la pasada hacia atrás.
+\end{enumerate}
+\end{minipage}}
+\caption{Esquema del algoritmo~1 de Dao \emph{et al.}~\cite{flash}. Los bloques $S_{ij}$ y $\tilde P_{ij}$ viven solo en la SRAM.}
+\label{fig:flash-alg}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,scale=0.9]
+  \draw[step=0.75,regla,thin] (0,0) grid (4.5,4.5);
+  \draw[thick] (0,0) rectangle (4.5,4.5);
+  \fill[black!25] (1.5,2.25) rectangle (2.25,3.0);
+  \draw[very thick] (1.5,0) rectangle (2.25,4.5);
+  \node at (2.25,-0.45) {$S=QK\T$ ($n\times n$), nunca en HBM};
+  \draw[thick] (-1.35,0) rectangle (-0.6,4.5); \node at (-0.975,4.85) {$Q$};
+  \fill[black!25] (-1.35,2.25) rectangle (-0.6,3.0); \node[left] at (-1.35,2.625) {$Q_i$};
+  \draw[thick] (0,5.25) rectangle (4.5,6.0); \node[right] at (4.5,5.625) {$K\T$};
+  \fill[black!25] (1.5,5.25) rectangle (2.25,6.0); \node[above] at (1.875,6.0) {$K_j\T$};
+  \node[right,align=left] at (4.8,2.625) {bloque $S_{ij}$ en SRAM\\(sombreado)};
+  \draw[->,thick] (2.6,4.3) -- (2.6,0.2) node[midway,right] {$i$};
+  \draw[->,thick] (0.1,4.8) -- (4.4,4.8) node[midway,above=-1pt,font=\scriptsize] {$j$ (bucle externo)};
+\end{tikzpicture}
+\caption{Recorrido por bloques de FlashAttention: para cada bloque de claves $K_j$ (columna destacada) se recorren todos los bloques de consultas $Q_i$; solo el bloque $S_{ij}$ en curso existe, y solo en la SRAM.}
+\label{fig:flash-bloques}
+\end{figure}
+
+\begin{teorema}[Exactitud y memoria; Dao \emph{et al.}, teorema~1]\label{teo:flash-exacto}
+El algoritmo de la \cref{fig:flash-alg} devuelve exactamente $O=\softmax(QK\T)V$ (salvo redondeo), con $O(n^{2}d)$ FLOP y $O(n)$ memoria adicional en HBM aparte de la entrada y la salida.
+\end{teorema}
+
+\begin{proof}
+Se fija una fila $q$ de $Q$ y se razona por inducción sobre $j$. Tras procesar los bloques de claves $1,\dots,j$, la fila correspondiente de $O$ y sus estadísticos $(m,\ell)$ son los de la atención restringida a $\mathcal{B}_1\cup\dots\cup\mathcal{B}_j$. Para $j=1$ se combina el estado inicial ($\ell=0$, $O=0$, $m=-\infty$, que actúa como elemento neutro porque $\ell\,e^{-\infty}=0$) con los estadísticos del primer bloque. El paso de $j-1$ a $j$ es exactamente el \cref{lem:combinacion} y la \cref{prop:combinacion-salida} aplicados a $\mathcal{B}_1\cup\dots\cup\mathcal{B}_{j-1}$ y $\mathcal{B}_j$. Con $j=T_c$ la unión es $\{1,\dots,n\}$ y la fila es la de $\softmax(QK\T)V$. Cada par $(i,j)$ realiza $O(B_rB_cd)$ FLOP, y la suma sobre los $T_rT_c$ pares es $O(n^{2}d)$. La memoria adicional en HBM son los vectores $\ell$ y $m$, de $2n$ elementos.
+\end{proof}
+
+\begin{proposicion}[Tráfico de FlashAttention]\label{prop:flash-trafico}
+El algoritmo de la \cref{fig:flash-alg} transfiere
+\[
+Q_{\mathrm{FA}}=(nd+2n)+2nd+T_c\,(3nd+4n)
+\]
+elementos entre la HBM y el procesador. Como $T_c\approx 4nd/M$, el término dominante es $12\,n^{2}d^{2}/M$.
+\end{proposicion}
+
+\begin{proof}
+La inicialización escribe $O$, $\ell$ y $m$: $nd+2n$. En el bucle externo, $K_j$ y $V_j$ se cargan una vez cada uno: $2nd$ en total. Para cada $j$, el bucle interno recorre todos los bloques de $Q$, de modo que lee $Q$ completo ($nd$), lee y escribe $O$ completo ($2nd$) y lee y escribe $\ell$ y $m$ ($4n$): $3nd+4n$ por cada uno de los $T_c$ valores de $j$. Con $B_c\approx M/(4d)$ es $T_c=n/B_c\approx 4nd/M$, y $T_c\cdot 3nd\approx 12n^{2}d^{2}/M$.
+\end{proof}
+
+Dao \emph{et al.}~\cite[teorema~2]{flash} enuncian el resultado asintótico: la atención estándar requiere $\Theta(nd+n^{2})$ accesos a la HBM y FlashAttention $\Theta(n^{2}d^{2}M^{-1})$. Con valores típicos ($d$ entre 64 y 128, $M$ de unos $10^{5}$ elementos), $d^{2}/M$ es mucho menor que~1 y el ahorro es grande. También demuestran que ningún algoritmo exacto puede hacer $o(n^{2}d^{2}M^{-1})$ accesos para todo $M\in[d,nd]$~\cite[proposición~3]{flash}.
+
+\begin{observacion}[Pasada hacia atrás y recomputación]
+La retropropagación de la atención necesita $P$. FlashAttention no la guarda: almacena solo $(m,\ell)$ y, en la pasada hacia atrás, recalcula cada bloque $S_{ij}$ en la SRAM a partir de $Q_i$ y $K_j$. Realiza más FLOP que la implementación estándar, pero muchos menos accesos a la HBM, y resulta más rápida~\cite[§3.1]{flash}. Es el principio del roofline: en una operación limitada por la memoria, recalcular es más barato que leer.
+\end{observacion}
+
+\begin{lecturas}
+\item Dao \emph{et al.}~\cite{flash}, §2 «Background», §3.1 (algoritmo con \emph{tiling} y recomputación) y §3.2 (análisis de E/S).
+\item Milakov y Gimelshein~\cite{milakov}, cálculo en una pasada del normalizador de la softmax.
+\item CS336~\cite{cs336}, clase~6 (ejemplos de softmax y producto de matrices por bloques en Triton), y tarea~2~\cite{cs336a2}, §4 (implementación de FlashAttention).
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-jerarquia}
+Ordene de mayor a menor ancho de banda: HBM, registros, red entre nodos, SRAM, NVLink. ¿Qué nivel gestiona explícitamente FlashAttention y con qué decisión?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-online}
+Aplique la softmax en línea a $x=(2,-1,4,1)$ con bloques $(2,-1)$ y $(4,1)$. Dé $m_1$, $\ell_1$, $m_2$, $\ell_2$, el $\ell$ combinado y el vector $\softmax(x)$, y compruebe el resultado calculando $\ell$ directamente.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-S}
+Sea una cabeza de atención con $n=4096$ y $d=128$ en bf16 en una A100. (a) ¿Cuánto ocupa $S$? ¿Y con 32 cabezas? ¿Y con $n=32\,768$ por cabeza? (b) Compare el tiempo de escribir y volver a leer $S$ de la HBM con el tiempo de cómputo del producto $QK\T$ al rendimiento máximo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-trafico}
+Sea $n=4096$, $d=64$ y una SRAM de $M=2^{15}$ elementos. (a) Calcule $B_c$, $B_r$, $T_c$ y $T_r$. (b) Calcule el tráfico de la atención estándar (\cref{prop:atencion-estandar}) y el de FlashAttention (\cref{prop:flash-trafico}) en elementos, y su cociente.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-pytorch}
+Atención de una sola cabeza con lote~8, $d=64$ y todo en fp32. La diferenciación automática guarda, para la pasada hacia atrás, la matriz $P$ ($n\times n$) de cada secuencia. (a) ¿Cuánto ocupa $P$ para $n=4096$ y para $n=16\,384$? (b) ¿Cuánto ocupan $Q$, $K$ y $V$ juntos? (c) ¿Cómo crece el cociente entre ambas cantidades con $n$, y qué técnica elimina $P$?
+\fuente{adaptado de CS336~\cite{cs336a2}, tarea~2, §4.1.1, problema \texttt{pytorch\_attention} (datos simplificados).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-asociativa}
+Sobre los pares $(m,\ell)\in(\R\cup\{-\infty\})\times[0,\infty)$ se define la operación
+\[
+(m_1,\ell_1)\oplus(m_2,\ell_2)=\bigl(\max(m_1,m_2),\ \ell_1e^{m_1-\max(m_1,m_2)}+\ell_2e^{m_2-\max(m_1,m_2)}\bigr),
+\]
+con el convenio $0\cdot e^{-\infty}=0$. Demuestre que $\oplus$ es conmutativa y asociativa y que $(-\infty,0)$ es su elemento neutro. Deduzca que el resultado de la softmax en línea no depende de cómo se agrupen ni de en qué orden se procesen los bloques, y explique por qué esto permite repartir la reducción entre varios hilos.
+\end{ejercicio}

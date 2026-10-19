@@ -1,0 +1,1634 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase I — Módulo 5
+%  Probabilidad y estadística
+%  Compilar: latexmk -r ../latexmkrc M05-probabilidad.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 5}
+
+\usetikzlibrary{decorations.pathreplacing}
+
+% Anclas de hiperenlace únicas por tema para los enunciados
+\makeatletter
+\@for\nombre:=definicion,teorema,proposicion,lema,corolario,ejemplo,observacion\do{%
+  \expandafter\xdef\csname theH\nombre\endcsname{\noexpand\thechapter.\noexpand\arabic{definicion}}}
+\makeatother
+
+% Notación propia del módulo
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\Cov}{Cov}
+\DeclareMathOperator{\Ber}{Ber}
+\DeclareMathOperator{\Bin}{Bin}
+\DeclareMathOperator{\Cat}{Cat}
+\DeclareMathOperator{\Unif}{Unif}
+\DeclareMathOperator{\Expo}{Exp}
+\DeclareMathOperator{\BetaD}{Beta}
+\DeclareMathOperator{\Dir}{Dir}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\newcommand{\N}{\mathcal{N}}
+\newcommand{\PP}{\mathbb{P}}
+\newcommand{\iid}{i.i.d.}
+\newcommand{\Xbar}{\overline{X}}
+
+\hypersetup{pdftitle={Módulo 5. Probabilidad y estadística},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase I \textperiodcentered\ Fundamentos matemáticos}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 5\par}\vspace{0.3cm}
+{\LARGE Probabilidad y estadística\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Un gran modelo de lenguaje es, en su salida, una distribución de probabilidad categórica sobre el vocabulario, y cada respuesta que produce es una muestra de ella. El azar interviene también en su construcción: los pesos se inicializan con distribuciones gaussianas, el entrenamiento estima la pérdida con minilotes elegidos al azar y el criterio de entrenamiento es la máxima verosimilitud. Este módulo presenta la probabilidad y la estadística necesarias para entender estas tres piezas con rigor: variables aleatorias y sus momentos, el teorema de Bayes, la estimación de parámetros y los teoremas límite que justifican sustituir esperanzas por promedios.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item enunciar los axiomas de la probabilidad, calcular probabilidades condicionadas y aplicar el teorema de la probabilidad total y la regla de Bayes, también en forma de razón de probabilidades;
+  \item manejar variables aleatorias discretas (Bernoulli, binomial, categórica) y continuas (uniforme, exponencial, normal), calcular su esperanza y su varianza y demostrar las propiedades de ambas;
+  \item muestrear de una distribución mediante la transformada inversa y aplicarlo al muestreo del token siguiente;
+  \item justificar las reglas de inicialización de Glorot y de He a partir de la varianza de una suma de productos independientes;
+  \item obtener estimadores de máxima verosimilitud, analizar su sesgo y relacionar el suavizado de Laplace con la media a posteriori bajo una distribución a priori conjugada;
+  \item demostrar las desigualdades de Markov y Chebyshev y la ley débil de los grandes números, enunciar el teorema central del límite y usarlos para cuantificar el error de Monte Carlo, de un minilote y de un banco de pruebas.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1: probabilidad condicionada, regla de la cadena, modelo de bigramas, función softmax con temperatura, suavizado de Laplace y entropía cruzada. Del módulo~4: derivadas parciales, gradiente, matriz hessiana y multiplicadores de Lagrange. Se usan también integrales elementales (por partes y cambio de variable) y sumas de series geométricas.
+
+\section*{Organización}
+\begin{center}
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Probabilidad, condicionamiento y teorema de Bayes & \cite{bt}, \cite{mit6041}, \cite{mit1805}, \cite{bh} \\
+2 & Variables aleatorias discretas & \cite{bt}, \cite{mit6041}, \cite{mml} \\
+3 & Variables continuas y distribución normal & \cite{bt}, \cite{bh}, \cite{mml}, \cite{glorot} \\
+4 & Estimación de parámetros & \cite{bt}, \cite{mit1805}, \cite{mml}, \cite{bishop} \\
+5 & Teoremas límite y Monte Carlo & \cite{bt}, \cite{mit6041}, \cite{bh}, \cite{d2l} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. El orden de los temas y la notación siguen a Bertsekas y Tsitsiklis~\cite{bt}, texto del curso 6.041 del MIT~\cite{mit6041}: capítulos~1 a~3 para los temas~1 a~3, capítulos~8 y~9 para el tema~4 y capítulo~5 para el tema~5. Los ejemplos de estimación bayesiana proceden del enfoque del curso 18.05 del MIT~\cite{mit1805}, y varios ejercicios, del curso Stat~110 de Harvard~\cite{stat110} y de su libro de texto~\cite{bh}. La conexión con el aprendizaje automático sigue el capítulo~6 y la sección~8.3 de Deisenroth, Faisal y Ong~\cite{mml}, y el capítulo~2 de Bishop~\cite{bishop}. Las reglas de inicialización proceden de los artículos originales~\cite{glorot,he}.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$(\Omega,\mathcal{F},\PP)$ & espacio de probabilidad \\
+$X$, $x$ & variable aleatoria y valor que toma \\
+$p_X(x)$, $f_X(x)$, $F_X(x)$ & función de masa, densidad y función de distribución \\
+$\E[X]$, $\Var(X)$, $\Cov(X,Y)$ & esperanza, varianza y covarianza \\
+$\Ber(p)$, $\Bin(n,p)$, $\Cat(p_1,\dots,p_K)$ & distribuciones de Bernoulli, binomial y categórica \\
+$\Unif(a,b)$, $\Expo(\lambda)$, $\N(\mu,\sigma^{2})$ & distribuciones uniforme, exponencial y normal \\
+$\Phi$ & función de distribución de la normal estándar \\
+$\BetaD(a,b)$, $\Dir(\alpha_1,\dots,\alpha_K)$ & distribuciones beta y de Dirichlet \\
+$X_1,\dots,X_n$ \iid & muestra independiente e idénticamente distribuida \\
+$\Xbar_n$ & media muestral $\frac1n\sum_{i=1}^{n}X_i$ \\
+$\ell(\theta)$, $\hat\theta$ & log-verosimilitud y estimador \\
+$\mathbf{1}_A$ & función indicadora del suceso $A$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Probabilidad, condicionamiento y teorema de Bayes}
+\label{tema:1}
+% =====================================================================
+
+Este tema fija el lenguaje del módulo: espacios de probabilidad, probabilidad condicionada, independencia y teorema de Bayes. La presentación sigue el capítulo~1 de~\cite{bt} y las lecciones~1 a~3 de~\cite{mit6041}; la terminología bayesiana (a priori, verosimilitud, a posteriori) y la forma de razón de probabilidades siguen las clases~3 y~12 de~\cite{mit1805} y el capítulo~2 de~\cite{bh}. Deisenroth \emph{et al.}~\cite[§6.1 y §6.3]{mml} ofrecen el mismo material con orientación al aprendizaje automático.
+
+\section{Modelos probabilísticos}
+
+\begin{definicion}[Espacio de probabilidad]\label{def:espacio}
+Un \emph{espacio de probabilidad} es una terna $(\Omega,\mathcal{F},\PP)$ formada por un \emph{espacio muestral} $\Omega$ (el conjunto de resultados posibles de un experimento), una familia $\mathcal{F}$ de subconjuntos de $\Omega$, llamados \emph{sucesos}, cerrada por complementos y uniones numerables y que contiene a $\Omega$, y una función $\PP\colon\mathcal{F}\to\R$ que cumple los \emph{axiomas de Kolmogorov}:
+\begin{enumerate}
+  \item \emph{no negatividad}: $\PP(A)\ge 0$ para todo $A\in\mathcal{F}$;
+  \item \emph{normalización}: $\PP(\Omega)=1$;
+  \item \emph{aditividad numerable}: si $A_1,A_2,\dots$ son disjuntos dos a dos, $\PP\bigl(\bigcup_{i}A_i\bigr)=\sum_{i}\PP(A_i)$.
+\end{enumerate}
+\end{definicion}
+
+Cuando $\Omega$ es finito o numerable se toma $\mathcal{F}$ igual a todos los subconjuntos de $\Omega$, y basta dar la probabilidad de cada resultado: $\PP(A)=\sum_{\omega\in A}\PP(\{\omega\})$. Si además $\Omega$ es finito y todos los resultados son equiprobables, $\PP(A)=\abs{A}/\abs{\Omega}$ (ley de Laplace)~\cite[§1.2]{bt}.
+
+\begin{proposicion}[Consecuencias de los axiomas]\label{prop:axiomas}
+Para sucesos $A,B\in\mathcal{F}$:
+\begin{enumerate}
+  \item $\PP(\varnothing)=0$ y $\PP(A^{c})=1-\PP(A)$;
+  \item si $A\subseteq B$, entonces $\PP(A)\le\PP(B)$;
+  \item $\PP(A\cup B)=\PP(A)+\PP(B)-\PP(A\cap B)$;
+  \item $\PP(A\cup B)\le\PP(A)+\PP(B)$ (cota de la unión).
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\Omega$ y $\varnothing$ son disjuntos y $\Omega\cup\varnothing=\Omega$; por aditividad, $\PP(\Omega)=\PP(\Omega)+\PP(\varnothing)$, luego $\PP(\varnothing)=0$. Como $A$ y $A^{c}$ son disjuntos y su unión es $\Omega$, $\PP(A)+\PP(A^{c})=1$. (ii) $B=A\cup(B\cap A^{c})$ con unión disjunta, así que $\PP(B)=\PP(A)+\PP(B\cap A^{c})\ge\PP(A)$ por no negatividad. (iii) $A\cup B=A\cup(B\cap A^{c})$ y $B=(A\cap B)\cup(B\cap A^{c})$, ambas uniones disjuntas; restando las dos igualdades de probabilidades se obtiene el resultado. (iv) Se sigue de (iii), porque $\PP(A\cap B)\ge 0$.
+\end{proof}
+
+\section{Probabilidad condicionada}
+
+\begin{definicion}[Probabilidad condicionada]
+Sean $A,B\in\mathcal{F}$ con $\PP(A)>0$. La \emph{probabilidad de $B$ condicionada a $A$} es
+\[
+\PP(B\mid A)=\frac{\PP(A\cap B)}{\PP(A)}.
+\]
+\end{definicion}
+
+Condicionar a $A$ equivale a tomar $A$ como nuevo espacio muestral y renormalizar. Para $A$ fijo, $B\mapsto\PP(B\mid A)$ cumple los tres axiomas de Kolmogorov~\cite[§1.3]{bt}; en consecuencia, todas las propiedades de la \cref{prop:axiomas} valen también para probabilidades condicionadas. Despejando se obtiene la \emph{regla del producto}, $\PP(A\cap B)=\PP(A)\,\PP(B\mid A)$, cuya iteración es la regla de la cadena del módulo~1.
+
+\begin{observacion}
+Un modelo de lenguaje es una familia de probabilidades condicionadas $\PP(x_t\mid x_{1:t-1})$: el suceso condicionante es el contexto observado y la distribución condicionada es la del token siguiente. Todo lo que se demuestre en este tema para probabilidades condicionadas se aplica, por tanto, a las salidas de un LLM.
+\end{observacion}
+
+\section{Probabilidad total y regla de Bayes}
+
+\begin{definicion}[Partición]
+Una familia finita o numerable de sucesos $H_1,H_2,\dots$ es una \emph{partición} de $\Omega$ si son disjuntos dos a dos y su unión es $\Omega$.
+\end{definicion}
+
+\begin{teorema}[Probabilidad total]\label{teo:total}
+Sea $H_1,H_2,\dots$ una partición de $\Omega$ con $\PP(H_i)>0$ para todo $i$. Para todo suceso $D$,
+\[
+\PP(D)=\sum_{i}\PP(D\mid H_i)\,\PP(H_i).
+\]
+\end{teorema}
+
+\begin{proof}
+Los sucesos $D\cap H_i$ son disjuntos dos a dos y su unión es $D\cap\Omega=D$. Por aditividad, $\PP(D)=\sum_i\PP(D\cap H_i)$, y por la regla del producto, $\PP(D\cap H_i)=\PP(H_i)\,\PP(D\mid H_i)$.
+\end{proof}
+
+\begin{teorema}[Regla de Bayes]\label{teo:bayes}
+Con las hipótesis del \cref{teo:total} y $\PP(D)>0$, para cada $j$,
+\[
+\PP(H_j\mid D)=\frac{\PP(D\mid H_j)\,\PP(H_j)}{\sum_{i}\PP(D\mid H_i)\,\PP(H_i)}.
+\]
+\end{teorema}
+
+\begin{proof}
+Por la definición y la regla del producto aplicada de las dos formas posibles, $\PP(H_j\mid D)=\PP(H_j\cap D)/\PP(D)=\PP(D\mid H_j)\PP(H_j)/\PP(D)$. Basta sustituir $\PP(D)$ por la expresión del \cref{teo:total}.
+\end{proof}
+
+En el lenguaje de la inferencia, los $H_i$ son \emph{hipótesis} y $D$ son los \emph{datos}. $\PP(H_j)$ es la probabilidad \emph{a priori}, $\PP(D\mid H_j)$ la \emph{verosimilitud}, $\PP(H_j\mid D)$ la probabilidad \emph{a posteriori} y el denominador, $\PP(D)$, la \emph{evidencia}, que solo normaliza. Abreviadamente, la probabilidad a posteriori es proporcional al producto de verosimilitud y probabilidad a priori~\cite[clase~11]{mit1805}.
+
+\begin{ejemplo}[Filtro de correo no deseado]\label{ej:spam}
+El $20\,\%$ del correo es no deseado ($S$). La palabra «gratis» ($G$) aparece en el $50\,\%$ de esos mensajes y en el $5\,\%$ de los demás. Por el \cref{teo:bayes},
+\[
+\PP(S\mid G)=\frac{0{,}5\cdot 0{,}2}{0{,}5\cdot 0{,}2+0{,}05\cdot 0{,}8}=\frac{0{,}10}{0{,}14}=\frac57\approx 0{,}714.
+\]
+La \cref{fig:arbol} representa el cálculo como un árbol: cada camino lleva el producto de sus probabilidades, y el resultado es la fracción de la masa de los caminos que terminan en $G$ que corresponde al camino que pasa por $S$.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,level distance=3.2cm,
+  level 1/.style={sibling distance=2.6cm},level 2/.style={sibling distance=1.25cm},
+  grow=right,edge from parent/.style={draw,-{Stealth[length=2mm]}}]
+\node[draw,circle,inner sep=1.5pt] {}
+  child {node[right] {$S^{c}$}
+    child {node[right] {$G^{c}$: \ $0{,}8\cdot 0{,}95=0{,}76$} edge from parent node[below,pos=0.6] {$0{,}95$}}
+    child {node[right] {$G$: \ $0{,}8\cdot 0{,}05=0{,}04$} edge from parent node[above,pos=0.6] {$0{,}05$}}
+    edge from parent node[below left] {$0{,}8$}}
+  child {node[right] {$S$}
+    child {node[right] {$G^{c}$: \ $0{,}2\cdot 0{,}5=0{,}10$} edge from parent node[below,pos=0.6] {$0{,}5$}}
+    child {node[right] {$G$: \ $0{,}2\cdot 0{,}5=0{,}10$} edge from parent node[above,pos=0.6] {$0{,}5$}}
+    edge from parent node[above left] {$0{,}2$}};
+\end{tikzpicture}
+\caption{Árbol de probabilidades del \cref{ej:spam}. La evidencia es $\PP(G)=0{,}10+0{,}04=0{,}14$ y la probabilidad a posteriori, $0{,}10/0{,}14\approx 0{,}714$.}
+\label{fig:arbol}
+\end{figure}
+
+Cuando solo hay dos hipótesis, $H$ y $H^{c}$, es cómodo trabajar con la \emph{razón de probabilidades} (en inglés, \emph{odds}) $O(H)=\PP(H)/\PP(H^{c})$.
+
+\begin{proposicion}[Bayes en forma de razón]\label{prop:odds}
+Si $\PP(D\mid H^{c})>0$, entonces
+\[
+O(H\mid D)=\frac{\PP(D\mid H)}{\PP(D\mid H^{c})}\cdot O(H),
+\]
+donde $O(H\mid D)=\PP(H\mid D)/\PP(H^{c}\mid D)$. El cociente $\PP(D\mid H)/\PP(D\mid H^{c})$ se llama \emph{factor de Bayes} o razón de verosimilitudes.
+\end{proposicion}
+
+\begin{proof}
+Se aplica el \cref{teo:bayes} a $H$ y a $H^{c}$ y se dividen las dos expresiones: la evidencia $\PP(D)$ se cancela y queda $\dfrac{\PP(H\mid D)}{\PP(H^{c}\mid D)}=\dfrac{\PP(D\mid H)\,\PP(H)}{\PP(D\mid H^{c})\,\PP(H^{c})}$.
+\end{proof}
+
+La forma de razón muestra con claridad la llamada \emph{falacia de la probabilidad a priori}: un factor de Bayes grande no basta para que la hipótesis sea probable si $O(H)$ es muy pequeña (\cref{eje:1-detector,eje:1-cribado}).
+
+\section{Independencia}
+
+\begin{definicion}[Independencia]\label{def:indep}
+Dos sucesos $A$ y $B$ son \emph{independientes} si $\PP(A\cap B)=\PP(A)\,\PP(B)$. Si $\PP(A)>0$, la condición equivale a $\PP(B\mid A)=\PP(B)$: saber que ha ocurrido $A$ no cambia la probabilidad de $B$. Los sucesos $A_1,\dots,A_n$ son \emph{independientes} si $\PP\bigl(\bigcap_{i\in S}A_i\bigr)=\prod_{i\in S}\PP(A_i)$ para todo subconjunto $S\subseteq\{1,\dots,n\}$.
+\end{definicion}
+
+\begin{definicion}[Independencia condicionada]
+Sea $C$ con $\PP(C)>0$. Los sucesos $A$ y $B$ son \emph{independientes condicionalmente a $C$} si $\PP(A\cap B\mid C)=\PP(A\mid C)\,\PP(B\mid C)$.
+\end{definicion}
+
+\begin{observacion}
+La independencia condicionada no implica la independencia, ni al revés. Dos lanzamientos de una moneda elegida al azar entre una equilibrada y una trucada son independientes condicionalmente a la moneda, pero no lo son incondicionalmente: una cara en el primer lanzamiento hace más probable la moneda que favorece la cara y, con ella, una cara en el segundo (\cref{eje:1-monedas}). Del mismo modo, independencia no es lo mismo que incompatibilidad: dos sucesos disjuntos con probabilidad positiva nunca son independientes (\cref{eje:1-disjuntos}).
+\end{observacion}
+
+\begin{observacion}[Conexión con los LLM]
+El aprendizaje en contexto, es decir, la capacidad de un LLM de adaptar su respuesta a ejemplos incluidos en la instrucción sin modificar sus pesos (módulo~22), se ha interpretado como una inferencia bayesiana implícita: el contexto actúa como los datos $D$ y el modelo concentra su distribución sobre las continuaciones compatibles con un «concepto» latente $H$~\cite{xie}. Se trata de un modelo teórico explicativo, no de una descripción del funcionamiento interno de un modelo comercial concreto.
+\end{observacion}
+
+\begin{lecturas}
+\item Bertsekas y Tsitsiklis~\cite{bt}, §1.2 «Probabilistic Models», §1.3 «Conditional Probability», §1.4 «Total Probability Theorem and Bayes' Rule» y §1.5 «Independence».
+\item MIT 6.041SC~\cite{mit6041}, unidad~I, lecciones~1 «Probability Models and Axioms», 2 «Conditioning and Bayes' Rule» y 3 «Independence».
+\item MIT 18.05~\cite{mit1805}, clase~3 «Conditional Probability, Independence and Bayes' Theorem» y clase~12b «Bayesian Updating: Odds».
+\item Blitzstein y Hwang~\cite{bh}, cap.~2 «Conditional Probability».
+\item Deisenroth, Faisal y Ong~\cite{mml}, §6.1 «Construction of a Probability Space» y §6.3 «Sum Rule, Product Rule, and Bayes' Theorem».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-inversa}
+Proponga un ejemplo cotidiano en el que $\PP(A\mid B)$ y $\PP(B\mid A)$ sean muy distintas. Asigne valores plausibles a $\PP(A)$, $\PP(B)$ y $\PP(B\mid A)$, calcule $\PP(A\mid B)$ e identifique qué cociente relaciona ambas probabilidades condicionadas.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-disjuntos}
+Demuestre que si $A$ y $B$ son disjuntos y $\PP(A)>0$, $\PP(B)>0$, entonces $A$ y $B$ no son independientes. Explique intuitivamente el resultado.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-detector}
+Un detector de texto generado por IA tiene una sensibilidad del $99\,\%$ (marca el $99\,\%$ de los textos generados) y una tasa de falsos positivos del $5\,\%$. Si el $1\,\%$ de los textos analizados son generados, ¿qué probabilidad hay de que un texto marcado lo sea realmente?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-cribado}
+Una enfermedad afecta al $0{,}5\,\%$ de la población. Una prueba diagnóstica da un $5\,\%$ de falsos positivos y un $2\,\%$ de falsos negativos. Para una persona con resultado positivo, calcule la razón de probabilidades a priori, el factor de Bayes, la razón a posteriori y la probabilidad a posteriori de estar enferma.
+\fuente{adaptado de MIT 18.05~\cite{mit1805}, clase~12, problema~2.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-monedas}
+En una bolsa hay dos monedas de aspecto idéntico: una equilibrada y otra con probabilidad de cara $1/4$. Se extrae una al azar y se lanza dos veces. (a) Si salen dos caras, ¿qué probabilidad hay de que sea la moneda equilibrada? (b) ¿Son independientes los sucesos «cara en el primer lanzamiento» y «cara en el segundo»? Justifíquelo con un cálculo.
+\fuente{adaptado de Harvard Stat 110~\cite{stat110}, \emph{Homework}~2, problema~4.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-complementos}
+Demuestre que si $A$ y $B$ son independientes, también lo son $A$ y $B^{c}$, y $A^{c}$ y $B^{c}$.
+\fuente{adaptado de Harvard Stat 110~\cite{stat110}, \emph{Strategic Practice}~2, sección «Independence», problema~2.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Variables aleatorias discretas}
+\label{tema:2}
+% =====================================================================
+
+Una variable aleatoria asigna un número a cada resultado de un experimento. Este tema estudia las variables discretas, entre ellas la distribución categórica que produce un LLM en cada paso, y sus dos resúmenes principales, la esperanza y la varianza. Se sigue el capítulo~2 y la §4.2 de~\cite{bt}, las lecciones~5 a~7 de~\cite{mit6041} y las clases~4, 5a y~7 de~\cite{mit1805}; la orientación al aprendizaje automático procede de~\cite[§6.2 y §6.4]{mml}.
+
+\section{Variables aleatorias y funciones de masa}
+
+\begin{definicion}[Variable aleatoria discreta]\label{def:va}
+Una \emph{variable aleatoria} es una función $X\colon\Omega\to\R$ tal que $\{\omega: X(\omega)\le x\}\in\mathcal{F}$ para todo $x\in\R$. Es \emph{discreta} si toma un conjunto finito o numerable de valores. Su \emph{función de masa} es
+\[
+p_X(x)=\PP(X=x),
+\]
+que cumple $p_X(x)\ge 0$ y $\sum_x p_X(x)=1$. Si $X$ y $Y$ tienen la misma función de masa se dice que tienen la misma \emph{distribución}.
+\end{definicion}
+
+\begin{definicion}[Distribuciones discretas básicas]\label{def:discretas}
+\begin{enumerate}
+  \item $X\sim\Ber(p)$, con $p\in[0,1]$, si $X\in\{0,1\}$ y $p_X(x)=p^{x}(1-p)^{1-x}$. Modela un experimento con dos resultados: acierto o fallo.
+  \item $X\sim\Bin(n,p)$ si $X$ es el número de éxitos en $n$ ensayos de Bernoulli independientes con probabilidad $p$:
+  \[
+  p_X(k)=\binom{n}{k}p^{k}(1-p)^{n-k},\qquad k=0,1,\dots,n.
+  \]
+  \item $X\sim\Cat(p_1,\dots,p_K)$, con $p_k\ge 0$ y $\sum_k p_k=1$, si $X\in\{1,\dots,K\}$ y $\PP(X=k)=p_k$. Equivalentemente, $p_X(k)=\prod_{j=1}^{K}p_j^{\mathbf{1}[j=k]}$.
+\end{enumerate}
+\end{definicion}
+
+La categórica es la generalización de la Bernoulli a $K$ resultados, y es exactamente lo que produce un LLM en cada posición: la softmax convierte los $K$ logits en el vector $(p_1,\dots,p_K)$ de una categórica sobre el vocabulario. Los valores $1,\dots,K$ son etiquetas sin orden ni distancia: el token~517 no está «entre» el~516 y el~518.
+
+\begin{ejemplo}
+Que la función de masa binomial sume~1 es el desarrollo del binomio de Newton: $\sum_{k=0}^{n}\binom nk p^{k}(1-p)^{n-k}=(p+(1-p))^{n}=1$. El coeficiente $\binom nk$ cuenta las secuencias de $n$ ensayos con exactamente $k$ éxitos, y cada una tiene probabilidad $p^{k}(1-p)^{n-k}$ por la independencia de los ensayos~\cite[§2.2]{bt}.
+\end{ejemplo}
+
+\section{Esperanza}
+
+\begin{definicion}[Esperanza]\label{def:esperanza}
+La \emph{esperanza} o \emph{media} de una variable discreta $X$ es
+\[
+\E[X]=\sum_x x\,p_X(x),
+\]
+siempre que la serie converja absolutamente.
+\end{definicion}
+
+La esperanza es el centro de gravedad de la función de masa. Para una categórica con etiquetas arbitrarias no tiene sentido «el token medio», pero sí la esperanza de cualquier función numérica de los tokens, por ejemplo de la pérdida.
+
+\begin{teorema}[Esperanza de una función]\label{teo:lotus}
+Si $g\colon\R\to\R$ y $X$ es discreta, entonces $\E[g(X)]=\sum_x g(x)\,p_X(x)$.
+\end{teorema}
+
+\begin{proof}
+Sea $Y=g(X)$. Para cada valor $y$, $p_Y(y)=\sum_{x:g(x)=y}p_X(x)$. Entonces $\E[Y]=\sum_y y\,p_Y(y)=\sum_y\sum_{x:g(x)=y}g(x)\,p_X(x)=\sum_x g(x)\,p_X(x)$, porque los conjuntos $\{x:g(x)=y\}$ forman una partición de los valores de $X$.
+\end{proof}
+
+\begin{proposicion}[Linealidad]\label{prop:linealidad}
+Para variables $X$, $Y$ con esperanza finita y constantes $a,b,c$,
+\[
+\E[aX+bY+c]=a\,\E[X]+b\,\E[Y]+c.
+\]
+La igualdad no requiere independencia.
+\end{proposicion}
+
+\begin{proof}
+Sea $p_{X,Y}$ la función de masa conjunta (\cref{def:conjunta}). Por la versión bidimensional del \cref{teo:lotus},
+$\E[aX+bY+c]=\sum_{x,y}(ax+by+c)\,p_{X,Y}(x,y)=a\sum_x x\sum_y p_{X,Y}(x,y)+b\sum_y y\sum_x p_{X,Y}(x,y)+c$, y las sumas interiores son las funciones de masa marginales.
+\end{proof}
+
+\begin{ejemplo}[Dado equilibrado]\label{ej:dado}
+Si $X$ es la puntuación de un dado equilibrado, $\E[X]=(1+2+\dots+6)/6=21/6=3{,}5$. Por el \cref{teo:lotus}, $\E[X^{2}]=(1+4+9+16+25+36)/6=91/6$.
+\end{ejemplo}
+
+\section{Varianza}
+
+\begin{definicion}[Varianza]\label{def:varianza}
+La \emph{varianza} de $X$ es $\Var(X)=\E\bigl[(X-\E[X])^{2}\bigr]$, y su \emph{desviación típica} es $\sigma_X=\sqrt{\Var(X)}$, que tiene las mismas unidades que $X$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:varianza}
+\begin{enumerate}
+  \item $\Var(X)=\E[X^{2}]-\E[X]^{2}$.
+  \item $\Var(aX+b)=a^{2}\Var(X)$ para constantes $a,b$.
+  \item $\Var(X)\ge 0$, con igualdad si y solo si $X$ es constante con probabilidad~1.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+Sea $\mu=\E[X]$. (i) Desarrollando el cuadrado y por linealidad, $\E[(X-\mu)^{2}]=\E[X^{2}]-2\mu\E[X]+\mu^{2}=\E[X^{2}]-\mu^{2}$. (ii) $\E[aX+b]=a\mu+b$, luego $\Var(aX+b)=\E[(aX-a\mu)^{2}]=a^{2}\E[(X-\mu)^{2}]$. (iii) $\Var(X)=\sum_x(x-\mu)^{2}p_X(x)$ es una suma de términos no negativos; es nula si y solo si $p_X(x)=0$ para todo $x\ne\mu$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:tresvalores}
+Para el dado del \cref{ej:dado}, $\Var(X)=91/6-(7/2)^{2}=182/12-147/12=35/12\approx 2{,}917$. Si $X\in\{0,1,2\}$ con probabilidades $(0{,}5;\,0{,}3;\,0{,}2)$, entonces $\E[X]=0{,}3+0{,}4=0{,}7$, $\E[X^{2}]=0{,}3+0{,}8=1{,}1$ y $\Var(X)=1{,}1-0{,}49=0{,}61$.
+\end{ejemplo}
+
+Para $X\sim\Ber(p)$, $X^{2}=X$, luego $\E[X]=\E[X^{2}]=p$ y $\Var(X)=p-p^{2}=p(1-p)$, máxima en $p=1/2$.
+
+\section{Varias variables aleatorias}
+
+\begin{definicion}[Distribución conjunta e independencia]\label{def:conjunta}
+La \emph{función de masa conjunta} de $X$ e $Y$ es $p_{X,Y}(x,y)=\PP(X=x,\,Y=y)$; las \emph{marginales} se obtienen sumando, $p_X(x)=\sum_y p_{X,Y}(x,y)$. Las variables $X$ e $Y$ son \emph{independientes} si $p_{X,Y}(x,y)=p_X(x)\,p_Y(y)$ para todo $(x,y)$, y $X_1,\dots,X_n$ son independientes si la conjunta factoriza en el producto de las $n$ marginales.
+\end{definicion}
+
+\begin{definicion}[Covarianza]
+La \emph{covarianza} de $X$ e $Y$ es $\Cov(X,Y)=\E\bigl[(X-\E[X])(Y-\E[Y])\bigr]=\E[XY]-\E[X]\,\E[Y]$. Si $\Cov(X,Y)=0$, las variables se llaman \emph{incorreladas}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:suma}
+\begin{enumerate}
+  \item Si $X$ e $Y$ son independientes, $\E[XY]=\E[X]\,\E[Y]$ y, por tanto, $\Cov(X,Y)=0$.
+  \item $\Var(X+Y)=\Var(X)+\Var(Y)+2\Cov(X,Y)$. En particular, la varianza de una suma de variables independientes es la suma de las varianzas.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Por la factorización de la conjunta, $\E[XY]=\sum_{x,y}xy\,p_X(x)p_Y(y)=\bigl(\sum_x x\,p_X(x)\bigr)\bigl(\sum_y y\,p_Y(y)\bigr)$. (ii) Sean $\tilde X=X-\E[X]$ e $\tilde Y=Y-\E[Y]$. Entonces $\Var(X+Y)=\E[(\tilde X+\tilde Y)^{2}]=\E[\tilde X^{2}]+\E[\tilde Y^{2}]+2\E[\tilde X\tilde Y]$.
+\end{proof}
+
+El recíproco de (i) es falso: hay variables incorreladas que no son independientes (\cref{eje:2-covarianza}).
+
+\begin{corolario}[Varianza de la media muestral]\label{cor:media}
+Sean $X_1,\dots,X_n$ independientes con media $\mu$ y varianza $\sigma^{2}$, y sea $\Xbar_n=\frac1n\sum_{i=1}^{n}X_i$. Entonces $\E[\Xbar_n]=\mu$ y $\Var(\Xbar_n)=\sigma^{2}/n$.
+\end{corolario}
+
+\begin{proof}
+La media se obtiene por linealidad. Para la varianza, por la \cref{prop:varianza}(ii) y la \cref{prop:suma}(ii) aplicada repetidamente, $\Var(\Xbar_n)=\frac{1}{n^{2}}\sum_{i}\Var(X_i)=\frac{n\sigma^{2}}{n^{2}}$.
+\end{proof}
+
+El \cref{cor:media} es el resultado central del módulo: promediar $n$ observaciones independientes divide la varianza por $n$ y la desviación típica por $\sqrt n$. El tema~5 lo convierte en garantías sobre el error de cualquier promedio. Como aplicación inmediata, si $X\sim\Bin(n,p)$ se escribe $X=\sum_{i=1}^{n}B_i$ con $B_i\sim\Ber(p)$ independientes, y se obtiene $\E[X]=np$ y $\Var(X)=np(1-p)$.
+
+\begin{table}[h]
+\centering\small
+\caption{Distribuciones de los temas~2 y~3 y uso en un LLM.}\label{tab:distribuciones}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Distribución & Valores & $\E[X]$ & $\Var(X)$ & Uso en un LLM \\
+\midrule
+$\Ber(p)$ & $\{0,1\}$ & $p$ & $p(1-p)$ & acierto en una pregunta de evaluación \\
+$\Bin(n,p)$ & $\{0,\dots,n\}$ & $np$ & $np(1-p)$ & aciertos en un banco de pruebas \\
+$\Cat(p_1,\dots,p_K)$ & $\{1,\dots,K\}$ & --- & --- & token siguiente \\
+$\Unif(a,b)$ & $[a,b]$ & $(a+b)/2$ & $(b-a)^{2}/12$ & número aleatorio del muestreo \\
+$\Expo(\lambda)$ & $[0,\infty)$ & $1/\lambda$ & $1/\lambda^{2}$ & tiempos de espera \\
+$\N(\mu,\sigma^{2})$ & $\R$ & $\mu$ & $\sigma^{2}$ & pesos iniciales, ruido \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Muestreo de una distribución categórica}
+
+Para generar un token, el LLM necesita extraer una muestra de $\Cat(p_1,\dots,p_K)$ a partir de un número aleatorio uniforme. Sea $F_k=p_1+\dots+p_k$ la probabilidad acumulada, con $F_0=0$ y $F_K=1$.
+
+\begin{proposicion}[Transformada inversa discreta]\label{prop:inversa-discreta}
+Sea $U\sim\Unif(0,1)$, es decir, $\PP(a<U\le b)=b-a$ para $0\le a\le b\le 1$ (\cref{tema:3}). La variable
+\[
+X=\min\{k: U\le F_k\}
+\]
+tiene distribución $\Cat(p_1,\dots,p_K)$.
+\end{proposicion}
+
+\begin{proof}
+Como $F_0\le F_1\le\dots\le F_K$, se tiene $X=k$ si y solo si $F_{k-1}<U\le F_k$. Por tanto, $\PP(X=k)=F_k-F_{k-1}=p_k$.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=10cm,y=1cm,font=\small]
+  \draw[thick] (0,0) -- (1,0);
+  \foreach \x/\l in {0/0,0.5/{0{,}5},0.8/{0{,}8},1/1} {\draw (\x,0.12) -- (\x,-0.12) node[below] {$\l$};}
+  \draw[-{Stealth[length=2mm]},thick] (0.6,0.9) node[above] {$u=0{,}6$} -- (0.6,0.08);
+  \draw[decorate,decoration={brace,amplitude=4pt,mirror},yshift=-0.55cm] (0,0) -- (0.5,0) node[midway,below=4pt,align=center] {token 0\\ $p_0=0{,}5$};
+  \draw[decorate,decoration={brace,amplitude=4pt,mirror},yshift=-0.55cm] (0.5,0) -- (0.8,0) node[midway,below=4pt,align=center] {token 1\\ $p_1=0{,}3$};
+  \draw[decorate,decoration={brace,amplitude=4pt,mirror},yshift=-0.55cm] (0.8,0) -- (1,0) node[midway,below=4pt,align=center] {token 2\\ $p_2=0{,}2$};
+\end{tikzpicture}
+\caption{Muestreo por transformada inversa del \cref{ej:muestreo}: el intervalo $[0,1]$ se divide en tramos de longitud $p_k$ y se devuelve el tramo en el que cae $u$.}
+\label{fig:inversa}
+\end{figure}
+
+\begin{ejemplo}[Muestreo de un token]\label{ej:muestreo}
+Un vocabulario de tres tokens, numerados $0$, $1$ y $2$, recibe las probabilidades $(0{,}5;\,0{,}3;\,0{,}2)$. Las acumuladas son $(0{,}5;\,0{,}8;\,1)$. Si el generador produce $u=0{,}6$, como $0{,}5<0{,}6\le 0{,}8$, se emite el token~1 (\cref{fig:inversa}).
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+La softmax con temperatura del módulo~1 modifica el vector $(p_k)$ antes de aplicar la \cref{prop:inversa-discreta}: con $T\to 0$ toda la masa se concentra en el logit máximo (si es único) y el muestreo se vuelve determinista; con $T$ grande, la categórica se acerca a la uniforme. Por eso la misma instrucción puede producir respuestas distintas en dos ejecuciones: cada respuesta es una realización distinta de la misma secuencia de distribuciones categóricas.
+\end{observacion}
+
+\begin{lecturas}
+\item Bertsekas y Tsitsiklis~\cite{bt}, §2.1–2.4 (variables discretas, funciones de masa, esperanza y varianza), §2.5 y §2.7 (conjuntas e independencia) y §4.2 «Covariance and Correlation».
+\item MIT 6.041SC~\cite{mit6041}, unidad~I, lecciones~5 «Discrete Random Variables; Probability Mass Functions; Expectations», 6 y~7.
+\item MIT 18.05~\cite{mit1805}, clases~4a–4b (variables discretas y valor esperado), 5a (varianza) y 7b «Covariance and Correlation».
+\item Deisenroth, Faisal y Ong~\cite{mml}, §6.2 «Discrete and Continuous Probabilities» y §6.4 «Summary Statistics and Independence».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-categorica}
+¿Por qué la salida de un LLM se modela con una distribución categórica y no con una normal sobre el índice del token? Dé al menos dos razones.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-dados}
+Se lanzan dos dados equilibrados independientes. Calcule la esperanza y la varianza de la suma $S$ y la probabilidad $\PP(S=7)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-softmax}
+Un modelo con cuatro tokens, numerados de~0 a~3, produce los logits $z=(2,1,0,-1)$. Calcule la softmax con tres decimales, las probabilidades acumuladas y el token emitido según la \cref{prop:inversa-discreta} cuando $u=0{,}5$ y cuando $u=0{,}9$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-dados4}
+Se lanzan dos dados de cuatro caras (numeradas del~1 al~4). Cada uno de los 16 resultados ordenados $(i,j)$ tiene probabilidad proporcional a la suma $i+j$. (a) Halle la constante de proporcionalidad. (b) Calcule la probabilidad de que la suma sea par. (c) Calcule la probabilidad de que un dado muestre un~2 y el otro un~3. (d) Calcule la esperanza de la suma.
+\fuente{adaptado de MIT 6.041~\cite{mit6041f10}, \emph{Problem Set}~1, problema~3 (el apartado (d) es nuevo).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-binomial}
+Un modelo responde a 10 preguntas independientes y acierta cada una con probabilidad $0{,}8$. Sea $X$ el número de aciertos. Calcule $\E[X]$, $\Var(X)$, $\PP(X=10)$ y $\PP(X\ge 9)$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-covarianza}
+(a) Demuestre la \cref{prop:suma} con todo detalle, justificando cada uso de la linealidad. (b) Sea $X$ uniforme en $\{-1,0,1\}$ e $Y=X^{2}$. Demuestre que $X$ e $Y$ son incorreladas pero no independientes.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Variables aleatorias continuas y distribución normal}
+\label{tema:3}
+% =====================================================================
+
+Las magnitudes que varían en un continuo, como los pesos de una red o el número aleatorio que se usa para muestrear, se describen con densidades. Este tema introduce las variables continuas, estudia la uniforme, la exponencial y la normal, demuestra el método de la transformada inversa y aplica las propiedades de la varianza a la inicialización de redes neuronales. Se sigue el capítulo~3 y la §4.1 de~\cite{bt}, la unidad~II de~\cite{mit6041}, las clases~5b a~6a de~\cite{mit1805} y el capítulo~5 de~\cite{bh}; la normal en aprendizaje automático, en~\cite[§6.5]{mml} y~\cite[§1.2.4]{bishop}, y la inicialización, en los artículos originales~\cite{glorot,he}.
+
+\section{Densidad y función de distribución}
+
+\begin{definicion}[Variable continua]\label{def:continua}
+Una variable aleatoria $X$ es \emph{continua} si existe una función $f_X\ge 0$, su \emph{densidad}, tal que
+\[
+\PP(a\le X\le b)=\int_a^b f_X(x)\,dx\qquad\text{para todo } a\le b,
+\]
+y en particular $\int_{-\infty}^{\infty}f_X(x)\,dx=1$. La \emph{función de distribución} de cualquier variable es $F_X(x)=\PP(X\le x)$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:densidad}
+Si $X$ es continua con densidad $f_X$:
+\begin{enumerate}
+  \item $\PP(X=x)=0$ para todo $x$; por tanto, da igual usar desigualdades estrictas o no estrictas;
+  \item $F_X(x)=\int_{-\infty}^{x}f_X(t)\,dt$ y, en cada punto de continuidad de $f_X$, $F_X'(x)=f_X(x)$;
+  \item $F_X$ es no decreciente, con $\lim_{x\to-\infty}F_X(x)=0$ y $\lim_{x\to\infty}F_X(x)=1$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\PP(X=x)=\int_x^x f_X=0$. (ii) La primera igualdad es la definición con $a\to-\infty$; la segunda es el teorema fundamental del cálculo. (iii) Si $x<y$, $F_X(y)-F_X(x)=\int_x^y f_X\ge 0$; los límites se siguen de que la integral total es~1.
+\end{proof}
+
+La densidad no es una probabilidad: puede ser mayor que~1. Para $h$ pequeño, $\PP(x\le X\le x+h)\approx f_X(x)\,h$, de modo que $f_X(x)$ es probabilidad por unidad de longitud. La esperanza y la varianza se definen como en el caso discreto cambiando sumas por integrales: $\E[g(X)]=\int g(x)f_X(x)\,dx$, y todas las propiedades del \cref{tema:2} se mantienen~\cite[§3.1]{bt}.
+
+\section{Uniforme y exponencial}
+
+\begin{definicion}[Uniforme]
+$X\sim\Unif(a,b)$, con $a<b$, si $f_X(x)=1/(b-a)$ en $[a,b]$ y $0$ fuera.
+\end{definicion}
+
+\begin{proposicion}\label{prop:uniforme}
+Si $X\sim\Unif(a,b)$, entonces $\E[X]=(a+b)/2$ y $\Var(X)=(b-a)^{2}/12$.
+\end{proposicion}
+
+\begin{proof}
+$\E[X]=\frac{1}{b-a}\int_a^b x\,dx=\frac{b^{2}-a^{2}}{2(b-a)}=\frac{a+b}{2}$. Para la varianza, la variable $Y=X-\frac{a+b}{2}$ es uniforme en $[-c,c]$ con $c=\frac{b-a}{2}$, y $\Var(X)=\Var(Y)=\E[Y^{2}]=\frac{1}{2c}\int_{-c}^{c}y^{2}\,dy=\frac{c^{2}}{3}=\frac{(b-a)^{2}}{12}$.
+\end{proof}
+
+\begin{definicion}[Exponencial]
+$X\sim\Expo(\lambda)$, con $\lambda>0$, si $f_X(x)=\lambda e^{-\lambda x}$ para $x\ge 0$ y $0$ para $x<0$. Su función de distribución es $F_X(x)=1-e^{-\lambda x}$ para $x\ge 0$.
+\end{definicion}
+
+Integrando por partes se obtiene $\E[X]=1/\lambda$ y $\E[X^{2}]=2/\lambda^{2}$, luego $\Var(X)=1/\lambda^{2}$~\cite[§3.1]{bt}. La exponencial modela tiempos de espera sin desgaste, como el de un taxi o el de una desintegración radiactiva~\cite[clase~5c]{mit1805}.
+
+\begin{proposicion}[Falta de memoria]\label{prop:memoria}
+Si $X\sim\Expo(\lambda)$ y $s,t\ge 0$, entonces $\PP(X>s+t\mid X>s)=\PP(X>t)$.
+\end{proposicion}
+
+\begin{proof}
+Como $\{X>s+t\}\subseteq\{X>s\}$, $\PP(X>s+t\mid X>s)=\dfrac{\PP(X>s+t)}{\PP(X>s)}=\dfrac{e^{-\lambda(s+t)}}{e^{-\lambda s}}=e^{-\lambda t}=\PP(X>t)$.
+\end{proof}
+
+\section{La distribución normal}
+
+\begin{definicion}[Normal]\label{def:normal}
+$X\sim\N(\mu,\sigma^{2})$, con $\mu\in\R$ y $\sigma>0$, si
+\[
+f_X(x)=\frac{1}{\sqrt{2\pi\sigma^{2}}}\exp\Bigl(-\frac{(x-\mu)^{2}}{2\sigma^{2}}\Bigr).
+\]
+La \emph{normal estándar} es $\N(0,1)$; su función de distribución se denota $\Phi$, y el valor máximo de su densidad es $1/\sqrt{2\pi}\approx 0{,}399$.
+\end{definicion}
+
+Que la densidad integre~1 se deduce de la integral gaussiana $\int_{-\infty}^{\infty}e^{-x^{2}/2}\,dx=\sqrt{2\pi}$, que se calcula pasando a coordenadas polares en el plano~\cite[§3.3]{bt}. Por simetría, $\E[X]=\mu$, y una integración por partes da $\Var(X)=\sigma^{2}$.
+
+\begin{proposicion}[Transformaciones lineales]\label{prop:afin}
+Si $X\sim\N(\mu,\sigma^{2})$ y $a\ne 0$, $b$ son constantes, entonces $aX+b\sim\N(a\mu+b,\,a^{2}\sigma^{2})$. En particular, $Z=(X-\mu)/\sigma\sim\N(0,1)$ y $\PP(X\le x)=\Phi\bigl((x-\mu)/\sigma\bigr)$.
+\end{proposicion}
+
+\begin{proof}
+Sea $a>0$ (el caso $a<0$ es análogo). Para $Y=aX+b$, $F_Y(y)=\PP(X\le (y-b)/a)=F_X\bigl((y-b)/a\bigr)$. Derivando con la regla de la cadena,
+\[
+f_Y(y)=\frac1a f_X\Bigl(\frac{y-b}{a}\Bigr)=\frac{1}{\sqrt{2\pi a^{2}\sigma^{2}}}\exp\Bigl(-\frac{(y-b-a\mu)^{2}}{2a^{2}\sigma^{2}}\Bigr),
+\]
+que es la densidad de $\N(a\mu+b,a^{2}\sigma^{2})$.
+\end{proof}
+
+Gracias a la \cref{prop:afin}, cualquier probabilidad normal se reduce a valores de $\Phi$, que se tabulan o se calculan numéricamente. El \cref{tab:normal} recoge los más usados y la \cref{fig:normal} los representa.
+
+\begin{table}[h]
+\centering\small
+\caption{Probabilidad de que una normal caiga a menos de $k$ desviaciones típicas de su media.}\label{tab:normal}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+$k$ & $1$ & $1{,}96$ & $2$ & $3$ \\
+\midrule
+$\PP(\abs{X-\mu}\le k\sigma)=2\Phi(k)-1$ & $0{,}683$ & $0{,}950$ & $0{,}954$ & $0{,}997$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=1.15cm,y=6cm,font=\small]
+  \fill[gray!35,domain=-1:1,samples=40] (-1,0) -- plot (\x,{exp(-\x*\x/2)/sqrt(2*pi)}) -- (1,0) -- cycle;
+  \fill[gray!15,domain=1:2,samples=20] (1,0) -- plot (\x,{exp(-\x*\x/2)/sqrt(2*pi)}) -- (2,0) -- cycle;
+  \fill[gray!15,domain=-2:-1,samples=20] (-2,0) -- plot (\x,{exp(-\x*\x/2)/sqrt(2*pi)}) -- (-1,0) -- cycle;
+  \draw[-{Stealth[length=2mm]}] (-3.6,0) -- (3.7,0) node[right] {$z$};
+  \draw[thick,domain=-3.5:3.5,samples=80] plot (\x,{exp(-\x*\x/2)/sqrt(2*pi)});
+  \foreach \k in {-3,-2,-1,0,1,2,3} {\draw (\k,0.012) -- (\k,-0.012) node[below] {$\k$};}
+  \node at (0,0.17) {$0{,}683$};
+  \draw[{Stealth[length=1.5mm]}-{Stealth[length=1.5mm]}] (-2,0.47) -- node[above] {$0{,}954$} (2,0.47);
+  \draw[dotted] (-2,0) -- (-2,0.47) (2,0) -- (2,0.47);
+\end{tikzpicture}
+\caption{Densidad de la normal estándar. La zona oscura, $\abs{z}\le 1$, contiene el $68{,}3\,\%$ de la probabilidad; junto con las zonas claras, $\abs{z}\le 2$, el $95{,}4\,\%$.}
+\label{fig:normal}
+\end{figure}
+
+\begin{ejemplo}\label{ej:normal}
+Si $Z\sim\N(0,1)$, $\PP(-1{,}5\le Z\le 2)=\Phi(2)-\Phi(-1{,}5)=0{,}9772-0{,}0668=0{,}9104$~\cite[clase~5c]{mit1805}.
+\end{ejemplo}
+
+La normal aparece cuando una magnitud es la suma de muchos efectos pequeños e independientes; el teorema central del límite (\cref{tema:5}) da la justificación precisa.
+
+\section{Muestreo por transformada inversa}
+
+Un ordenador genera números (pseudo)aleatorios uniformes en $(0,1)$. El resultado siguiente permite convertirlos en muestras de cualquier distribución continua cuya función de distribución sea invertible; es la versión continua de la \cref{prop:inversa-discreta}.
+
+\begin{teorema}[Universalidad de la uniforme]\label{teo:inversa}
+Sea $F$ una función de distribución continua y estrictamente creciente en el intervalo donde $0<F<1$, y sea $U\sim\Unif(0,1)$. Entonces $X=F^{-1}(U)$ tiene función de distribución $F$.
+\end{teorema}
+
+\begin{proof}
+Como $F$ es estrictamente creciente, $F^{-1}(u)\le x$ si y solo si $u\le F(x)$. Por tanto, $\PP(X\le x)=\PP(U\le F(x))=F(x)$, porque $\PP(U\le c)=c$ para $c\in[0,1]$.
+\end{proof}
+
+\begin{observacion}
+El \cref{teo:inversa} es la base de la generación de muestras en todas las bibliotecas numéricas. Para la normal, $\Phi^{-1}$ no tiene expresión cerrada y se usan otros métodos (por ejemplo, el de Box--Muller), pero el principio es el mismo: transformar uniformes~\cite[§6.7]{mml}. El \cref{eje:3-exponencial} lo aplica a la exponencial.
+\end{observacion}
+
+\section{Aplicación: inicialización de redes neuronales}
+
+Una neurona lineal calcula $y=\sum_{j=1}^{n}w_jx_j$, donde $n$ es el número de entradas (el \emph{fan-in}). Antes de entrenar, los pesos $w_j$ se eligen al azar. ¿Con qué varianza?
+
+\begin{proposicion}[Varianza de una neurona]\label{prop:neurona}
+Supóngase que $w_1,\dots,w_n,x_1,\dots,x_n$ son independientes, que los $w_j$ tienen media~0 y varianza $\Var(w)$ y que los $x_j$ tienen media~0 y varianza $\Var(x)$. Entonces
+\[
+\E[y]=0,\qquad \Var(y)=n\,\Var(w)\,\Var(x).
+\]
+\end{proposicion}
+
+\begin{proof}
+Por independencia, $\E[w_jx_j]=\E[w_j]\E[x_j]=0$, luego $\E[y]=0$. Además, $\Var(w_jx_j)=\E[w_j^{2}x_j^{2}]-0=\E[w_j^{2}]\,\E[x_j^{2}]=\Var(w)\Var(x)$, porque ambas medias son nulas. Los $n$ productos $w_jx_j$ son independientes (cada uno depende de variables distintas), y la \cref{prop:suma} da $\Var(y)=\sum_j\Var(w_jx_j)=n\Var(w)\Var(x)$.
+\end{proof}
+
+Si se toma $\Var(w)=1$ y $n=512$, cada capa multiplica la varianza por~512 y la desviación típica por $\sqrt{512}\approx 22{,}6$; tras diez capas la desviación ha crecido en un factor $512^{5}\approx 3{,}5\cdot 10^{13}$ y la red se desborda. Si $\Var(w)$ es demasiado pequeña, la señal se anula. La \cref{prop:neurona} da la elección que conserva la varianza:
+\[
+\Var(w)=\frac1n,\qquad\text{por ejemplo } n=512\ \Rightarrow\ \sigma_w=1/\sqrt{512}\approx 0{,}0442.
+\]
+Glorot y Bengio~\cite{glorot} propusieron este análisis y, para equilibrar también la propagación hacia atrás de los gradientes, la elección de compromiso $\Var(w)=2/(n_{\mathrm{ent}}+n_{\mathrm{sal}})$. Con la activación ReLU, $\max(0,x)$, la mitad de las entradas se anula y el segundo momento se reduce a la mitad (\cref{eje:3-he}); He \emph{et al.}~\cite{he} compensan con $\Var(w)=2/n$, que para $n=512$ da $\sigma_w=\sqrt{2/512}=0{,}0625$. El módulo~9 retoma estas reglas.
+
+\begin{lecturas}
+\item Bertsekas y Tsitsiklis~\cite{bt}, §3.1 «Continuous Random Variables and PDFs», §3.2 «Cumulative Distribution Functions», §3.3 «Normal Random Variables» y §4.1 «Derived Distributions».
+\item MIT 6.041SC~\cite{mit6041}, unidad~II, lecciones~8 «Continuous Random Variables» y~10 «Continuous Bayes' Rule; Derived Distributions».
+\item MIT 18.05~\cite{mit1805}, clases~5b «Continuous Random Variables», 5c «Gallery of Continuous Random Variables» y 6a (esperanza y varianza en el caso continuo).
+\item Blitzstein y Hwang~\cite{bh}, cap.~5 «Continuous Random Variables» (universalidad de la uniforme).
+\item Deisenroth, Faisal y Ong~\cite{mml}, §6.5 «Gaussian Distribution» y §6.7 «Change of Variables/Inverse Transform».
+\item Glorot y Bengio~\cite{glorot}, y He \emph{et al.}~\cite{he}, sección dedicada a la inicialización.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-tabla}
+Sea $X\sim\N(10,4)$. Usando solo el \cref{tab:normal} y la simetría de la normal, calcule $\PP(8\le X\le 12)$ y $\PP(X>14)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-espera}
+El tiempo de espera $X$, en minutos, hasta la siguiente petición a un servidor sigue una $\Expo(0{,}5)$. (a) Calcule $\E[X]$ y $\sigma_X$. (b) Calcule $\PP(X>2)$. (c) Si ya se ha esperado 3 minutos, ¿qué probabilidad hay de esperar más de 5 en total?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-cuadrado}
+Sea $U\sim\Unif(-1,1)$. (a) Calcule $\E[U]$, $\Var(U)$ y $\E[U^{4}]$. (b) Halle la función de distribución y la densidad de $U^{2}$. ¿Es $U^{2}$ uniforme en $(0,1)$?
+\fuente{adaptado de Harvard Stat 110~\cite{stat110}, \emph{Homework}~5, problema~3.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-init}
+Una capa lineal tiene $n=4096$ entradas de media~0 y varianza~1. (a) ¿Qué desviación típica de los pesos conserva la varianza (regla de fan-in)? (b) ¿Y con la regla de He? (c) Si se usa $\sigma_w=0{,}1$ con $n=256$, ¿cuánto vale $\Var(y)$ y qué ocurre tras diez capas?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-exponencial}
+Sea $U\sim\Unif(0,1)$ y $\lambda>0$. Construya, como función de $U$, una variable con distribución $\Expo(\lambda)$ y demuestre que la tiene. Muestre además que $-\ln(U)/\lambda$ también es una $\Expo(\lambda)$.
+\fuente{adaptado de Harvard Stat 110~\cite{stat110}, \emph{Strategic Practice}~5, sección~3, problema~2.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-he}
+Sea $x$ una variable continua con densidad simétrica respecto de~0 y varianza $v$, y sea $r=\max(0,x)$. (a) Demuestre que $\E[r^{2}]=v/2$. (b) En una neurona $y=\sum_{j=1}^{n}w_jr_j$, con $w_j$ de media~0 independientes de los $r_j$, demuestre que $\Var(y)=n\Var(w)\,\E[r^{2}]$ aunque $\E[r_j]\ne 0$. (c) Deduzca que $\Var(w)=2/n$ hace $\Var(y)=v$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Estimación de parámetros}
+\label{tema:4}
+% =====================================================================
+
+Entrenar un modelo es elegir sus parámetros a partir de datos. Este tema presenta los dos enfoques clásicos de la estimación: el frecuentista, cuyo método principal es la máxima verosimilitud, y el bayesiano, que trata los parámetros como variables aleatorias con una distribución a priori. Se sigue la §9.1 y las §8.1–8.2 de~\cite{bt}, las lecciones~21 a~23 de~\cite{mit6041} y las clases~10 a~15 de~\cite{mit1805}; la conexión con el aprendizaje automático procede de~\cite[§6.6 y §8.3]{mml} y de~\cite[§2.1–2.3]{bishop}.
+
+\section{Estimadores, sesgo y error cuadrático medio}
+
+\begin{definicion}[Modelo estadístico y estimador]
+Un \emph{modelo estadístico} es una familia de distribuciones $\{p(\cdot\,;\theta):\theta\in\Theta\}$ indexada por un parámetro $\theta$. Dada una muestra $X_1,\dots,X_n$ \iid\ con distribución $p(\cdot\,;\theta)$ para un $\theta$ desconocido, un \emph{estimador} es una función $\hat\theta_n=g(X_1,\dots,X_n)$ de la muestra. Es una variable aleatoria.
+\end{definicion}
+
+\begin{definicion}[Sesgo y error cuadrático medio]
+El \emph{sesgo} de $\hat\theta_n$ es $b(\hat\theta_n)=\E[\hat\theta_n]-\theta$; el estimador es \emph{insesgado} si $b=0$ para todo $\theta$. Su \emph{error cuadrático medio} es $\mathrm{ECM}(\hat\theta_n)=\E\bigl[(\hat\theta_n-\theta)^{2}\bigr]$~\cite[§9.1]{bt}.
+\end{definicion}
+
+\begin{proposicion}[Descomposición sesgo--varianza]\label{prop:ecm}
+$\mathrm{ECM}(\hat\theta_n)=b(\hat\theta_n)^{2}+\Var(\hat\theta_n)$.
+\end{proposicion}
+
+\begin{proof}
+Sea $m=\E[\hat\theta_n]$. Entonces $\hat\theta_n-\theta=(\hat\theta_n-m)+(m-\theta)$. Al elevar al cuadrado y tomar esperanzas, el término cruzado es $2(m-\theta)\E[\hat\theta_n-m]=0$, y quedan $\Var(\hat\theta_n)$ y $(m-\theta)^{2}=b^{2}$.
+\end{proof}
+
+Por el \cref{cor:media}, la media muestral $\Xbar_n$ es un estimador insesgado de la media, con $\mathrm{ECM}=\sigma^{2}/n$.
+
+\section{Máxima verosimilitud}
+
+\begin{definicion}[Estimador de máxima verosimilitud]\label{def:emv}
+Dada una realización $x_1,\dots,x_n$ de una muestra \iid, la \emph{verosimilitud} es $\mathcal{L}(\theta)=\prod_{i=1}^{n}p(x_i;\theta)$ y la \emph{log-verosimilitud} es $\ell(\theta)=\sum_{i=1}^{n}\ln p(x_i;\theta)$. El \emph{estimador de máxima verosimilitud} (EMV) es
+\[
+\hat\theta_{\mathrm{EMV}}=\argmax_{\theta\in\Theta}\ell(\theta)=\argmin_{\theta\in\Theta}\Bigl(-\frac1n\sum_{i=1}^{n}\ln p(x_i;\theta)\Bigr).
+\]
+\end{definicion}
+
+Las dos formas son equivalentes porque $\ln$ es creciente y dividir por $-n$ invierte el sentido de la optimización. La segunda es la log-verosimilitud negativa media, que el módulo~1 identificó con la entropía cruzada entre la distribución empírica de los datos y el modelo. En consecuencia, \emph{preentrenar un LLM minimizando la entropía cruzada es calcular un estimador de máxima verosimilitud}, con $\theta$ de miles de millones de componentes~\cite[§8.3]{mml}.
+
+\begin{ejemplo}[Bernoulli]\label{ej:emv-bernoulli}
+Con $k$ éxitos en $n$ ensayos de $\Ber(p)$, $\ell(p)=k\ln p+(n-k)\ln(1-p)$. Derivando, $\ell'(p)=k/p-(n-k)/(1-p)=0$ da $\hat p=k/n$, y $\ell''(p)=-k/p^{2}-(n-k)/(1-p)^{2}<0$ confirma el máximo. Con 7 caras en 10 lanzamientos, $\hat p=0{,}7$ y $\ell(0{,}7)=-6{,}109$, mayor que $\ell(0{,}5)=10\ln 0{,}5=-6{,}931$.
+\end{ejemplo}
+
+Para la categórica con conteos $N_1,\dots,N_K$, el EMV es la frecuencia relativa $\hat p_j=N_j/\sum_k N_k$; es el teorema del EMV del modelo de bigramas del módulo~1, demostrado allí con multiplicadores de Lagrange. Contar y normalizar es, por tanto, máxima verosimilitud.
+
+\section{El EMV de la normal}
+
+\begin{teorema}[EMV de la normal]\label{teo:emv-normal}
+Sea $x_1,\dots,x_n$ una muestra de $\N(\mu,\sigma^{2})$ con $n\ge 2$ y no todos los $x_i$ iguales. El EMV de $(\mu,\sigma^{2})$ es
+\[
+\hat\mu=\bar x=\frac1n\sum_{i=1}^{n}x_i,\qquad \hat\sigma^{2}=\frac1n\sum_{i=1}^{n}(x_i-\bar x)^{2}.
+\]
+\end{teorema}
+
+\begin{proof}
+Con $v=\sigma^{2}$, la log-verosimilitud es
+\[
+\ell(\mu,v)=-\frac n2\ln(2\pi v)-\frac{1}{2v}\sum_{i=1}^{n}(x_i-\mu)^{2}.
+\]
+\emph{Paso 1.} $\partial\ell/\partial\mu=\frac1v\sum_i(x_i-\mu)=0$ da $\mu=\bar x$, para cualquier $v>0$.
+
+\emph{Paso 2.} Sea $S=\sum_i(x_i-\bar x)^{2}>0$. Entonces $\partial\ell/\partial v=-\frac{n}{2v}+\frac{S}{2v^{2}}=0$ da $v=S/n$.
+
+\emph{Paso 3.} En $(\bar x,S/n)$ las segundas derivadas son $\partial^{2}\ell/\partial\mu^{2}=-n/v$, $\partial^{2}\ell/\partial\mu\,\partial v=-\frac{1}{v^{2}}\sum_i(x_i-\bar x)=0$ y $\partial^{2}\ell/\partial v^{2}=\frac{n}{2v^{2}}-\frac{S}{v^{3}}=-\frac{n}{2v^{2}}$. La hessiana es diagonal con entradas negativas, luego el punto es un máximo local; como es el único punto crítico y $\ell\to-\infty$ cuando $v\to 0^{+}$, $v\to\infty$ o $\abs\mu\to\infty$, es el máximo global.
+\end{proof}
+
+\begin{ejemplo}\label{ej:emv-normal}
+Para los datos $(2,4,4,4,5,5,7,9)$, $\hat\mu=40/8=5$. Las desviaciones al cuadrado son $9,1,1,1,0,0,4,16$, que suman~32, y $\hat\sigma^{2}=32/8=4$, $\hat\sigma=2$.
+\end{ejemplo}
+
+\begin{proposicion}[Sesgo de la varianza muestral]\label{prop:sesgo}
+Si $X_1,\dots,X_n$ son \iid\ con varianza $\sigma^{2}$, entonces $\E[\hat\sigma^{2}]=\frac{n-1}{n}\sigma^{2}$. En consecuencia, $s^{2}=\frac{1}{n-1}\sum_i(X_i-\Xbar_n)^{2}$ es un estimador insesgado de $\sigma^{2}$.
+\end{proposicion}
+
+\begin{proof}
+Se usa la identidad $\sum_i(X_i-\Xbar_n)^{2}=\sum_i(X_i-\mu)^{2}-n(\Xbar_n-\mu)^{2}$, cuya deducción detallada se pide en el \cref{eje:4-sesgo}. La esperanza del primer término es $n\sigma^{2}$; la del segundo, $n\Var(\Xbar_n)=\sigma^{2}$ por el \cref{cor:media}. Por tanto, $\E\bigl[\sum_i(X_i-\Xbar_n)^{2}\bigr]=(n-1)\sigma^{2}$.
+\end{proof}
+
+En el \cref{ej:emv-normal}, la versión insesgada es $s^{2}=32/7\approx 4{,}571$. El sesgo se debe a que $\bar x$ se ajusta a los propios datos y las desviaciones respecto de él son, en media, menores que respecto de $\mu$. El EMV no es siempre insesgado, pero su sesgo tiende a~0 cuando $n\to\infty$.
+
+\begin{proposicion}[Mínimos cuadrados como máxima verosimilitud]\label{prop:mco}
+Supóngase $y_i=f_\theta(x_i)+\varepsilon_i$ con $\varepsilon_i\sim\N(0,\sigma^{2})$ independientes y $\sigma$ fija. Maximizar la verosimilitud de $(y_1,\dots,y_n)$ en $\theta$ equivale a minimizar el error cuadrático $\sum_i\bigl(y_i-f_\theta(x_i)\bigr)^{2}$.
+\end{proposicion}
+
+\begin{proof}
+Cada $y_i\sim\N(f_\theta(x_i),\sigma^{2})$, de modo que $-\ell(\theta)=\frac n2\ln(2\pi\sigma^{2})+\frac{1}{2\sigma^{2}}\sum_i\bigl(y_i-f_\theta(x_i)\bigr)^{2}$. El primer sumando y el factor $1/(2\sigma^{2})>0$ no dependen de $\theta$.
+\end{proof}
+
+El módulo~8 usa la \cref{prop:mco} para justificar la regresión lineal; la entropía cruzada de la clasificación es su análogo para la categórica.
+
+\section{Inferencia bayesiana y distribuciones conjugadas}
+
+El EMV de la categórica asigna probabilidad nula a toda categoría no observada, y la pérdida de un texto que la contenga es infinita (módulo~1). El enfoque bayesiano lo remedia tratando el parámetro como una variable aleatoria con una distribución \emph{a priori} $\pi(\theta)$ y actualizándola con la regla de Bayes~\cite[§8.1]{bt}:
+\[
+\pi(\theta\mid x_{1:n})=\frac{\mathcal{L}(\theta)\,\pi(\theta)}{\int\mathcal{L}(\theta')\,\pi(\theta')\,d\theta'}\ \propto\ \mathcal{L}(\theta)\,\pi(\theta).
+\]
+
+\begin{definicion}[Estimadores bayesianos]
+La \emph{media a posteriori} es $\E[\theta\mid x_{1:n}]$. El estimador \emph{máximo a posteriori} (MAP) es $\hat\theta_{\mathrm{MAP}}=\argmax_\theta\pi(\theta\mid x_{1:n})=\argmax_\theta\bigl(\ell(\theta)+\ln\pi(\theta)\bigr)$~\cite[§8.2]{bt}.
+\end{definicion}
+
+\begin{definicion}[Distribución beta]
+$p\sim\BetaD(a,b)$, con $a,b>0$, si su densidad en $(0,1)$ es proporcional a $p^{a-1}(1-p)^{b-1}$. Su media es $a/(a+b)$ y, si $a,b>1$, su moda es $(a-1)/(a+b-2)$~\cite[§2.1.1]{bishop}.
+\end{definicion}
+
+\begin{teorema}[Conjugación beta--Bernoulli]\label{teo:beta}
+Si $p\sim\BetaD(a,b)$ a priori y se observan $k$ éxitos en $n$ ensayos de Bernoulli independientes dado $p$, la distribución a posteriori es $\BetaD(a+k,\,b+n-k)$. En particular,
+\[
+\E[p\mid\text{datos}]=\frac{k+a}{n+a+b}.
+\]
+\end{teorema}
+
+\begin{proof}
+La verosimilitud es proporcional a $p^{k}(1-p)^{n-k}$. Multiplicando por la densidad a priori, la densidad a posteriori es proporcional a $p^{k+a-1}(1-p)^{n-k+b-1}$, que es el núcleo de una $\BetaD(a+k,b+n-k)$; la constante queda fijada por la normalización. La media se obtiene de la fórmula $a/(a+b)$ con los nuevos parámetros.
+\end{proof}
+
+Se dice que la beta es \emph{conjugada} de la Bernoulli: la distribución a posteriori pertenece a la misma familia que la a priori, y los datos se limitan a sumar conteos a los parámetros, que actúan como \emph{pseudoconteos}~\cite[clase~15]{mit1805}. El mismo argumento vale para $K$ categorías con la distribución de Dirichlet, de densidad proporcional a $\prod_{j=1}^{K}p_j^{\alpha_j-1}$ sobre el símplex: con conteos $N_1,\dots,N_K$, la distribución a posteriori es $\Dir(\alpha_1+N_1,\dots,\alpha_K+N_K)$~\cite[§2.2.1]{bishop}, \cite[§6.6]{mml}.
+
+\begin{corolario}[Suavizado de Laplace como estimación bayesiana]\label{cor:laplace}
+Con distribución a priori $\Dir(\alpha,\dots,\alpha)$ y conteos $N_1,\dots,N_K$ de total $N$,
+\[
+\E[p_j\mid\text{datos}]=\frac{N_j+\alpha}{N+K\alpha},\qquad
+\hat p_{j,\mathrm{MAP}}=\frac{N_j+\alpha-1}{N+K(\alpha-1)}\quad(\alpha>1).
+\]
+El suavizado de Laplace del módulo~1 es la media a posteriori con $\alpha=1$ (a priori uniforme sobre el símplex) y también el MAP con $\alpha=2$.
+\end{corolario}
+
+\begin{table}[h]
+\centering\small
+\caption{Estimadores de una categórica con conteos $N=(3,1,0)$, $K=3$.}\label{tab:estimadores}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Estimador & Fórmula para $p_j$ & Resultado \\
+\midrule
+EMV & $N_j/N$ & $(0{,}75;\ 0{,}25;\ 0)$ \\
+Media a posteriori, $\alpha=1$ & $(N_j+1)/(N+K)$ & $(4/7;\ 2/7;\ 1/7)\approx(0{,}571;\ 0{,}286;\ 0{,}143)$ \\
+MAP, $\alpha=2$ & $(N_j+1)/(N+K)$ & igual que la fila anterior \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Conexión con los LLM]
+En una red neuronal no se suele fijar una distribución a priori explícita, pero el término $\ln\pi(\theta)$ del MAP reaparece como \emph{regularización}: con una a priori normal $\theta\sim\N(0,\tau^{2}I)$, $\ln\pi(\theta)=-\norm{\theta}^{2}/(2\tau^{2})+\text{cte}$, y maximizar $\ell(\theta)+\ln\pi(\theta)$ es minimizar la entropía cruzada más una penalización cuadrática de los pesos (\emph{weight decay}), que se estudia en el módulo~7~\cite[§8.3]{mml}.
+\end{observacion}
+
+\begin{lecturas}
+\item Bertsekas y Tsitsiklis~\cite{bt}, §8.1 «Bayesian Inference and the Posterior Distribution», §8.2 «Point Estimation, Hypothesis Testing, and the MAP Rule» y §9.1 «Classical Parameter Estimation».
+\item MIT 6.041SC~\cite{mit6041}, unidad~IV, lecciones~21–22 «Bayesian Statistical Inference» y~23 «Classical Statistical Inference~-~I».
+\item MIT 18.05~\cite{mit1805}, clases~10b «Maximum Likelihood Estimates», 11 «Bayesian Updating with Discrete Priors», 12a «Bayesian Updating: Probabilistic Prediction» y 15 «Conjugate priors: Beta and normal».
+\item Deisenroth, Faisal y Ong~\cite{mml}, §6.6 «Conjugacy and the Exponential Family» y §8.3 «Parameter Estimation».
+\item Bishop~\cite{bishop}, §2.1.1 «The beta distribution», §2.2.1 «The Dirichlet distribution» y §2.3.4 «Maximum likelihood for the Gaussian».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-ceros}
+Explique por qué el EMV de una categórica es problemático cuando hay pocos datos y cómo lo resuelve una distribución a priori de Dirichlet. Con conteos $(3,1,0)$, ¿qué probabilidad asigna al tercer valor el suavizado de Laplace?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-datos}
+Para los datos $(1,3,5,7)$, supuestos procedentes de una normal, calcule el EMV de $\mu$ y de $\sigma^{2}$, y la varianza muestral insesgada $s^{2}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-moneda}
+En 10 lanzamientos de una moneda salen 7 caras. Calcule $\hat p_{\mathrm{EMV}}$, $\ell(0{,}7)$ y $\ell(0{,}5)$, y la estimación de Laplace $(k+1)/(n+2)$. Interprete la diferencia entre ambas estimaciones.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-u2}
+(a) Una caja contiene tres monedas con probabilidad de cara $1/3$, $1/2$ y $2/3$. Se extrae una y, en 80 lanzamientos, salen 49 caras. ¿Qué moneda maximiza la verosimilitud? (b) Si $p$ puede tomar cualquier valor de $[0,1]$, ¿cuál es el EMV? (c) Las duraciones de cinco bombillas, supuestas exponenciales de parámetro $\lambda$, son 2, 3, 1, 3 y 4 años. Obtenga el EMV de $\lambda$.
+\fuente{adaptado de MIT 18.05~\cite{mit1805}, clase~10, \emph{Board Questions}~1 y~2.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-u3}
+Un cajón contiene tres monedas con probabilidad de cara $0{,}5$, $0{,}6$ y $0{,}9$. Se elige una al azar, se lanza 5 veces y sale una sola cara. Calcule la probabilidad a posteriori de cada moneda y la probabilidad predictiva de cara en el lanzamiento siguiente, antes y después de observar los datos.
+\fuente{adaptado de MIT 18.05~\cite{mit1805}, clase~12, problema~1.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-sesgo}
+Sean $X_1,\dots,X_n$ independientes con media $\mu$ y varianza $\sigma^{2}$. Demuestre la identidad $\sum_i(X_i-\Xbar_n)^{2}=\sum_i(X_i-\mu)^{2}-n(\Xbar_n-\mu)^{2}$ y complete la demostración de la \cref{prop:sesgo}. Compruebe el caso $n=1$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-beta}
+Para $K=2$, la distribución a priori de Dirichlet simétrica es $\BetaD(\alpha,\alpha)$. Demuestre, sin usar el \cref{teo:beta}, que tras $k$ éxitos en $n$ ensayos la media a posteriori es $(k+\alpha)/(n+2\alpha)$. Puede usar que la media de una $\BetaD(a,b)$ es $a/(a+b)$. Compruebe los casos $n=0$ y $\alpha=1$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Teoremas límite y estimación por Monte Carlo}
+\label{tema:5}
+% =====================================================================
+
+Ni la pérdida de un LLM ni su exactitud en un banco de pruebas pueden calcularse exactamente: son esperanzas respecto de una distribución desconocida y se estiman con promedios. Este tema demuestra que esos promedios convergen (ley de los grandes números), cuantifica su error (desigualdad de Chebyshev y teorema central del límite) y lo aplica al método de Monte Carlo, a los intervalos de confianza y a los minilotes del entrenamiento. Se sigue el capítulo~5 de~\cite{bt}, las lecciones~19 y~20 de~\cite{mit6041}, la clase~6b de~\cite{mit1805} y el capítulo~10 de~\cite{bh}; la §2.6 de~\cite{d2l} trata el mismo material en el contexto del aprendizaje profundo.
+
+\section{Desigualdades de Markov y Chebyshev}
+
+\begin{teorema}[Desigualdad de Markov]\label{teo:markov}
+Si $Y\ge 0$ y $a>0$, entonces $\PP(Y\ge a)\le\E[Y]/a$.
+\end{teorema}
+
+\begin{proof}
+Sea $\mathbf{1}_{\{Y\ge a\}}$ la indicadora del suceso. Para todo resultado, $a\,\mathbf{1}_{\{Y\ge a\}}\le Y$: si $Y\ge a$, el miembro izquierdo vale $a\le Y$, y si no, vale $0\le Y$. Tomando esperanzas, $a\,\PP(Y\ge a)\le\E[Y]$.
+\end{proof}
+
+\begin{teorema}[Desigualdad de Chebyshev]\label{teo:chebyshev}
+Si $X$ tiene media $\mu$ y varianza $\sigma^{2}$, para todo $\varepsilon>0$,
+\[
+\PP\bigl(\abs{X-\mu}\ge\varepsilon\bigr)\le\frac{\sigma^{2}}{\varepsilon^{2}}.
+\]
+\end{teorema}
+
+\begin{proof}
+El suceso $\{\abs{X-\mu}\ge\varepsilon\}$ coincide con $\{(X-\mu)^{2}\ge\varepsilon^{2}\}$. Se aplica el \cref{teo:markov} a $Y=(X-\mu)^{2}\ge 0$ con $a=\varepsilon^{2}$, y se usa que $\E[Y]=\sigma^{2}$.
+\end{proof}
+
+Las dos desigualdades valen para cualquier distribución con los momentos indicados; a cambio, suelen ser pesimistas~\cite[§5.1]{bt}.
+
+\section{Ley débil de los grandes números}
+
+\begin{definicion}[Convergencia en probabilidad]
+Una sucesión $Y_1,Y_2,\dots$ \emph{converge en probabilidad} a la constante $c$ si, para todo $\varepsilon>0$, $\lim_{n\to\infty}\PP\bigl(\abs{Y_n-c}\ge\varepsilon\bigr)=0$.
+\end{definicion}
+
+\begin{teorema}[Ley débil de los grandes números]\label{teo:lgn}
+Sean $X_1,X_2,\dots$ \iid\ con media $\mu$ y varianza finita $\sigma^{2}$. Entonces, para todo $\varepsilon>0$,
+\[
+\PP\bigl(\abs{\Xbar_n-\mu}\ge\varepsilon\bigr)\le\frac{\sigma^{2}}{n\varepsilon^{2}}\xrightarrow[n\to\infty]{}0,
+\]
+es decir, $\Xbar_n$ converge en probabilidad a $\mu$.
+\end{teorema}
+
+\begin{proof}
+Por el \cref{cor:media}, $\E[\Xbar_n]=\mu$ y $\Var(\Xbar_n)=\sigma^{2}/n$. Basta aplicar el \cref{teo:chebyshev} a $\Xbar_n$.
+\end{proof}
+
+La ley fuerte de los grandes números afirma que, de hecho, $\Xbar_n\to\mu$ con probabilidad~1; su demostración excede este módulo~\cite[§5.5]{bt}.
+
+\section{El método de Monte Carlo}
+
+\begin{definicion}[Estimador de Monte Carlo]\label{def:montecarlo}
+Para aproximar $I=\E[g(X)]$, se generan $X_1,\dots,X_n$ \iid\ con la distribución de $X$ y se toma $\hat I_n=\frac1n\sum_{i=1}^{n}g(X_i)$. Por el \cref{cor:media}, $\hat I_n$ es insesgado y su \emph{error típico} es $\sigma_g/\sqrt n$, donde $\sigma_g^{2}=\Var(g(X))$.
+\end{definicion}
+
+\begin{ejemplo}[Estimación de $\pi$]\label{ej:pi}
+Sean $(U_i,V_i)$ puntos independientes uniformes en $[0,1]^{2}$ y $B_i=\mathbf{1}\{U_i^{2}+V_i^{2}\le 1\}$, que es una $\Ber(\pi/4)$ porque el cuarto de círculo tiene área $\pi/4$. El estimador $\hat\pi_n=4\,\overline{B}_n$ es insesgado, con error típico
+\[
+\sigma_{\hat\pi}=4\sqrt{\frac{(\pi/4)(1-\pi/4)}{n}}\approx\frac{1{,}642}{\sqrt n}.
+\]
+Con $n=10^{4}$ puntos, $\sigma_{\hat\pi}\approx 0{,}0164$. Para bajar a $0{,}001$ se necesitan unos $2{,}7\cdot 10^{6}$ puntos: ganar una cifra decimal exige multiplicar $n$ por~100.
+\end{ejemplo}
+
+La ley $1/\sqrt n$ no depende de la dimensión del problema, lo que hace a Monte Carlo competitivo para integrales en muchas dimensiones, pero sí la hace lenta: el error se reduce a la mitad solo cuadruplicando el número de muestras.
+
+\begin{observacion}[Conexión con los LLM]
+Medir la pérdida de validación de un modelo es un cálculo de Monte Carlo: se promedia $-\ln p_\theta(x_t\mid x_{1:t-1})$ sobre $n$ tokens. Si la pérdida por token tiene desviación típica de $2$ nats y los tokens fueran independientes, con $n=10^{4}$ el error típico sería $2/100=0{,}02$ nats. Los tokens de un mismo documento están correlacionados, por lo que el error real suele ser mayor.
+\end{observacion}
+
+\section{Teorema central del límite}
+
+La ley de los grandes números dice que $\Xbar_n-\mu\to 0$; el teorema central del límite describe la forma de la distribución de ese error cuando se amplía por el factor $\sqrt n$.
+
+\begin{teorema}[Teorema central del límite]\label{teo:tcl}
+Sean $X_1,X_2,\dots$ \iid\ con media $\mu$ y varianza $\sigma^{2}\in(0,\infty)$, y sea $S_n=X_1+\dots+X_n$. Entonces, para todo $z\in\R$,
+\[
+\lim_{n\to\infty}\PP\Bigl(\frac{S_n-n\mu}{\sigma\sqrt n}\le z\Bigr)=\Phi(z).
+\]
+\end{teorema}
+
+La demostración habitual usa funciones generatrices de momentos o funciones características~\cite[§5.4]{bt}. Lo notable es que no se exige que los $X_i$ sean normales: la normalidad es la conclusión, no la hipótesis. Así se explica la ubicuidad de la normal: el ruido térmico, los errores de medida o la suma de muchos pesos pequeños son sumas de muchos efectos independientes.
+
+\begin{corolario}[Aproximación normal de la media]\label{cor:aprox}
+Para $n$ grande, $\Xbar_n$ es aproximadamente $\N(\mu,\sigma^{2}/n)$ y, en particular,
+\[
+\PP\Bigl(\abs{\Xbar_n-\mu}\ge z\,\frac{\sigma}{\sqrt n}\Bigr)\approx 2\bigl(1-\Phi(z)\bigr).
+\]
+\end{corolario}
+
+\begin{proof}
+$\Xbar_n-\mu=\frac{\sigma}{\sqrt n}\cdot\frac{S_n-n\mu}{\sigma\sqrt n}$; se aplica el \cref{teo:tcl} y la simetría de $\Phi$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\caption{Tres herramientas aplicadas al \cref{ej:pi} con $n=10^{4}$ y un error de $0{,}05$, que equivale a $3{,}04$ errores típicos.}\label{tab:herramientas}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Herramienta & Afirmación & Carácter \\
+\midrule
+Ley de los grandes números & $\hat\pi_n\to\pi$ & cualitativa \\
+Chebyshev & $\PP(\abs{\hat\pi_n-\pi}\ge 0{,}05)\le 0{,}108$ & cota rigurosa, pesimista \\
+Teorema central del límite & $\PP(\abs{\hat\pi_n-\pi}\ge 0{,}05)\approx 0{,}0023$ & aproximación realista \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Intervalos de confianza y comparación de modelos}
+
+\begin{definicion}[Intervalo de confianza aproximado]
+Sea $\hat p$ la proporción de aciertos de un modelo en $n$ preguntas independientes. El intervalo
+\[
+\hat p\pm 1{,}96\sqrt{\frac{\hat p(1-\hat p)}{n}}
+\]
+es un \emph{intervalo de confianza aproximado del $95\,\%$} para la exactitud verdadera $p$: por el \cref{cor:aprox}, contiene a $p$ con probabilidad aproximada $0{,}95$~\cite[clase~22]{mit1805}.
+\end{definicion}
+
+\begin{ejemplo}[Banco de pruebas]\label{ej:benchmark}
+Un modelo acierta 820 de 1000 preguntas. El error típico es $\sqrt{0{,}82\cdot 0{,}18/1000}\approx 0{,}0122$ y el intervalo del $95\,\%$ es $0{,}82\pm 1{,}96\cdot 0{,}0122=[0{,}796;\ 0{,}844]$. Una diferencia de un punto porcentual entre dos modelos en este banco de pruebas está muy por debajo de la incertidumbre de la medida.
+\end{ejemplo}
+
+\section{Minilotes y gradiente estocástico}
+
+La función de pérdida de entrenamiento es una esperanza, $L(\theta)=\E[\lambda(\theta;X)]$, donde $\lambda(\theta;x)$ es la pérdida en el ejemplo $x$ y $X$ sigue la distribución de los datos. Un \emph{minilote} es una muestra $X_1,\dots,X_B$ extraída al azar, y la pérdida del minilote es
+\[
+\hat L_B(\theta)=\frac1B\sum_{i=1}^{B}\lambda(\theta;X_i).
+\]
+
+\begin{proposicion}\label{prop:minilote}
+Si los ejemplos del minilote son \iid\ y $\sigma^{2}=\Var(\lambda(\theta;X))$, entonces $\E[\hat L_B(\theta)]=L(\theta)$ y la desviación típica de $\hat L_B(\theta)$ es $\sigma/\sqrt B$. Si la derivada y la esperanza pueden intercambiarse, $\nabla_\theta\hat L_B$ es también un estimador insesgado de $\nabla_\theta L$, cuya covarianza decrece como $1/B$.
+\end{proposicion}
+
+\begin{proof}
+Es el \cref{cor:media} aplicado a $\lambda(\theta;X_i)$, y componente a componente a los gradientes $\nabla_\theta\lambda(\theta;X_i)$, que también son \iid
+\end{proof}
+
+\begin{ejemplo}
+Con pérdidas por ejemplo de desviación típica $\sigma=2$, un minilote de $B=256$ tiene error típico $2/16=0{,}125$, y uno de $B=1024$, $2/32=0{,}0625$. Cuadruplicar el lote divide el ruido por dos y multiplica por cuatro el coste de cada paso.
+\end{ejemplo}
+
+El descenso de gradiente estocástico (módulo~7) avanza con estos gradientes ruidosos. Por el \cref{teo:tcl}, el ruido es aproximadamente normal, y el tamaño de lote es un compromiso entre la calidad de cada paso y su coste.
+
+\begin{lecturas}
+\item Bertsekas y Tsitsiklis~\cite{bt}, §5.1 «Markov and Chebyshev Inequalities», §5.2 «The Weak Law of Large Numbers», §5.3 «Convergence in Probability» y §5.4 «The Central Limit Theorem».
+\item MIT 6.041SC~\cite{mit6041}, unidad~IV, lecciones~19 «Weak Law of Large Numbers» y~20 «Central Limit Theorem».
+\item MIT 18.05~\cite{mit1805}, clase~6b «Central Limit Theorem and the Law of Large Numbers» y clase~22 «Confidence intervals based on normal data».
+\item Blitzstein y Hwang~\cite{bh}, cap.~10 «Inequalities and Limit Theorems».
+\item Zhang \emph{et al.}~\cite{d2l}, §2.6 «Probability and Statistics».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-lote}
+Si se multiplica por~4 el tamaño del minilote, ¿cómo cambia el error típico de la pérdida estimada? ¿Y el coste de cada paso?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:5-vf}
+Justifique si son verdaderas o falsas: (a) $\Var(X+Y)=\Var(X)+\Var(Y)$ para cualesquiera $X$, $Y$. (b) El EMV de la varianza de una normal es insesgado. (c) El teorema central del límite exige que los datos sean normales. (d) Con temperatura $T\to 0$, el muestreo del token siguiente se vuelve determinista.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-pi}
+Se estima $\pi$ con el método del \cref{ej:pi} y $n=10^{4}$ puntos. (a) Calcule el error típico. (b) ¿Cuántos puntos hacen falta para un error típico de $0{,}001$? (c) Se obtiene $\hat\pi=3{,}19$. ¿Es un resultado sospechoso?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-chebyshev}
+Se estima la probabilidad de cara de una moneda equilibrada con la frecuencia observada en $n=100$ lanzamientos. (a) Calcule la varianza y el error típico del estimador e indique cómo escalan con $n$. (b) Acote con la desigualdad de Chebyshev la probabilidad de equivocarse en $0{,}1$ o más. (c) Compare con la aproximación del teorema central del límite.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.6, ejercicio~3 (los datos numéricos son nuevos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-comparar}
+Dos modelos obtienen un $82\,\%$ y un $80\,\%$ de aciertos en dos bancos de pruebas distintos e independientes de 500 preguntas cada uno. (a) ¿Es significativa la diferencia al $95\,\%$? (b) ¿Cuántas preguntas por modelo harían falta para que una diferencia de dos puntos equivaliese exactamente a $1{,}96$ errores típicos?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-n}
+(a) Demuestre que la varianza de una variable de Bernoulli es como máximo $1/4$. (b) Use el \cref{teo:lgn} para hallar un tamaño $n$ que garantice, sea cual sea $p$, que la frecuencia observada difiere de $p$ en menos de $0{,}1$ con probabilidad al menos $0{,}95$. (c) Compare con el tamaño que sugiere el teorema central del límite y explique la diferencia.
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los resultados exactos se dan como fracción cuando existe. Los valores de $\Phi$ proceden del \cref{tab:normal} o de un cálculo numérico.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-inversa}
+\datos se pide un ejemplo con valores plausibles.
+\planteamiento por el \cref{teo:bayes}, $\PP(A\mid B)=\PP(B\mid A)\,\PP(A)/\PP(B)$: las dos condicionadas difieren en el factor $\PP(A)/\PP(B)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sean $A=\{\text{llueve}\}$ y $B=\{\text{la calle está mojada}\}$.
+  \item Si llueve, la calle se moja: $\PP(B\mid A)\approx 1$.
+  \item La calle también se moja por el riego o la limpieza municipal; se toma $\PP(A)=0{,}1$ y $\PP(B)=0{,}4$.
+  \item $\PP(A\mid B)=1\cdot 0{,}1/0{,}4=0{,}25$.
+\end{enumerate}
+\resultado \textbf{$\PP(B\mid A)\approx 1$, pero $\PP(A\mid B)\approx 0{,}25$}; las relaciona el cociente $\PP(A)/\PP(B)=0{,}25$.
+\comprobacion ambas factorizaciones dan la misma probabilidad conjunta: $\PP(B\mid A)\PP(A)=1\cdot 0{,}1=0{,}1$ y $\PP(A\mid B)\PP(B)=0{,}25\cdot 0{,}4=0{,}1$.
+\end{solucion}
+
+\begin{solucion}{eje:1-disjuntos}
+\datos $A\cap B=\varnothing$, $\PP(A)>0$, $\PP(B)>0$.
+\planteamiento comparar $\PP(A\cap B)$ con $\PP(A)\PP(B)$ (\cref{def:indep}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Como $A\cap B=\varnothing$, $\PP(A\cap B)=\PP(\varnothing)=0$ por la \cref{prop:axiomas}(i).
+  \item $\PP(A)\PP(B)>0$ por ser producto de dos números positivos.
+  \item Luego $\PP(A\cap B)\ne\PP(A)\PP(B)$ y los sucesos no son independientes.
+\end{enumerate}
+\resultado \textbf{Dos sucesos incompatibles con probabilidad positiva son dependientes.} Intuitivamente, saber que ha ocurrido $A$ da la máxima información sobre $B$: que no ha ocurrido, pues $\PP(B\mid A)=0\ne\PP(B)$. $\blacksquare$
+\comprobacion con un dado, $A=\{1\}$ y $B=\{2\}$: $\PP(A\cap B)=0$ y $\PP(A)\PP(B)=1/36$.
+\end{solucion}
+
+\begin{solucion}{eje:1-detector}
+\datos $\PP(G)=0{,}01$ (generado); $\PP(M\mid G)=0{,}99$ (marcado); $\PP(M\mid G^{c})=0{,}05$.
+\planteamiento regla de Bayes con la probabilidad total en el denominador (\cref{teo:total,teo:bayes}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Verdaderos positivos: $\PP(M\mid G)\PP(G)=0{,}99\cdot 0{,}01=0{,}0099$.
+  \item Falsos positivos: $\PP(M\mid G^{c})\PP(G^{c})=0{,}05\cdot 0{,}99=0{,}0495$.
+  \item Evidencia: $\PP(M)=0{,}0099+0{,}0495=0{,}0594$.
+  \item $\PP(G\mid M)=0{,}0099/0{,}0594=1/6\approx 0{,}1667$.
+\end{enumerate}
+\resultado \textbf{$\PP(G\mid M)=1/6\approx 0{,}167$}: cinco de cada seis alarmas son falsas.
+\comprobacion con $10\,000$ textos hay 100 generados (99 marcados) y $9900$ humanos (495 marcados); $99/(99+495)=99/594=1/6$.
+\end{solucion}
+
+\begin{solucion}{eje:1-cribado}
+\datos $\PP(E)=0{,}005$; $\PP(+\mid E^{c})=0{,}05$; $\PP(-\mid E)=0{,}02$, luego $\PP(+\mid E)=0{,}98$.
+\planteamiento \cref{prop:odds}: razón a posteriori $=$ factor de Bayes $\times$ razón a priori; después $\PP=O/(1+O)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Razón a priori: $O(E)=0{,}005/0{,}995=1/199\approx 0{,}005025$.
+  \item Factor de Bayes: $0{,}98/0{,}05=19{,}6$.
+  \item Razón a posteriori: $O(E\mid +)=19{,}6/199=98/995\approx 0{,}09849$.
+  \item Probabilidad a posteriori: $0{,}09849/1{,}09849\approx 0{,}08966$.
+\end{enumerate}
+\resultado \textbf{razón a priori $1/199$; factor de Bayes $19{,}6$; razón a posteriori $\approx 0{,}0985$; $\PP(E\mid +)\approx 0{,}0897$.}
+\comprobacion por la vía directa, $\dfrac{0{,}98\cdot 0{,}005}{0{,}98\cdot 0{,}005+0{,}05\cdot 0{,}995}=\dfrac{0{,}0049}{0{,}05465}=0{,}08966$. La prueba es informativa (multiplica la razón por casi~20), pero la razón a priori es tan baja que un positivo sigue siendo probablemente falso.
+\end{solucion}
+
+\begin{solucion}{eje:1-monedas}
+\datos $\PP(J)=\PP(J^{c})=1/2$ ($J$: moneda equilibrada); $\PP(\text{cara}\mid J)=1/2$; $\PP(\text{cara}\mid J^{c})=1/4$; dada la moneda, los lanzamientos son independientes.
+\planteamiento (a) regla de Bayes; (b) probabilidad total para $\PP(C_1)$, $\PP(C_2)$ y $\PP(C_1\cap C_2)$, donde $C_i$ es «cara en el lanzamiento $i$».
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\PP(C_1\cap C_2\mid J)=(1/2)^{2}=1/4$ y $\PP(C_1\cap C_2\mid J^{c})=(1/4)^{2}=1/16$.
+  \item $\PP(C_1\cap C_2)=\frac12\cdot\frac14+\frac12\cdot\frac1{16}=\frac18+\frac1{32}=\frac{5}{32}$.
+  \item (a) $\PP(J\mid C_1\cap C_2)=\dfrac{1/8}{5/32}=\dfrac{4}{5}$.
+  \item (b) $\PP(C_1)=\frac12\cdot\frac12+\frac12\cdot\frac14=\frac38$, y por simetría $\PP(C_2)=\frac38$.
+  \item $\PP(C_1)\PP(C_2)=\frac{9}{64}=0{,}1406\ne\frac{5}{32}=0{,}1563=\PP(C_1\cap C_2)$.
+\end{enumerate}
+\resultado \textbf{(a) $4/5$; (b) no son independientes}, aunque sí lo son condicionalmente a la moneda: una cara en el primer lanzamiento aumenta la probabilidad de la moneda equilibrada y, con ella, la de cara en el segundo, $\PP(C_2\mid C_1)=(5/32)/(3/8)=5/12>3/8$.
+\comprobacion la probabilidad a priori de la moneda equilibrada era $1/2$; dos caras la elevan a $4/5$, coherente con que esa moneda produce caras con mayor frecuencia.
+\end{solucion}
+
+\begin{solucion}{eje:1-complementos}
+\datos $\PP(A\cap B)=\PP(A)\PP(B)$.
+\planteamiento descomponer $A$ en una unión disjunta y usar la aditividad; después aplicar el resultado dos veces.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $A=(A\cap B)\cup(A\cap B^{c})$ con unión disjunta, luego $\PP(A\cap B^{c})=\PP(A)-\PP(A\cap B)$.
+  \item Por la hipótesis, $\PP(A\cap B^{c})=\PP(A)-\PP(A)\PP(B)=\PP(A)\bigl(1-\PP(B)\bigr)=\PP(A)\PP(B^{c})$, por la \cref{prop:axiomas}(i). Así, $A$ y $B^{c}$ son independientes.
+  \item La relación de independencia es simétrica. Aplicando el paso~2 al par independiente $(B^{c},A)$, se obtiene que $B^{c}$ y $A^{c}$ son independientes.
+\end{enumerate}
+\resultado \textbf{Si $A$ y $B$ son independientes, también lo son $A$ y $B^{c}$, y $A^{c}$ y $B^{c}$.} $\blacksquare$
+\comprobacion con dos monedas equilibradas, $A=\{\text{cara en la 1.ª}\}$ y $B=\{\text{cara en la 2.ª}\}$: $\PP(A^{c}\cap B^{c})=1/4=\PP(A^{c})\PP(B^{c})$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-categorica}
+\datos la salida de un LLM es un índice de token en $\{1,\dots,K\}$.
+\planteamiento comparar lo que supone cada distribución sobre los valores que modela.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Los tokens son categorías sin orden: los índices son etiquetas arbitrarias, y el token~517 no se parece más al~518 que al~30\,000.
+  \item Una normal vive en $\R$: asignaría densidad a valores no enteros y supondría que índices próximos son parecidos, porque su densidad es una función suave del índice.
+  \item Una normal es unimodal: no puede repartir la masa entre dos tokens de índices lejanos («gato» y «perro») sin ponerla también en los intermedios.
+  \item La categórica asigna una probabilidad independiente a cada token, con $p_k\ge 0$ y $\sum_k p_k=1$, que es justo lo que produce la softmax.
+\end{enumerate}
+\resultado \textbf{la categórica, porque los tokens son categorías discretas sin orden y la distribución del token siguiente puede ser multimodal.}
+\comprobacion con $K=50\,000$, la categórica tiene $49\,999$ parámetros libres y la normal, 2: ninguna familia de dos parámetros puede representar preferencias arbitrarias entre $50\,000$ opciones.
+\end{solucion}
+
+\begin{solucion}{eje:2-dados}
+\datos $S=X_1+X_2$, dados equilibrados independientes; por el \cref{ej:tresvalores}, $\E[X_i]=7/2$ y $\Var(X_i)=35/12$.
+\planteamiento linealidad (\cref{prop:linealidad}), suma de varianzas de independientes (\cref{prop:suma}) y recuento de casos favorables.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\E[S]=7/2+7/2=7$.
+  \item $\Var(S)=35/12+35/12=35/6\approx 5{,}833$.
+  \item Pares con suma~7: $(1,6),(2,5),(3,4),(4,3),(5,2),(6,1)$, seis de los 36 equiprobables.
+  \item $\PP(S=7)=6/36=1/6\approx 0{,}1667$.
+\end{enumerate}
+\resultado \textbf{$\E[S]=7$; $\Var(S)=35/6\approx 5{,}833$; $\PP(S=7)=1/6$.}
+\comprobacion $\E[X_i^{2}]-\E[X_i]^{2}=91/6-49/4=182/12-147/12=35/12$. Además, $7$ es la suma más probable y coincide con $\E[S]$, por la simetría de la distribución de $S$.
+\end{solucion}
+
+\begin{solucion}{eje:2-softmax}
+\datos $z=(2,1,0,-1)$; $u=0{,}5$ y $u=0{,}9$; tokens numerados de~0 a~3.
+\planteamiento $p_k=e^{z_k}/\sum_j e^{z_j}$; se emite el primer token cuya acumulada sea $\ge u$ (\cref{prop:inversa-discreta}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $e^{z}=(7{,}389;\ 2{,}718;\ 1;\ 0{,}3679)$.
+  \item Suma: $7{,}389+2{,}718+1+0{,}3679=11{,}475$ (se conservan cinco cifras para que los cocientes tengan tres decimales correctos).
+  \item $p=(7{,}389;\ 2{,}718;\ 1;\ 0{,}3679)/11{,}475=(0{,}644;\ 0{,}237;\ 0{,}087;\ 0{,}032)$.
+  \item Acumuladas: $F=(0{,}644;\ 0{,}881;\ 0{,}968;\ 1)$.
+  \item $u=0{,}5\le 0{,}644$: se emite el token~0.
+  \item $0{,}881<0{,}9\le 0{,}968$: con $u=0{,}9$ se emite el token~2.
+\end{enumerate}
+\resultado \textbf{$p=(0{,}644;\,0{,}237;\,0{,}087;\,0{,}032)$; $F=(0{,}644;\,0{,}881;\,0{,}968;\,1)$; token~0 con $u=0{,}5$ y token~2 con $u=0{,}9$.}
+\comprobacion $0{,}644+0{,}237+0{,}087+0{,}032=1{,}000$.
+\end{solucion}
+
+\begin{solucion}{eje:2-dados4}
+\datos $\PP(i,j)=c\,(i+j)$ para $i,j\in\{1,2,3,4\}$.
+\planteamiento normalización para hallar $c$; después, sumar $c(i+j)$ sobre los pares de cada suceso; para (d), \cref{def:esperanza}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\sum_{i,j}(i+j)=\sum_{i,j}i+\sum_{i,j}j=4\cdot 10+4\cdot 10=80$, luego $c=1/80$.
+  \item (b) Sumas pares: 2 (1 par), 4 (3 pares), 6 (3 pares), 8 (1 par). Peso: $2\cdot 1+4\cdot 3+6\cdot 3+8\cdot 1=40$; $\PP=40/80=1/2$.
+  \item (c) Pares $(2,3)$ y $(3,2)$, de peso $5$ cada uno: $\PP=10/80=1/8$.
+  \item (d) $\E[S]=\sum_{i,j}(i+j)\cdot\frac{i+j}{80}=\frac1{80}\sum_s s^{2}\,n_s$, con $n_s$ el número de pares de suma $s$: $4\cdot 1+9\cdot 2+16\cdot 3+25\cdot 4+36\cdot 3+49\cdot 2+64\cdot 1=440$.
+  \item $\E[S]=440/80=11/2=5{,}5$.
+\end{enumerate}
+\resultado \textbf{$c=1/80$; $\PP(\text{par})=1/2$; $\PP(\{2,3\})=1/8$; $\E[S]=5{,}5$.}
+\comprobacion con dados equilibrados de cuatro caras $\E[S]=5$; aquí los pesos favorecen las sumas altas, de modo que $5{,}5>5$ es coherente.
+\end{solucion}
+
+\begin{solucion}{eje:2-binomial}
+\datos $X\sim\Bin(10;\,0{,}8)$.
+\planteamiento $\E[X]=np$, $\Var(X)=np(1-p)$ y la función de masa binomial (\cref{def:discretas}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\E[X]=10\cdot 0{,}8=8$.
+  \item $\Var(X)=10\cdot 0{,}8\cdot 0{,}2=1{,}6$.
+  \item $\PP(X=10)=0{,}8^{10}=0{,}1074$.
+  \item $\PP(X=9)=\binom{10}{9}0{,}8^{9}\cdot 0{,}2=10\cdot 0{,}1342\cdot 0{,}2=0{,}2684$.
+  \item $\PP(X\ge 9)=0{,}2684+0{,}1074=0{,}3758$.
+\end{enumerate}
+\resultado \textbf{$\E[X]=8$; $\Var(X)=1{,}6$; $\PP(X=10)\approx 0{,}107$; $\PP(X\ge 9)\approx 0{,}376$.}
+\comprobacion $\PP(X=9)/\PP(X=10)=10\cdot 0{,}2/0{,}8=2{,}5$ y $0{,}2684/0{,}1074=2{,}50$.
+\end{solucion}
+
+\begin{solucion}{eje:2-covarianza}
+\datos (a) $X$, $Y$ con varianza finita. (b) $\PP(X=-1)=\PP(X=0)=\PP(X=1)=1/3$, $Y=X^{2}$.
+\planteamiento (a) desarrollar la definición de varianza; (b) calcular la covarianza y buscar un par $(x,y)$ en que la conjunta no factorice.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Sean $\mu_X=\E[X]$ y $\mu_Y=\E[Y]$. Por linealidad, $\E[X+Y]=\mu_X+\mu_Y$.
+  \item $(X+Y-\mu_X-\mu_Y)^{2}=(X-\mu_X)^{2}+(Y-\mu_Y)^{2}+2(X-\mu_X)(Y-\mu_Y)$.
+  \item Tomando esperanzas y usando de nuevo la linealidad: $\Var(X+Y)=\Var(X)+\Var(Y)+2\Cov(X,Y)$.
+  \item $\Cov(X,Y)=\E[XY]-\mu_X\E[Y]-\mu_Y\E[X]+\mu_X\mu_Y=\E[XY]-\mu_X\mu_Y$, de nuevo por linealidad.
+  \item Si son independientes, $\E[XY]=\sum_{x,y}xy\,p_X(x)p_Y(y)=\mu_X\mu_Y$ y la covarianza se anula.
+  \item (b) $\E[X]=(-1+0+1)/3=0$ y $\E[XY]=\E[X^{3}]=(-1+0+1)/3=0$, luego $\Cov(X,Y)=0$.
+  \item $\PP(X=0,Y=0)=\PP(X=0)=1/3$, mientras que $\PP(X=0)\PP(Y=0)=\frac13\cdot\frac13=\frac19$.
+\end{enumerate}
+\resultado \textbf{(a) la fórmula de la \cref{prop:suma}; (b) $X$ e $Y$ son incorreladas pero dependientes}: $Y$ es función de $X$. $\blacksquare$
+\comprobacion la covarianza solo detecta dependencia lineal; aquí la dependencia es cuadrática y simétrica, y las contribuciones de $x=-1$ y $x=1$ se cancelan.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-tabla}
+\datos $X\sim\N(10,4)$, luego $\mu=10$ y $\sigma=2$.
+\planteamiento estandarizar con la \cref{prop:afin} y usar el \cref{tab:normal} y la simetría.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $8\le X\le 12$ equivale a $\abs{X-10}\le 2=1\cdot\sigma$: probabilidad $0{,}683$.
+  \item $X>14$ equivale a $Z=(X-10)/2>2$.
+  \item $\PP(\abs Z\le 2)=0{,}954$, luego $\PP(\abs Z>2)=0{,}046$ y, por simetría, $\PP(Z>2)=0{,}046/2=0{,}023$.
+\end{enumerate}
+\resultado \textbf{$\PP(8\le X\le 12)\approx 0{,}683$; $\PP(X>14)\approx 0{,}023$.}
+\comprobacion numéricamente, $1-\Phi(2)=0{,}02275$.
+\end{solucion}
+
+\begin{solucion}{eje:3-espera}
+\datos $X\sim\Expo(0{,}5)$, en minutos.
+\planteamiento $\E[X]=1/\lambda$, $\Var(X)=1/\lambda^{2}$, $\PP(X>x)=e^{-\lambda x}$ y la \cref{prop:memoria}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\E[X]=1/0{,}5=2$ minutos; $\sigma_X=\sqrt{1/0{,}25}=2$ minutos.
+  \item (b) $\PP(X>2)=e^{-0{,}5\cdot 2}=e^{-1}=0{,}3679$.
+  \item (c) $\PP(X>5\mid X>3)=\PP(X>3+2\mid X>3)=\PP(X>2)=e^{-1}$.
+\end{enumerate}
+\resultado \textbf{(a) media y desviación típica de 2 minutos; (b) y (c) $e^{-1}\approx 0{,}368$.}
+\comprobacion directamente, $\PP(X>5)/\PP(X>3)=e^{-2{,}5}/e^{-1{,}5}=e^{-1}$: los 3 minutos ya esperados no cambian la distribución del tiempo restante.
+\end{solucion}
+
+\begin{solucion}{eje:3-cuadrado}
+\datos $U\sim\Unif(-1,1)$, de densidad $1/2$ en $[-1,1]$.
+\planteamiento \cref{prop:uniforme} para la media y la varianza; integral directa para $\E[U^{4}]$; función de distribución de $U^{2}$ a partir de la de $U$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\E[U]=(-1+1)/2=0$ y $\Var(U)=2^{2}/12=1/3$.
+  \item $\E[U^{4}]=\frac12\int_{-1}^{1}u^{4}\,du=\frac12\cdot\frac{2}{5}=\frac15$.
+  \item Para $t\in[0,1]$: $\PP(U^{2}\le t)=\PP(-\sqrt t\le U\le\sqrt t)=\frac{2\sqrt t}{2}=\sqrt t$. Vale $0$ si $t<0$ y $1$ si $t>1$.
+  \item Derivando, la densidad de $U^{2}$ es $\frac{1}{2\sqrt t}$ en $(0,1]$.
+\end{enumerate}
+\resultado \textbf{$\E[U]=0$, $\Var(U)=1/3$, $\E[U^{4}]=1/5$; $F_{U^{2}}(t)=\sqrt t$ y $f_{U^{2}}(t)=1/(2\sqrt t)$ en $(0,1]$: $U^{2}$ no es uniforme}, pues su densidad no es constante y acumula masa cerca de~0.
+\comprobacion $\E[U^{2}]=\int_0^1 t\cdot\frac{1}{2\sqrt t}\,dt=\frac12\cdot\frac23=\frac13=\Var(U)$, como debe ser porque $\E[U]=0$.
+\end{solucion}
+
+\begin{solucion}{eje:3-init}
+\datos $n=4096$, $\Var(x)=1$; en (c), $\sigma_w=0{,}1$ y $n=256$.
+\planteamiento \cref{prop:neurona}: $\Var(y)=n\Var(w)\Var(x)$; regla de fan-in $\Var(w)=1/n$; regla de He $\Var(w)=2/n$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\sigma_w=1/\sqrt{4096}=1/64=0{,}01563$.
+  \item (b) $\sigma_w=\sqrt{2/4096}=\sqrt2/64=1{,}414/64=0{,}02210$.
+  \item (c) $\Var(y)=256\cdot 0{,}1^{2}\cdot 1=2{,}56$, de modo que la desviación típica se multiplica por $\sqrt{2{,}56}=1{,}6$ en cada capa.
+  \item Tras diez capas, el factor es $1{,}6^{10}\approx 110$.
+\end{enumerate}
+\resultado \textbf{(a) $\sigma_w=1/64\approx 0{,}0156$; (b) $\sigma_w\approx 0{,}0221$; (c) $\Var(y)=2{,}56$: la señal crece un factor $1{,}6$ por capa, unas 110 veces en diez capas.}
+\comprobacion la desviación correcta para $n=256$ es $1/\sqrt{256}=0{,}0625<0{,}1$; con ella, $256\cdot 0{,}0625^{2}=1$.
+\end{solucion}
+
+\begin{solucion}{eje:3-exponencial}
+\datos $U\sim\Unif(0,1)$; $F(x)=1-e^{-\lambda x}$ para $x\ge 0$.
+\planteamiento aplicar el \cref{teo:inversa}: invertir $F$ y comprobar la función de distribución resultante.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $F$ es continua y estrictamente creciente en $[0,\infty)$, con valores en $[0,1)$.
+  \item Despejando $u=1-e^{-\lambda x}$: $F^{-1}(u)=-\ln(1-u)/\lambda$.
+  \item Sea $X=-\ln(1-U)/\lambda$. Para $x\ge 0$: $X\le x\iff\ln(1-U)\ge-\lambda x\iff 1-U\ge e^{-\lambda x}\iff U\le 1-e^{-\lambda x}$.
+  \item Luego $\PP(X\le x)=1-e^{-\lambda x}=F(x)$, y $X\sim\Expo(\lambda)$.
+  \item Si $U\sim\Unif(0,1)$, también $1-U\sim\Unif(0,1)$, pues $\PP(1-U\le c)=\PP(U\ge 1-c)=c$. Sustituyendo $1-U$ por $U$, $-\ln(U)/\lambda\sim\Expo(\lambda)$.
+\end{enumerate}
+\resultado \textbf{$X=-\ln(1-U)/\lambda$, o equivalentemente $-\ln(U)/\lambda$, sigue una $\Expo(\lambda)$.} $\blacksquare$
+\comprobacion con $\lambda=1$ y $u=1-e^{-1}=0{,}6321$, se obtiene $x=1$, la media de la $\Expo(1)$; la mitad de las muestras cae por debajo de $\ln 2/\lambda$, la mediana.
+\end{solucion}
+
+\begin{solucion}{eje:3-he}
+\datos $x$ con densidad $f$ simétrica, $f(-t)=f(t)$, y $\Var(x)=v$; $r=\max(0,x)$; $w_j$ con media~0, independientes entre sí y de los $r_j$, que son independientes entre sí.
+\planteamiento (a) integrar usando la simetría; (b) varianza de un producto de independientes y \cref{prop:suma}; (c) sustituir.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Por simetría, $\E[x]=0$, luego $\E[x^{2}]=v$.
+  \item $\E[r^{2}]=\int_0^{\infty}t^{2}f(t)\,dt$, porque $r=0$ cuando $x<0$.
+  \item La función $t^{2}f(t)$ es par, así que $\int_0^{\infty}t^{2}f(t)\,dt=\frac12\int_{-\infty}^{\infty}t^{2}f(t)\,dt=\frac v2$.
+  \item (b) $\E[w_jr_j]=\E[w_j]\E[r_j]=0$ y $\Var(w_jr_j)=\E[w_j^{2}]\E[r_j^{2}]-0=\Var(w)\,\E[r^{2}]$. No hace falta $\E[r_j]=0$: basta con que $\E[w_j]=0$.
+  \item Los productos $w_jr_j$ son independientes, luego $\Var(y)=\sum_j\Var(w_jr_j)=n\Var(w)\,\E[r^{2}]$.
+  \item (c) Con $\Var(w)=2/n$: $\Var(y)=n\cdot\frac2n\cdot\frac v2=v$.
+\end{enumerate}
+\resultado \textbf{$\E[r^{2}]=v/2$, $\Var(y)=n\Var(w)\E[r^{2}]$, y la regla de He $\Var(w)=2/n$ conserva la varianza $v$.} $\blacksquare$
+\comprobacion con $n=512$, $\sigma_w=\sqrt{2/512}=0{,}0625$, el valor dado en el texto.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-ceros}
+\datos conteos $N=(3,1,0)$, $K=3$, $N_{\mathrm{tot}}=4$.
+\planteamiento EMV $N_j/N_{\mathrm{tot}}$ frente a media a posteriori con $\alpha=1$ (\cref{cor:laplace}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El EMV asigna $0/4=0$ al tercer valor. Si ese valor aparece después, la verosimilitud es nula y la entropía cruzada, infinita.
+  \item Con pocos datos, muchos valores posibles no se observan por azar; el EMV confunde «no observado» con «imposible».
+  \item Una a priori $\Dir(\alpha,\dots,\alpha)$ añade $\alpha$ pseudoconteos a cada valor, de modo que ninguna probabilidad estimada es nula.
+  \item Con $\alpha=1$: $(0+1)/(4+3)=1/7\approx 0{,}1429$.
+\end{enumerate}
+\resultado \textbf{el suavizado de Laplace asigna $1/7$ al tercer valor}, frente al~$0$ del EMV.
+\comprobacion las tres estimaciones, $(4/7,\,2/7,\,1/7)$, suman~1 (\cref{tab:estimadores}).
+\end{solucion}
+
+\begin{solucion}{eje:4-datos}
+\datos $x=(1,3,5,7)$, $n=4$.
+\planteamiento \cref{teo:emv-normal} y \cref{prop:sesgo}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\hat\mu=(1+3+5+7)/4=16/4=4$.
+  \item Desviaciones: $-3,-1,1,3$; cuadrados: $9,1,1,9$; suma $20$.
+  \item $\hat\sigma^{2}=20/4=5$.
+  \item $s^{2}=20/3\approx 6{,}667$.
+\end{enumerate}
+\resultado \textbf{$\hat\mu=4$; $\hat\sigma^{2}=5$; $s^{2}=20/3\approx 6{,}667$.}
+\comprobacion por la \cref{prop:varianza}(i) aplicada a la distribución empírica, $(1+9+25+49)/4-4^{2}=21-16=5$.
+\end{solucion}
+
+\begin{solucion}{eje:4-moneda}
+\datos $k=7$, $n=10$.
+\planteamiento \cref{ej:emv-bernoulli}; Laplace es la media a posteriori con a priori $\BetaD(1,1)$ (\cref{teo:beta}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\hat p=7/10=0{,}7$.
+  \item $\ln 0{,}7=-0{,}3567$ y $\ln 0{,}3=-1{,}204$.
+  \item $\ell(0{,}7)=7\cdot(-0{,}3567)+3\cdot(-1{,}204)=-2{,}497-3{,}612=-6{,}109$.
+  \item $\ell(0{,}5)=10\cdot(-0{,}6931)=-6{,}931$.
+  \item Laplace: $(7+1)/(10+2)=8/12=2/3\approx 0{,}6667$.
+\end{enumerate}
+\resultado \textbf{$\hat p=0{,}7$; $\ell(0{,}7)\approx-6{,}109>\ell(0{,}5)\approx-6{,}931$; Laplace, $2/3\approx 0{,}667$.} La estimación bayesiana queda entre la media a priori, $1/2$, y el EMV, $0{,}7$: con pocos datos, la a priori atrae la estimación hacia el centro.
+\comprobacion $\ell'(0{,}7)=7/0{,}7-3/0{,}3=10-10=0$.
+\end{solucion}
+
+\begin{solucion}{eje:4-u2}
+\datos 49 caras y 31 cruces en 80 lanzamientos; duraciones $2,3,1,3,4$.
+\planteamiento comparar $\ell(p)=49\ln p+31\ln(1-p)$ (el coeficiente binomial es común a todas las hipótesis); para la exponencial, $f(x)=\lambda e^{-\lambda x}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $p=1/3$: $\ell=49\cdot(-1{,}099)+31\cdot(-0{,}4055)=-53{,}83-12{,}57=-66{,}40$.
+  \item $p=1/2$: $\ell=80\cdot(-0{,}6931)=-55{,}45$.
+  \item $p=2/3$: $\ell=49\cdot(-0{,}4055)+31\cdot(-1{,}099)=-19{,}87-34{,}06=-53{,}92$, el mayor de los tres.
+  \item (b) $\ell'(p)=49/p-31/(1-p)=0\Rightarrow 49(1-p)=31p\Rightarrow\hat p=49/80=0{,}6125$.
+  \item (c) $\ell(\lambda)=\sum_i(\ln\lambda-\lambda x_i)=5\ln\lambda-13\lambda$, pues $\sum_i x_i=13$.
+  \item $\ell'(\lambda)=5/\lambda-13=0\Rightarrow\hat\lambda=5/13\approx 0{,}3846$; $\ell''(\lambda)=-5/\lambda^{2}<0$, máximo.
+\end{enumerate}
+\resultado \textbf{(a) la moneda de $p=2/3$; (b) $\hat p=49/80=0{,}6125$; (c) $\hat\lambda=5/13\approx 0{,}385$ por año} (vida media estimada, $2{,}6$ años).
+\comprobacion $\ell(5/13)=5\ln 0{,}3846-5=-9{,}778$, mayor que $\ell(0{,}3)=-9{,}920$ y que $\ell(0{,}5)=-9{,}966$.
+\end{solucion}
+
+\begin{solucion}{eje:4-u3}
+\datos a priori $1/3$ para cada moneda; dato: una cara en 5 lanzamientos.
+\planteamiento verosimilitud binomial $5p(1-p)^{4}$; tabla de Bayes; probabilidad predictiva por probabilidad total, $\sum_i\PP(\text{cara}\mid i)\PP(i\mid\text{datos})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Verosimilitudes: $p=0{,}5$: $5\cdot 0{,}5\cdot 0{,}5^{4}=0{,}1563$; $p=0{,}6$: $5\cdot 0{,}6\cdot 0{,}4^{4}=0{,}0768$; $p=0{,}9$: $5\cdot 0{,}9\cdot 0{,}1^{4}=0{,}00045$.
+  \item Productos por la a priori ($\div 3$): $0{,}05208$; $0{,}0256$; $0{,}00015$.
+  \item Evidencia: $0{,}05208+0{,}0256+0{,}00015=0{,}07783$.
+  \item A posteriori: $0{,}6692$; $0{,}3289$; $0{,}001927$.
+  \item Predictiva a priori: $(0{,}5+0{,}6+0{,}9)/3=2/3\approx 0{,}6667$.
+  \item Predictiva a posteriori: $0{,}5\cdot 0{,}6692+0{,}6\cdot 0{,}3289+0{,}9\cdot 0{,}001927=0{,}3346+0{,}1973+0{,}0017=0{,}5337$.
+\end{enumerate}
+\resultado \textbf{a posteriori $(0{,}669;\ 0{,}329;\ 0{,}002)$; la probabilidad de cara siguiente pasa de $0{,}667$ a $0{,}534$.}
+\comprobacion $0{,}6692+0{,}3289+0{,}0019=1{,}000$. Una sola cara en cinco lanzamientos hace casi imposible la moneda de $p=0{,}9$.
+\end{solucion}
+
+\begin{solucion}{eje:4-sesgo}
+\datos $X_1,\dots,X_n$ independientes, media $\mu$, varianza $\sigma^{2}$.
+\planteamiento escribir $X_i-\Xbar_n=(X_i-\mu)-(\Xbar_n-\mu)$, desarrollar y tomar esperanzas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $(X_i-\Xbar_n)^{2}=(X_i-\mu)^{2}-2(X_i-\mu)(\Xbar_n-\mu)+(\Xbar_n-\mu)^{2}$.
+  \item Como $\sum_i(X_i-\mu)=n\Xbar_n-n\mu$, el término cruzado sumado vale $-2(\Xbar_n-\mu)\cdot n(\Xbar_n-\mu)=-2n(\Xbar_n-\mu)^{2}$.
+  \item El último término, sumado $n$ veces, da $n(\Xbar_n-\mu)^{2}$.
+  \item Luego $\sum_i(X_i-\Xbar_n)^{2}=\sum_i(X_i-\mu)^{2}-n(\Xbar_n-\mu)^{2}$.
+  \item $\E\bigl[\sum_i(X_i-\mu)^{2}\bigr]=n\sigma^{2}$ por la definición de varianza.
+  \item $\E\bigl[n(\Xbar_n-\mu)^{2}\bigr]=n\Var(\Xbar_n)=n\cdot\sigma^{2}/n=\sigma^{2}$ por el \cref{cor:media}.
+  \item $\E\bigl[\sum_i(X_i-\Xbar_n)^{2}\bigr]=(n-1)\sigma^{2}$; dividiendo por $n$, $\E[\hat\sigma^{2}]=\frac{n-1}{n}\sigma^{2}$, y dividiendo por $n-1$, $\E[s^{2}]=\sigma^{2}$.
+\end{enumerate}
+\resultado \textbf{$\E[\hat\sigma^{2}]=(n-1)\sigma^{2}/n$; dividir por $n-1$ elimina el sesgo.} $\blacksquare$
+\comprobacion con $n=1$, $\sum_i(X_i-\Xbar_n)^{2}=0$ siempre, y la fórmula da $(1-1)\sigma^{2}=0$. Con $n=5$ y $\sigma^{2}=4$, $\E[\hat\sigma^{2}]=3{,}2$.
+\end{solucion}
+
+\begin{solucion}{eje:4-beta}
+\datos a priori proporcional a $p^{\alpha-1}(1-p)^{\alpha-1}$; $k$ éxitos en $n$ ensayos; la media de $\BetaD(a,b)$ es $a/(a+b)$.
+\planteamiento densidad a posteriori $\propto$ verosimilitud $\times$ a priori, e identificación de la familia.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Verosimilitud: $\PP(\text{datos}\mid p)=\binom nk p^{k}(1-p)^{n-k}\propto p^{k}(1-p)^{n-k}$.
+  \item Producto: $p^{k}(1-p)^{n-k}\cdot p^{\alpha-1}(1-p)^{\alpha-1}=p^{k+\alpha-1}(1-p)^{n-k+\alpha-1}$.
+  \item Es el núcleo de una $\BetaD(a,b)$ con $a=k+\alpha$ y $b=n-k+\alpha$; la constante de normalización queda determinada por la condición de integrar~1.
+  \item Media: $\dfrac{a}{a+b}=\dfrac{k+\alpha}{(k+\alpha)+(n-k+\alpha)}=\dfrac{k+\alpha}{n+2\alpha}$.
+\end{enumerate}
+\resultado \textbf{media a posteriori $(k+\alpha)/(n+2\alpha)$; con $\alpha=1$ es el estimador de Laplace, $(k+1)/(n+2)$.} $\blacksquare$
+\comprobacion con $n=0$ se obtiene $\alpha/(2\alpha)=1/2$, la media a priori; con $k=7$, $n=10$ y $\alpha=1$, $8/12=2/3$, como en el \cref{eje:4-moneda}.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-lote}
+\datos el tamaño del minilote pasa de $B$ a $4B$.
+\planteamiento \cref{prop:minilote}: error típico $\sigma/\sqrt B$; coste proporcional a $B$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\sigma/\sqrt{4B}=\sigma/(2\sqrt B)$: el error típico se divide por~2.
+  \item Se procesan $4B$ ejemplos: el coste por paso se multiplica por~4.
+\end{enumerate}
+\resultado \textbf{el error típico se reduce a la mitad y el coste por paso se cuadruplica.}
+\comprobacion con $\sigma=2$: $B=256$ da $0{,}125$ y $B=1024$ da $0{,}0625$.
+\end{solucion}
+
+\begin{solucion}{eje:5-vf}
+\planteamiento contrastar cada afirmación con la \cref{prop:suma}, la \cref{prop:sesgo}, el \cref{teo:tcl} y la softmax con temperatura del módulo~1.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Falsa.} $\Var(X+Y)=\Var(X)+\Var(Y)+2\Cov(X,Y)$. Con $Y=X$ y $\Var(X)>0$, $\Var(2X)=4\Var(X)\ne 2\Var(X)$.
+  \item \textbf{Falsa.} $\E[\hat\sigma^{2}]=(n-1)\sigma^{2}/n<\sigma^{2}$.
+  \item \textbf{Falsa.} El teorema exige independencia, igual distribución y varianza finita; la normalidad es la conclusión.
+  \item \textbf{Verdadera} si el logit máximo es único: al dividir los logits por $T\to 0$, la diferencia entre el máximo y los demás crece sin límite y la softmax tiende al vector que vale~1 en el máximo.
+\end{enumerate}
+\resultado \textbf{(a) F; (b) F; (c) F; (d) V.}
+\end{solucion}
+
+\begin{solucion}{eje:5-pi}
+\datos $n=10^{4}$; $p=\pi/4\approx 0{,}7854$; $p(1-p)=0{,}1685$; valor observado $3{,}19$.
+\planteamiento \cref{ej:pi}: $\sigma_{\hat\pi}=4\sqrt{p(1-p)/n}$; para (c), expresar el error en errores típicos y usar el \cref{cor:aprox}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\sigma_{\hat\pi}=4\sqrt{0{,}1685/10^{4}}=4\cdot 0{,}004105=0{,}01642$.
+  \item (b) $4\sqrt{0{,}1685/n}=0{,}001\Rightarrow n=16\cdot 0{,}1685/10^{-6}=2{,}696\cdot 10^{6}$.
+  \item (c) Error observado: $3{,}19-3{,}1416=0{,}0484$, es decir, $0{,}0484/0{,}01642=2{,}95$ errores típicos.
+  \item $\PP(\abs Z\ge 2{,}95)=2(1-\Phi(2{,}95))\approx 0{,}0032$.
+\end{enumerate}
+\resultado \textbf{(a) $0{,}0164$; (b) unos $2{,}7$ millones de puntos; (c) un error de unos $2{,}9$ errores típicos, con probabilidad $\approx 0{,}3\,\%$: es sospechoso y conviene revisar el código.}
+\comprobacion bajar el error de $0{,}0164$ a $0{,}001$ es dividirlo por $16{,}4$; $n$ debe multiplicarse por $16{,}4^{2}\approx 270$, y $10^{4}\cdot 270=2{,}7\cdot 10^{6}$.
+\end{solucion}
+
+\begin{solucion}{eje:5-chebyshev}
+\datos $p=0{,}5$; $n=100$; $\varepsilon=0{,}1$.
+\planteamiento $\hat p$ es la media de $n$ variables $\Ber(p)$: $\Var(\hat p)=p(1-p)/n$ (\cref{cor:media}); \cref{teo:chebyshev}; \cref{cor:aprox}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\Var(\hat p)=0{,}25/100=0{,}0025$; error típico $\sqrt{0{,}0025}=0{,}05$. La varianza escala como $1/n$ y el error típico como $1/\sqrt n$.
+  \item (b) $\PP(\abs{\hat p-0{,}5}\ge 0{,}1)\le 0{,}0025/0{,}01=0{,}25$.
+  \item (c) $0{,}1$ son $0{,}1/0{,}05=2$ errores típicos; $2(1-\Phi(2))=2(1-0{,}9772)=0{,}0455$.
+\end{enumerate}
+\resultado \textbf{$\Var(\hat p)=0{,}0025$ y error típico $0{,}05$; Chebyshev da $\le 0{,}25$ y el teorema central del límite, $\approx 0{,}046$.}
+\comprobacion Chebyshev es unas $5{,}5$ veces más pesimista: vale para cualquier distribución con esa varianza, mientras que el teorema central del límite usa la forma aproximadamente normal de $\hat p$.
+\end{solucion}
+
+\begin{solucion}{eje:5-comparar}
+\datos $\hat p_1=0{,}82$, $\hat p_2=0{,}80$, $n=500$ cada uno, independientes.
+\planteamiento error típico de cada proporción $\sqrt{\hat p(1-\hat p)/n}$; el de la diferencia de dos independientes, $\sqrt{\sigma_1^{2}+\sigma_2^{2}}$ (\cref{prop:suma}); $z=$ diferencia$/$error típico.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\sigma_1^{2}=0{,}82\cdot 0{,}18/500=0{,}1476/500=2{,}952\cdot 10^{-4}$.
+  \item $\sigma_2^{2}=0{,}8\cdot 0{,}2/500=0{,}16/500=3{,}2\cdot 10^{-4}$.
+  \item $\sigma_{\mathrm{dif}}=\sqrt{6{,}152\cdot 10^{-4}}=0{,}02480$.
+  \item (a) $z=0{,}02/0{,}02480=0{,}806<1{,}96$: no significativa.
+  \item (b) Con $n$ preguntas por modelo, $\sigma_{\mathrm{dif}}=\sqrt{0{,}3076/n}$. Se impone $1{,}96\sqrt{0{,}3076/n}=0{,}02$.
+  \item $n=1{,}96^{2}\cdot 0{,}3076/0{,}02^{2}=3{,}8416\cdot 0{,}3076/0{,}0004=2954{,}2$.
+\end{enumerate}
+\resultado \textbf{(a) $z\approx 0{,}81$: diferencia no significativa; (b) unas $2955$ preguntas por modelo.}
+\comprobacion $n$ crece en el factor $(1{,}96/0{,}806)^{2}=5{,}91$, y $500\cdot 5{,}91\approx 2954$.
+\end{solucion}
+
+\begin{solucion}{eje:5-n}
+\datos frecuencia $\hat p$ de $n$ ensayos $\Ber(p)$, $p$ desconocido; $\varepsilon=0{,}1$; probabilidad de error admitida $0{,}05$.
+\planteamiento (a) completar el cuadrado; (b) cota del \cref{teo:lgn} con la peor varianza; (c) \cref{cor:aprox} con $z=1{,}96$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $p(1-p)=\frac14-\bigl(p-\frac12\bigr)^{2}\le\frac14$, con igualdad en $p=1/2$.
+  \item (b) $\PP(\abs{\hat p-p}\ge 0{,}1)\le\dfrac{p(1-p)}{n\cdot 0{,}01}\le\dfrac{0{,}25}{0{,}01\,n}=\dfrac{25}{n}$.
+  \item Se exige $25/n\le 0{,}05$, es decir, $n\ge 500$.
+  \item (c) Con el teorema central del límite y la peor varianza, se pide $1{,}96\cdot 0{,}5/\sqrt n\le 0{,}1$, es decir, $\sqrt n\ge 9{,}8$ y $n\ge 96{,}04$: bastan $97$ ensayos.
+\end{enumerate}
+\resultado \textbf{$n=500$ garantiza el error pedido para cualquier $p$; el teorema central del límite sugiere que bastan unos 97.} La cota de Chebyshev es rigurosa para todo $n$; la aproximación normal es más ajustada, pero solo asintótica. $\blacksquare$
+\comprobacion con $n=500$ y $p=1/2$, el error típico es $\sqrt{0{,}25/500}=0{,}02236$, y $0{,}1$ son $4{,}47$ errores típicos: la probabilidad real de error es muy inferior a $0{,}05$, lo que confirma el carácter pesimista de la cota.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{bt}
+D.~P. Bertsekas y J.~N. Tsitsiklis.
+\newblock \emph{Introduction to Probability}, 2.ª ed.
+\newblock Athena Scientific, 2008.
+\newblock Texto del curso 6.041 del MIT.
+
+\bibitem{bishop}
+C.~M. Bishop.
+\newblock \emph{Pattern Recognition and Machine Learning}.
+\newblock Springer, 2006.
+
+\bibitem{bh}
+J.~K. Blitzstein y J.~Hwang.
+\newblock \emph{Introduction to Probability}, 2.ª ed.
+\newblock CRC Press, 2019.
+\newblock Texto del curso Stat~110 de Harvard.
+
+\bibitem{stat110}
+J.~K. Blitzstein.
+\newblock Stat 110: Probability.
+\newblock Harvard University. \emph{Strategic Practice and Homework}, otoño de 2011.
+\newblock \url{https://stat110.hsites.harvard.edu/strategic-practice-problems}
+
+\bibitem{mml}
+M.~P. Deisenroth, A.~A. Faisal y C.~S. Ong.
+\newblock \emph{Mathematics for Machine Learning}.
+\newblock Cambridge University Press, 2020.
+\newblock \url{https://mml-book.github.io/}
+
+\bibitem{glorot}
+X.~Glorot e Y.~Bengio.
+\newblock Understanding the difficulty of training deep feedforward neural networks.
+\newblock En \emph{Proceedings of the Thirteenth International Conference on Artificial Intelligence and Statistics (AISTATS)}, PMLR~9:249--256, 2010.
+\newblock \url{https://proceedings.mlr.press/v9/glorot10a.html}
+
+\bibitem{he}
+K.~He, X.~Zhang, S.~Ren y J.~Sun.
+\newblock Delving deep into rectifiers: surpassing human-level performance on ImageNet classification.
+\newblock En \emph{Proceedings of the IEEE International Conference on Computer Vision (ICCV)}, 2015.
+\newblock \url{https://arxiv.org/abs/1502.01852}
+
+\bibitem{mit1805}
+J.~Orloff y J.~Bloom.
+\newblock 18.05: Introduction to Probability and Statistics.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, primavera de 2022.
+\newblock \url{https://ocw.mit.edu/courses/18-05-introduction-to-probability-and-statistics-spring-2022/}
+
+\bibitem{mit6041}
+J.~N. Tsitsiklis.
+\newblock 6.041SC: Probabilistic Systems Analysis and Applied Probability.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, otoño de 2013.
+\newblock \url{https://ocw.mit.edu/courses/6-041sc-probabilistic-systems-analysis-and-applied-probability-fall-2013/}
+
+\bibitem{mit6041f10}
+J.~N. Tsitsiklis.
+\newblock 6.041: Probabilistic Systems Analysis and Applied Probability.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, otoño de 2010. \emph{Problem Set}~1.
+\newblock \url{https://ocw.mit.edu/courses/6-041-probabilistic-systems-analysis-and-applied-probability-fall-2010/}
+
+\bibitem{xie}
+S.~M. Xie, A.~Raghunathan, P.~Liang y T.~Ma.
+\newblock An explanation of in-context learning as implicit Bayesian inference.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2022.
+\newblock \url{https://arxiv.org/abs/2111.02080}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock \url{https://d2l.ai/}
+
+\end{thebibliography}
+
+
+\end{document}

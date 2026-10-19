@@ -1,0 +1,1150 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase II — Hito 2
+%  Examen de hito: Aprendizaje (módulos 7 a 11)
+%  Compilar: latexmk -r ../latexmkrc H2-examen.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+\usepackage{multicol}
+\usepackage{needspace}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Hito 2}
+
+\hypersetup{pdftitle={Hito 2. Examen de la Fase II: Aprendizaje},pdfauthor={Anatomía de un LLM}}
+
+% --- Notación propia del examen -----------------------------------------
+\newcommand{\T}{^{\top}}
+\newcommand{\uno}{\mathbf{1}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\RMS}{\operatorname{RMS}}
+\newcommand{\LN}{\operatorname{LN}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+\newcommand{\ReLU}{\operatorname{ReLU}}
+\newcommand{\GELU}{\operatorname{GELU}}
+\newcommand{\SSE}{\operatorname{SSE}}
+\newcommand{\NaN}{\text{\fontseries{m}\ttfamily NaN}}
+\newcommand{\Inf}{\text{\fontseries{m}\ttfamily inf}}
+\newcommand{\pts}[1]{\textup{(#1~p)}}
+
+% --- Problemas en lugar de ejercicios ------------------------------------
+%  Se reutilizan el contador y las etiquetas del estilo común; solo cambia
+%  el rótulo («Problema») y la numeración, que es continua en todo el examen.
+\renewcommand{\theejercicio}{\arabic{ejercicio}}
+\renewcommand{\theHejercicio}{\arabic{ejercicio}}
+\renewenvironment{ejercicio}[2]{%
+  \refstepcounter{ejercicio}\label{#2}%
+  \par\medskip\noindent
+  \hyperref[sol:#2]{\textbf{Problema \theejercicio}}\ \ {\small\estrellas{#1}}\quad\ignorespaces}%
+  {\par\medskip}
+\renewenvironment{solucion}[1]{%
+  \par\medskip\noindent
+  \phantomsection\label{sol:#1}%
+  \hyperref[#1]{\textbf{Solución del problema \ref*{#1}}}\par\nopagebreak\smallskip\ignorespaces}%
+  {\par\medskip}
+\crefname{ejercicio}{problema}{problemas}
+\newlist{opciones}{enumerate}{1}
+\setlist[opciones]{label=(\alph*),itemsep=0pt,topsep=2pt,leftmargin=2.2em}
+\newlist{apartados}{enumerate}{1}
+\setlist[apartados]{label=(\alph*),itemsep=3pt,topsep=4pt,leftmargin=2.2em}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase II \textperiodcentered\ Hito 2 \textperiodcentered\ Examen de hito}\par\vspace{0.3cm}
+{\Huge\bfseries Hito 2\par}\vspace{0.3cm}
+{\LARGE Aprendizaje\par}
+\vspace{0.3cm}
+{\large Optimización, aprendizaje supervisado, redes neuronales,\\ diferenciación automática y redes profundas\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Examen, proyecto de fase y soluciones}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% =====================================================================
+\chapter*{Instrucciones}
+\phantomsection\addcontentsline{toc}{chapter}{Instrucciones}
+\markboth{Instrucciones}{}
+% =====================================================================
+
+Este examen cierra la Fase~II del curso, \emph{Aprendizaje}, y evalúa los módulos~7 a~11. Comprueba que el estudiante sabe entrenar una red neuronal: plantear la pérdida, optimizarla, derivar sus gradientes a mano y con diferenciación automática, y mantener estable el entrenamiento.
+
+\section*{Condiciones}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Duración & 2~h 30~min \\
+Material permitido & calculadora científica y una hoja A4 de fórmulas escrita a mano \\
+Puntuación total & 100 puntos \\
+Aprobado & 70 puntos (70\,\%) \\
+Módulos evaluados & M07 Optimización, M08 Aprendizaje supervisado, \\
+ & M09 Redes neuronales, M10 Diferenciación automática, \\
+ & M11 Entrenamiento de redes profundas \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section*{Estructura y puntuación}
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Parte A. Cuestiones} (30 puntos): 20 preguntas de opción múltiple, de 1,5 puntos cada una. Cada pregunta tiene una única respuesta correcta. Las respuestas erróneas no restan.
+  \item \textbf{Parte B. Problemas} (70 puntos): 6 problemas de desarrollo, con la puntuación indicada en cada apartado. Deben escribirse todos los pasos: el planteamiento correcto puntúa aunque el resultado numérico sea erróneo, y un error aritmético arrastrado de forma coherente solo se penaliza en el apartado en que se comete.
+  \item El \textbf{proyecto de fase} se entrega aparte, en un plazo de dos semanas. En la nota de la fase, el examen pesa un 40\,\% y el proyecto un 30\,\%.
+\end{itemize}
+
+\section*{Convenios}
+\begin{itemize}[leftmargin=1.4em]
+  \item Salvo indicación en contrario, se redondea a cuatro cifras decimales y se usan logaritmos naturales (las pérdidas se expresan en nats).
+  \item \textbf{Vectores fila}, como en NumPy y PyTorch: $z^{(1)}=xW_1+b_1$, $h=\varphi(z^{(1)})$, $z^{(2)}=hW_2+b_2$, $p=\softmax(z^{(2)})$ y $L=-\ln p_y$. Con un lote, $x$ pasa a ser la matriz $X$ de tamaño $B\times n$ y la softmax se aplica por filas.
+  \item Los \emph{deltas} son $\delta^{(l)}=\partial L/\partial z^{(l)}$; con un lote, $\Delta^{(l)}$ apila los deltas de los ejemplos por filas.
+  \item En un grafo computacional, $\bar v=\partial L/\partial v$ es el \emph{adjunto} del nodo $v$ (M10, §3.1).
+  \item Las clases se numeran $0,1,2,\dots$ y $e_k$ es el vector canónico con un~1 en la posición~$k$.
+  \item $\sigma(t)=1/(1+e^{-t})$ es la sigmoide y $\sigma'(t)=\sigma(t)\bigl(1-\sigma(t)\bigr)$.
+\end{itemize}
+
+\section*{Procedencia de los problemas}
+Cuatro de los seis problemas de la parte~B (los problemas 1 a~4) están adaptados de exámenes y hojas de problemas de cursos universitarios: dos exámenes parciales y un examen final de CS189 de Berkeley y la primera tarea de CS224N de Stanford; un apartado del problema~5 procede también de esta última. Cada problema indica su \emph{Fuente}. Los enunciados son de redacción propia y los datos se han elegido para que puedan resolverse a mano. Las soluciones completas están en el \cref{ap:soluciones} y la tabla de autoevaluación en el \cref{ap:autoevaluacion}.
+
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter*{Parte A. Cuestiones}
+\phantomsection\addcontentsline{toc}{chapter}{Parte A. Cuestiones}
+\markboth{Parte A. Cuestiones}{}
+\label{cap:parteA}
+% =====================================================================
+
+Veinte preguntas de opción múltiple, de 1,5 puntos cada una (30 puntos en total). Cada pregunta tiene una única respuesta correcta; las respuestas erróneas no restan. La clave y su justificación están en el \cref{sec:clave}.
+
+\begin{enumerate}[label=\textbf{\arabic*.},leftmargin=2em,itemsep=8pt,ref=\arabic*]
+
+% ----------------------------------------------------------------- M07
+\needspace{7\baselineskip}\item\label{q:1} \pts{1,5} Para $f(\theta)=2\theta^{2}$, el descenso de gradiente con tasa constante $\eta>0$ converge al mínimo desde cualquier $\theta_0$ si y solo si $\eta$ pertenece a
+\begin{multicols}{4}
+\begin{opciones}
+  \item $(0;\ 0{,}25)$
+  \item $(0;\ 0{,}5)$
+  \item $(0;\ 1)$
+  \item $(0;\ 2)$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:2} \pts{1,5} En el método de la bola pesada, $v_{k+1}=\beta v_k+\nabla f(\theta_k)$ y $\theta_{k+1}=\theta_k-\eta v_{k+1}$, con $v_0=0$. Si $\beta=0{,}95$ y el gradiente es constante e igual a $g$, la velocidad $v_k$ tiende a
+\begin{multicols}{4}
+\begin{opciones}
+  \item $0{,}95\,g$
+  \item $1{,}95\,g$
+  \item $20\,g$
+  \item $95\,g$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:3} \pts{1,5} Los ejemplos de un minibatch se muestrean de forma independiente y uniforme (con reemplazamiento). Si el tamaño del minibatch se multiplica por~4, la desviación típica de cada componente del gradiente estimado
+\begin{multicols}{2}
+\begin{opciones}
+  \item se divide por~4.
+  \item se divide por~2.
+  \item no cambia.
+  \item se multiplica por~2.
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:4} \pts{1,5} En AdamW con $\eta=10^{-3}$ y $\lambda=0{,}01$, ¿cuánto disminuye en un paso un peso $\theta=4$ por efecto del término de decaimiento de pesos?
+\begin{multicols}{4}
+\begin{opciones}
+  \item $4\cdot 10^{-5}$
+  \item $4\cdot 10^{-3}$
+  \item $10^{-5}$
+  \item Depende de $\hat v_t$.
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:5} \pts{1,5} El calentamiento lineal de la tasa de aprendizaje se usa sobre todo porque, al principio del entrenamiento,
+\begin{opciones}
+  \item los pesos son demasiado pequeños para que el gradiente sea informativo.
+  \item los gradientes son grandes e irregulares y los momentos de Adam ($\hat m_t$, $\hat v_t$) se han estimado con muy pocos gradientes.
+  \item la pérdida es convexa y admite una tasa mayor que al final.
+  \item el dropout todavía no está activado.
+\end{opciones}
+
+% ----------------------------------------------------------------- M08
+\needspace{7\baselineskip}\item\label{q:6} \pts{1,5} Si $X\T X$ es invertible, la solución de mínimos cuadrados de $\min_\theta\norm{X\theta-y}^{2}$ es
+\begin{multicols}{2}
+\begin{opciones}
+  \item $\theta=X\T y$
+  \item $\theta=(XX\T)^{-1}y$
+  \item $\theta=(X\T X)^{-1}X\T y$
+  \item $\theta=X^{-1}y$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:7} \pts{1,5} En regresión logística, con $p=\sigma(w\T x+b)$ y pérdida $\ell=-\bigl[y\ln p+(1-y)\ln(1-p)\bigr]$, el gradiente $\nabla_w\ell$ es
+\begin{multicols}{2}
+\begin{opciones}
+  \item $(p-y)\,x$
+  \item $p(1-p)\,x$
+  \item $(y-p)\,\sigma'(w\T x+b)$
+  \item $x/p$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:8} \pts{1,5} Un modelo de caracteres con $\abs{\V}=28$ que al inicio predice la distribución uniforme tiene una entropía cruzada inicial, en nats, de
+\begin{multicols}{4}
+\begin{opciones}
+  \item $1$
+  \item $2{,}8$
+  \item $3{,}3322$
+  \item $28$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:9} \pts{1,5} Un clasificador obtiene una exactitud de $0{,}99$ en entrenamiento y de $0{,}62$ en validación. Lo más probable es que sufra
+\begin{opciones}
+  \item sesgo alto (infraajuste).
+  \item varianza alta (sobreajuste).
+  \item una tasa de aprendizaje demasiado baja.
+  \item etiquetas erróneas en validación.
+\end{opciones}
+
+% ----------------------------------------------------------------- M09-M10
+\needspace{7\baselineskip}\item\label{q:10} \pts{1,5} La capa \texttt{nn.Linear(30, 64)} de PyTorch implementa $z=xW+b$ con $x$ de tamaño $1\times 30$. ¿Qué forma tiene su atributo \texttt{weight}?
+\begin{multicols}{4}
+\begin{opciones}
+  \item $(30, 64)$
+  \item $(64, 30)$
+  \item $(1, 64)$
+  \item $(30, 30)$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:11} \pts{1,5} La inicialización de Xavier con distribución normal para una capa $100\to 200$ usa una desviación típica de
+\begin{multicols}{4}
+\begin{opciones}
+  \item $0{,}0577$
+  \item $0{,}0816$
+  \item $0{,}1$
+  \item $0{,}1414$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:12} \pts{1,5} ¿Cuál de estas activaciones toma un valor negativo en $t=-1$?
+\begin{multicols}{4}
+\begin{opciones}
+  \item ReLU
+  \item GELU
+  \item Ambas.
+  \item Ninguna.
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:13} \pts{1,5} La capa prealimentada SwiGLU de LLaMA~7B~\cite{llama} tiene $d=4096$, anchura oculta $11\,008$ y no tiene sesgos. ¿Cuántos parámetros tiene en cada bloque?
+\begin{multicols}{4}
+\begin{opciones}
+  \item $90\,177\,536$
+  \item $135\,266\,304$
+  \item $67\,108\,864$
+  \item $180\,355\,072$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:14} \pts{1,5} Se quiere el jacobiano completo de $f\colon\R^{10}\to\R^{3}$ en modo inverso. ¿Cuántas pasadas hacia atrás hacen falta?
+\begin{multicols}{4}
+\begin{opciones}
+  \item $1$
+  \item $3$
+  \item $10$
+  \item $30$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:15} \pts{1,5} Con números duales ($\varepsilon^{2}=0$), la parte en $\varepsilon$ de $(2+\varepsilon)^{3}$ vale
+\begin{multicols}{4}
+\begin{opciones}
+  \item $8$
+  \item $6$
+  \item $12$
+  \item $3$
+\end{opciones}
+\end{multicols}
+
+% ----------------------------------------------------------------- M11
+\needspace{7\baselineskip}\item\label{q:16} \pts{1,5} Con $\epsilon=0$ y ganancia $g=\uno$, para todo $x\ne 0$ el vector $\RMSNorm(10x)$, comparado con $\RMSNorm(x)$, es
+\begin{multicols}{4}
+\begin{opciones}
+  \item 10 veces mayor.
+  \item igual.
+  \item 10 veces menor.
+  \item Depende de $x$.
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:17} \pts{1,5} Con dropout invertido de probabilidad $p=0{,}25$, una activación $h=4$ vale durante el entrenamiento
+\begin{multicols}{4}
+\begin{opciones}
+  \item $0$ o $4$
+  \item $0$ o $5{,}3333$
+  \item siempre $3$
+  \item $0$ o $3$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:18} \pts{1,5} El producto $260\cdot 260$, calculado en fp16 con redondeo al más próximo, da
+\begin{multicols}{4}
+\begin{opciones}
+  \item $67\,600$
+  \item $67\,584$
+  \item \Inf
+  \item $65\,504$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:19} \pts{1,5} En fp16, $\exp(z)$ se desborda a infinito a partir de $z\approx$
+\begin{multicols}{4}
+\begin{opciones}
+  \item $11{,}09$
+  \item $88{,}72$
+  \item $15$
+  \item $65\,504$
+\end{opciones}
+\end{multicols}
+
+\needspace{7\baselineskip}\item\label{q:20} \pts{1,5} Entrenando en fp32, la pérdida pasa de $2{,}1$ a \NaN\ de un paso al siguiente sin haber crecido antes. Según el árbol de diagnóstico de M11, §6.4, lo primero que debe buscarse es
+\begin{opciones}
+  \item una tasa de aprendizaje demasiado alta.
+  \item un logaritmo, una división o una exponencial sin proteger.
+  \item un desbordamiento de fp16.
+  \item dropout activo durante la evaluación.
+\end{opciones}
+
+\end{enumerate}
+
+% =====================================================================
+\chapter*{Parte B. Problemas}
+\phantomsection\addcontentsline{toc}{chapter}{Parte B. Problemas}
+\markboth{Parte B. Problemas}{}
+\label{cap:parteB}
+% =====================================================================
+
+Seis problemas de desarrollo (70 puntos en total). La puntuación de cada apartado figura entre paréntesis. Las soluciones están en el \cref{sec:sol-problemas}; el título de cada problema enlaza con la suya.
+
+% ---------------------------------------------------------------------
+\section*{Problema 1. Retropropagación en un perceptrón de dos capas (18 puntos)}
+\phantomsection\addcontentsline{toc}{section}{Problema 1. Retropropagación en un perceptrón de dos capas}
+
+\begin{ejercicio}{3}{eje:mlp}
+\textbf{Módulos M08 y M09.} Una red $2\to 2\to 3$ con activación ReLU procesa un lote de dos ejemplos. La pérdida es la entropía cruzada media del lote:
+\begin{gather*}
+Z^{(1)}=XW_1+b_1,\qquad H=\ReLU\bigl(Z^{(1)}\bigr),\qquad Z^{(2)}=HW_2+b_2,\\
+P=\softmax\bigl(Z^{(2)}\bigr)\ \text{por filas},\qquad L=\frac12\sum_{i=1}^{2}\bigl(-\ln P_{i,y_i}\bigr),
+\end{gather*}
+con
+\begin{gather*}
+X=\begin{pmatrix}2&1\\1&-1\end{pmatrix},\qquad y=(0,\,2),\qquad
+W_1=\begin{pmatrix}1&0{,}5\\-1&1\end{pmatrix},\qquad b_1=(0;\ -0{,}5),\\
+W_2=\begin{pmatrix}1&0&-1\\0&1&1\end{pmatrix},\qquad b_2=(0;\ 0;\ 0).
+\end{gather*}
+El primer ejemplo es de la clase~0 y el segundo, de la clase~2. Sea $Y$ la matriz de etiquetas en codificación \emph{one-hot}.
+\begin{apartados}
+  \item \pts{3} Realice la pasada hacia delante: calcule $Z^{(1)}$, $H$, $Z^{(2)}$, $P$, la pérdida $\ell_i$ de cada ejemplo y $L$.
+  \item \pts{3} Para el primer ejemplo, calcule el jacobiano de la softmax, $J=\diag(p)-p\T p$, y el vector fila $\partial\ell_1/\partial p$. Compruebe que su producto es $p-e_{y_1}$ y demuestre en general que, si $\hat y=\softmax(\theta)$ y $\mathrm{CE}(y,\hat y)=-\sum_k y_k\ln\hat y_k$ con $y$ \emph{one-hot}, entonces $\partial\mathrm{CE}/\partial\theta=\hat y-y$. Explique de dónde procede el factor $1/2$ de $\Delta^{(2)}=(P-Y)/2$.
+  \item \pts{3} Calcule $\Delta^{(2)}$, $\nabla W_2=H\T\Delta^{(2)}$ y $\nabla b_2$ (suma de las filas de $\Delta^{(2)}$). Compruebe las formas.
+  \item \pts{3} Retropropague: $\nabla H=\Delta^{(2)}W_2\T$, $\Delta^{(1)}=\nabla H\odot\uno\bigl[Z^{(1)}>0\bigr]$, $\nabla W_1=X\T\Delta^{(1)}$ y $\nabla b_1$. Identifique la única de las cuatro unidades ocultas (dos neuronas por dos ejemplos) que está apagada y demuestre que la segunda columna de $\nabla W_1$ solo recibe la contribución del primer ejemplo.
+  \item \pts{2} Obtenga la expresión de $\nabla_X L$ en función de $\Delta^{(1)}$ y $W_1$, y calcúlela. ¿Qué componente de la entrada tiene más influencia sobre la pérdida?
+  \item \pts{2} Dé un paso de descenso de gradiente con $\eta=0{,}5$ sobre los cuatro tensores de parámetros y recalcule la pérdida de cada ejemplo y la media. ¿Mejoran los dos ejemplos?
+  \item \pts{2} Para una red con una capa oculta de este tipo, con entrada de dimensión $D_x$, $H_o$ unidades ocultas y salida de dimensión $D_y$, cuente los parámetros y aplique la fórmula a esta red. Explique qué cambia en las fórmulas anteriores si la pérdida es la \emph{suma} del lote en lugar de la media, y por qué se prefiere la media cuando se cambia el tamaño del lote.
+\end{apartados}
+\fuente{adaptado de Stanford CS224N, invierno de 2018, tarea~1, problema~2 «Neural Network Basics», apartados (b), (c) y~(d)~\cite{cs224n2018}. Se sustituye la sigmoide por ReLU, se añade un lote de dos ejemplos y los datos numéricos son propios.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\section*{Problema 2. Optimización (10 puntos)}
+\phantomsection\addcontentsline{toc}{section}{Problema 2. Optimización}
+
+\begin{ejercicio}{2}{eje:opt}
+\textbf{Módulo M07.} En este problema los vectores son columnas.
+\begin{apartados}
+  \item \pts{5} Sea $J(w)=w\T Aw+b\T w$ con
+  \[
+  A=\begin{pmatrix}2&0\\0&1/2\end{pmatrix},\qquad b=\begin{pmatrix}-4\\-1\end{pmatrix},
+  \]
+  y sea el descenso de gradiente $w^{(k+1)}=w^{(k)}-\eta\nabla J\bigl(w^{(k)}\bigr)$.
+  (i)~Calcule $\nabla J$ y el minimizador $w^{*}$.
+  (ii)~Demuestre que el error $e^{(k)}=w^{(k)}-w^{*}$ cumple $e^{(k+1)}=(I-2\eta A)\,e^{(k)}$.
+  (iii)~Deduzca la condición sobre $\eta$ para que el método converja desde cualquier punto de partida y calcule el número de condición $\kappa$ de la hessiana.
+  (iv)~Calcule la tasa $\eta^{*}=2/(\mu+L)$ y el factor de contracción que produce.
+  (v)~Con $\eta^{*}$, dé dos pasos desde $w^{(0)}=(0,0)\T$.
+  \item \pts{3} AdamW con un único parámetro: $\theta_0=2$, $\eta=0{,}1$, $\lambda=0{,}1$, $\beta_1=0{,}9$, $\beta_2=0{,}999$ y $\varepsilon=0$. Los gradientes son $g_1=4$ y $g_2=1$. Calcule $m_t$, $v_t$, $\hat m_t$, $\hat v_t$ y $\theta_t$ para $t=1$ y $t=2$.
+  \item \pts{2} Un calendario combina calentamiento lineal durante $W=500$ pasos y decaimiento coseno hasta $T=5500$, con $\eta_{\max}=10^{-3}$ y $\eta_{\min}=10^{-4}$. Calcule $\eta_t$ en $t=250$, $3000$, $4250$ y $5500$.
+\end{apartados}
+\fuente{el apartado~(a) está adaptado de Berkeley CS189, primavera de 2023, examen parcial, pregunta~2 «Convergence of Gradient Descent»~\cite{cs189mid23}; se particulariza a una matriz diagonal y se añaden las preguntas (iii)--(v). Los apartados (b) y~(c) son de elaboración propia.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\section*{Problema 3. Aprendizaje supervisado (12 puntos)}
+\phantomsection\addcontentsline{toc}{section}{Problema 3. Aprendizaje supervisado}
+
+\begin{ejercicio}{2}{eje:sup}
+\textbf{Módulo M08.}
+\begin{apartados}
+  \item \pts{4} Ajuste por mínimos cuadrados la recta $y=\theta_0+\theta_1x$ a los datos $x=(1,2,3)$, $y=(1,2,6)$. Calcule $X\T X$, $X\T y$, $\hat\theta$, los residuos, la suma de cuadrados residual $\SSE$ y la varianza de máxima verosimilitud $\hat\sigma^{2}$ del ruido gaussiano.
+  \item \pts{4} \emph{Regresión logística con un único parámetro.} Cada ejemplo tiene una característica $x\in\R$ y una etiqueta $y\in\{0,1\}$. El modelo es $P(y=1\mid x)=\sigma(x-\alpha)$, de modo que la frontera de decisión es $x=\alpha$. Para un ejemplo, la pérdida es
+  \[
+  J(\alpha)=-y\ln\sigma(x-\alpha)-(1-y)\ln\bigl(1-\sigma(x-\alpha)\bigr).
+  \]
+  (i)~Demuestre que $J'(\alpha)=y-\sigma(x-\alpha)$ y escriba la regla del SGD con paso $\epsilon>0$. Aplíquela una vez con $\epsilon=0{,}5$, desde $\alpha=1$, al ejemplo $(x,y)=(3,1)$.
+  (ii)~Calcule $J''(\alpha)$ y decida si $J$ es convexa en $\R$.
+  (iii)~Para los dos ejemplos $(0,0)$ y $(2,1)$, demuestre que la suma de las pérdidas se minimiza en $\alpha^{*}=1$.
+  (iv)~Dé un conjunto de datos para el que la suma de las pérdidas no tenga mínimo en $\R$ y justifíquelo.
+  \item \pts{2} Una regresión softmax devuelve los logits $z=(1,\,0,\,-1,\,2)$ y la clase correcta es la~3. Calcule $p$, la pérdida y el gradiente respecto a $z$.
+  \item \pts{2} Con $1200$ ejemplos se comparan 5 valores de $\lambda$ mediante validación cruzada con $k=4$ particiones. ¿Cuántos ejemplos tiene cada partición? ¿Con cuántos se entrena en cada ronda? ¿Cuántos entrenamientos se hacen en total, contando el reentrenamiento final? ¿Por qué no se elige $\lambda$ con el conjunto de prueba?
+\end{apartados}
+\fuente{el apartado~(b) está adaptado de Berkeley CS189, primavera de 2019, examen parcial, pregunta~5 «Logistic Regression with One Feature»~\cite{cs189mid19}; los datos numéricos de (i) y~(iii) son propios. Los apartados (a), (c) y~(d) son de elaboración propia.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\section*{Problema 4. Diferenciación automática (10 puntos)}
+\phantomsection\addcontentsline{toc}{section}{Problema 4. Diferenciación automática}
+
+\begin{ejercicio}{2}{eje:ad}
+\textbf{Módulo M10.} Con entradas $a$, $b$ y $c$, se evalúa la expresión
+\[
+d=ab,\quad e=\sigma(d),\quad f=\ReLU(a),\quad g=3a,\quad h=2e+f+g,\quad i=ch,\quad j=f+i^{2},
+\]
+en el punto $a=1$, $b=0$, $c=0{,}5$. Se usa $\ReLU'(t)=\uno[t\ge 0]$.
+\begin{apartados}
+  \item \pts{2} Dibuje el grafo computacional, indique qué nodos tienen más de una salida y realice la pasada hacia delante.
+  \item \pts{3} Aplique el modo inverso con adjuntos, empezando por $\bar\jmath=1$, hasta obtener $\partial j/\partial a$, $\partial j/\partial b$ y $\partial j/\partial c$. Escriba también $\partial j/\partial a$ como expresión simbólica en las variables $a,\dots,i$, sin símbolos de derivada.
+  \item \pts{2} Repita el cálculo de $\partial j/\partial a$ en modo directo con el número dual $a=1+\varepsilon$, usando $\sigma(u+v\varepsilon)=\sigma(u)+\sigma'(u)\,v\varepsilon$ y $\ReLU(u+v\varepsilon)=\ReLU(u)+\uno[u\ge 0]\,v\varepsilon$. ¿Cuántas pasadas necesitaría cada modo para obtener el gradiente completo respecto a $(a,b,c)$?
+  \item \pts{3} El modelo \texttt{MLPCaracteres} de M10, §6.2, tiene contexto $B=3$, embeddings de dimensión $d=10$, $H=64$ unidades ocultas y $\abs{\V}=28$, con $N=4084$ parámetros. Con un lote de 128 ejemplos, el modo inverso guarda la matriz de embeddings concatenados $E$ ($128\times 30$), $z^{(1)}$, $h$, $z^{(2)}$ y $p$. Cuente cuántos números ocupan y compárelo con $N$. Para la capa oculta, calcule los FLOP de la pasada hacia delante y de la pasada hacia atrás (2~FLOP por multiplicación-suma) y relaciónelos con la regla $C\approx 6ND$.
+\end{apartados}
+\fuente{los apartados (a) y~(b) están adaptados de Berkeley CS189, primavera de 2023, examen final, pregunta~4 «Backpropagation on an Arithmetic Expression»~\cite{cs189fin23}, que pide las mismas derivadas en forma simbólica; aquí se añaden valores numéricos y el modo directo. El apartado~(d) es de elaboración propia.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\section*{Problema 5. Entrenamiento de redes profundas (10 puntos)}
+\phantomsection\addcontentsline{toc}{section}{Problema 5. Entrenamiento de redes profundas}
+
+\begin{ejercicio}{2}{eje:prof}
+\textbf{Módulo M11.}
+\begin{apartados}
+  \item \pts{3} Demuestre que $\softmax(z+c\uno)=\softmax(z)$ para todo $c\in\R$. Para los logits $z=(90,\,88,\,80)$, explique qué ocurre si la softmax se calcula de forma ingenua en fp32. Calcule $\LSE(z)$ de forma estable, $p$ y la pérdida si la clase correcta es la~1 (logit~88).
+  \item \pts{3} Normalice $x=(-1,\,0,\,2,\,3)$ con LayerNorm y con RMSNorm ($\gamma=g=\uno$, $\beta=0$, $\epsilon=0$). Compruebe que $\RMSNorm(10x)=\RMSNorm(x)$. ¿Ocurre lo mismo con LayerNorm? ¿Y al sumar una constante a todas las componentes?
+  \item \pts{2} Recorte el gradiente $g=(2,\,-1,\,2)$ a norma global máxima $c=1{,}5$. Una pila de 8 capas $\tanh$ escalares tiene todas sus preactivaciones en $z=2$. Calcule el factor del gradiente sin conexiones residuales, $\prod_{\ell=1}^{8}\tanh'(2)$, y con ellas, $\bigl(1\pm\tanh'(2)\bigr)^{8}$, para los dos signos.
+  \item \pts{2} En bf16, entre $0{,}5$ y $1$ los números representables están separados por $2^{-8}$. Se aplica a un peso $w=1$, por separado, cada una de las actualizaciones $-0{,}001$, $-0{,}003$ y $-0{,}005$ (tres casos independientes). ¿Qué valor se obtiene en bf16 en cada caso? ¿Qué remedio usa la precisión mixta? Por otra parte, 16 bloques residuales suman a un flujo de varianza inicial~1 contribuciones incorreladas de varianza~1 cada una. ¿Qué desviación típica tiene el flujo final?
+\end{apartados}
+\fuente{la demostración del apartado~(a) está adaptada de Stanford CS224N, invierno de 2018, tarea~1, problema~1(a)~\cite{cs224n2018}. El resto del problema es de elaboración propia.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\section*{Problema 6. Estimación de parámetros, cómputo y memoria (10 puntos)}
+\phantomsection\addcontentsline{toc}{section}{Problema 6. Estimación de parámetros, cómputo y memoria}
+
+\begin{ejercicio}{1}{eje:est}
+\textbf{Módulos M07, M09, M10 y M11.}
+\begin{apartados}
+  \item \pts{3} Se amplía el modelo de lenguaje de caracteres: contexto $B=5$, $\abs{\V}=28$, $d=16$, $H=128$, con sesgos. Cuente sus parámetros por capa. Estime los FLOP de 800 pasos con minibatches de 128 ejemplos mediante $C\approx 6ND$.
+  \item \pts{4} Se pasa a nivel de palabra: $\abs{\V}=50\,000$, $d=64$, contexto de 8 palabras y $H=512$. Cuente los parámetros por capa y el total. ¿Qué fracción está en la capa de salida? Estime la memoria de entrenamiento con AdamW en fp32 (pesos, gradientes, $m$ y $v$), sin contar las activaciones.
+  \item \pts{3} Se entrena el modelo de~(b) con $D=10^{8}$ tokens en un equipo que alcanza $10^{12}$~FLOP/s efectivos. Estime el tiempo. ¿Cabe un modelo de 7000 millones de parámetros, con la misma receta de 16 bytes por parámetro, en una GPU de 80~GB?
+\end{apartados}
+\end{ejercicio}
+
+% =====================================================================
+\chapter*{Proyecto de fase}
+\phantomsection\addcontentsline{toc}{chapter}{Proyecto de fase}
+\markboth{Proyecto de fase}{}
+\label{cap:proyecto}
+% =====================================================================
+
+\section*{Generador de nombres españoles con un perceptrón multicapa en PyTorch}
+
+\paragraph{Objetivo.} Construir un modelo de lenguaje de caracteres basado en un perceptrón multicapa, según el modelo de Bengio \emph{et al.}~\cite{bengio} estudiado en M09, §6.3, que supere en \emph{perplejidad de validación} al modelo de bigramas del módulo~1 con los mismos datos. El punto de partida es la clase \texttt{MLPCaracteres} de M10, §6.2. El proyecto consiste en mejorarla con las técnicas de los módulos~7 y~11 y en documentar los experimentos.
+
+\paragraph{Datos y protocolo.} Son fijos, para que todos los resultados sean comparables.
+\begin{itemize}[leftmargin=1.4em]
+  \item La lista de 316 nombres del cuaderno \texttt{M1\_bigramas.ipynb}, con el vocabulario de $\abs{\V}=28$ símbolos
+\[\texttt{.abcdefghijklmnñopqrstuvwxyz}\]
+en el que «\texttt{.}» marca el inicio y el fin de cada nombre.
+  \item Partición: \texttt{rng = np.random.default\_rng(7)} e \texttt{idx = rng.permutation(316)}. Los 47 primeros índices (15\,\%) forman el conjunto de validación y los 269 restantes, el de entrenamiento.
+  \item Perplejidad: $\PPL=\exp(\text{entropía cruzada media por carácter predicho})$, incluido el «\texttt{.}» final de cada nombre (M01, §5.1).
+  \item Línea base: modelo de bigramas con suavizado aditivo de parámetro $\alpha$ (M01, §3.3). Con esta partición, $\alpha=0{,}2$ da una perplejidad de validación de $12{,}42$, y $\alpha=1$, de $12{,}96$. Esta cifra debe reproducirse antes de cualquier otro experimento.
+\end{itemize}
+
+\paragraph{Entregables.}
+\begin{enumerate}[label=\arabic*.]
+  \item Un cuaderno \texttt{H2-proyecto.ipynb} que se ejecute en CPU de principio a fin en menos de 3 minutos, con semilla fija.
+  \item Un informe de dos páginas como máximo con la arquitectura y el número de parámetros, las curvas de pérdida de entrenamiento y validación, una tabla de experimentos, la perplejidad final frente a la línea base y 20 nombres generados.
+  \item Una celda que compruebe con \texttt{assert} que la perplejidad de validación del perceptrón es menor que la del modelo de bigramas.
+\end{enumerate}
+
+\paragraph{Pasos sugeridos.}
+\begin{enumerate}[label=\arabic*.]
+  \item Reproducir la línea base de bigramas y elegir $\alpha$ por validación (M08, §6.5).
+  \item Construir el conjunto de datos con un contexto de $B$ caracteres, rellenado con «\texttt{.}» al inicio. Con $B=3$ resultan 1885 ejemplos de entrenamiento y 321 de validación.
+  \item Partir de \texttt{MLPCaracteres} (\texttt{nn.Embedding}, \texttt{view}, \texttt{nn.Linear}, ReLU, \texttt{nn.Linear}) y usar \texttt{F.cross\_entropy} sobre los logits, que aplica la evaluación estable de log-sum-exp (M11, §6.3). Reproducir su perplejidad de validación de $10{,}31$ (descenso de gradiente con el lote completo, $\eta=0{,}5$, $\lambda=0{,}005$, 1000 pasos).
+  \item Vigilar la validación cada pocos pasos. Sin decaimiento de pesos, el modelo memoriza los 269 nombres: perplejidad de entrenamiento $3{,}76$ y de validación $30{,}73$ (M09, §6.4).
+  \item Regularizar y optimizar: dropout (M11, §4.1), decaimiento de pesos o AdamW (M07, §6.1 y §6.2), calendario coseno (M07, §6.3) y recorte del gradiente (M11, §4.2).
+  \item Barrer al menos $B\in\{2,3,4,5\}$ y dos valores de $H$. Repetir la mejor configuración con 3 semillas e informar de la media y la dispersión.
+  \item Generar nombres por muestreo con temperatura (M01, §4.3) y comentar cuáles son nuevos y cuáles están copiados del conjunto de entrenamiento.
+\end{enumerate}
+
+\paragraph{Referencia orientativa.} Con la receta de M10, §6.2, tres semillas dan perplejidades de $10{,}31$, $10{,}36$ y $10{,}37$. Basta añadir dropout de $0{,}3$ y alargar el contexto a $B=4$ (4724 parámetros) para bajar a valores entre $9{,}92$ y $10{,}07$, con media $9{,}99$; con $B=5$ se obtiene $9{,}89$ en una semilla. No es la única ruta: AdamW con minibatches de 128 ejemplos y decaimiento coseno también supera al modelo de bigramas. Con poca regularización, el sobreajuste aparece en unos cientos de pasos.
+
+\paragraph{Criterios de evaluación.} El proyecto se califica sobre 100 según la \cref{tab:criterios}.
+
+\begin{table}[h]
+\centering\small
+\caption{Criterios de evaluación del proyecto de fase.}\label{tab:criterios}
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.3cm}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Criterio & Peso & Excelente & Suficiente & Insuficiente \\
+\midrule
+Línea base y protocolo & 15\,\% & Reproduce $12{,}42$, justifica $\alpha$ por validación y respeta la partición & Bigrama correcto con otro $\alpha$ razonable & Partición distinta o perplejidad mal calculada \\
+\addlinespace
+Modelo y código PyTorch & 25\,\% & \texttt{nn.Module} limpio, semilla fija, menos de 3 min, \texttt{model.eval()} y \texttt{torch.no\_grad()} al validar, sin fugas de validación & Funciona, pero con código repetido o lento & No se ejecuta o mezcla entrenamiento y validación \\
+\addlinespace
+Resultado frente al bigrama & 25\,\% & Perplejidad media $\le 10{,}1$ en 3 semillas (mejora la receta de M10, §6.2) & Supera al bigrama ($<12{,}42$) en la semilla entregada & No lo supera \\
+\addlinespace
+Experimentos y diagnóstico & 20\,\% & Barrido de $B$ y $H$, curvas, sobreajuste identificado y corregido, efecto de cada regularizador medido por separado & Una o dos variantes con curvas & Un único entrenamiento sin curvas \\
+\addlinespace
+Informe y muestras & 15\,\% & Claro, dos páginas como máximo, muestras comentadas (nuevas frente a copiadas) & Completo, pero sin análisis de las muestras & Faltan el informe o las muestras \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones}
+\label{ap:soluciones}
+% =====================================================================
+
+Las soluciones de la parte~B se presentan con el esquema de los apuntes: datos, planteamiento, desarrollo, resultado y comprobación. Los valores intermedios se redondean a cuatro decimales; cuando el redondeo altera la cuarta cifra del resultado se indica el valor obtenido con todas las cifras. Todos los resultados numéricos se han comprobado con Python (NumPy y PyTorch). Cada solución termina con las secciones de los apuntes que conviene repasar si se ha fallado.
+
+% ---------------------------------------------------------------------
+\section{Clave de la parte A}
+\label{sec:clave}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\textwidth}{@{}c c >{\raggedright\arraybackslash}X l@{}}
+\toprule
+Nº & Resp. & Justificación & Apuntes \\
+\midrule
+1 & (b) & $f''=4=L$; el método converge si y solo si $\abs{1-4\eta}<1$, es decir, $0<\eta<2/L=0{,}5$. & M07, §2.3 \\
+2 & (c) & La acumulación exponencial de un valor constante tiende a $g/(1-\beta)=g/0{,}05=20\,g$. & M07, §4.1 \\
+3 & (b) & $\Var[\hat g]=\sigma^{2}/B$; la desviación típica escala como $1/\sqrt B$ y $\sqrt4=2$. & M07, §3.1 \\
+4 & (a) & El decaimiento desacoplado resta $\eta\lambda\theta=10^{-3}\cdot 0{,}01\cdot 4=4\cdot 10^{-5}$, sin dividir por $\sqrt{\hat v_t}$. & M07, §6.2 \\
+5 & (b) & Al principio los momentos de Adam se basan en muy pocos gradientes, que además son grandes e irregulares. & M07, §6.3 \\
+6 & (c) & Anular el gradiente da las ecuaciones normales $X\T X\theta=X\T y$. & M08, §2.2 \\
+7 & (a) & $\sigma'$ se cancela con la derivada del logaritmo y queda $(p-y)\,x$. & M08, §3.4 \\
+8 & (c) & Con logits iguales la pérdida es $\ln K=\ln 28=3{,}3322$ nats. & M08, §4.5 \\
+9 & (b) & Error bajo en entrenamiento y alto en validación: el modelo memoriza y no generaliza. & M08, §5.3 \\
+10 & (b) & \texttt{nn.Linear(n, m)} guarda \texttt{weight} con forma $(m,n)$, traspuesta de $W$. & M10, §6.2 \\
+11 & (b) & $s=\sqrt{2/(100+200)}=\sqrt{1/150}=0{,}0816$. & M09, §4.3 \\
+12 & (b) & $\GELU(-1)=-0{,}1587<0$, mientras que $\ReLU(-1)=0$. & M09, §2.3 \\
+13 & (b) & Tres matrices de $4096\times 11\,008$: $3\cdot 45\,088\,768=135\,266\,304$. & M09, §2.4 \\
+14 & (b) & Cada pasada inversa da una fila del jacobiano; hay $m=3$ salidas. & M10, §3.1 \\
+15 & (c) & $(2+\varepsilon)^{3}=8+3\cdot 2^{2}\varepsilon=8+12\varepsilon$. & M10, §2.2 \\
+16 & (b) & $\RMS(10x)=10\RMS(x)$ y el cociente no cambia (invariancia de escala). & M11, §3.2 \\
+17 & (b) & Se anula con probabilidad $0{,}25$ o se divide por $0{,}75$: $4/0{,}75=5{,}3333$. & M11, §4.1 \\
+18 & (c) & $67\,600$ supera el máximo de fp16, $65\,504$, y se redondea a \Inf. (En bf16 daría $67\,584$.) & M11, §5.1 \\
+19 & (a) & $\ln 65\,504=11{,}09$. (El valor $88{,}72$ es el umbral de fp32.) & M11, §6.1 \\
+20 & (b) & Salto brusco, sin crecimiento previo y sin fp16: operación sin proteger. & M11, §6.4 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ---------------------------------------------------------------------
+\section{Soluciones de la parte B}
+\label{sec:sol-problemas}
+
+% ===================================================================== P1
+\begin{solucion}{eje:mlp}
+\paragraph{Apartado (a).}
+\datos $X$, $y=(0,2)$, $W_1$, $b_1=(0;\,-0{,}5)$, $W_2$, $b_2=0$.
+\planteamiento pasada hacia delante fila a fila (M09, §5.5). La pérdida de cada ejemplo se calcula como $\ell_i=\LSE\bigl(z^{(2)}_i\bigr)-z^{(2)}_{i,y_i}$, que es más precisa que $-\ln P_{i,y_i}$ con $P$ redondeada (M11, §6.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Fila~1 de $XW_1$: $(2\cdot 1+1\cdot(-1);\allowbreak\ 2\cdot 0{,}5+1\cdot 1)=(1;\allowbreak\ 2)$; con $b_1$, $(1;\allowbreak\ 1{,}5)$.
+  \item Fila~2 de $XW_1$: $(1+1;\allowbreak\ 0{,}5-1)=(2;\allowbreak\ -0{,}5)$; con $b_1$, $(2;\allowbreak\ -1)$.
+  \item La ReLU anula el $-1$. $HW_2$: fila~1, $(1;\allowbreak\ 1{,}5;\allowbreak\ -1+1{,}5)=(1;\allowbreak\ 1{,}5;\allowbreak\ 0{,}5)$; fila~2, $(2;\allowbreak\ 0;\allowbreak\ -2)$.
+  \[
+  Z^{(1)}=\begin{pmatrix}1&1{,}5\\2&-1\end{pmatrix},\qquad H=\begin{pmatrix}1&1{,}5\\2&0\end{pmatrix},\qquad Z^{(2)}=\begin{pmatrix}1&1{,}5&0{,}5\\2&0&-2\end{pmatrix}.
+  \]
+  \item Fila~1: $e^{z}=(2{,}7183;\allowbreak\ 4{,}4817;\allowbreak\ 1{,}6487)$, suma $8{,}8487$; $P_1=(0{,}3072;\allowbreak\ 0{,}5065;\allowbreak\ 0{,}1863)$.
+  \item Fila~2: $e^{z}=(7{,}3891;\allowbreak\ 1;\allowbreak\ 0{,}1353)$, suma $8{,}5244$; $P_2=(0{,}8668;\allowbreak\ 0{,}1173;\allowbreak\ 0{,}0159)$.
+  \item $\ell_1=\ln 8{,}8487-1=2{,}1803-1=1{,}1803$; $\ell_2=\ln 8{,}5244-(-2)=2{,}1429+2=4{,}1429$.
+  \item $L=(1{,}1803+4{,}1429)/2=2{,}6616$.
+\end{enumerate}
+\resultado $P=\begin{pmatrix}0{,}3072&0{,}5065&0{,}1863\\0{,}8668&0{,}1173&0{,}0159\end{pmatrix}$, $\ell_1=1{,}1803$, $\ell_2=4{,}1429$, $L=2{,}6616$.
+\comprobacion cada fila de $P$ suma~1. Con $P$ redondeada, $-\ln 0{,}0159=4{,}1414$: por eso se usa $\LSE-z$. El segundo ejemplo, de la clase~2, recibe solo un $1{,}6\,\%$ de probabilidad.
+
+\paragraph{Apartado (b).}
+\datos $p=(0{,}3072;\allowbreak\ 0{,}5065;\allowbreak\ 0{,}1863)$, $y_1=0$, $\ell_1=-\ln p_0$.
+\planteamiento $J_{ij}=\partial p_i/\partial z_j=p_i(\uno[i=j]-p_j)$ y, por la regla de la cadena con vectores fila, $\partial\ell_1/\partial z=(\partial\ell_1/\partial p)\,J$ (M09, §5.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Diagonal: $p_0(1-p_0)=0{,}2128$, $p_1(1-p_1)=0{,}2500$, $p_2(1-p_2)=0{,}1516$. Fuera de la diagonal: $-p_0p_1=-0{,}1556$, $-p_0p_2=-0{,}0572$, $-p_1p_2=-0{,}0944$.
+  \[
+  J=\begin{pmatrix}0{,}2128&-0{,}1556&-0{,}0572\\-0{,}1556&0{,}2500&-0{,}0944\\-0{,}0572&-0{,}0944&0{,}1516\end{pmatrix},\qquad
+  \frac{\partial\ell_1}{\partial p}=\Bigl(-\frac{1}{p_0};\allowbreak\ 0;\allowbreak\ 0\Bigr)=(-3{,}2553;\allowbreak\ 0;\allowbreak\ 0).
+  \]
+  \item Solo cuenta la primera fila de $J$:
+  \[
+  -3{,}2553\cdot(0{,}2128;\allowbreak\ -0{,}1556;\allowbreak\ -0{,}0572)=(-0{,}6927;\allowbreak\ 0{,}5065;\allowbreak\ 0{,}1862),
+  \]
+  que coincide con $p-e_0=(-0{,}6928;\allowbreak\ 0{,}5065;\allowbreak\ 0{,}1863)$ salvo redondeo en la cuarta cifra.
+  \item Caso general: si $y=e_k$, $\mathrm{CE}=-\ln\hat y_k=-\theta_k+\LSE(\theta)$. Como $\partial\LSE/\partial\theta_j=e^{\theta_j}/\sum_m e^{\theta_m}=\hat y_j$, se obtiene $\partial\mathrm{CE}/\partial\theta_j=\hat y_j-\uno[j=k]$, es decir, $\partial\mathrm{CE}/\partial\theta=\hat y-y$.
+  \item Factor $1/2$: $L=(\ell_1+\ell_2)/2$ y $\ell_i$ solo depende de la fila~$i$ de $Z^{(2)}$, luego $\partial L/\partial Z^{(2)}_i=\tfrac12(P_i-e_{y_i})$. Apilando las filas, $\Delta^{(2)}=(P-Y)/2$.
+\end{enumerate}
+\resultado $(\partial\ell_1/\partial p)\,J=p-e_0\approx(-0{,}6928;\allowbreak\ 0{,}5065;\allowbreak\ 0{,}1863)$; el factor $1/2$ procede de promediar dos ejemplos.
+\comprobacion las filas de $J$ suman~0 ($0{,}2128-0{,}1556-0{,}0572=0$), por lo que el gradiente también suma~0.
+
+\paragraph{Apartado (c).}
+\datos $P$ y $H$ de (a); $Y=\begin{pmatrix}1&0&0\\0&0&1\end{pmatrix}$.
+\planteamiento $\Delta^{(2)}=(P-Y)/2$; $\nabla W_2=H\T\Delta^{(2)}$; $\nabla b_2=\uno\T\Delta^{(2)}$ (M09, §5.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $P-Y=\begin{pmatrix}-0{,}6928&0{,}5065&0{,}1863\\0{,}8668&0{,}1173&-0{,}9841\end{pmatrix}$, luego $\Delta^{(2)}=\begin{pmatrix}-0{,}3464&0{,}2532&0{,}0932\\0{,}4334&0{,}0587&-0{,}4921\end{pmatrix}$.
+  \item Fila~1 de $\nabla W_2$: $1\cdot\Delta^{(2)}_1+2\cdot\Delta^{(2)}_2=(0{,}5204;\allowbreak\ 0{,}3706;\allowbreak\ -0{,}8910)$.
+  \item Fila~2 de $\nabla W_2$: $1{,}5\cdot\Delta^{(2)}_1+0\cdot\Delta^{(2)}_2=(-0{,}5196;\allowbreak\ 0{,}3799;\allowbreak\ 0{,}1397)$.
+  \item $\nabla b_2=(-0{,}3464+0{,}4334;\allowbreak\ 0{,}2532+0{,}0587;\allowbreak\ 0{,}0932-0{,}4921)=(0{,}0870;\allowbreak\ 0{,}3119;\allowbreak\ -0{,}3989)$.
+\end{enumerate}
+\resultado $\nabla W_2=\begin{pmatrix}0{,}5204&0{,}3706&-0{,}8910\\-0{,}5196&0{,}3799&0{,}1397\end{pmatrix}$, $\nabla b_2=(0{,}0870;\allowbreak\ 0{,}3119;\allowbreak\ -0{,}3989)$.
+\comprobacion $H\T$ ($2\times2$) por $\Delta^{(2)}$ ($2\times3$) da $2\times3$, como $W_2$. Las filas de $\nabla W_2$ y $\nabla b_2$ suman~0 porque las de $\Delta^{(2)}$ también.
+
+\paragraph{Apartado (d).}
+\datos $\Delta^{(2)}$, $W_2$, $Z^{(1)}$ y $X$.
+\planteamiento la ReLU deja pasar el gradiente solo donde $Z^{(1)}>0$ (M09, §5.4); $\nabla W_1=X\T\Delta^{(1)}=\sum_i x_i\T\Delta^{(1)}_i$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\nabla H=\Delta^{(2)}W_2\T$: fila~1, $(-0{,}3464-0{,}0932;\allowbreak\ 0{,}2532+0{,}0932)=(-0{,}4396;\allowbreak\ 0{,}3464)$; fila~2, $(0{,}4334+0{,}4921;\allowbreak\ 0{,}0587-0{,}4921)=(0{,}9255;\allowbreak\ -0{,}4334)$.
+  \item Máscara $\uno[Z^{(1)}>0]=\begin{pmatrix}1&1\\1&0\end{pmatrix}$: está apagada la neurona~2 en el ejemplo~2 ($Z^{(1)}_{22}=-1$). Luego $\Delta^{(1)}=\begin{pmatrix}-0{,}4396&0{,}3464\\0{,}9255&0\end{pmatrix}$.
+  \item Fila~1 de $\nabla W_1$: $2\cdot(-0{,}4396;\allowbreak\ 0{,}3464)+1\cdot(0{,}9255;\allowbreak\ 0)=(0{,}0463;\allowbreak\ 0{,}6928)$. Fila~2: $1\cdot(-0{,}4396;\allowbreak\ 0{,}3464)-1\cdot(0{,}9255;\allowbreak\ 0)=(-1{,}3650;\allowbreak\ 0{,}3464)$.
+  \item $\nabla b_1=(-0{,}4396+0{,}9255;\allowbreak\ 0{,}3464+0)=(0{,}4859;\allowbreak\ 0{,}3464)$.
+  \item Columna~2 de $\nabla W_1$: $x_1\T\Delta^{(1)}_{12}+x_2\T\Delta^{(1)}_{22}=(2;\,1)\T\cdot 0{,}3464+(1;\,-1)\T\cdot 0=(0{,}6928;\allowbreak\ 0{,}3464)\T$: solo contribuye el primer ejemplo.
+\end{enumerate}
+\resultado $\nabla W_1=\begin{pmatrix}0{,}0463&0{,}6928\\-1{,}3650&0{,}3464\end{pmatrix}$, $\nabla b_1=(0{,}4859;\allowbreak\ 0{,}3464)$; la unidad apagada es la neurona~2 en el ejemplo~2.
+\comprobacion las diferencias centradas con paso $10^{-6}$ (M09, §5.6) reproducen $\nabla W_1$ con cuatro decimales. La neurona~2 no está \emph{muerta}: lo estaría si se apagara con todos los ejemplos (M09, §2.2).
+
+\paragraph{Apartado (e).}
+\datos $\Delta^{(1)}$ de (d) y $W_1$.
+\planteamiento $Z^{(1)}=XW_1+b_1$ es afín en $X$; por la regla de una capa afín (M09, §5.3), $\nabla_X L=\Delta^{(1)}W_1\T$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $W_1\T=\begin{pmatrix}1&-1\\0{,}5&1\end{pmatrix}$.
+  \item Fila~1: $(-0{,}4396+0{,}5\cdot 0{,}3464;\allowbreak\ 0{,}4396+0{,}3464)=(-0{,}2664;\allowbreak\ 0{,}7860)$.
+  \item Fila~2: $(0{,}9255+0;\allowbreak\ -0{,}9255+0)=(0{,}9255;\allowbreak\ -0{,}9255)$.
+\end{enumerate}
+\resultado $\nabla_X L=\Delta^{(1)}W_1\T=\begin{pmatrix}-0{,}2664&0{,}7860\\0{,}9255&-0{,}9255\end{pmatrix}$. Las mayores sensibilidades, en valor absoluto $0{,}9255$, corresponden a las dos componentes del segundo ejemplo, el peor clasificado; en el primero domina la segunda componente.
+\comprobacion las diferencias centradas dan el mismo resultado. Es la expresión $\partial J/\partial x=\delta^{(1)}W_1\T$ de la fuente, con $\delta^{(1)}=\delta^{(2)}W_2\T\odot\sigma'(z^{(1)})$ y la sigmoide sustituida por la ReLU.
+
+\paragraph{Apartado (f).}
+\datos gradientes de (c) y (d); $\eta=0{,}5$.
+\planteamiento $\theta\leftarrow\theta-\eta\nabla_\theta L$ en los cuatro tensores y nueva pasada hacia delante.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $W_1=\begin{pmatrix}0{,}9768&0{,}1536\\-0{,}3175&0{,}8268\end{pmatrix}$, $b_1=(-0{,}2430;\allowbreak\ -0{,}6732)$.
+  \item $W_2=\begin{pmatrix}0{,}7398&-0{,}1853&-0{,}5545\\0{,}2598&0{,}8101&0{,}9301\end{pmatrix}$, $b_2=(-0{,}0435;\allowbreak\ -0{,}1559;\allowbreak\ 0{,}1995)$.
+  \item $Z^{(1)}=\begin{pmatrix}1{,}3932&0{,}4608\\1{,}0514&-1{,}3464\end{pmatrix}$ y $Z^{(2)}=\begin{pmatrix}1{,}1069&-0{,}0408&-0{,}1445\\0{,}7343&-0{,}3507&-0{,}3835\end{pmatrix}$.
+  \item Fila~1: $e^{z}=(3{,}0250;\allowbreak\ 0{,}9600;\allowbreak\ 0{,}8654)$, suma $4{,}8505$; $P_1=(0{,}6237;\allowbreak\ 0{,}1979;\allowbreak\ 0{,}1784)$; $\ell_1=-\ln 0{,}6237=0{,}4722$.
+  \item Fila~2: $e^{z}=(2{,}0840;\allowbreak\ 0{,}7042;\allowbreak\ 0{,}6814)$, suma $3{,}4696$; $P_2=(0{,}6006;\allowbreak\ 0{,}2030;\allowbreak\ 0{,}1964)$; $\ell_2=\ln 3{,}4696+0{,}3835=1{,}6276$.
+  \item $L=(0{,}4722+1{,}6276)/2=1{,}0499$.
+\end{enumerate}
+\resultado $\ell_1=0{,}4722$ (antes $1{,}1803$), $\ell_2=1{,}6276$ (antes $4{,}1429$), $L=1{,}0499$ (antes $2{,}6616$). Mejoran los dos ejemplos.
+\comprobacion con los parámetros sin redondear, PyTorch da $L=1{,}0499$. La bajada es grande porque $\eta=0{,}5$ es un paso generoso para una red tan pequeña.
+
+\paragraph{Apartado (g).}
+\datos red $D_x\to H_o\to D_y$ con sesgos; aquí $D_x=2$, $H_o=2$, $D_y=3$.
+\planteamiento cada capa afín $n\to m$ tiene $nm$ pesos y $m$ sesgos; si la pérdida es la suma, $L_{\text{suma}}=B\,L_{\text{media}}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Total: $D_xH_o+H_o+H_oD_y+D_y=(D_x+1)H_o+(H_o+1)D_y$.
+  \item Aquí: $(2+1)\cdot 2+(2+1)\cdot 3=6+9=15$.
+  \item Con la suma, $\Delta^{(2)}=P-Y$ sin el factor $1/2$ y, por linealidad de la retropropagación, todos los gradientes se multiplican por $B=2$.
+  \item Con la suma, la escala del gradiente crece con $B$ y habría que reajustar $\eta$ al cambiar el tamaño del lote; con la media, el gradiente de minibatch es un estimador insesgado de $\nabla J$ cuya escala no depende de $B$ (M07, §3.1).
+\end{enumerate}
+\resultado \textbf{$(D_x+1)H_o+(H_o+1)D_y$ parámetros, 15 en esta red; con la suma, todos los gradientes se multiplican por $B$; la media hace que $\eta$ no dependa de $B$.}
+\comprobacion con la suma, $\nabla b_2=2\cdot(0{,}0870;\allowbreak\ 0{,}3119;\allowbreak\ -0{,}3989)=(0{,}1740;\allowbreak\ 0{,}6238;\allowbreak\ -0{,}7978)$.
+
+\paragraph{Criterios de corrección.} (a) 1~p $Z^{(1)}$ y $H$, 1~p $Z^{(2)}$, 1~p $P$ y pérdidas. (b) 1~p jacobiano y producto, 1~p demostración general, 1~p factor $1/2$. (c) 1~p por cada resultado. (d) 1~p $\Delta^{(1)}$ y unidad apagada, 1~p $\nabla W_1$ y $\nabla b_1$, 1~p columna~2. (e) 1~p fórmula, 1~p valores. (f) 1~p parámetros, 1~p pérdidas. (g) 1~p conteo, 1~p suma frente a media.
+
+\textit{Repasar:} M09, §5.2--5.5; M08, §4.3; M09, §5.6; M07, §3.1.
+\end{solucion}
+
+% ===================================================================== P2
+\begin{solucion}{eje:opt}
+\paragraph{Apartado (a).}
+\datos $J(w)=w\T Aw+b\T w$, $A=\diag(2,\,1/2)$, $b=(-4,\,-1)\T$, $w^{(0)}=0$.
+\planteamiento $A$ es simétrica, luego $\nabla J=2Aw+b$ y la hessiana es $2A$. En una cuadrática el descenso de gradiente es lineal en el error y se analiza por valores propios (M07, §2.3; \cite[§9.3]{bv}, texto del curso EE364a~\cite{ee364a}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\nabla J(w)=2Aw+b=(4w_1-4;\allowbreak\ w_2-1)\T$. Se anula en $w^{*}=-\tfrac12A^{-1}b=(1,\,1)\T$.
+  \item Restando $w^{*}$ a la iteración y usando $2Aw^{*}+b=0$: $e^{(k+1)}=e^{(k)}-\eta(2Aw^{(k)}+b)=e^{(k)}-\eta\,2A\bigl(w^{(k)}-w^{*}\bigr)=(I-2\eta A)\,e^{(k)}$.
+  \item $I-2\eta A=\diag(1-4\eta,\ 1-\eta)$. El error tiende a~0 desde todo $e^{(0)}$ si y solo si $\abs{1-4\eta}<1$ y $\abs{1-\eta}<1$, es decir, $0<\eta<0{,}5$. Equivale a la condición de la fuente, $0<\lambda_i(A)<1/\eta$.
+  \item Hessiana $2A=\diag(4,1)$: $L=4$, $\mu=1$, $\kappa=L/\mu=4$.
+  \item $\eta^{*}=2/(\mu+L)=2/5=0{,}4$; factor $(\kappa-1)/(\kappa+1)=3/5=0{,}6$. Los factores por coordenada son $1-0{,}4\cdot 4=-0{,}6$ y $1-0{,}4=0{,}6$.
+  \item $e^{(0)}=(-1,\,-1)\T$; $e^{(1)}=(0{,}6;\allowbreak\ -0{,}6)\T$, luego $w^{(1)}=(1{,}6;\allowbreak\ 0{,}4)\T$; $e^{(2)}=(-0{,}36;\allowbreak\ -0{,}36)\T$, luego $w^{(2)}=(0{,}64;\allowbreak\ 0{,}64)\T$.
+\end{enumerate}
+\resultado $w^{*}=(1,1)\T$; \textbf{convergencia si y solo si $0<\eta<0{,}5$}; $\kappa=4$; $\eta^{*}=0{,}4$ \textbf{con factor} $0{,}6$; $w^{(1)}=(1{,}6;\allowbreak\ 0{,}4)\T$, $w^{(2)}=(0{,}64;\allowbreak\ 0{,}64)\T$.
+\comprobacion directamente, $\nabla J(w^{(1)})=(2{,}4;\allowbreak\ -0{,}6)\T$ y $w^{(1)}-0{,}4\cdot(2{,}4;\allowbreak\ -0{,}6)\T=(0{,}64;\allowbreak\ 0{,}64)\T$. La primera coordenada del error cambia de signo en cada paso y la segunda no; ambas se reducen en un factor $0{,}6$.
+
+\paragraph{Apartado (b).}
+\datos $\theta_0=2$, $\eta=0{,}1$, $\lambda=0{,}1$, $\beta_1=0{,}9$, $\beta_2=0{,}999$, $\varepsilon=0$, $g_1=4$, $g_2=1$.
+\planteamiento Adam (M07, §5.3) con el decaimiento desacoplado de AdamW (M07, §6.2): $\theta_t=\theta_{t-1}-\eta\bigl(\hat m_t/\sqrt{\hat v_t}+\lambda\theta_{t-1}\bigr)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $t=1$: $m_1=0{,}1\cdot 4=0{,}4$; $v_1=0{,}001\cdot 16=0{,}016$; $\hat m_1=0{,}4/0{,}1=4$; $\hat v_1=0{,}016/0{,}001=16$.
+  \item $\hat m_1/\sqrt{\hat v_1}=4/4=1$; $\lambda\theta_0=0{,}2$; paso $0{,}1\cdot 1{,}2=0{,}12$; $\theta_1=1{,}88$.
+  \item $t=2$: $m_2=0{,}36+0{,}1=0{,}46$; $v_2=0{,}015984+0{,}001=0{,}016984$; $\hat m_2=0{,}46/0{,}19=2{,}4211$; $\hat v_2=0{,}016984/0{,}001999=8{,}4962$.
+  \item $\sqrt{8{,}4962}=2{,}9148$; $\hat m_2/\sqrt{\hat v_2}=0{,}8306$; $\lambda\theta_1=0{,}188$; paso $0{,}1\cdot 1{,}0186=0{,}1019$; $\theta_2=1{,}7781$.
+\end{enumerate}
+\begin{center}\small
+\begin{tabular}{@{}cccccccc@{}}
+\toprule
+$t$ & $g_t$ & $m_t$ & $v_t$ & $\hat m_t$ & $\hat v_t$ & $\hat m_t/\sqrt{\hat v_t}$ & $\theta_t$ \\
+\midrule
+1 & 4 & $0{,}4$ & $0{,}016$ & $4$ & $16$ & $1$ & $1{,}88$ \\
+2 & 1 & $0{,}46$ & $0{,}016984$ & $2{,}4211$ & $8{,}4962$ & $0{,}8306$ & $1{,}7781$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\resultado $\theta_1=1{,}88$, $\theta_2=1{,}7781$.
+\comprobacion en $t=1$, $\hat m_1/\sqrt{\hat v_1}=g_1/\abs{g_1}=1$ (M07, §5.3). \texttt{torch.optim.AdamW} con estos datos da $1{,}8800$ y $1{,}7781$.
+
+\paragraph{Apartado (c).}
+\datos $\eta_{\max}=10^{-3}$, $\eta_{\min}=10^{-4}$, $W=500$, $T=5500$.
+\planteamiento $\eta_t=\eta_{\max}t/W$ si $t<W$, y $\eta_t=\eta_{\min}+\tfrac12(\eta_{\max}-\eta_{\min})\bigl(1+\cos(\pi(t-W)/(T-W))\bigr)$ si $W\le t\le T$ (M07, §6.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $t=250$: $10^{-3}\cdot 250/500=5\cdot 10^{-4}$.
+  \item $\tfrac12(\eta_{\max}-\eta_{\min})=4{,}5\cdot 10^{-4}$ y $T-W=5000$.
+  \item $t=3000$: cociente $0{,}5$, $\cos(\pi/2)=0$: $10^{-4}+4{,}5\cdot 10^{-4}=5{,}5\cdot 10^{-4}$.
+  \item $t=4250$: cociente $0{,}75$, $\cos(3\pi/4)=-0{,}7071$: $10^{-4}+4{,}5\cdot 10^{-4}\cdot 0{,}2929=2{,}318\cdot 10^{-4}$.
+  \item $t=5500$: $\cos\pi=-1$: $10^{-4}$.
+\end{enumerate}
+\resultado $5\cdot 10^{-4}$, $5{,}5\cdot 10^{-4}$, $2{,}318\cdot 10^{-4}$ \textbf{y} $10^{-4}$.
+\comprobacion en el punto medio del tramo coseno, $\eta=(\eta_{\max}+\eta_{\min})/2=5{,}5\cdot 10^{-4}$, como establece la proposición de M07, §6.3.
+
+\paragraph{Criterios de corrección.} (a) 1~p gradiente y $w^{*}$, 1~p recurrencia, 1~p condición y $\kappa$, 1~p $\eta^{*}$ y factor, 1~p iterados. (b) 1,5~p por fila. (c) 0,5~p por valor.
+
+\textit{Repasar:} M07, §2.2--2.3; M07, §5.3; M07, §6.2--6.3.
+\end{solucion}
+
+% ===================================================================== P3
+\begin{solucion}{eje:sup}
+\paragraph{Apartado (a).}
+\datos $x=(1,2,3)$, $y=(1,2,6)$; $X$ tiene filas $(1,\,x_i)$.
+\planteamiento ecuaciones normales $X\T X\theta=X\T y$ (M08, §2.2) y $\hat\sigma^{2}=\SSE/n$ (M08, §2.5; \cite[§1.3]{cs229}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $X\T X=\begin{pmatrix}3&6\\6&14\end{pmatrix}$ y $X\T y=(9;\allowbreak\ 23)\T$.
+  \item $\det=42-36=6$; $\hat\theta=\tfrac16\begin{pmatrix}14&-6\\-6&3\end{pmatrix}\begin{pmatrix}9\\23\end{pmatrix}=\tfrac16\begin{pmatrix}-12\\15\end{pmatrix}=\begin{pmatrix}-2\\2{,}5\end{pmatrix}$.
+  \item Predicciones $(0{,}5;\allowbreak\ 3;\allowbreak\ 5{,}5)$; residuos $y-\hat y=(0{,}5;\allowbreak\ -1;\allowbreak\ 0{,}5)$.
+  \item $\SSE=0{,}25+1+0{,}25=1{,}5$; $\hat\sigma^{2}=1{,}5/3=0{,}5$.
+\end{enumerate}
+\resultado $\hat\theta=(-2;\allowbreak\ 2{,}5)$, \textbf{residuos} $(0{,}5;\allowbreak\ -1;\allowbreak\ 0{,}5)$, $\SSE=1{,}5$, $\hat\sigma^{2}=0{,}5$.
+\comprobacion el vector de residuos es ortogonal a las columnas de $X$ (M08, §2.3): suma~0 y $1\cdot 0{,}5+2\cdot(-1)+3\cdot 0{,}5=0$.
+
+\paragraph{Apartado (b).}
+\datos $P(y=1\mid x)=\sigma(x-\alpha)$; $J(\alpha)=-y\ln s-(1-y)\ln(1-s)$ con $s=\sigma(x-\alpha)$.
+\planteamiento regla de la cadena con $\mathrm{d}s/\mathrm{d}\alpha=-s(1-s)$ (M08, §3.1) y convexidad por el signo de $J''$ (M08, §3.4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $J'(\alpha)=-y\,\dfrac{-s(1-s)}{s}-(1-y)\,\dfrac{s(1-s)}{1-s}=y(1-s)-(1-y)s=y-s$.
+  \item SGD: $\alpha\leftarrow\alpha-\epsilon J'(\alpha)=\alpha+\epsilon\bigl(\sigma(x-\alpha)-y\bigr)$. Con $(x,y)=(3,1)$ y $\alpha=1$: $s=\sigma(2)=0{,}8808$ y $\alpha\leftarrow 1+0{,}5\,(0{,}8808-1)=0{,}9404$.
+  \item $J''(\alpha)=-\mathrm{d}s/\mathrm{d}\alpha=s(1-s)>0$ porque $s\in(0,1)$: $J$ es estrictamente convexa en $\R$.
+  \item Con $(0,0)$ y $(2,1)$: la derivada de la suma es $\bigl(0-\sigma(-\alpha)\bigr)+\bigl(1-\sigma(2-\alpha)\bigr)$. En $\alpha=1$ vale $1-\sigma(-1)-\sigma(1)=1-0{,}2689-0{,}7311=0$, porque $\sigma(-t)=1-\sigma(t)$. Como la suma es estrictamente convexa, $\alpha^{*}=1$ es su único mínimo.
+  \item Si todos los ejemplos son de la clase~1, por ejemplo $\{(0,1),(1,1)\}$, la derivada de la suma es $\sum_i\bigl(1-\sigma(x_i-\alpha)\bigr)>0$: la pérdida es estrictamente creciente en $\alpha$, tiende a~0 cuando $\alpha\to-\infty$ y ese ínfimo no se alcanza. Lo mismo ocurre, con la desigualdad contraria, si todos son de la clase~0.
+\end{enumerate}
+\resultado $J'(\alpha)=y-\sigma(x-\alpha)$; \textbf{tras un paso,} $\alpha=0{,}9404$; $J''=s(1-s)>0$ \textbf{(convexa)}; $\alpha^{*}=1$; \textbf{sin mínimo si todos los ejemplos son de la misma clase.}
+\comprobacion el paso desplaza la frontera hacia la izquierda, de modo que $x=3$ queda más claramente en la clase~1. El mínimo $\alpha^{*}=1$ es el punto medio entre $0$ y $2$, como exige la simetría del problema. La situación del paso~5 es la versión unidimensional del caso de datos separables de M08, §3.4: la pérdida tiene ínfimo pero no mínimo, y el SGD desplaza $\alpha$ sin límite.
+
+\paragraph{Apartado (c).}
+\datos $z=(1,\,0,\,-1,\,2)$, clase correcta $3$.
+\planteamiento $p=\softmax(z)$, $\ell=\LSE(z)-z_3$ y $\nabla_z\ell=p-e_3$ (M08, §4.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $e^{z}=(2{,}7183;\allowbreak\ 1;\allowbreak\ 0{,}3679;\allowbreak\ 7{,}3891)$, suma $11{,}4752$; $p=(0{,}2369;\allowbreak\ 0{,}0871;\allowbreak\ 0{,}0321;\allowbreak\ 0{,}6439)$.
+  \item $\ell=-\ln 0{,}6439=0{,}4402$.
+  \item $\nabla_z\ell=(0{,}2369;\allowbreak\ 0{,}0871;\allowbreak\ 0{,}0321;\allowbreak\ -0{,}3561)$.
+\end{enumerate}
+\resultado $p\approx(0{,}2369;\allowbreak\ 0{,}0871;\allowbreak\ 0{,}0321;\allowbreak\ 0{,}6439)$, $\ell\approx 0{,}4402$, $\nabla_z\ell\approx(0{,}2369;\allowbreak\ 0{,}0871;\allowbreak\ 0{,}0321;\allowbreak\ -0{,}3561)$.
+\comprobacion el gradiente suma~0 y $\ln 11{,}4752-2=2{,}4402-2=0{,}4402$.
+
+\paragraph{Apartado (d).}
+\datos $n=1200$, $k=4$, 5 valores de $\lambda$.
+\planteamiento en cada ronda una partición valida y las $k-1$ restantes entrenan; tras elegir $\lambda$ se reentrena con todos los datos (M08, §6.5).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Cada partición: $1200/4=300$ ejemplos; se entrena con $3\cdot 300=900$.
+  \item Entrenamientos: $5\cdot 4=20$, más el final con los $1200$: $21$.
+  \item El conjunto de prueba debe quedar intacto: si se usa para elegir $\lambda$, su error deja de ser una estimación insesgada del error de generalización (M08, §1.4).
+\end{enumerate}
+\resultado \textbf{300 por partición, 900 para entrenar en cada ronda, 21 entrenamientos.}
+\comprobacion para cada $\lambda$, cada ejemplo valida exactamente una vez: $4\cdot 300=1200$.
+
+\paragraph{Criterios de corrección.} (a) 1~p $X\T X$ y $X\T y$, 2~p $\hat\theta$, 1~p residuos, $\SSE$ y $\hat\sigma^{2}$. (b) 1~p derivada y paso, 1~p convexidad, 1~p $\alpha^{*}$, 1~p contraejemplo. (c) 1~p $p$, 1~p pérdida y gradiente. (d) 1~p cuentas, 1~p justificación.
+
+\textit{Repasar:} M08, §2.2--2.5; M08, §3.4; M08, §4.3; M08, §6.5.
+\end{solucion}
+
+% ===================================================================== P4
+\begin{solucion}{eje:ad}
+\paragraph{Apartado (a).}
+\datos $a=1$, $b=0$, $c=0{,}5$.
+\planteamiento traza de evaluación en orden topológico (M10, §1.1).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Grafo: $a\to d$, $b\to d$, $d\to e$, $a\to f$, $a\to g$, $(e,f,g)\to h$, $(c,h)\to i$, $(f,i)\to j$. Tienen más de una salida $a$ (hacia $d$, $f$ y $g$) y $f$ (hacia $h$ y $j$); sus adjuntos acumulan varias contribuciones.
+\begin{center}
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},n/.style={draw,circle,minimum size=7mm,inner sep=0pt}]
+  \node[n] (a) at (0,1.6) {$a$}; \node[n] (b) at (0,0) {$b$}; \node[n] (c) at (0,-1.6) {$c$};
+  \node[n] (d) at (1.8,0.4) {$d$}; \node[n] (e) at (3.4,0.4) {$e$};
+  \node[n] (f) at (3.4,2.4) {$f$}; \node[n] (g) at (3.4,1.4) {$g$};
+  \node[n] (h) at (5.0,1.0) {$h$}; \node[n] (i) at (6.6,0.0) {$i$}; \node[n] (j) at (8.2,1.2) {$j$};
+  \draw[->] (a)--(d); \draw[->] (b)--(d); \draw[->] (d)--(e);
+  \draw[->] (a)--(f); \draw[->] (a)--(g);
+  \draw[->] (e)--(h); \draw[->] (f)--(h); \draw[->] (g)--(h);
+  \draw[->] (h)--(i); \draw[->] (c)--(i); \draw[->] (i)--(j); \draw[->] (f)--(j);
+\end{tikzpicture}
+\end{center}
+  \item $d=1\cdot 0=0$; $e=\sigma(0)=0{,}5$; $f=\ReLU(1)=1$; $g=3$.
+  \item $h=2\cdot 0{,}5+1+3=5$; $i=0{,}5\cdot 5=2{,}5$; $j=1+2{,}5^{2}=7{,}25$.
+\end{enumerate}
+\resultado $d=0,\ e=0{,}5,\ f=1,\ g=3,\ h=5,\ i=2{,}5,\ j=7{,}25$.
+\comprobacion $j=f+(c(2\sigma(ab)+\ReLU(a)+3a))^{2}=1+(0{,}5\cdot 5)^{2}=7{,}25$.
+
+\paragraph{Apartado (b).}
+\datos valores de (a); $\sigma'(0)=0{,}25$; $\ReLU'(1)=1$.
+\planteamiento recorrido inverso con $\bar\jmath=1$; cada nodo suma (\texttt{+=}) las contribuciones de todos sus sucesores (M10, §3.1--3.2): los gradientes se suman en las bifurcaciones~\cite{cs231n}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\bar\imath=\bar\jmath\cdot 2i=5$.
+  \item $\bar h=\bar\imath\cdot c=2{,}5$ y $\bar c=\bar\imath\cdot h=25$.
+  \item $\bar e=2\bar h=5$; $\bar g=\bar h=2{,}5$; $\bar f=\bar\jmath\cdot 1+\bar h\cdot 1=1+2{,}5=3{,}5$ (dos contribuciones).
+  \item $\bar d=\bar e\,\sigma'(d)=5\cdot 0{,}25=1{,}25$; $\bar b=\bar d\cdot a=1{,}25$.
+  \item $\bar a=\bar d\cdot b+\bar f\cdot\uno[a\ge 0]+\bar g\cdot 3=0+3{,}5+7{,}5=11$ (tres contribuciones).
+  \item Simbólicamente, como en la fuente: $\dfrac{\partial j}{\partial a}=4icb\,\sigma(d)\bigl(1-\sigma(d)\bigr)+(2ic+1)\,\uno[a\ge 0]+6ic$.
+\end{enumerate}
+\resultado $\partial j/\partial a=11$, $\partial j/\partial b=1{,}25$, $\partial j/\partial c=25$.
+\comprobacion la expresión simbólica da $0+(2\cdot 2{,}5\cdot 0{,}5+1)+6\cdot 2{,}5\cdot 0{,}5=3{,}5+7{,}5=11$. Las diferencias centradas con paso $10^{-6}$ dan $11{,}0000$, $1{,}2500$ y $25{,}0000$.
+
+\paragraph{Apartado (c).}
+\datos $a=1+\varepsilon$, $b=0$, $c=0{,}5$.
+\planteamiento se propaga el par (valor, tangente); la parte en $\varepsilon$ de $j$ es $\partial j/\partial a$ (M10, §2.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $d=(1+\varepsilon)\cdot 0=0$; $e=\sigma(0)=0{,}5$; $f=1+\varepsilon$; $g=3+3\varepsilon$.
+  \item $h=1+(1+\varepsilon)+(3+3\varepsilon)=5+4\varepsilon$; $i=2{,}5+2\varepsilon$.
+  \item $i^{2}=6{,}25+2\cdot 2{,}5\cdot 2\varepsilon=6{,}25+10\varepsilon$ (pues $\varepsilon^{2}=0$); $j=7{,}25+11\varepsilon$.
+  \item El modo directo da una columna del jacobiano por pasada: el gradiente respecto a $(a,b,c)$ exige 3 pasadas, frente a 1 del modo inverso (M10, §2.3 y §4.2).
+\end{enumerate}
+\resultado \textbf{$j=7{,}25+11\varepsilon$: coincide con el modo inverso. Directo: 3 pasadas; inverso: 1.}
+\comprobacion la parte real, $7{,}25$, es el valor de (a).
+
+\paragraph{Apartado (d).}
+\datos lote de 128; $E$ ($128\times 30$), $z^{(1)}$ y $h$ ($128\times 64$), $z^{(2)}$ y $p$ ($128\times 28$); $N=4084$; capa oculta $30\to 64$.
+\planteamiento contar elementos de los tensores guardados (M10, §5.1); un producto $(B\times n)(n\times k)$ cuesta $2Bnk$ FLOP y la pasada hacia atrás hace dos productos del mismo tamaño (M10, §4.4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $E$: $128\cdot 30=3840$; $z^{(1)}$ y $h$: $2\cdot 128\cdot 64=16\,384$; $z^{(2)}$ y $p$: $2\cdot 128\cdot 28=7168$.
+  \item Total: $3840+16\,384+7168=27\,392$ números, $27\,392/4084=6{,}71$ veces los parámetros.
+  \item Pesos de la capa oculta: $30\cdot 64=1920$. Hacia delante: $2\cdot 128\cdot 1920=491\,520$ FLOP.
+  \item Hacia atrás ($\bar EW\T$ y $E\T\bar Z$): $2\cdot 491\,520=983\,040$ FLOP.
+  \item Total: $1\,474\,560=6\cdot 1920\cdot 128$.
+\end{enumerate}
+\resultado \textbf{$27\,392$ activaciones guardadas ($\approx 6{,}7$ veces $N$); $491\,520$ FLOP hacia delante y $983\,040$ hacia atrás, en total $6ND$ con $N=1920$ y $D=128$.}
+\comprobacion la proporción $1:2$ entre las dos pasadas es la que da la regla $C\approx 6ND$ (M10, §4.4). Las activaciones crecen con el tamaño del lote y los parámetros no; por eso dominan la memoria del entrenamiento (M10, §5.1).
+
+\paragraph{Criterios de corrección.} (a) 1~p grafo, 1~p valores. (b) 1~p adjuntos hasta $\bar d$, 1~p acumulación en $\bar f$ y $\bar a$, 1~p expresión simbólica. (c) 1~p dual, 1~p número de pasadas. (d) 1,5~p memoria, 1,5~p FLOP.
+
+\textit{Repasar:} M10, §1.1; M10, §2.2--2.3; M10, §3.1--3.2; M10, §4.4; M10, §5.1.
+\end{solucion}
+
+% ===================================================================== P5
+\begin{solucion}{eje:prof}
+\paragraph{Apartado (a).}
+\datos $z=(90,88,80)$; máximo de fp32 $3{,}40\cdot 10^{38}=e^{88{,}72}$; clase correcta~1.
+\planteamiento $\LSE(z)=c+\ln\sum_ie^{z_i-c}$ con $c=\max_iz_i$ (M11, §6.2) y pérdida $\LSE(z)-z_1$ (M11, §6.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Invariancia: $e^{z_i+c}=e^{c}e^{z_i}$ y el factor $e^{c}>0$ es común al numerador y al denominador, luego se cancela.
+  \item Ingenuo: $e^{90}=1{,}22\cdot 10^{39}>3{,}40\cdot 10^{38}$ da \Inf; el denominador también es \Inf\ y $\Inf/\Inf=\NaN$.
+  \item $z-90=(0,-2,-10)$; $e^{z-90}=(1;\allowbreak\ 0{,}1353;\allowbreak\ 4{,}540\cdot 10^{-5})$; suma $1{,}1354$; $\ln 1{,}1354=0{,}1270$.
+  \item $\LSE(z)=90{,}1270$; $p=(0{,}8808;\allowbreak\ 0{,}1192;\allowbreak\ 4{,}00\cdot 10^{-5})$.
+  \item Pérdida: $90{,}1270-88=2{,}1270$.
+\end{enumerate}
+\resultado \textbf{ingenuo: \Inf\ y \NaN}; $\LSE(z)=90{,}1270$; $p\approx(0{,}8808;\allowbreak\ 0{,}1192;\allowbreak\ 4{,}0\cdot 10^{-5})$; \textbf{pérdida} $2{,}1270$.
+\comprobacion $-\ln 0{,}1192=2{,}127$. Cotas: $\max z\le\LSE(z)\le\max z+\ln 3$, es decir, $90\le 90{,}127\le 91{,}099$.
+
+\paragraph{Apartado (b).}
+\datos $x=(-1,0,2,3)$, $d=4$, $\epsilon=0$.
+\planteamiento $\LN(x)=(x-\mu)/\sigma$ y $\RMSNorm(x)=x/\RMS(x)$ (M11, §3.1); invariancias de M11, §3.2.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\mu=1$; $x-\mu=(-2,-1,1,2)$; $\sigma^{2}=10/4=2{,}5$; $\sigma=1{,}5811$; $\LN(x)=(-1{,}2649;\allowbreak\ -0{,}6325;\allowbreak\ 0{,}6325;\allowbreak\ 1{,}2649)$.
+  \item $\RMS(x)=\sqrt{14/4}=\sqrt{3{,}5}=1{,}8708$; $\RMSNorm(x)=(-0{,}5345;\allowbreak\ 0;\allowbreak\ 1{,}0690;\allowbreak\ 1{,}6036)$.
+  \item $\RMS(10x)=\sqrt{350}=18{,}708=10\RMS(x)$, luego $\RMSNorm(10x)=\RMSNorm(x)$.
+  \item LayerNorm también es invariante a la escala: $\mu$ y $\sigma$ se multiplican por~10 y el cociente no cambia.
+  \item Traslación: $\LN(x+c\uno)=\LN(x)$, porque la media absorbe $c$; RMSNorm no lo es: $\RMSNorm(x+\uno)=(0;\allowbreak\ 1;\allowbreak\ 3;\allowbreak\ 4)/\sqrt{6{,}5}=(0;\allowbreak\ 0{,}3922;\allowbreak\ 1{,}1767;\allowbreak\ 1{,}5689)$.
+\end{enumerate}
+\resultado $\LN(x)\approx(-1{,}2649;\allowbreak\ -0{,}6325;\allowbreak\ 0{,}6325;\allowbreak\ 1{,}2649)$, $\RMSNorm(x)\approx(-0{,}5345;\allowbreak\ 0;\allowbreak\ 1{,}0690;\allowbreak\ 1{,}6036)$; \textbf{ambas son invariantes a la escala y solo LN lo es a la traslación.}
+\comprobacion la media de los cuadrados de ambas salidas vale~1: $(1{,}6+0{,}4+0{,}4+1{,}6)/4=1$ y $(0{,}2857+0+1{,}1429+2{,}5714)/4=1$.
+
+\paragraph{Apartado (c).}
+\datos $g=(2,-1,2)$, $c=1{,}5$; 8 capas con $z=2$.
+\planteamiento recorte $g\cdot\min(1,c/\norm{g})$ (M11, §4.2); factor plano $\prod\tanh'(z)$ (M11, §1.3) y residual $(1\pm\tanh'(z))^{8}$ (M11, §2.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\norm{g}=3>1{,}5$; factor $0{,}5$; $g=(1;\allowbreak\ -0{,}5;\allowbreak\ 1)$.
+  \item $\tanh 2=0{,}9640$; $\tanh'(2)=1-0{,}9640^{2}=0{,}07065$.
+  \item Sin residuos: $0{,}07065^{8}=6{,}21\cdot 10^{-10}$.
+  \item Con residuos: $1{,}07065^{8}=1{,}7266$ y $0{,}92935^{8}=0{,}5565$.
+\end{enumerate}
+\resultado $g=(1;\allowbreak\ -0{,}5;\allowbreak\ 1)$; \textbf{factor plano} $6{,}21\cdot 10^{-10}$; \textbf{residual} $1{,}7266$ \textbf{($+$) o} $0{,}5565$ \textbf{($-$).}
+\comprobacion $\norm{(1;-0{,}5;1)}=\sqrt{2{,}25}=1{,}5=c$. La identidad mantiene el gradiente en orden~1, frente a $10^{-10}$ sin ella.
+
+\paragraph{Apartado (d).}
+\datos separación $2^{-8}=0{,}00390625$ en $[0{,}5;\allowbreak\ 1)$; $w=1$; tres actualizaciones independientes; 16 contribuciones de varianza~1.
+\planteamiento redondeo al representable más próximo (M11, §5.2); las varianzas de sumandos incorrelados se suman (M11, §2.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Vecinos por debajo de~1: $0{,}99609$ y $0{,}99219$; medio hueco, $2^{-9}=0{,}00195$.
+  \item $0{,}999$ dista $0{,}001<0{,}00195$ de~1: se redondea a~1 y la actualización se pierde.
+  \item $0{,}997$ dista $0{,}00091$ de $0{,}99609$: se redondea a $0{,}99609$.
+  \item $0{,}995$ dista $0{,}00109$ de $0{,}99609$ y $0{,}0028$ de $0{,}99219$: se redondea a $0{,}99609$.
+  \item Remedio: copia maestra de los pesos en fp32 y acumulación de las actualizaciones en fp32 (M11, §5.3).
+  \item Flujo: $\Var=1+16\cdot 1=17$; desviación típica $\sqrt{17}=4{,}1231$.
+\end{enumerate}
+\resultado \textbf{$1$; $0{,}9961$; $0{,}9961$ (la primera actualización se pierde y las otras dos dan el mismo peso); desviación típica del flujo $\sqrt{17}\approx 4{,}1231$.}
+\comprobacion PyTorch con \texttt{dtype=torch.bfloat16} da $1{,}0$, $0{,}99609375$ y $0{,}99609375$. El crecimiento como $\sqrt L$ motiva la normalización previa y el escalado de las proyecciones residuales (M11, §2.3).
+
+\paragraph{Criterios de corrección.} (a) 1~p invariancia y diagnóstico, 1~p $\LSE$, 1~p $p$ y pérdida. (b) 1~p LN, 1~p RMSNorm, 1~p invariancias. (c) 1~p recorte, 1~p factores. (d) 1~p redondeos y remedio, 1~p desviación típica.
+
+\textit{Repasar:} M11, §6.2--6.3; M11, §3.1--3.2; M11, §4.2; M11, §1.3; M11, §2.2--2.3; M11, §5.2--5.3.
+\end{solucion}
+
+% ===================================================================== P6
+\begin{solucion}{eje:est}
+\paragraph{Apartado (a).}
+\datos $B=5$, $\abs{\V}=28$, $d=16$, $H=128$, con sesgos; 800 pasos de 128 ejemplos.
+\planteamiento parámetros por capa como en M09, §6.3; $C\approx 6ND$ con $D$ el número de ejemplos procesados (M10, §4.4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Embeddings: $28\cdot 16=448$.
+  \item Oculta: entrada $5\cdot 16=80$; $80\cdot 128+128=10\,368$.
+  \item Salida: $128\cdot 28+28=3612$.
+  \item $N=448+10\,368+3612=14\,428$; $D=800\cdot 128=102\,400$; $C=6\cdot 14\,428\cdot 102\,400=8{,}86\cdot 10^{9}$ FLOP.
+\end{enumerate}
+\resultado $N=14\,428$; $C\approx 8{,}86\cdot 10^{9}$ \textbf{FLOP}, unos segundos en un portátil.
+\comprobacion la consulta de embeddings no es un producto de matrices; sin ella, $6\cdot 13\,980\cdot 102\,400=8{,}59\cdot 10^{9}$. La regla es una cota por exceso.
+
+\paragraph{Apartado (b).}
+\datos $\abs{\V}=50\,000$, $d=64$, contexto~8, $H=512$.
+\planteamiento mismo conteo; AdamW en fp32 guarda pesos, gradientes, $m$ y $v$: $4\cdot 4=16$ bytes por parámetro (M07, §5.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Embeddings: $50\,000\cdot 64=3\,200\,000$.
+  \item Oculta: $(8\cdot 64)\cdot 512+512=262\,656$.
+  \item Salida: $512\cdot 50\,000+50\,000=25\,650\,000$.
+  \item $N=29\,112\,656$; fracción de la salida: $25\,650\,000/29\,112\,656=0{,}8811$.
+  \item Memoria: $16\cdot 29\,112\,656=465\,802\,496$ bytes $\approx 466$~MB ($444$~MiB).
+\end{enumerate}
+\resultado $N=29\,112\,656$; \textbf{la salida es el $88{,}1\,\%$}; $\approx 466$ \textbf{MB}.
+\comprobacion embeddings y salida suman el $99{,}1\,\%$: en los modelos pequeños, el vocabulario domina el recuento (M08, §4.5).
+
+\paragraph{Apartado (c).}
+\datos $N=2{,}911\cdot 10^{7}$, $D=10^{8}$, $10^{12}$~FLOP/s; $7\cdot 10^{9}$ parámetros a 16 bytes; 80~GB.
+\planteamiento tiempo $=6ND/(\text{FLOP/s})$; memoria $=16N$ bytes.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $C=6\cdot 2{,}911\cdot 10^{7}\cdot 10^{8}=1{,}747\cdot 10^{16}$ FLOP.
+  \item Tiempo: $1{,}747\cdot 10^{16}/10^{12}=17\,468$~s $=4{,}85$~h.
+  \item $16\cdot 7\cdot 10^{9}=1{,}12\cdot 10^{11}$ bytes $=112$~GB $>80$~GB: no cabe.
+\end{enumerate}
+\resultado $\approx 1{,}75\cdot 10^{16}$ \textbf{FLOP, unas 4,9~h; el modelo de 7000 millones necesita 112~GB y no cabe en 80~GB}. Habría que repartir el estado del optimizador entre varias GPU o reducir la precisión (anticipo del módulo~17).
+\comprobacion orden de magnitud: $6\cdot 3\cdot 10^{7}\cdot 10^{8}=1{,}8\cdot 10^{16}$ y $1{,}8\cdot 10^{4}$~s $\approx 5$~h.
+
+\paragraph{Criterios de corrección.} (a) 2~p conteo, 1~p FLOP. (b) 2~p conteo, 1~p fracción, 1~p memoria. (c) 2~p tiempo, 1~p conclusión. Se aceptan resultados dentro de un factor~2 si el razonamiento es correcto.
+
+\textit{Repasar:} M09, §6.3; M10, §4.4; M07, §5.3; M08, §4.5.
+\end{solucion}
+
+% =====================================================================
+\chapter{Autoevaluación}
+\label{ap:autoevaluacion}
+% =====================================================================
+
+\section{Puntuación por parte}
+
+\begin{center}
+\begin{tabular}{@{}llcc@{}}
+\toprule
+Parte & Contenido & Puntos & Nota obtenida \\
+\midrule
+A & Cuestiones ($20\times 1{,}5$) & 30 & \\
+B1 & Retropropagación en un perceptrón de dos capas & 18 & \\
+B2 & Optimización & 10 & \\
+B3 & Aprendizaje supervisado & 12 & \\
+B4 & Diferenciación automática & 10 & \\
+B5 & Entrenamiento de redes profundas & 10 & \\
+B6 & Estimación de parámetros, cómputo y memoria & 10 & \\
+\midrule
+ & \textbf{Total} & \textbf{100} & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+La nota sobre~10 es la puntuación total dividida por~10. La nota de la fase es
+\[
+0{,}4\cdot\text{examen}+0{,}3\cdot\text{proyecto}+0{,}2\cdot\text{ejercicios}+0{,}1\cdot\text{tests},
+\]
+y exige, además, al menos un 70\,\% en este examen.
+
+\section{Puntuación por módulo}
+
+La tabla reparte los 100 puntos entre los módulos. El problema~6 combina varios módulos y se contabiliza aparte.
+
+\begin{center}
+\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Módulo & Cuestiones & Puntos A & Problemas & Puntos B & Total \\
+\midrule
+M07 Optimización & 1--5 & 7,5 & 2; 1(g) & 10 + 1 & 18,5 \\
+M08 Aprendizaje supervisado & 6--9 & 6 & 3; 1(b) & 12 + 3 & 21 \\
+M09 Redes neuronales & 11--13 & 4,5 & 1(a), (c)--(g) & 14 & 18,5 \\
+M10 Diferenciación automática & 10, 14, 15 & 4,5 & 4 & 10 & 14,5 \\
+M11 Redes profundas & 16--20 & 7,5 & 5 & 10 & 17,5 \\
+Varios (M07, M09--M11) & --- & --- & 6 & 10 & 10 \\
+\midrule
+\textbf{Total} & & \textbf{30} & & \textbf{70} & \textbf{100} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+En el problema~1 se asignan a M08 los 3 puntos del apartado~(b) (gradiente de la entropía cruzada), a M07 un punto del apartado~(g) (suma frente a media) y a M09 los 14 restantes.
+
+\section{Umbral de aprobado y puerta de salida de la fase}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Examen de hito:} al menos 70 de 100 puntos.
+  \item \textbf{Puerta de salida de la Fase~II:} además del examen, se requiere una puntuación mínima de $9/12$ en el test de cada módulo (M07 a M11) y al menos un 70\,\% en la autoevaluación del laboratorio interactivo de la fase.
+  \item \textbf{Proyecto de fase:} debe superar al modelo de bigramas ($\PPL_{\text{val}}<12{,}42$) para obtener al menos la calificación de suficiente en el criterio de resultado.
+\end{itemize}
+
+\section{Qué hacer si no se alcanza el umbral}
+
+Si un módulo obtiene menos del 70\,\% de sus puntos en la tabla anterior, conviene repasar las secciones indicadas, rehacer los ejercicios $\star\star\star$ de esos temas en los apuntes del módulo y repetir el examen al cabo de una semana sin consultar las soluciones.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{4.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Si se falla\dots & Repasar \\
+\midrule
+Cuestiones 1--5, problema~2 & M07, §2.2--2.3 (convergencia y $\kappa$), §3.1 (minibatch), §4.1--4.2 (momentum), §5.3 (Adam), §6.2--6.3 (AdamW, calentamiento y coseno) \\
+Cuestiones 6--9, problema~3 & M08, §2.2 y §2.5 (ecuaciones normales y máxima verosimilitud), §3.4 (logística), §4.3 y §4.5 (softmax y capa de salida), §5.3 (diagnóstico), §6.5 (validación cruzada) \\
+Cuestiones 11--13 & M09, §2.2--2.4 (ReLU, GELU y SwiGLU), §4.3 (Xavier) \\
+Problema~1 & M09, §5.2--5.5 (retropropagación y ejemplo completo), §5.6 (comprobación numérica); M08, §4.3 \\
+Cuestiones 10, 14, 15; problema~4 & M10, §1.1 (trazas), §2.2--2.3 (números duales y coste), §3.1--3.2 (adjuntos), §4.4 (regla $6ND$), §5.1 (memoria), §6.2 (PyTorch) \\
+Cuestión 16, problema~5(b) & M11, §3.1--3.2 (LayerNorm, RMSNorm e invariancias) \\
+Cuestión 17, problema~5(c) & M11, §1.3 (saturación), §2.2 (residuales), §4.1--4.2 (dropout y recorte) \\
+Cuestiones 18--19, problema~5(d) & M11, §5.1--5.3 (formatos, redondeo y precisión mixta) \\
+Cuestión 20, problema~5(a) & M11, §6.1--6.4 (log-sum-exp y diagnóstico de \NaN) \\
+Problema~6 & M09, §6.3 (modelo de Bengio); M10, §4.4; M07, §5.3; M08, §4.5 \\
+Proyecto por debajo del bigrama & M09, §6.3--6.4; M10, §6.2; M07, §6.2--6.3; M11, §4.1 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\paragraph{Siguiente.} Fase~III, módulo~12: tokenización.
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{bengio}
+Y.~Bengio, R.~Ducharme, P.~Vincent y C.~Jauvin.
+\newblock A neural probabilistic language model.
+\newblock \emph{Journal of Machine Learning Research}, 3:1137--1155, 2003.
+\newblock \url{https://www.jmlr.org/papers/v3/bengio03a.html}
+
+\bibitem{bv}
+S.~Boyd y L.~Vandenberghe.
+\newblock \emph{Convex Optimization}.
+\newblock Cambridge University Press, 2004.
+\newblock Cap.~9, «Unconstrained minimization». Texto del curso EE364a de Stanford.
+
+\bibitem{ee364a}
+S.~Boyd.
+\newblock EE364a: Convex Optimization I.
+\newblock Stanford University. Transparencias del curso.
+\newblock \url{https://web.stanford.edu/class/ee364a/lectures.html}
+
+\bibitem{cs189mid19}
+J.~R. Shewchuk.
+\newblock CS~189/289A: Introduction to Machine Learning. Examen parcial (\emph{Midterm}), primavera de 2019.
+\newblock University of California, Berkeley. Pregunta~5, «Logistic Regression with One Feature».
+\newblock \url{https://people.eecs.berkeley.edu/~jrs/189s24/exam/mids19.pdf}
+
+\bibitem{cs189mid23}
+J.~R. Shewchuk.
+\newblock CS~189/289A: Introduction to Machine Learning. Examen parcial (\emph{Midterm}), primavera de 2023.
+\newblock University of California, Berkeley. Pregunta~2, «Convergence of Gradient Descent».
+\newblock \url{https://people.eecs.berkeley.edu/~jrs/189s24/exam/mids23.pdf}
+
+\bibitem{cs189fin23}
+J.~R. Shewchuk.
+\newblock CS~189/289A: Introduction to Machine Learning. Examen final, primavera de 2023.
+\newblock University of California, Berkeley. Pregunta~4, «Backpropagation on an Arithmetic Expression».
+\newblock \url{https://people.eecs.berkeley.edu/~jrs/189s24/exam/finals23.pdf}
+
+\bibitem{cs231n}
+A.~Karpathy y equipo docente de CS231n.
+\newblock CS231n: Deep Learning for Computer Vision. Notas del curso, «Backpropagation, Intuitions».
+\newblock Stanford University.
+\newblock \url{https://cs231n.github.io/optimization-2/}
+
+\bibitem{cs224n2018}
+C.~Manning y R.~Socher.
+\newblock CS224N: Natural Language Processing with Deep Learning. Tarea~1.
+\newblock Stanford University, invierno de 2018. Problema~1, «Softmax», y problema~2, «Neural Network Basics».
+\newblock \url{https://web.stanford.edu/class/archive/cs/cs224n/cs224n.1184/assignment1/assignment1.pdf}
+
+\bibitem{cs229}
+A.~Ng y T.~Ma.
+\newblock CS229 Lecture Notes.
+\newblock Stanford University. Parte~I, «Supervised learning».
+\newblock \url{https://cs229.stanford.edu/main_notes.pdf}
+
+\bibitem{llama}
+H.~Touvron, T.~Lavril, G.~Izacard, X.~Martinet \emph{et al.}
+\newblock LLaMA: Open and efficient foundation language models.
+\newblock Prepublicación arXiv:2302.13971, 2023.
+\newblock \url{https://arxiv.org/abs/2302.13971}
+
+\end{thebibliography}
+
+
+\end{document}

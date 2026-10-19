@@ -1,0 +1,167 @@
+% =====================================================================
+\chapter{Leyes de potencia y leyes de escalado de Kaplan}
+\label{tema:3}
+% =====================================================================
+
+Kaplan \emph{et al.}~\cite{kaplan} observaron en 2020 que la pérdida de validación de un Transformer disminuye como una ley de potencia en cada uno de tres recursos, el número de parámetros $N$, el número de tokens $D$ y el cómputo $C$, a lo largo de varios órdenes de magnitud. Este tema estudia primero las leyes de potencia como objeto matemático (por qué son las funciones invariantes por cambio de escala y cómo se ajustan) y después enuncia las leyes de Kaplan y su recomendación de reparto. Se sigue~\cite[§1.2, §4 y §6]{kaplan}, la clase «Scaling laws» del curso CS324~\cite{cs324} y la revisión de leyes de escalado de la práctica~3 de CS336~\cite[§2]{cs336a3}.
+
+\section{Leyes de potencia}
+
+\begin{definicion}[Ley de potencia]
+Una función $f\colon(0,\infty)\to(0,\infty)$ es una \emph{ley de potencia} si existen $c>0$ y $\alpha\in\R$ tales que $f(x)=c\,x^{-\alpha}$ para todo $x>0$. El número $\alpha$ es el \emph{exponente}; si $\alpha>0$, $f$ es decreciente.
+\end{definicion}
+
+La propiedad que distingue a las leyes de potencia es que no tienen escala característica: multiplicar $x$ por un factor $\lambda$ multiplica $f$ por un factor que no depende del punto de partida.
+
+\begin{proposicion}[Invariancia de escala]\label{prop:escala}
+Sea $f\colon(0,\infty)\to(0,\infty)$ continua. Existe una función $g$ con $f(\lambda x)=g(\lambda)f(x)$ para todos $\lambda,x>0$ si y solo si $f$ es una ley de potencia. En ese caso, $g(\lambda)=\lambda^{-\alpha}$.
+\end{proposicion}
+
+\begin{proof}
+Si $f(x)=cx^{-\alpha}$, entonces $f(\lambda x)=c\lambda^{-\alpha}x^{-\alpha}=\lambda^{-\alpha}f(x)$. Recíprocamente, con $x=1$ se obtiene $g(\lambda)=f(\lambda)/f(1)$, de modo que $F=f/f(1)$ cumple $F(\lambda x)=F(\lambda)F(x)$. Sea $\varphi(t)=\ln F(e^{t})$, continua en $\R$. Entonces $\varphi(s+t)=\ln F(e^{s}e^{t})=\varphi(s)+\varphi(t)$: es la ecuación funcional de Cauchy. Por inducción, $\varphi(mt)=m\varphi(t)$ para $m\in\mathbb{N}$; de ahí $\varphi(p/q)=(p/q)\varphi(1)$ para todo racional positivo, y $\varphi(0)=0$, $\varphi(-t)=-\varphi(t)$ extienden la igualdad a todos los racionales. Por continuidad y densidad de $\mathbb{Q}$, $\varphi(t)=-\alpha t$ con $\alpha=-\varphi(1)$. Deshaciendo el cambio, $F(x)=x^{-\alpha}$ y $f(x)=f(1)\,x^{-\alpha}$.
+\end{proof}
+
+\begin{corolario}\label{cor:factor}
+Si $L=cN^{-\alpha}$, cada vez que $N$ se multiplica por $\lambda$ la pérdida se multiplica por $\lambda^{-\alpha}$, sea cual sea $N$. En particular, la mejora relativa por cada duplicación de $N$ es constante, $1-2^{-\alpha}$.
+\end{corolario}
+
+\section{Ajuste en escala log-log}
+
+\begin{proposicion}\label{prop:loglog}
+$L=cN^{-\alpha}$ si y solo si $\log L=\log c-\alpha\log N$. En el plano $(u,v)=(\log N,\log L)$, una ley de potencia es una recta de pendiente $-\alpha$, en cualquier base del logaritmo.
+\end{proposicion}
+
+\begin{proof}
+Se aplica el logaritmo, que es inyectivo, y se usan $\log(xy)=\log x+\log y$ y $\log x^{a}=a\log x$. El cambio de base multiplica $u$ y $v$ por la misma constante, que no altera la pendiente.
+\end{proof}
+
+En consecuencia, el exponente se estima por regresión lineal de $v$ sobre $u$ (módulo~8).
+
+\begin{definicion}[Ajuste de una ley de potencia]\label{def:ajuste}
+Dados entrenamientos $(N_j,L_j)$, $j=1,\dots,m$, con $u_j=\log N_j$ y $v_j=\log L_j$, el ajuste por mínimos cuadrados en escala log-log es la recta $v=b_0+b_1u$ con
+\[
+b_1=\frac{\sum_j(u_j-\bar u)(v_j-\bar v)}{\sum_j(u_j-\bar u)^{2}},\qquad b_0=\bar v-b_1\bar u,
+\]
+y la ley ajustada es $\hat L(N)=10^{b_0}N^{b_1}$ (con $\log=\log_{10}$), de exponente $\hat\alpha=-b_1$.
+\end{definicion}
+
+\begin{observacion}
+El ajuste en escala logarítmica minimiza errores \emph{relativos}, no absolutos, y da el mismo peso a cada orden de magnitud. Es lo adecuado cuando los entrenamientos están espaciados geométricamente, como es habitual. Extrapolar es otra cuestión: una recta ajustada en $10^{7}$--$10^{9}$ parámetros y usada en $10^{11}$ supone que nada cambia en dos órdenes de magnitud sin observar.
+\end{observacion}
+
+\section{Las leyes de Kaplan}
+
+Kaplan \emph{et al.}\ entrenaron Transformers decoder-only sobre WebText2 y midieron la entropía cruzada de validación en nats por token sobre contextos de $1024$ tokens~\cite[§2]{kaplan}. El número de parámetros $N$ excluye los embeddings de vocabulario y de posición~\cite[§1.3]{kaplan}.
+
+\begin{definicion}[Leyes de Kaplan]\label{def:kaplan}
+Cuando el crecimiento de la pérdida está limitado por un único recurso, la pérdida sigue~\cite[ecuaciones~(1.1)--(1.3)]{kaplan}
+\[
+L(N)=\Bigl(\frac{N_c}{N}\Bigr)^{\alpha_N},\qquad
+L(D)=\Bigl(\frac{D_c}{D}\Bigr)^{\alpha_D},\qquad
+L(C_{\min})=\Bigl(\frac{C_c}{C_{\min}}\Bigr)^{\alpha_C},
+\]
+con los valores ajustados de la \cref{tab:kaplan}. La ley en $N$ supone datos suficientes y entrenamiento hasta la convergencia; la ley en $D$, un modelo grande con parada temprana; la ley en $C_{\min}$, el mejor reparto posible del cómputo.
+\end{definicion}
+
+\begin{table}[h]
+\centering\small
+\caption{Constantes de las leyes de Kaplan \emph{et al.}~\cite[§1.2]{kaplan}. Un PF-día son $10^{15}\cdot 86\,400=8{,}64\cdot 10^{19}$ FLOP.}\label{tab:kaplan}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Ley & Exponente & Constante \\
+\midrule
+$L(N)$ & $\alpha_N\approx 0{,}076$ & $N_c\approx 8{,}8\cdot 10^{13}$ parámetros \\
+$L(D)$ & $\alpha_D\approx 0{,}095$ & $D_c\approx 5{,}4\cdot 10^{13}$ tokens \\
+$L(C_{\min})$ & $\alpha_C\approx 0{,}050$ & $C_c\approx 3{,}1\cdot 10^{8}$ PF-días \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{ejemplo}\label{ej:kaplan}
+Con $N=10^{9}$, $L=(8{,}8\cdot 10^{4})^{0{,}076}=2{,}376$ nats. Por el \cref{cor:factor}, duplicar $N$ multiplica la pérdida por $2^{-0{,}076}=0{,}9487$ (un $5\,\%$ menos) y multiplicarlo por diez, por $10^{-0{,}076}=0{,}8395$: con $N=10^{10}$, $L=1{,}994$ nats.
+\end{ejemplo}
+
+Las constantes dependen del tokenizador y de la distribución de los datos: no se trasladan a otro corpus. Los exponentes son más estables, y son lo que interesa para decidir cómo crecer.
+
+\section{Ley conjunta y sobreajuste}
+
+Cuando ambos recursos son finitos, Kaplan \emph{et al.}\ proponen~\cite[ecuación~(1.5) y §4]{kaplan}
+\begin{equation}\label{eq:kaplan-nd}
+L(N,D)=\Bigl[\Bigl(\frac{N_c}{N}\Bigr)^{\alpha_N/\alpha_D}+\frac{D_c}{D}\Bigr]^{\alpha_D}.
+\end{equation}
+
+\begin{proposicion}\label{prop:limites}
+La función~\eqref{eq:kaplan-nd} es decreciente en $N$ y en $D$, y sus límites son las leyes de un solo recurso:
+\[
+\lim_{D\to\infty}L(N,D)=L(N),\qquad\lim_{N\to\infty}L(N,D)=L(D).
+\]
+\end{proposicion}
+
+\begin{proof}
+Ambos sumandos del corchete son decrecientes en su variable y el exponente $\alpha_D$ es positivo. Cuando $D\to\infty$, $D_c/D\to 0$ y, por continuidad de $y\mapsto y^{\alpha_D}$, $L\to\bigl[(N_c/N)^{\alpha_N/\alpha_D}\bigr]^{\alpha_D}=(N_c/N)^{\alpha_N}$. Cuando $N\to\infty$, el primer sumando tiende a~$0$ y $L\to(D_c/D)^{\alpha_D}$.
+\end{proof}
+
+La forma~\eqref{eq:kaplan-nd} permite cuantificar el sobreajuste: la penalización relativa por datos finitos depende de $N$ y $D$ solo a través de $N^{\alpha_N/\alpha_D}/D$ (\cref{eje:3-sobreajuste}). De ahí la regla empírica de Kaplan \emph{et al.}\ para que el sobreajuste quede dentro de la variación entre semillas, $D\gtrsim 5\cdot 10^{3}\,N^{0{,}74}$~\cite[ecuación~(4.4)]{kaplan}. Con $N=10^{9}$, la regla pide $D\gtrsim 2{,}3\cdot 10^{10}$ tokens.
+
+\section{El reparto de Kaplan}
+
+El cómputo de entrenamiento es $C\approx 6ND$ FLOP (módulo~14, tema~6; \cite[§2.1]{kaplan}). Kaplan \emph{et al.}\ estudian cómo repartir un presupuesto creciente y concluyen que el tamaño óptimo crece como~\cite[ecuación~(6.1)]{kaplan}
+\[
+\Nopt\propto C^{0{,}73},
+\]
+y los datos, como $D\propto C^{0{,}27}$~\cite[§1.1]{kaplan}. Con diez veces más cómputo, el modelo debería crecer $10^{0{,}73}=5{,}4$ veces y los datos solo $10^{0{,}27}=1{,}9$ veces. GPT-3 siguió esa pauta: $N=1{,}75\cdot 10^{11}$ parámetros y $D=3\cdot 10^{11}$ tokens~\cite{brown}, es decir, $C\approx 6\cdot 1{,}75\cdot 10^{11}\cdot 3\cdot 10^{11}=3{,}15\cdot 10^{23}$ FLOP, unos $3650$ PF-días, con menos de dos tokens por parámetro. El \cref{tema:4} muestra que esta recomendación no se sostiene.
+
+\begin{observacion}[Hace falta un suelo]
+Una ley de potencia pura tiende a~$0$ cuando el recurso crece. Pero la pérdida de un modelo es una entropía cruzada $H(p,q)$, y por la desigualdad de Gibbs (módulo~1, tema~5) nunca baja de la entropía $H(p)$ del propio texto. Toda ley realista debe incluir, por tanto, un término constante irreducible; es lo que hace la ley de Chinchilla del \cref{tema:4}.
+\end{observacion}
+
+\begin{lecturas}
+\item Kaplan \emph{et al.}~\cite{kaplan}, §1.2 «Summary of Scaling Laws», §4 «Charting the Infinite Data Limit and Overfitting» y §6 «Optimal Allocation of the Compute Budget».
+\item Stanford CS324~\cite{cs324}, clase «Scaling laws».
+\item Stanford CS336~\cite{cs336a3}, práctica~3 «Scaling», §2 «Scaling Laws Review».
+\item Para el ajuste por mínimos cuadrados, el tema correspondiente del módulo~8.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-recta}
+Explique por qué una ley de potencia $L=kN^{-\alpha}$ es una recta en escala log-log y qué representa su pendiente. Con $\alpha=0{,}076$ y logaritmos decimales, ¿cuánto baja $\log_{10}L$ al multiplicar $N$ por~$10$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-computo}
+Calcule el cómputo de entrenamiento de un modelo de $1{,}3\cdot 10^{9}$ parámetros con $2{,}6\cdot 10^{10}$ tokens, en FLOP y en PF-días. ¿Cuántos tokens por parámetro son?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-datos}
+Con la ley $L(D)=(5{,}4\cdot 10^{13}/D)^{0{,}095}$, calcule $L$ para $D=10^{9}$ y $D=10^{11}$. ¿Por qué factor se multiplica $L$ cada vez que $D$ se multiplica por~$10$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-ajuste}
+Se entrenan tres modelos con la forma de la práctica de CS336, cuyo número de parámetros sin embeddings se estima como $N=12\,n_{\mathrm{layer}}d_{\mathrm{model}}^{2}$, y se obtienen las pérdidas finales siguientes:
+\begin{center}\small
+\begin{tabular}{@{}ccc@{}}
+\toprule
+$n_{\mathrm{layer}}$ & $d_{\mathrm{model}}$ & $L$ (nats) \\
+\midrule
+$4$ & $256$ & $4{,}20$ \\
+$8$ & $512$ & $3{,}62$ \\
+$16$ & $1024$ & $3{,}12$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+(a) Calcule $N$ para cada modelo. (b) Ajuste $\log_{10}L=b_0+b_1\log_{10}N$ por mínimos cuadrados (\cref{def:ajuste}). (c) Prediga la pérdida de un modelo con $n_{\mathrm{layer}}=32$ y $d_{\mathrm{model}}=2048$ y comente la fiabilidad de la predicción.
+\fuente{adaptado de Stanford CS336~\cite{cs336a3}, práctica~3, §3.3, problema \texttt{scaling\_laws} (datos sintéticos en lugar de la API de entrenamiento).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-sobreajuste}
+Sea $L(N,D)$ la ley~\eqref{eq:kaplan-nd}. (a) Demuestre que
+\[
+\frac{L(N,D)}{L(N)}=\Bigl(1+\frac{N^{\alpha_N/\alpha_D}}{N_c^{\alpha_N/\alpha_D}}\cdot\frac{D_c}{D}\Bigr)^{\alpha_D}.
+\]
+(b) Deduzca que, para mantener constante la penalización relativa por datos finitos al crecer el modelo, $D$ debe crecer como $N^{\alpha_N/\alpha_D}$. (c) Calcule el exponente con $\alpha_D=0{,}095$ y con el ajuste conjunto de Kaplan \emph{et al.}, que usa $\alpha_D\approx 0{,}103$, y compárelo con el de la ecuación~(4.4).
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-invariancia}
+Demuestre que el exponente estimado $\hat\alpha$ de la \cref{def:ajuste} no cambia si (a) se usan logaritmos en otra base, (b) se mide $N$ en otras unidades, $N'=\kappa N$ con $\kappa>0$, o (c) se multiplican todas las pérdidas por una constante, por ejemplo al pasar de nats a bits. ¿Qué parámetro del ajuste sí cambia en cada caso?
+\end{ejercicio}

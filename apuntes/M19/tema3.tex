@@ -1,0 +1,183 @@
+% =====================================================================
+\chapter{Decodificación especulativa}
+\label{tema:3}
+% =====================================================================
+
+El \cref{tema:2} mostró que un paso de decodificación está limitado por la lectura de los pesos: procesar unas pocas posiciones más en la misma pasada apenas cuesta tiempo. La \emph{decodificación especulativa} aprovecha esta asimetría entre generar y verificar. Un modelo pequeño (el \emph{borrador}) propone varios tokens y el modelo grande (el \emph{objetivo}) los verifica todos en una sola pasada con una regla de aceptación y rechazo que preserva \emph{exactamente} su distribución. Se siguen el artículo de Leviathan, Kalman y Matias~\cite{leviathan} (secciones~2 y~3 y apéndice~A.1), el de Chen \emph{et al.}~\cite{chen}, que propuso el mismo algoritmo de forma independiente con el nombre de \emph{speculative sampling}, y la clase~10 de CS336~\cite{cs336}.
+
+\section{El algoritmo}
+
+En todo el tema, $p(\cdot\mid x_{<t})$ es la distribución del modelo objetivo y $q(\cdot\mid x_{<t})$ la del borrador, ambas ya modificadas por la regla de muestreo que se desee (temperatura, núcleo, etc.). Cuando el contexto está fijado se escribe simplemente $p(x)$ y $q(x)$.
+
+\begin{definicion}[Ronda de decodificación especulativa]\label{def:ronda}
+Sea $\gamma\ge 1$ un entero y sea $x_{<t}$ el prefijo actual. Una \emph{ronda} consiste en:
+\begin{enumerate}[label=\arabic*.]
+  \item El borrador genera $\tilde x_1,\dots,\tilde x_\gamma$ de forma autorregresiva, con $\tilde x_i\sim q(\cdot\mid x_{<t},\tilde x_{<i})$, y guarda esas probabilidades.
+  \item El modelo objetivo procesa en una sola pasada el prefijo y los $\gamma$ tokens propuestos, y obtiene $p(\cdot\mid x_{<t},\tilde x_{<i})$ para $i=1,\dots,\gamma+1$.
+  \item Para $i=1,\dots,\gamma$, en orden, se acepta $\tilde x_i$ con probabilidad $\min\bigl(1,\,p(\tilde x_i)/q(\tilde x_i)\bigr)$, con ambas distribuciones condicionadas al mismo prefijo.
+  \item En el primer rechazo, en la posición $i$, se emite un token de la \emph{distribución residual}
+  \[
+  r(x)=\frac{\max\bigl(0,\,p(x)-q(x)\bigr)}{\sum_{y}\max\bigl(0,\,p(y)-q(y)\bigr)}
+  \]
+  y la ronda termina.
+  \item Si se aceptan los $\gamma$ tokens, se emite además un token de $p(\cdot\mid x_{<t},\tilde x_{1:\gamma})$, que ya se calculó en el paso~2.
+\end{enumerate}
+\end{definicion}
+
+Cada ronda emite entre $1$ y $\gamma+1$ tokens con una sola pasada del modelo objetivo. Esa pasada procesa $\gamma+1$ posiciones, como un pequeño \emph{prefill}: está limitada por la lectura de los pesos y cuesta casi lo mismo que un paso de decodificación (\cref{teo:cota-memoria}).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,x=1.15cm,
+  tok/.style={draw,minimum width=9mm,minimum height=6mm,rounded corners=2pt}]
+  \node[left] at (0.3,1.2) {borrador $q$:};
+  \foreach \i in {1,...,4} \node[tok,fill=black!6] (d\i) at (\i+0.6,1.2) {$\tilde x_\i$};
+  \node[left] at (0.3,0) {objetivo $p$:};
+  \foreach \i in {1,2} \node[tok,fill=black!20] (a\i) at (\i+0.6,0) {$\tilde x_\i$};
+  \node[tok,fill=black!45,text=white] (r3) at (3.6,0) {$x'_3$};
+  \node[tok,dashed,draw=regla,text=regla] (n4) at (4.6,0) {$\tilde x_4$};
+  \foreach \i in {1,2} \draw[->] (d\i) -- (a\i);
+  \draw[->] (d3) -- node[midway,fill=white,inner sep=1pt,font=\scriptsize] {rechazo} (r3);
+  \draw[->,regla] (d4) -- (n4);
+  \node[right,align=left,font=\footnotesize] at (5.3,0.6) {$\tilde x_1,\tilde x_2$ aceptados;\\ $\tilde x_3$ rechazado: $x'_3\sim r$;\\ $\tilde x_4$ se descarta.\\ La ronda emite 3 tokens.};
+\end{tikzpicture}
+\caption{Una ronda con $\gamma=4$. El borrador propone cuatro tokens (arriba); el objetivo los evalúa en una pasada y acepta los dos primeros. En el primer rechazo emite un token de la distribución residual y la ronda termina.}
+\label{fig:ronda}
+\end{figure}
+
+\section{Muestreo por rechazo modificado}
+
+Se analiza primero un solo token. Se propone $\tilde x\sim q$, que se acepta con probabilidad $\min(1,p(\tilde x)/q(\tilde x))$; si se rechaza, se emite $x'\sim r$.
+
+\begin{definicion}[Tasa de aceptación]\label{def:beta}
+La \emph{tasa de aceptación} es la probabilidad de aceptar la propuesta~\cite[definición~3.1]{leviathan}:
+\[
+\beta=\sum_{x}q(x)\min\Bigl(1,\frac{p(x)}{q(x)}\Bigr)=\sum_{x}\min\bigl(p(x),q(x)\bigr).
+\]
+\end{definicion}
+
+\begin{lema}[Normalización del residuo]\label{lem:residuo}
+$\sum_{x}\max\bigl(0,p(x)-q(x)\bigr)=1-\beta$. En consecuencia, $r$ está bien definida si $\beta<1$, y $\beta=1$ si y solo si $p=q$.
+\end{lema}
+
+\begin{proof}
+Para cada $x$, $\max(0,p-q)=p-\min(p,q)$: si $p\le q$ ambos miembros valen~$0$, y si $p>q$ ambos valen $p-q$. Sumando, $\sum_x\max(0,p-q)=1-\beta$. Si $\beta=1$, la suma de los términos no negativos $\max(0,p-q)$ es nula, luego $p\le q$ en todo punto; como ambas suman~1, $p=q$. El recíproco es inmediato.
+\end{proof}
+
+\begin{teorema}[Preservación de la distribución]\label{teo:especulativa}
+El token emitido por el muestreo por rechazo modificado tiene distribución exactamente $p$.
+\end{teorema}
+
+\begin{proof}
+Si $\beta=1$, $p=q$ por el \cref{lem:residuo}, nunca se rechaza y el token emitido sigue $q=p$. Supóngase $\beta<1$. El token emitido es $x$ si se propone $x$ y se acepta, o si se rechaza la propuesta (sea cual sea) y el residuo produce $x$. El primer suceso tiene probabilidad $q(x)\min(1,p(x)/q(x))=\min(p(x),q(x))$. El rechazo tiene probabilidad $1-\beta$ y es independiente del muestreo del residuo, de modo que
+\[
+P(\text{emitir }x)=\min\bigl(p(x),q(x)\bigr)+(1-\beta)\,\frac{\max\bigl(0,p(x)-q(x)\bigr)}{1-\beta}=\min(p,q)+\max(0,p-q)=p(x),
+\]
+donde la última igualdad es la del \cref{lem:residuo}, $\max(0,p-q)=p-\min(p,q)$.
+\end{proof}
+
+\begin{proposicion}[Aceptación y variación total]\label{prop:beta-tv}
+$1-\beta=\TV(p,q)$, de modo que la tasa de rechazo es la distancia de variación total entre el objetivo y el borrador~\cite[lema~3.3 y teorema~3.5]{leviathan}.
+\end{proposicion}
+
+La demostración se pide en el \cref{eje:3-tv}. Un borrador es bueno exactamente en la medida en que su distribución está próxima, en variación total, a la del objetivo; por eso se suele obtener por destilación del objetivo~\cite{cs336} (\cref{tema:5}).
+
+\begin{ejemplo}\label{ej:especulativa}
+Sea $\V=\{A,B,C\}$ con $p=(0{,}5;\allowbreak\,0{,}3;\allowbreak\,0{,}2)$ y $q=(0{,}2;\allowbreak\,0{,}6;\allowbreak\,0{,}2)$. Las probabilidades de aceptación son $\min(1;2{,}5)=1$ para $A$, $\min(1;0{,}5)=0{,}5$ para $B$ y $1$ para $C$; $\beta=0{,}2+0{,}3+0{,}2=0{,}7$. El residuo es $\max(0,p-q)=(0{,}3;\allowbreak\,0;\allowbreak\,0)$, normalizado $(1,0,0)$. Entonces $P(A)=0{,}2+0{,}3\cdot 1=0{,}5$, $P(B)=0{,}6\cdot 0{,}5=0{,}3$ y $P(C)=0{,}2$: exactamente $p$. El borrador sobrestima $B$; el rechazo elimina el exceso y el residuo lo devuelve a $A$, que estaba infrarrepresentado. Una simulación de $2\cdot 10^{5}$ rondas da frecuencias $(0{,}5003;\allowbreak\,0{,}3004;\allowbreak\,0{,}1993)$.
+\end{ejemplo}
+
+\section{Corrección para secuencias}
+
+\begin{teorema}[Preservación en secuencias]\label{teo:especulativa-secuencias}
+Sea un procedimiento que ejecuta rondas sucesivas (\cref{def:ronda}) a partir de un prompt, cada una sobre el prefijo que dejó la anterior. Para todo $T$, los $T$ primeros tokens emitidos tienen la misma distribución conjunta que $T$ pasos de muestreo autorregresivo de $p$.
+\end{teorema}
+
+\begin{proof}
+Por la regla de la cadena (módulo~1), basta probar que, condicionado a cualquier historia de tokens ya emitidos $y_{<j}$ (y a cualquier estado interno de la ronda en curso compatible con ella), el token $j$-ésimo emitido sigue $p(\cdot\mid x,y_{<j})$. Dentro de una ronda hay tres casos. (i) El token procede de una propuesta $\tilde x_i$ aceptada o del residuo tras rechazarla: como los tokens anteriores de la ronda se aceptaron, el prefijo de $\tilde x_i$ es exactamente $y_{<j}$, la propuesta se extrajo de $q(\cdot\mid x,y_{<j})$ y la decisión de aceptarla usa $p$ y $q$ condicionadas a ese prefijo; por el \cref{teo:especulativa}, el token emitido sigue $p(\cdot\mid x,y_{<j})$. (ii) Es el token adicional tras aceptar las $\gamma$ propuestas: se extrae directamente de $p(\cdot\mid x,y_{<j})$. (iii) Es el primer token de una ronda nueva: la ronda empieza con el prefijo $y_{<j}$ y se aplica (i) o (ii). En los tres casos la distribución condicionada es la del objetivo, y la conjunta coincide con la del muestreo autorregresivo.
+\end{proof}
+
+\begin{corolario}[Versión voraz]\label{cor:voraz}
+Si $p$ y $q$ son distribuciones degeneradas en sus respectivos $\argmax$ (búsqueda voraz), la regla de aceptación acepta $\tilde x_i$ si y solo si coincide con el $\argmax$ del objetivo, y en caso contrario emite ese $\argmax$. La salida es idéntica a la búsqueda voraz con el objetivo.
+\end{corolario}
+
+\begin{proof}
+Si $\tilde x_i$ es el $\argmax$ de $p$, $p(\tilde x_i)/q(\tilde x_i)=1/1=1$ y se acepta; si no, $p(\tilde x_i)=0$ y se rechaza con probabilidad~1. El residuo $\max(0,p-q)$ es positivo solo en el $\argmax$ de $p$, que es el token emitido. El resultado se sigue del \cref{teo:especulativa-secuencias}.
+\end{proof}
+
+\section{Rendimiento}
+
+\begin{definicion}[Aceptación media y coste relativo]
+Se supone que las tasas de aceptación de las sucesivas propuestas son variables independientes e idénticamente distribuidas, de media $\alpha=\E[\beta]$~\cite[§3.1]{leviathan}. Se llama \emph{coste relativo} $c$ al cociente entre el tiempo de una pasada del borrador y el de una pasada del objetivo~\cite[definición~3.7]{leviathan}.
+\end{definicion}
+
+\begin{teorema}[Tokens esperados por ronda]\label{teo:tokens-ronda}
+Con aceptaciones independientes de probabilidad $\alpha<1$, el número $N_{\mathrm{r}}$ de tokens emitidos en una ronda cumple
+\[
+\E[N_{\mathrm{r}}]=\sum_{j=0}^{\gamma}\alpha^{j}=\frac{1-\alpha^{\gamma+1}}{1-\alpha}.
+\]
+\end{teorema}
+
+\begin{proof}
+Si se aceptan exactamente $a<\gamma$ propuestas, la ronda emite $a+1$ tokens (las aceptadas y la del residuo); si se aceptan las $\gamma$, emite $\gamma+1$. Así, $N_{\mathrm{r}}\ge j+1$ si y solo si se aceptan las $j$ primeras propuestas, suceso de probabilidad $\alpha^{j}$, para $j=0,\dots,\gamma$. Como $N_{\mathrm{r}}$ toma valores en $\{1,\dots,\gamma+1\}$, $\E[N_{\mathrm{r}}]=\sum_{j\ge 1}P(N_{\mathrm{r}}\ge j)=\sum_{j=0}^{\gamma}\alpha^{j}$, y la suma geométrica da la fórmula.
+\end{proof}
+
+\begin{teorema}[Factor de mejora]\label{teo:mejora}
+En las condiciones anteriores, si el tiempo de una ronda es el de $\gamma$ pasadas del borrador más una del objetivo, el cociente entre el tiempo esperado por token sin y con decodificación especulativa es
+\[
+f(\gamma)=\frac{1-\alpha^{\gamma+1}}{(1-\alpha)(\gamma c+1)}.
+\]
+\end{teorema}
+
+\begin{proof}
+Se toma como unidad el tiempo de una pasada del objetivo, que sin especulación produce un token. Una ronda cuesta $\gamma c+1$ unidades y emite en media $\E[N_{\mathrm{r}}]$ tokens. Por la ley de los grandes números aplicada a las rondas, el tiempo medio por token es $(\gamma c+1)/\E[N_{\mathrm{r}}]$, y el cociente con el tiempo sin especulación, $1$, es $f(\gamma)$ por el \cref{teo:tokens-ronda}~\cite[teorema~3.8]{leviathan}.
+\end{proof}
+
+\begin{corolario}\label{cor:alpha-c}
+Si $\alpha>c$, existe $\gamma$ con $f(\gamma)>1$; en concreto, $f(1)=(1+\alpha)/(1+c)>1$~\cite[corolario~3.9]{leviathan}.
+\end{corolario}
+
+\begin{proof}
+Con $\gamma=1$, $f(1)=(1-\alpha^{2})/((1-\alpha)(1+c))=(1+\alpha)/(1+c)$, que es mayor que~1 si y solo si $\alpha>c$.
+\end{proof}
+
+\begin{ejemplo}[Elección de $\gamma$]\label{ej:gamma}
+Con $\alpha=0{,}7$ y $c=0{,}1$, para $\gamma=4$, $\E[N_{\mathrm{r}}]=(1-0{,}7^{5})/0{,}3=2{,}773$ tokens por ronda, la ronda cuesta $1{,}4$ pasadas del objetivo y $f(4)=1{,}981$. Los valores para $\gamma=1,\dots,6$ son $1{,}545$; $1{,}825$; $1{,}949$; $1{,}981$; $1{,}961$ y $1{,}912$: el óptimo es $\gamma=4$. Como $\gamma$ es entero, se elige numéricamente~\cite[§3.5]{leviathan}.
+\end{ejemplo}
+
+\begin{observacion}[Resultados publicados]
+Leviathan \emph{et al.} obtienen aceleraciones de 2 a 3 veces en T5-XXL con salidas idénticas~\cite{leviathan}, y Chen \emph{et al.}, de 2 a 2{,}5 veces en Chinchilla 70B con un borrador de 4000 millones de parámetros~\cite{chen}. La clase~10 de CS336 describe extensiones en las que el borrador es una pequeña red añadida al propio objetivo~\cite{cs336}. Si Claude, Gemini o Grok emplean decodificación especulativa en su servicio no es información pública.
+\end{observacion}
+
+\begin{lecturas}
+\item Leviathan, Kalman y Matias~\cite{leviathan}, secciones~2 («Speculative Decoding») y~3 («Analysis») y apéndice~A.1 («Correctness of Speculative Sampling»).
+\item Chen \emph{et al.}~\cite{chen}, algoritmo~2 y teorema~1 del material suplementario.
+\item CS336~\cite{cs336}, clase~10 «Inference», apartado \emph{speculative sampling}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-vf}
+Justifique si son verdaderas o falsas: (a) la decodificación especulativa empeora un poco la calidad a cambio de velocidad; (b) si el borrador coincide con el objetivo, se aceptan todas las propuestas; (c) cada ronda emite al menos un token.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-dos}
+Con $\V=\{A,B\}$, $p=(0{,}6;\allowbreak\ 0{,}4)$ y $q=(0{,}9;\allowbreak\ 0{,}1)$, calcule la probabilidad de aceptación de cada token, $\beta$, la distribución residual, y compruebe que el token emitido sigue $p$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-cs336}
+Sea $\V=\{A,B\}$ y suponga que el borrador sobrestima $A$: $q(A)>p(A)$. (a) Demuestre que $q(B)<p(B)$ y que la distribución residual es $(0,1)$. (b) Calcule $P(\text{emitir }A)$ y $P(\text{emitir }B)$ en función de $p$ y $q$ y compruebe que valen $p(A)$ y $p(B)$. (c) Aplíquelo con $p=(0{,}3;\allowbreak\ 0{,}7)$ y $q=(0{,}8;\allowbreak\ 0{,}2)$.
+\fuente{adaptado de CS336~\cite{cs336}, clase~10 «Inference», demostración por ejemplo del muestreo especulativo con dos tokens (notación de $p$ y $q$ intercambiada).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-gamma}
+Con $\alpha=0{,}5$: (a) calcule el número esperado de tokens por ronda con $\gamma=3$ y con $\gamma=10$; (b) con $c=0{,}1$, calcule el factor de mejora en ambos casos y para $\gamma=2$. ¿Merece la pena subir $\gamma$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-tv}
+(a) Demuestre que si se aceptase siempre la propuesta (sin rechazo ni residuo), el token emitido seguiría $q$ y no $p$. (b) Demuestre la \cref{prop:beta-tv}: $1-\beta=\frac12\sum_x\abs{p(x)-q(x)}$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-optimo}
+Sean $0<\alpha<1$ y $c>0$ fijos. (a) Demuestre que $\E[N_{\mathrm{r}}]$ es estrictamente creciente en $\gamma$ y está acotado por $1/(1-\alpha)$. (b) Demuestre que $f(\gamma)\to 0$ cuando $\gamma\to\infty$ y deduzca que existe un $\gamma$ óptimo finito. (c) Demuestre que si $\alpha\le c$, entonces $f(\gamma)\le 1$ para todo $\gamma\ge 1$.
+\end{ejercicio}

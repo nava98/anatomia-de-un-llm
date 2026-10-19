@@ -1,0 +1,106 @@
+% =====================================================================
+\chapter{Coste, energía y límites físicos}
+\label{tema:6}
+% =====================================================================
+
+Los temas anteriores han tratado el rendimiento de un dispositivo y de un conjunto de ellos. Este tema convierte esas magnitudes en las que deciden un proyecto real: duración, coste económico, energía y refrigeración. Después compara la energía de las operaciones con la del movimiento de datos y con el límite físico de Landauer para el borrado de información. Se siguen el §2.1 de Kaplan \emph{et al.}~\cite{kaplan}, el §4.1 y el apéndice~B de Chowdhery \emph{et al.}~\cite{palm}, la tarea~1 de CS336~\cite[§4.3]{cs336a1}, el trabajo de Horowitz~\cite{horowitz}, el capítulo~6 de Hennessy y Patterson~\cite{hp} sobre centros de datos y el artículo de Landauer~\cite{landauer}.
+
+\section{Duración y coste de un entrenamiento}
+
+\begin{proposicion}[Duración de un entrenamiento]\label{prop:duracion}
+Sea un entrenamiento de $C$ FLOP en $n_{\mathrm{d}}$ dispositivos de rendimiento máximo $\Ppico$ con utilización $\MFU$. Su duración es
+\[
+t=\frac{C}{n_{\mathrm{d}}\,\Ppico\,\MFU},
+\]
+y consume $n_{\mathrm{d}}t$ dispositivos-segundo, que no dependen de $n_{\mathrm{d}}$ si el MFU se mantiene.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{def:mfu}, los FLOP útiles por segundo del conjunto son $n_{\mathrm{d}}\Ppico\MFU$; dividiendo $C$ por esa tasa se obtiene $t$. El producto $n_{\mathrm{d}}t=C/(\Ppico\MFU)$ no contiene $n_{\mathrm{d}}$.
+\end{proof}
+
+El coste económico es, en primera aproximación, el número de GPU-hora por el precio de la GPU-hora. Duplicar el número de dispositivos reduce la duración a la mitad sin cambiar el coste, mientras el MFU no caiga; por la ley de Amdahl (\cref{teo:amdahl}) y el coste creciente de la comunicación, en la práctica cae.
+
+\begin{ejemplo}[Un entrenamiento del tamaño de Chinchilla]\label{ej:chinchilla}
+Sea $N=7\cdot 10^{10}$ y $D=1{,}4\cdot 10^{12}$, de modo que $C=6ND=5{,}88\cdot 10^{23}$ FLOP. En 1024 A100 hipotéticas con $\MFU=0{,}4$, el rendimiento útil por GPU es $0{,}4\cdot 312=124{,}8$~TFLOP/s y la duración, $5{,}88\cdot 10^{23}/(1024\cdot 1{,}248\cdot 10^{14})=4{,}60\cdot 10^{6}$~s, unos 53 días. (Chinchilla se entrenó en TPU; el cálculo es ilustrativo.) El \cref{eje:6-chinchilla} completa la energía y el coste.
+\end{ejemplo}
+
+\section{Energía, potencia y refrigeración}
+
+\begin{definicion}[PUE]
+La \emph{eficiencia en el uso de la energía} (PUE, \emph{Power Usage Effectiveness}) de un centro de datos es el cociente entre la energía total que consume y la que consumen los equipos de cómputo. Siempre es $\PUE\ge 1$; el exceso corresponde a refrigeración, conversión eléctrica y otros servicios~\cite[cap.~6]{hp}.
+\end{definicion}
+
+La energía de un entrenamiento es, aproximadamente, $E\approx(\text{GPU-hora})\cdot P_{\mathrm{GPU}}\cdot\PUE$, donde $P_{\mathrm{GPU}}$ es la potencia media por GPU (la máxima de la A100 SXM es de 400~W~\cite{a100}). Esta estimación ignora las CPU, la red y el almacenamiento.
+
+Casi toda la energía eléctrica se disipa como calor, que debe evacuarse. Si un fluido de calor específico $c$ entra a una temperatura y sale $\Delta T$ más caliente, el calor que extrae por unidad de tiempo es
+\[
+\dot{Q}=\dot{m}\,c\,\Delta T,
+\]
+con $\dot{m}$ el caudal másico. Para el agua, $c\approx 4186$~J/(kg$\cdot$K); para el aire, $c\approx 1005$~J/(kg$\cdot$K), con una densidad unas 800 veces menor. Evacuar los $1024\cdot 400=409{,}6$~kW de las GPU del \cref{ej:chinchilla} con agua que se calienta 10~K exige $\dot{m}=409\,600/(4186\cdot 10)\approx 9{,}8$~kg/s, casi diez litros por segundo. Por eso los sistemas actuales de alta densidad pasan de la refrigeración por aire a la refrigeración líquida directa sobre el chip (\cref{eje:6-refrigeracion}).
+
+\section{Operar frente a mover datos}
+
+Horowitz~\cite{horowitz} recopiló la energía de operaciones elementales en una tecnología de 45~nm. Las cifras, de orden de magnitud, muestran que una suma en fp32 cuesta unos $0{,}9$~pJ y una multiplicación en fp32, unos $3{,}7$~pJ, mientras que leer 32~bits de DRAM cuesta unos $640$~pJ: mover el dato cuesta unas $640/3{,}7\approx 170$ veces más que operar con él. Las técnicas de los temas~1 a~3 (matrices sistólicas, \emph{tiling}, fusión, FlashAttention) ahorran energía por la misma razón por la que ahorran tiempo: reducen el tráfico con la memoria lejana.
+
+\begin{ejemplo}[Energía por FLOP de una GPU]\label{ej:pj}
+A potencia máxima y rendimiento máximo en bf16, la A100 gasta $400/(312\cdot 10^{12})=1{,}28\cdot 10^{-12}$~J, es decir, $1{,}28$~pJ por FLOP. La cifra incluye todo el chip y su memoria y es una cota optimista: con un MFU del 40~\% la energía por FLOP útil es $1{,}28/0{,}4=3{,}2$~pJ.
+\end{ejemplo}
+
+\section{El límite de Landauer}
+
+\begin{teorema}[Principio de Landauer]\label{teo:landauer}
+Borrar un bit de información, es decir, llevar un sistema físico que almacena un bit desconocido (0 o 1 con igual probabilidad) a un estado fijo, en contacto con un entorno a temperatura $T$, disipa en ese entorno un calor
+\[
+Q\ \ge\ \kB T\ln 2,
+\]
+donde $\kB=1{,}380649\cdot 10^{-23}$~J/K es la constante de Boltzmann.
+\end{teorema}
+
+\begin{proof}[Argumento]
+Se da el argumento termodinámico de Landauer~\cite{landauer}, no una demostración axiomática. Un bit con dos estados equiprobables tiene entropía de Shannon $H=\ln 2$ nats (módulo~6), que en unidades físicas es $S=\kB\ln 2$ (fórmula de Boltzmann $S=\kB\ln\Omega$ con $\Omega=2$ estados lógicos accesibles). Tras el borrado el estado lógico es conocido ($\Omega=1$, $S=0$): la entropía del sistema ha disminuido en $\kB\ln 2$. Por el segundo principio, la entropía total no puede disminuir, de modo que la del entorno debe aumentar al menos $\kB\ln 2$. Para un entorno a temperatura $T$ constante, un aumento de entropía $\Delta S$ requiere recibir un calor $Q=T\Delta S\ge\kB T\ln 2$.
+\end{proof}
+
+\begin{ejemplo}[Distancia al límite]\label{ej:landauer}
+A $T=300$~K, $\kB T\ln 2=1{,}380649\cdot 10^{-23}\cdot 300\cdot 0{,}6931=2{,}87\cdot 10^{-21}$~J, unos $0{,}018$~eV. La A100 gasta $1{,}28\cdot 10^{-12}$~J por FLOP (\cref{ej:pj}), unas $4{,}5\cdot 10^{8}$ veces el límite por bit. Aunque una operación borre decenas de bits, la distancia sigue siendo de muchos órdenes de magnitud: hoy no frenan la física fundamental sino la ingeniería del transistor y, sobre todo, el movimiento de datos.
+\end{ejemplo}
+
+\begin{observacion}
+El principio solo limita las operaciones \emph{irreversibles}, que destruyen información. Una suma $c=a+b$ que sobrescribe $a$ y $b$ es irreversible; la computación reversible, que conserva la información necesaria para deshacer cada paso, podría en principio operar por debajo de $\kB T\ln 2$ por operación. El vínculo con el módulo~6 es directo: $\kB\ln 2$ es la entropía de un bit expresada en julios por kelvin.
+\end{observacion}
+
+\begin{lecturas}
+\item Kaplan \emph{et al.}~\cite{kaplan}, §2.1; Hoffmann \emph{et al.}~\cite{chinchilla}, sobre la asignación óptima de $N$ y $D$.
+\item Chowdhery \emph{et al.}~\cite{palm}, §4.1 y apéndice~B (MFU, consumo y huella).
+\item CS336~\cite{cs336a1}, tarea~1, §4.3, problema \texttt{adamw\_accounting}.
+\item Hennessy y Patterson~\cite{hp}, cap.~6, «The Warehouse-Scale Computer» (PUE y coste de los centros de datos).
+\item Horowitz~\cite{horowitz}; Landauer~\cite{landauer}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-energia}
+Ordene de menor a mayor energía: una suma en fp32, una multiplicación en fp32, la lectura de 32~bits de DRAM y el límite de Landauer a 300~K. Explique por qué la reutilización de datos ahorra energía además de tiempo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-chinchilla}
+Calcule el coste de entrenar un modelo como Chinchilla ($N=7\cdot 10^{10}$, $D=1{,}4\cdot 10^{12}$) en A100 hipotéticas: 312~TFLOP/s, $\MFU=0{,}4$, 1024 GPU, 400~W por GPU, $\PUE=1{,}2$ y 2 dólares por GPU-hora. Dé los FLOP, las GPU-hora, los días, los MWh y el coste.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-landauer}
+Calcule el límite de Landauer a 300~K y a 77~K (nitrógeno líquido), y el cociente entre $1{,}28$~pJ y el límite a 300~K.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-refrigeracion}
+Un armario de cómputo disipa 120~kW. (a) ¿Qué caudal de agua hace falta si se calienta 12~K? (b) ¿Y de aire (densidad $1{,}2$~kg/m$^{3}$) con el mismo salto térmico? Exprese el segundo en m$^{3}$/s y compare.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-gpt2}
+Sea el modelo GPT-2 \emph{small} del \cref{eje:1-gpt2}, con $1{,}621\cdot 10^{8}$ parámetros y $2{,}916\cdot 10^{11}$ FLOP por secuencia de 1024 tokens en la pasada hacia delante. (a) Si todos los tensores de estado están en fp32 y se usa AdamW (dos momentos por parámetro), ¿cuánta memoria ocupan los pesos, los gradientes y el estado del optimizador? (b) En una H100 con un máximo de 495~TFLOP/s y un MFU del 50~\%, suponiendo que la pasada hacia atrás cuesta el doble que la de delante, ¿cuánto tarda entrenar 20\,000 pasos con lotes de 128 secuencias?
+\fuente{adaptado de CS336~\cite{cs336a1}, tarea~1, §4.3, problema \texttt{adamw\_accounting}, apartados~(a) y~(d) (modelo y número de pasos cambiados).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-presupuesto}
+Se dispone de $10^{5}$ GPU-hora de A100 (312~TFLOP/s, $\MFU=0{,}4$). (a) Demuestre que, con $C=6ND$ y la regla de Chinchilla $D=20N$, el tamaño óptimo es $N=\sqrt{C/120}$. (b) Calcule $N$ y $D$. (c) Demuestre que, si se multiplica el presupuesto de GPU-hora por $\lambda$ con el mismo MFU, $N$ y $D$ quedan multiplicados por $\sqrt{\lambda}$.
+\end{ejercicio}

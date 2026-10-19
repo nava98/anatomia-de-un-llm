@@ -1,0 +1,157 @@
+% =====================================================================
+\chapter{Tensores, \emph{broadcasting} y formas de un LLM}
+\label{tema:6}
+% =====================================================================
+
+En el código de un modelo de lenguaje casi nunca aparecen vectores o matrices aislados, sino arrays de varios ejes que agrupan muchos vectores a la vez. Este tema formaliza esos arrays, el producto matricial por lotes y las reglas de \emph{broadcasting}, y las aplica a las formas de las matrices de un Transformer y al rango de su capa de salida. Se sigue a Zhang \emph{et al.}~\cite[§2.1 y §2.3]{d2l}, la documentación de NumPy~\cite{numpy-bc} y el apéndice~6 de~\cite{strang-ila}; la última sección, a Yang \emph{et al.}~\cite{yang-softmax}.
+
+\section{Tensores como arrays}
+
+\begin{definicion}[Tensor]
+Un \emph{tensor} de orden $k$ y forma $(n_1,\dots,n_k)$ es una familia de números reales $X[i_1,\dots,i_k]$ indexada por $0\le i_j<n_j$; contiene $n_1n_2\cdots n_k$ elementos. Cada índice recorre un \emph{eje}. Los escalares, vectores y matrices son tensores de orden 0, 1 y~2.
+\end{definicion}
+
+En física y en geometría diferencial, un tensor es una aplicación multilineal cuyas componentes cambian de una forma determinada al cambiar de base~\cite[apéndice~6]{strang-ila}. En aprendizaje automático el término designa simplemente un array multidimensional~\cite[§2.3.4]{d2l}, y es el sentido que se usa en este curso.
+
+\begin{definicion}[Reducción a lo largo de un eje]
+Sumar un tensor de forma $(n_1,\dots,n_k)$ a lo largo del eje $j$ produce un tensor de forma $(n_1,\dots,n_{j-1},n_{j+1},\dots,n_k)$:
+\[
+Y[i_1,\dots,\widehat{i_j},\dots,i_k]=\sum_{i_j=0}^{n_j-1}X[i_1,\dots,i_k],
+\]
+donde $\widehat{i_j}$ indica que el índice se suprime. Con la opción \texttt{keepdims=True}, el eje $j$ se conserva con tamaño~1.
+\end{definicion}
+
+La media, el máximo y la función $\LSE$ del módulo~1 se reducen del mismo modo. En un LLM, la softmax se aplica a lo largo del último eje de los logits y la normalización por capas calcula media y varianza a lo largo del eje de $\dmodel$.
+
+\section{Producto por lotes y notación de Einstein}
+
+\begin{definicion}[Producto matricial por lotes]
+Sean $X$ de forma $(\dots,m,p)$ e $Y$ de forma $(\dots,p,q)$, con los mismos ejes iniciales (o ejes compatibles por \emph{broadcasting}). El producto $X\,@\,Y$ tiene forma $(\dots,m,q)$ y se obtiene multiplicando como matrices los dos últimos ejes para cada valor de los índices iniciales, que actúan como índices de lote.
+\end{definicion}
+
+Multiplicar una matriz de $m\times p$ por otra de $p\times q$ requiere $mpq$ multiplicaciones. Por eso el orden en que se agrupa un producto de varias matrices afecta mucho al coste (\cref{eje:6-orden}).
+
+La notación de Einstein (\texttt{np.einsum}) describe estas operaciones nombrando los índices: los que aparecen en las entradas y no en la salida se suman. Por ejemplo, para $Q$ y $K$ de forma $(B,T,d)$, la expresión \texttt{einsum('bid,bjd->bij', Q, K)} calcula
+\[
+S[b,i,j]=\sum_{k}Q[b,i,k]\,K[b,j,k],
+\]
+es decir, $S=QK\T$ para cada elemento del lote, de forma $(B,T,T)$. Es el núcleo de la atención del módulo~13. Con \texttt{@}, el mismo cálculo exige trasponer solo los dos últimos ejes: \texttt{Q @ K.transpose(0, 2, 1)}.
+
+\section{Broadcasting}
+
+\begin{definicion}[Reglas de \emph{broadcasting}]\label{def:broadcasting}
+Dos tensores de formas $(a_1,\dots,a_p)$ y $(b_1,\dots,b_q)$ se combinan elemento a elemento del siguiente modo~\cite{numpy-bc}:
+\begin{enumerate}
+  \item se alinean las formas por la derecha y se completa la más corta con ejes de tamaño~1 por la izquierda;
+  \item en cada eje, los tamaños son \emph{compatibles} si son iguales o si uno de ellos vale~1; en otro caso la operación produce un error;
+  \item el resultado tiene, en cada eje, el mayor de los dos tamaños, y el tensor con tamaño~1 en ese eje se repite a lo largo de él.
+\end{enumerate}
+\end{definicion}
+
+\begin{table}[h]
+\centering\small
+\caption{Ejemplos de \emph{broadcasting} con activaciones de forma $(2,3,4)$.}\label{tab:broadcasting}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Operación & Formas & Resultado \\
+\midrule
+\texttt{x + b} & $(2,3,4)+(4,)$ & $(2,3,4)$: sesgo sumado a cada token \\
+\texttt{x - x.mean(-1, keepdims=True)} & $(2,3,4)-(2,3,1)$ & $(2,3,4)$: centra cada token \\
+\texttt{x @ W} & $(2,3,4)\,@\,(4,8)$ & $(2,3,8)$: misma capa en cada token \\
+\texttt{x + y} & $(2,3,4)+(3,)$ & error: $4\ne 3$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}
+El \emph{broadcasting} es la forma eficiente de escribir operaciones que en notación matemática llevan un vector de unos: si $X\in\R^{T\times d}$ y $b\in\R^{d}$, \texttt{X + b} calcula $X+\mathbf{1}b\T$ sin construir la matriz $\mathbf{1}b\T$. Su contrapartida es que algunas combinaciones de formas no producen error y dan un resultado no deseado; el \cref{eje:6-formas} muestra un caso típico. Comprobar las formas en cada paso es el hábito que más errores evita al programar un Transformer.
+\end{observacion}
+
+\section{Formas de un LLM}
+
+El \cref{tab:formas} recoge las formas de los tensores principales de un Transformer de tipo decodificador, con los valores de GPT-2 small~\cite{gpt2}: vocabulario de $V=50\,257$ tokens, $\dmodel=768$, 12 cabezas de atención y contexto de 1024 tokens. Se escribe $B$ para el tamaño del lote, $T$ para la longitud de la secuencia y $h$ para el número de cabezas. Las capas lineales se escriben aquí como en el código, $y=xW$ con $W$ de forma $(d_{\text{in}},d_{\text{out}})$.
+
+\begin{table}[h]
+\centering\small
+\caption{Formas de los tensores de un Transformer decodificador.}\label{tab:formas}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Objeto & Forma & GPT-2 small, $B=8$ \\
+\midrule
+Identificadores de tokens & $(B,T)$ & $(8,1024)$ \\
+Matriz de embeddings $E$ & $(V,\dmodel)$ & $(50\,257,768)$ \\
+Activaciones & $(B,T,\dmodel)$ & $(8,1024,768)$ \\
+Pesos de la primera capa del MLP & $(\dmodel,4\dmodel)$ & $(768,3072)$ \\
+Puntuaciones de atención & $(B,h,T,T)$ & $(8,12,1024,1024)$ \\
+Logits & $(B,T,V)$ & $(8,1024,50\,257)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},font=\small,
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=8mm,align=center}]
+  \node[caja] (ids) at (0,0) {ids\\$(B,T)$};
+  \node[caja] (x) at (3.4,0) {$x$\\$(B,T,d)$};
+  \node[caja] (y) at (9.0,1.9) {$(B,T,d')$};
+  \node[caja] (s) at (9.0,0) {puntuaciones\\$(B,T,T)$};
+  \node[caja] (l) at (9.0,-1.9) {logits\\$(B,T,V)$};
+  \draw[->] (ids) -- node[above] {$E[\text{ids}]$} (x);
+  \draw[->] (x.east) to[out=40,in=180] node[pos=0.55,above left] {$@\,W+b$} (y.west);
+  \draw[->] (x.east) -- node[above] {$QK\T/\sqrt{d}$} (s.west);
+  \draw[->] (x.east) to[out=-40,in=180] node[pos=0.55,below left] {$@\,E\T$} (l.west);
+\end{tikzpicture}
+\caption{Transformaciones de forma en un LLM: búsqueda en la tabla de embeddings, capa lineal, puntuaciones de atención y logits con pesos atados.}
+\label{fig:formas}
+\end{figure}
+
+\subsection*{La matriz de embeddings y el cuello de botella de la softmax}
+
+La matriz de embeddings $E\in\R^{V\times\dmodel}$ tiene muchas más filas que columnas. En GPT-2 small, $50\,257\cdot 768=38\,597\,376$ parámetros, cerca del 31\,\% de los $124$~millones del modelo; en Llama~2 7B~\cite{llama2}, $32\,000\cdot 4096=131\,072\,000$. GPT-2 \emph{ata} los pesos de entrada y salida: los logits del token siguiente se calculan como $z=hE\T$, donde $h\in\R^{\dmodel}$ es la última activación.
+
+\begin{proposicion}[Cuello de botella de la softmax]\label{prop:cuello}
+Sean $N$ contextos con activaciones finales $h_1,\dots,h_N\in\R^{d}$, apiladas en $H\in\R^{N\times d}$, y sea $W\in\R^{V\times d}$ la matriz de salida. La matriz de logits $Z=HW\T\in\R^{N\times V}$ tiene rango a lo sumo $d$, y la matriz de log-probabilidades $L$, con $L_{cj}=\ln\softmax(z_c)_j$, tiene rango a lo sumo $d+1$.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:rango-producto}, $\rango(Z)\le\rango(H)\le d$. Para cada contexto $c$, $\ln\softmax(z_c)_j=z_{cj}-\LSE(z_c)$, de modo que $L=Z-\ell\mathbf{1}\T$, con $\ell_c=\LSE(z_c)$ y $\mathbf{1}\in\R^{V}$. La matriz $\ell\mathbf{1}\T$ tiene rango a lo sumo~1 y, como $\Col(L)\subseteq\Col(Z)+\gen\{\ell\}$, $\rango(L)\le d+1$.
+\end{proof}
+
+Yang \emph{et al.}~\cite{yang-softmax} plantean el modelado del lenguaje como una factorización de la matriz de log-probabilidades verdaderas. Si esa matriz, sobre todos los contextos posibles, tiene rango muy superior a $d+1$, ningún modelo con salida softmax de dimensión $d$ puede reproducirla exactamente. Con $V=50\,257$ y $d=768$, la restricción es severa en principio; los autores proponen una mezcla de varias softmax para superarla.
+
+\begin{lecturas}
+\item Zhang \emph{et al.}~\cite{d2l}, §2.1.4 «Broadcasting», §2.3.4 «Tensors», §2.3.6 «Reduction» y §2.3.10 «Matrix--Matrix Multiplication».
+\item Documentación de NumPy~\cite{numpy-bc}, «Broadcasting», reglas generales.
+\item Strang~\cite{strang-ila}, apéndice~6 «Tensors».
+\item Yang \emph{et al.}~\cite{yang-softmax}, §2 (formulación como factorización de matrices).
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-formas}
+Indique la forma del resultado o si se produce un error: (a)~$(16,128,512)$ \texttt{@} $(512,2048)$; (b)~$(16,128,512)$ $+$ $(128,1)$; (c)~$(16,128,512)$ $+$ $(16,128)$. En el caso (b), ¿qué se ha sumado a cada rasgo? ¿Qué forma debería tener un sesgo por rasgo?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:6-d2l}
+(a) Sea \texttt{X} un tensor de forma $(2,3,4)$. ¿Qué forma tiene la suma a lo largo de los ejes 0, 1 y~2? ¿Y con \texttt{keepdims=True}? (b) Sea \texttt{A} de forma $(3,3)$. Explique qué calcula \texttt{A / A.sum(axis=1)} según la \cref{def:broadcasting} y por qué no normaliza las filas. Corrija la expresión para que cada fila sume~1. ¿Qué ocurriría si \texttt{A} fuera de forma $(2,3)$?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.3, ejercicios~6 y~8.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-embeddings}
+(a) Calcule el número de parámetros de la matriz de embeddings de GPT-2 small y qué fracción representa de sus $124\,439\,808$ parámetros. (b) Si GPT-2 no atara los pesos y tuviera una matriz de salida independiente de la misma forma, ¿cuántos parámetros tendría el modelo? (c) Llama~2 7B, con unos $6738$~millones de parámetros, no ata los pesos. Calcule el tamaño conjunto de sus matrices de entrada y de salida y su porcentaje del total.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-atencion}
+Con $B=8$, $h=12$ y $T=1024$, calcule el número de elementos del tensor de puntuaciones de atención de forma $(B,h,T,T)$ y la memoria que ocupa con 2~bytes por elemento. ¿Por qué factor se multiplica esa memoria si se duplica la longitud del contexto?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-orden}
+Sean $A\in\R^{2^{10}\times 2^{16}}$, $B\in\R^{2^{16}\times 2^{5}}$ y $C\in\R^{2^{5}\times 2^{14}}$. Calcule el número de multiplicaciones y el tamaño de la matriz intermedia al evaluar $(AB)C$ y $A(BC)$. ¿Qué orden conviene y por qué?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.3, ejercicio~10.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-cuello}
+(a) Demuestre que, si la capa de salida incluye un vector de sesgo $b\in\R^{V}$, de modo que $z_c=Wh_c+b$, la matriz de log-probabilidades de la \cref{prop:cuello} tiene rango a lo sumo $d+2$. (b) Sin sesgo, con $d=1$, $V=2$, $h_1=0$, $h_2=1$ y $W=(1,0)\T$, calcule la matriz de log-probabilidades y compruebe que tiene rango $2=d+1$, aunque los logits tengan rango~1. (c) Sean tres contextos cuyas distribuciones verdaderas sobre $V=3$ tokens son $(\tfrac12,\tfrac14,\tfrac14)$, $(\tfrac14,\tfrac12,\tfrac14)$ y $(\tfrac14,\tfrac14,\tfrac12)$. Demuestre que ningún modelo sin sesgo con $d=1$ puede representarlas exactamente.
+\end{ejercicio}

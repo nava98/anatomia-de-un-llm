@@ -1,0 +1,123 @@
+% =====================================================================
+\chapter{Dropout y recorte del gradiente}
+\label{tema:4}
+% =====================================================================
+
+Este tema reúne dos técnicas que actúan sobre el entrenamiento sin cambiar la arquitectura. El dropout introduce ruido multiplicativo en las activaciones para regularizar; el recorte del gradiente limita la longitud de cada paso para que un gradiente anómalo no destruya lo aprendido. Se demuestran las propiedades que justifican ambas: el dropout invertido es insesgado y su varianza se calcula en forma cerrada; el recorte por norma global conserva la dirección del gradiente y acota el paso. Se sigue~\cite[§7.12]{gbc}, \cite[§5.6]{d2l}, \cite[§9.6.1]{bishopdl} y las notas de CS231n~\cite{cs231n} para el dropout, con el artículo de Srivastava \emph{et al.}~\cite{srivastava}; y \cite[§8.2.4 y §10.11]{gbc} y el artículo de Pascanu, Mikolov y Bengio~\cite{pascanu} para el recorte.
+
+\section{Dropout}
+
+\begin{definicion}[Dropout invertido]\label{def:dropout}
+Sea $h\in\R^{d}$ un vector de activaciones y $p\in[0,1)$. Durante el entrenamiento, el \emph{dropout invertido} con probabilidad $p$ sustituye $h$ por
+\[
+\tilde h_i=\frac{m_i\,h_i}{1-p},\qquad m_i\sim\Bern(1-p)\ \text{independientes},\qquad i=1,\dots,d.
+\]
+En evaluación se usa $\tilde h=h$.
+\end{definicion}
+
+Cada unidad se apaga con probabilidad $p$ y las que sobreviven se amplifican por $1/(1-p)$. La variante original~\cite{srivastava} no amplificaba durante el entrenamiento y, en cambio, multiplicaba los pesos por $1-p$ en la evaluación; la variante invertida traslada esa corrección al entrenamiento y deja intacto el código de inferencia~\cite{cs231n}.
+
+\begin{proposicion}[Esperanza y varianza]\label{prop:dropout}
+Con la notación de la \cref{def:dropout}, para $h$ fijo,
+\[
+\E[\tilde h_i]=h_i,\qquad \Var(\tilde h_i)=\frac{p}{1-p}\,h_i^{2}.
+\]
+\end{proposicion}
+
+\begin{proof}
+$\E[m_i]=1-p$ y, como $m_i^{2}=m_i$, $\E[m_i^{2}]=1-p$. Por linealidad, $\E[\tilde h_i]=h_i(1-p)/(1-p)=h_i$. Además $\E[\tilde h_i^{2}]=h_i^{2}(1-p)/(1-p)^{2}=h_i^{2}/(1-p)$, y $\Var(\tilde h_i)=h_i^{2}/(1-p)-h_i^{2}=h_i^{2}\,p/(1-p)$.
+\end{proof}
+
+\begin{corolario}[Dropout antes de una capa lineal]\label{cor:dropout-lineal}
+Sea $y=w\T\tilde h$ con $w\in\R^{d}$ fijo. Entonces $\E[y]=w\T h$ y $\Var(y)=\frac{p}{1-p}\sum_{i=1}^{d}w_i^{2}h_i^{2}$.
+\end{corolario}
+
+\begin{proof}
+La esperanza se sigue de la linealidad y de la \cref{prop:dropout}. Las $\tilde h_i$ son independientes, luego $\Var(y)=\sum_iw_i^{2}\Var(\tilde h_i)$.
+\end{proof}
+
+El corolario muestra que, para una capa lineal, evaluar sin máscara da exactamente la salida media sobre todas las máscaras. Goodfellow \emph{et al.}~\cite[§7.12]{gbc} interpretan el dropout como el entrenamiento simultáneo de los $2^{d}$ subredes que se obtienen al eliminar unidades, con parámetros compartidos; la regla de evaluación sin máscara, llamada \emph{regla de escalado de pesos}, es exacta para modelos sin no linealidades ocultas, como el anterior, y solo aproximada en redes profundas no lineales.
+
+\begin{ejemplo}\label{ej:dropout}
+Con $p=0{,}3$, las supervivientes se multiplican por $1/0{,}7=1{,}429$. Para $h=(5,5,5,5)$ y la máscara $m=(1,0,1,1)$, $\tilde h=(7{,}143;\,0;\,7{,}143;\,7{,}143)$. Cada componente tiene esperanza~5 y, por la \cref{prop:dropout}, varianza $\frac{0{,}3}{0{,}7}\cdot 25=10{,}71$.
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+El dropout reduce el sobreajuste, que es pequeño cuando cada ejemplo se ve una sola vez. En el preentrenamiento de modelos de lenguaje con billones de tokens se usa dropout bajo o nulo; en el ajuste fino con pocos datos (módulo~20) vuelve a ser útil. En evaluación hay que desactivarlo: en PyTorch, con \texttt{model.eval()}.
+\end{observacion}
+
+\section{Recorte del gradiente por norma global}
+
+\begin{definicion}[Recorte por norma global]\label{def:recorte}
+Sean $g^{(1)},\dots,g^{(K)}$ los gradientes de los $K$ tensores de parámetros de un modelo y sea $g\in\R^{n}$ su concatenación. Dado un umbral $c>0$, el \emph{recorte por norma global} sustituye cada $g^{(k)}$ por
+\[
+\hat g^{(k)}=\alpha\,g^{(k)},\qquad \alpha=\min\Bigl(1,\ \frac{c}{\norm{g}_2}\Bigr),
+\]
+con el convenio $\alpha=1$ si $g=0$.
+\end{definicion}
+
+\begin{proposicion}[Propiedades del recorte]\label{prop:recorte}
+Sea $\hat g=\alpha g$ el gradiente recortado.
+\begin{enumerate}
+  \item $\hat g$ tiene la dirección y el sentido de $g$, y $\norm{\hat g}_2=\min(\norm{g}_2,\,c)$.
+  \item Un paso de descenso $\theta\leftarrow\theta-\eta\hat g$ cumple $\norm{\Delta\theta}_2\le\eta c$.
+  \item Si $\hat g\ne 0$, $\hat g$ es una dirección de descenso: $\langle\nabla\Loss,-\hat g\rangle<0$ cuando $\hat g$ se calcula con el gradiente exacto.
+  \item Recortar cada tensor por separado con el mismo umbral conserva, en general, la dirección de cada $g^{(k)}$ pero no la de $g$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\alpha>0$, de modo que $\hat g$ es un múltiplo positivo de $g$. Si $\norm{g}\le c$, $\alpha=1$ y $\norm{\hat g}=\norm{g}$; si $\norm{g}>c$, $\norm{\hat g}=c\norm{g}/\norm{g}=c$. (ii) $\norm{\Delta\theta}=\eta\norm{\hat g}\le\eta c$ por (i). (iii) $\langle g,-\alpha g\rangle=-\alpha\norm{g}^{2}<0$. (iv) Con factores distintos $\alpha_k=\min(1,c/\norm{g^{(k)}})$, el vector concatenado $(\alpha_1g^{(1)},\dots,\alpha_Kg^{(K)})$ es proporcional a $g$ solo si todos los $\alpha_k$ con $g^{(k)}\ne 0$ coinciden. El \cref{eje:4-global} da un contraejemplo.
+\end{proof}
+
+\begin{ejemplo}\label{ej:recorte}
+Sea $g=(6,8)$ y $c=5$. Como $\norm{g}=10$, el factor es $\alpha=1/2$ y $\hat g=(3,4)$, con norma~5 y la misma dirección $(0{,}6;\,0{,}8)$. Con $c=20$, $\alpha=1$ y el gradiente no cambia.
+\end{ejemplo}
+
+El recorte lo propusieron Pascanu, Mikolov y Bengio~\cite[§3.2]{pascanu} para redes recurrentes, donde el \cref{cor:pascanu} permite gradientes que explotan; en un acantilado de la superficie de pérdida~\cite[§8.2.4]{gbc}, el gradiente apunta en una dirección razonable pero tiene una longitud desproporcionada, y el recorte conserva lo primero y corrige lo segundo. En PyTorch se aplica con \texttt{torch.nn.utils.clip\_grad\_norm\_} entre \texttt{backward()} y el paso del optimizador.
+
+\begin{observacion}[Conexión con los LLM]
+El recorte por norma global es parte de la receta de preentrenamiento de los modelos abiertos; LLaMA, por ejemplo, usa umbral $c=1$~\cite{llama}. La norma del gradiente antes de recortar, que \texttt{clip\_grad\_norm\_} devuelve, es además una magnitud de diagnóstico que conviene registrar en cada paso (\cref{tema:6}). Con Adam (módulo~7), el gradiente recortado es el que entra en los momentos $m_t$ y $v_t$.
+\end{observacion}
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §7.12 «Dropout», §8.2.4 «Cliffs and Exploding Gradients» y §10.11 «Optimization for Long-Term Dependencies».
+\item Zhang \emph{et al.}~\cite{d2l}, §5.6 «Dropout».
+\item Bishop y Bishop~\cite{bishopdl}, §9.6 «Model Averaging» y §9.6.1 «Dropout».
+\item Notas de CS231n~\cite{cs231n}, «Neural Networks Part 2», apartado «Regularization» (dropout invertido).
+\item Srivastava \emph{et al.}~\cite{srivastava}; Pascanu, Mikolov y Bengio~\cite{pascanu}, §3.2 «Scaling down the gradients».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-eval}
+Al evaluar una red, un estudiante obtiene resultados distintos en cada ejecución con la misma entrada. ¿Qué ha olvidado? ¿Por qué la media de las activaciones no delata el error?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:4-constante}
+Durante el entrenamiento se aplica $h_{\mathrm{drop}}=\gamma\,(d\odot h)$, donde cada $d_i$ vale~0 con probabilidad $p$ y~1 con probabilidad $1-p$. (a) Determine $\gamma$ para que $\E[h_{\mathrm{drop},i}]=h_i$. (b) Con $p=0{,}2$, $h=(1,3,0,2)$ y $d=(1,0,1,1)$, calcule $h_{\mathrm{drop}}$. (c) ¿Por qué se aplica dropout al entrenar y no al evaluar?
+\fuente{adaptado de Stanford CS224N~\cite{cs224n}, invierno de 2021, práctica~3, pregunta~1(b), apartados (i) y (ii).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-mascara}
+Aplique dropout invertido con $p=0{,}3$ a $h=(5,5,5,5)$ con la máscara $m=(1,0,1,1)$. Compruebe que $\E[\tilde h_i]=h_i$ y calcule la media de la salida para esta máscara concreta.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-recorte}
+El gradiente es $g=(6,8)$. Aplique el recorte por norma global con $c=5$ y con $c=20$, y compruebe la \cref{prop:recorte}(i).
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-global}
+Un modelo tiene dos tensores de parámetros con gradientes $g^{(1)}=(1,2)$ y $g^{(2)}=(2)$. (a) Recorte con norma global máxima $c=1$. (b) Recorte cada tensor por separado con $c=1$ y compruebe que el vector resultante no es proporcional a $(1,2,2)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-epsilon}
+Una implementación del recorte multiplica todos los gradientes por $M/(\norm{g}_2+\epsilon)$ cuando $\norm{g}_2\ge M$, con $\epsilon=10^{-6}$. Con $g^{(1)}=(2,-1)$, $g^{(2)}=(2)$ y $M=1$: (a) calcule la norma global, el factor y los gradientes recortados; (b) calcule la norma del resultado y explique por qué no es exactamente $M$.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, primavera de 2026, práctica~1 (\emph{basics}), versión~26.0.3, §4.5, problema \texttt{gradient\_clipping}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-varianza}
+(a) Demuestre la \cref{prop:dropout} y el \cref{cor:dropout-lineal}. (b) Para $w=(1,2,-1)$, $h=(2,1,2)$ y $p=0{,}5$, calcule $\E[y]$ y $\Var(y)$ con el corolario y compruébelo enumerando las ocho máscaras posibles. (c) Explique cómo cambia la varianza de las activaciones de una capa oculta cuando se activa el dropout y por qué crece sin límite cuando $p\to 1$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.6, ejercicio~3 (varianza de las activaciones con y sin dropout).}
+\end{ejercicio}

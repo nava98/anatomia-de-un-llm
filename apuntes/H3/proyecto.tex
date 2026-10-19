@@ -1,0 +1,61 @@
+% =====================================================================
+\chapter{Proyecto de fase}
+\label{chap:proyecto}
+% =====================================================================
+
+\section*{Mini-GPT en español con informe técnico}
+
+\paragraph{Objetivo.} Entrenar desde cero, en PyTorch y en CPU, un Transformer decoder-only de caracteres, y redactar un informe técnico con las curvas de pérdida, muestras generadas e interpretación de mapas de atención. El proyecto integra los cuatro módulos de la fase: el vocabulario de caracteres (M12), la atención causal multi-cabeza (M13), el bloque pre-norm (M14) y el bucle de entrenamiento y generación (M15).
+
+\paragraph{Datos.} Se usará un corpus en español escrito por el estudiante o generado con plantillas (frases que combinan al azar sujetos, verbos, objetos y lugares). No deben usarse textos literarios existentes, ni siquiera de dominio público. Bastan entre $300\,000$ y $10^{6}$ caracteres.
+
+\section*{Entregables}
+\begin{enumerate}[label=\arabic*.]
+  \item \texttt{H3-minigpt.ipynb}: código completo, que se ejecute en CPU en menos de 10~minutos.
+  \item \texttt{H3-informe.md}, de 2 a 4 páginas, con:
+  \begin{itemize}[label=\textendash]
+    \item la configuración ($d$, $L$, $h$, $T$, $V$, $B$, número de pasos y tasa de aprendizaje) y el número de parámetros, contado a mano y con código;
+    \item las curvas de pérdida de entrenamiento y de validación en la misma gráfica, con la pérdida de un modelo de bigramas como línea de referencia y el valor $\ln V$ marcado en el paso~0;
+    \item tres muestras de 300~caracteres con temperaturas $0{,}5$, $1{,}0$ y $1{,}5$, comentadas;
+    \item mapas de atención de al menos dos cabezas en dos capas sobre una frase del corpus, con su interpretación (qué cabeza atiende al carácter anterior, al inicio de palabra o a sí misma);
+    \item un experimento de ablación: eliminar las posiciones, usar una cabeza en lugar de cuatro o pasar de pre-norm a post-norm, comparando las pérdidas.
+  \end{itemize}
+\end{enumerate}
+
+\section*{Pasos sugeridos}
+\begin{enumerate}[label=\arabic*.]
+  \item Generar el corpus y dividirlo en un 90\,\% para entrenamiento y un 10\,\% para validación, con un corte contiguo, no aleatorio.
+  \item Calcular la pérdida de validación de un modelo de bigramas con suavizado de Laplace (módulo~1): es el listón que hay que superar.
+  \item Implementar el bloque pre-norm con atención causal multi-cabeza y MLP. Inicializar los embeddings con desviación típica $0{,}02$: con $\mathcal N(0,1)$ y pesos atados, la pérdida inicial queda muy por encima de $\ln V$ (M15, §1.4).
+  \item Comprobar la causalidad: al cambiar el último carácter, los logits de las posiciones anteriores no deben cambiar (M13, §3.2).
+  \item Entrenar con AdamW, calentamiento lineal y decaimiento coseno, y recorte del gradiente a norma~$1{,}0$ (M15, §3.2 a §3.4). Evaluar cada 100~pasos y conservar el punto de control con menor pérdida de validación (M15, §4.2).
+  \item Generar muestras y extraer las matrices $A$ de cada capa, devueltas por \texttt{forward}. Dibujarlas con \texttt{imshow}, con los caracteres en los ejes.
+\end{enumerate}
+
+\paragraph{Orientación.} En una prueba con un corpus de plantillas de $717\,000$ caracteres ($V=33$), un modelo con $d=64$, $L=2$, $h=4$ y $T=32$ ($103\,104$ parámetros) redujo la pérdida de validación de $3{,}50$ a $0{,}36$ nats en 800~pasos, frente a $1{,}75$ del modelo de bigramas, y tardó menos de 30~s en CPU. Las muestras eran ya frases gramaticales del estilo de las plantillas.
+
+\section*{Criterios de evaluación}
+El proyecto se califica sobre 100 con los pesos del \cref{tab:rubrica}. Se considera superado con 70 o más.
+
+\begin{table}[ht]
+\centering\footnotesize
+\renewcommand{\arraystretch}{1.15}
+\caption{Rúbrica del proyecto de fase.}\label{tab:rubrica}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.45cm}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Criterio & Peso & Excelente & Suficiente & Insuficiente \\
+\midrule
+Implementación del modelo & 25\,\% & Bloque pre-norm correcto, causalidad comprobada con una prueba, recuento a mano igual al del código & Funciona y entrena; recuento con pequeñas discrepancias explicadas & Errores en la máscara o en las formas; no entrena \\
+\addlinespace
+Entrenamiento y curvas & 20\,\% & Curvas de entrenamiento y validación con bigramas y $\ln V$ como referencias; validación $\le 75\,\%$ de la de bigramas; mejor punto de control justificado & Curvas correctas y validación por debajo de bigramas & Solo pérdida de entrenamiento, o no supera a bigramas \\
+\addlinespace
+Muestras generadas & 15\,\% & Tres temperaturas comentadas con criterio (repetición frente a incoherencia) & Muestras presentadas con un comentario breve & Sin muestras o sin comentar \\
+\addlinespace
+Mapas de atención & 20\,\% & Mapas legibles con ejes etiquetados, triángulo inferior visible, interpretación de cada cabeza con ejemplos & Mapas correctos con interpretación genérica & Mapas sin máscara visible o sin interpretar \\
+\addlinespace
+Ablación & 10\,\% & Experimento controlado (misma semilla y número de pasos) con conclusión cuantitativa & Experimento realizado con comparación cualitativa & No hay ablación \\
+\addlinespace
+Informe & 10\,\% & Claro y reproducible, con cifras en formato español y relación con los LLM reales & Completo pero desordenado & Faltan secciones \\
+\bottomrule
+\end{tabularx}
+\end{table}

@@ -1,0 +1,178 @@
+% =====================================================================
+\chapter{Teoremas límite y estimación por Monte Carlo}
+\label{tema:5}
+% =====================================================================
+
+Ni la pérdida de un LLM ni su exactitud en un banco de pruebas pueden calcularse exactamente: son esperanzas respecto de una distribución desconocida y se estiman con promedios. Este tema demuestra que esos promedios convergen (ley de los grandes números), cuantifica su error (desigualdad de Chebyshev y teorema central del límite) y lo aplica al método de Monte Carlo, a los intervalos de confianza y a los minilotes del entrenamiento. Se sigue el capítulo~5 de~\cite{bt}, las lecciones~19 y~20 de~\cite{mit6041}, la clase~6b de~\cite{mit1805} y el capítulo~10 de~\cite{bh}; la §2.6 de~\cite{d2l} trata el mismo material en el contexto del aprendizaje profundo.
+
+\section{Desigualdades de Markov y Chebyshev}
+
+\begin{teorema}[Desigualdad de Markov]\label{teo:markov}
+Si $Y\ge 0$ y $a>0$, entonces $\PP(Y\ge a)\le\E[Y]/a$.
+\end{teorema}
+
+\begin{proof}
+Sea $\mathbf{1}_{\{Y\ge a\}}$ la indicadora del suceso. Para todo resultado, $a\,\mathbf{1}_{\{Y\ge a\}}\le Y$: si $Y\ge a$, el miembro izquierdo vale $a\le Y$, y si no, vale $0\le Y$. Tomando esperanzas, $a\,\PP(Y\ge a)\le\E[Y]$.
+\end{proof}
+
+\begin{teorema}[Desigualdad de Chebyshev]\label{teo:chebyshev}
+Si $X$ tiene media $\mu$ y varianza $\sigma^{2}$, para todo $\varepsilon>0$,
+\[
+\PP\bigl(\abs{X-\mu}\ge\varepsilon\bigr)\le\frac{\sigma^{2}}{\varepsilon^{2}}.
+\]
+\end{teorema}
+
+\begin{proof}
+El suceso $\{\abs{X-\mu}\ge\varepsilon\}$ coincide con $\{(X-\mu)^{2}\ge\varepsilon^{2}\}$. Se aplica el \cref{teo:markov} a $Y=(X-\mu)^{2}\ge 0$ con $a=\varepsilon^{2}$, y se usa que $\E[Y]=\sigma^{2}$.
+\end{proof}
+
+Las dos desigualdades valen para cualquier distribución con los momentos indicados; a cambio, suelen ser pesimistas~\cite[§5.1]{bt}.
+
+\section{Ley débil de los grandes números}
+
+\begin{definicion}[Convergencia en probabilidad]
+Una sucesión $Y_1,Y_2,\dots$ \emph{converge en probabilidad} a la constante $c$ si, para todo $\varepsilon>0$, $\lim_{n\to\infty}\PP\bigl(\abs{Y_n-c}\ge\varepsilon\bigr)=0$.
+\end{definicion}
+
+\begin{teorema}[Ley débil de los grandes números]\label{teo:lgn}
+Sean $X_1,X_2,\dots$ \iid\ con media $\mu$ y varianza finita $\sigma^{2}$. Entonces, para todo $\varepsilon>0$,
+\[
+\PP\bigl(\abs{\Xbar_n-\mu}\ge\varepsilon\bigr)\le\frac{\sigma^{2}}{n\varepsilon^{2}}\xrightarrow[n\to\infty]{}0,
+\]
+es decir, $\Xbar_n$ converge en probabilidad a $\mu$.
+\end{teorema}
+
+\begin{proof}
+Por el \cref{cor:media}, $\E[\Xbar_n]=\mu$ y $\Var(\Xbar_n)=\sigma^{2}/n$. Basta aplicar el \cref{teo:chebyshev} a $\Xbar_n$.
+\end{proof}
+
+La ley fuerte de los grandes números afirma que, de hecho, $\Xbar_n\to\mu$ con probabilidad~1; su demostración excede este módulo~\cite[§5.5]{bt}.
+
+\section{El método de Monte Carlo}
+
+\begin{definicion}[Estimador de Monte Carlo]\label{def:montecarlo}
+Para aproximar $I=\E[g(X)]$, se generan $X_1,\dots,X_n$ \iid\ con la distribución de $X$ y se toma $\hat I_n=\frac1n\sum_{i=1}^{n}g(X_i)$. Por el \cref{cor:media}, $\hat I_n$ es insesgado y su \emph{error típico} es $\sigma_g/\sqrt n$, donde $\sigma_g^{2}=\Var(g(X))$.
+\end{definicion}
+
+\begin{ejemplo}[Estimación de $\pi$]\label{ej:pi}
+Sean $(U_i,V_i)$ puntos independientes uniformes en $[0,1]^{2}$ y $B_i=\mathbf{1}\{U_i^{2}+V_i^{2}\le 1\}$, que es una $\Ber(\pi/4)$ porque el cuarto de círculo tiene área $\pi/4$. El estimador $\hat\pi_n=4\,\overline{B}_n$ es insesgado, con error típico
+\[
+\sigma_{\hat\pi}=4\sqrt{\frac{(\pi/4)(1-\pi/4)}{n}}\approx\frac{1{,}642}{\sqrt n}.
+\]
+Con $n=10^{4}$ puntos, $\sigma_{\hat\pi}\approx 0{,}0164$. Para bajar a $0{,}001$ se necesitan unos $2{,}7\cdot 10^{6}$ puntos: ganar una cifra decimal exige multiplicar $n$ por~100.
+\end{ejemplo}
+
+La ley $1/\sqrt n$ no depende de la dimensión del problema, lo que hace a Monte Carlo competitivo para integrales en muchas dimensiones, pero sí la hace lenta: el error se reduce a la mitad solo cuadruplicando el número de muestras.
+
+\begin{observacion}[Conexión con los LLM]
+Medir la pérdida de validación de un modelo es un cálculo de Monte Carlo: se promedia $-\ln p_\theta(x_t\mid x_{1:t-1})$ sobre $n$ tokens. Si la pérdida por token tiene desviación típica de $2$ nats y los tokens fueran independientes, con $n=10^{4}$ el error típico sería $2/100=0{,}02$ nats. Los tokens de un mismo documento están correlacionados, por lo que el error real suele ser mayor.
+\end{observacion}
+
+\section{Teorema central del límite}
+
+La ley de los grandes números dice que $\Xbar_n-\mu\to 0$; el teorema central del límite describe la forma de la distribución de ese error cuando se amplía por el factor $\sqrt n$.
+
+\begin{teorema}[Teorema central del límite]\label{teo:tcl}
+Sean $X_1,X_2,\dots$ \iid\ con media $\mu$ y varianza $\sigma^{2}\in(0,\infty)$, y sea $S_n=X_1+\dots+X_n$. Entonces, para todo $z\in\R$,
+\[
+\lim_{n\to\infty}\PP\Bigl(\frac{S_n-n\mu}{\sigma\sqrt n}\le z\Bigr)=\Phi(z).
+\]
+\end{teorema}
+
+La demostración habitual usa funciones generatrices de momentos o funciones características~\cite[§5.4]{bt}. Lo notable es que no se exige que los $X_i$ sean normales: la normalidad es la conclusión, no la hipótesis. Así se explica la ubicuidad de la normal: el ruido térmico, los errores de medida o la suma de muchos pesos pequeños son sumas de muchos efectos independientes.
+
+\begin{corolario}[Aproximación normal de la media]\label{cor:aprox}
+Para $n$ grande, $\Xbar_n$ es aproximadamente $\N(\mu,\sigma^{2}/n)$ y, en particular,
+\[
+\PP\Bigl(\abs{\Xbar_n-\mu}\ge z\,\frac{\sigma}{\sqrt n}\Bigr)\approx 2\bigl(1-\Phi(z)\bigr).
+\]
+\end{corolario}
+
+\begin{proof}
+$\Xbar_n-\mu=\frac{\sigma}{\sqrt n}\cdot\frac{S_n-n\mu}{\sigma\sqrt n}$; se aplica el \cref{teo:tcl} y la simetría de $\Phi$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\caption{Tres herramientas aplicadas al \cref{ej:pi} con $n=10^{4}$ y un error de $0{,}05$, que equivale a $3{,}04$ errores típicos.}\label{tab:herramientas}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Herramienta & Afirmación & Carácter \\
+\midrule
+Ley de los grandes números & $\hat\pi_n\to\pi$ & cualitativa \\
+Chebyshev & $\PP(\abs{\hat\pi_n-\pi}\ge 0{,}05)\le 0{,}108$ & cota rigurosa, pesimista \\
+Teorema central del límite & $\PP(\abs{\hat\pi_n-\pi}\ge 0{,}05)\approx 0{,}0023$ & aproximación realista \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Intervalos de confianza y comparación de modelos}
+
+\begin{definicion}[Intervalo de confianza aproximado]
+Sea $\hat p$ la proporción de aciertos de un modelo en $n$ preguntas independientes. El intervalo
+\[
+\hat p\pm 1{,}96\sqrt{\frac{\hat p(1-\hat p)}{n}}
+\]
+es un \emph{intervalo de confianza aproximado del $95\,\%$} para la exactitud verdadera $p$: por el \cref{cor:aprox}, contiene a $p$ con probabilidad aproximada $0{,}95$~\cite[clase~22]{mit1805}.
+\end{definicion}
+
+\begin{ejemplo}[Banco de pruebas]\label{ej:benchmark}
+Un modelo acierta 820 de 1000 preguntas. El error típico es $\sqrt{0{,}82\cdot 0{,}18/1000}\approx 0{,}0122$ y el intervalo del $95\,\%$ es $0{,}82\pm 1{,}96\cdot 0{,}0122=[0{,}796;\ 0{,}844]$. Una diferencia de un punto porcentual entre dos modelos en este banco de pruebas está muy por debajo de la incertidumbre de la medida.
+\end{ejemplo}
+
+\section{Minilotes y gradiente estocástico}
+
+La función de pérdida de entrenamiento es una esperanza, $L(\theta)=\E[\lambda(\theta;X)]$, donde $\lambda(\theta;x)$ es la pérdida en el ejemplo $x$ y $X$ sigue la distribución de los datos. Un \emph{minilote} es una muestra $X_1,\dots,X_B$ extraída al azar, y la pérdida del minilote es
+\[
+\hat L_B(\theta)=\frac1B\sum_{i=1}^{B}\lambda(\theta;X_i).
+\]
+
+\begin{proposicion}\label{prop:minilote}
+Si los ejemplos del minilote son \iid\ y $\sigma^{2}=\Var(\lambda(\theta;X))$, entonces $\E[\hat L_B(\theta)]=L(\theta)$ y la desviación típica de $\hat L_B(\theta)$ es $\sigma/\sqrt B$. Si la derivada y la esperanza pueden intercambiarse, $\nabla_\theta\hat L_B$ es también un estimador insesgado de $\nabla_\theta L$, cuya covarianza decrece como $1/B$.
+\end{proposicion}
+
+\begin{proof}
+Es el \cref{cor:media} aplicado a $\lambda(\theta;X_i)$, y componente a componente a los gradientes $\nabla_\theta\lambda(\theta;X_i)$, que también son \iid
+\end{proof}
+
+\begin{ejemplo}
+Con pérdidas por ejemplo de desviación típica $\sigma=2$, un minilote de $B=256$ tiene error típico $2/16=0{,}125$, y uno de $B=1024$, $2/32=0{,}0625$. Cuadruplicar el lote divide el ruido por dos y multiplica por cuatro el coste de cada paso.
+\end{ejemplo}
+
+El descenso de gradiente estocástico (módulo~7) avanza con estos gradientes ruidosos. Por el \cref{teo:tcl}, el ruido es aproximadamente normal, y el tamaño de lote es un compromiso entre la calidad de cada paso y su coste.
+
+\begin{lecturas}
+\item Bertsekas y Tsitsiklis~\cite{bt}, §5.1 «Markov and Chebyshev Inequalities», §5.2 «The Weak Law of Large Numbers», §5.3 «Convergence in Probability» y §5.4 «The Central Limit Theorem».
+\item MIT 6.041SC~\cite{mit6041}, unidad~IV, lecciones~19 «Weak Law of Large Numbers» y~20 «Central Limit Theorem».
+\item MIT 18.05~\cite{mit1805}, clase~6b «Central Limit Theorem and the Law of Large Numbers» y clase~22 «Confidence intervals based on normal data».
+\item Blitzstein y Hwang~\cite{bh}, cap.~10 «Inequalities and Limit Theorems».
+\item Zhang \emph{et al.}~\cite{d2l}, §2.6 «Probability and Statistics».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-lote}
+Si se multiplica por~4 el tamaño del minilote, ¿cómo cambia el error típico de la pérdida estimada? ¿Y el coste de cada paso?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:5-vf}
+Justifique si son verdaderas o falsas: (a) $\Var(X+Y)=\Var(X)+\Var(Y)$ para cualesquiera $X$, $Y$. (b) El EMV de la varianza de una normal es insesgado. (c) El teorema central del límite exige que los datos sean normales. (d) Con temperatura $T\to 0$, el muestreo del token siguiente se vuelve determinista.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-pi}
+Se estima $\pi$ con el método del \cref{ej:pi} y $n=10^{4}$ puntos. (a) Calcule el error típico. (b) ¿Cuántos puntos hacen falta para un error típico de $0{,}001$? (c) Se obtiene $\hat\pi=3{,}19$. ¿Es un resultado sospechoso?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-chebyshev}
+Se estima la probabilidad de cara de una moneda equilibrada con la frecuencia observada en $n=100$ lanzamientos. (a) Calcule la varianza y el error típico del estimador e indique cómo escalan con $n$. (b) Acote con la desigualdad de Chebyshev la probabilidad de equivocarse en $0{,}1$ o más. (c) Compare con la aproximación del teorema central del límite.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.6, ejercicio~3 (los datos numéricos son nuevos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-comparar}
+Dos modelos obtienen un $82\,\%$ y un $80\,\%$ de aciertos en dos bancos de pruebas distintos e independientes de 500 preguntas cada uno. (a) ¿Es significativa la diferencia al $95\,\%$? (b) ¿Cuántas preguntas por modelo harían falta para que una diferencia de dos puntos equivaliese exactamente a $1{,}96$ errores típicos?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-n}
+(a) Demuestre que la varianza de una variable de Bernoulli es como máximo $1/4$. (b) Use el \cref{teo:lgn} para hallar un tamaño $n$ que garantice, sea cual sea $p$, que la frecuencia observada difiere de $p$ en menos de $0{,}1$ con probabilidad al menos $0{,}95$. (c) Compare con el tamaño que sugiere el teorema central del límite y explique la diferencia.
+\end{ejercicio}

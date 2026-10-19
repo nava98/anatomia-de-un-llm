@@ -1,0 +1,129 @@
+% =====================================================================
+\chapter{La subcapa MLP: GELU y SwiGLU}
+\label{tema:3}
+% =====================================================================
+
+La segunda subcapa de cada bloque es un perceptrón de una capa oculta que se aplica por separado a cada token. Contiene unos dos tercios de los parámetros del modelo. Este tema define el MLP clásico del Transformer original y de GPT-2, las unidades lineales con puerta y la variante SwiGLU de LLaMA, demuestra las propiedades de la activación SiLU y justifica la elección $\dff\approx\frac83 d$. Se sigue~\cite[§3.3]{vaswani}, \cite[§11.7.2]{d2l}, \cite[§7.2.1]{jm3}, el artículo de Shazeer~\cite{shazeer} y la §3.4.2 de la práctica de CS336~\cite{cs336}.
+
+\section{El MLP posición a posición}
+
+\begin{definicion}[MLP posición a posición]\label{def:ffn}
+Sea $\phi:\R\to\R$ una función de activación aplicada componente a componente. El \emph{MLP posición a posición} con dimensión intermedia $\dff$ es
+\[
+\FFN(x)=\phi\bigl(xW_1+b_1\bigr)W_2+b_2,\qquad W_1\in\R^{d\times\dff},\;W_2\in\R^{\dff\times d},
+\]
+aplicado a cada fila $x\in\R^{d}$ de la matriz de entrada con los mismos parámetros.
+\end{definicion}
+
+El Transformer original usa $\phi=\ReLU$, $d=512$ y $\dff=2048=4d$~\cite[§3.3]{vaswani}; GPT-2 usa la misma proporción con la activación GELU. Que el MLP actúe fila a fila tiene una consecuencia estructural.
+
+\begin{lema}[Las operaciones fila a fila conmutan con las permutaciones]\label{lem:filas}
+Sea $f:\R^{d}\to\R^{m}$ y sea $\hat f:\R^{n\times d}\to\R^{n\times m}$ la aplicación que actúa como $f$ sobre cada fila. Para toda matriz de permutación $P\in\R^{n\times n}$, $\hat f(PX)=P\,\hat f(X)$.
+\end{lema}
+
+\begin{proof}
+La fila $t$ de $PX$ es la fila $\pi(t)$ de $X$, para cierta permutación $\pi$. La fila $t$ de $\hat f(PX)$ es, por tanto, $f(x_{\pi(t)})$, que es la fila $\pi(t)$ de $\hat f(X)$, es decir, la fila $t$ de $P\hat f(X)$.
+\end{proof}
+
+El \cref{lem:filas} se aplica al MLP, a las normalizaciones y a las proyecciones lineales. Por eso la atención es la única subcapa sensible al orden de los tokens, y por eso hace falta codificar la posición (\cref{tema:4}).
+
+\section{Activaciones suaves: GELU y SiLU}
+
+\begin{definicion}[GELU y SiLU]\label{def:gelu-silu}
+Sean $\Phi$ la función de distribución de la normal estándar y $\sigma(x)=1/(1+e^{-x})$ la sigmoide. Se definen
+\[
+\GELU(x)=x\,\Phi(x),\qquad \SiLU(x)=x\,\sigma(x).
+\]
+La función SiLU también se llama \emph{Swish} con parámetro~$1$~\cite{shazeer}.
+\end{definicion}
+
+Ambas multiplican $x$ por un número entre $0$ y $1$ que crece con $x$: son versiones suaves de $\ReLU(x)=x\cdot\mathbf{1}[x>0]$, en las que el interruptor $\mathbf{1}[x>0]$ se sustituye por una función de distribución~\cite{gelu}.
+
+\begin{proposicion}[Propiedades de SiLU]\label{prop:silu}
+La función SiLU cumple:
+\begin{enumerate}
+  \item $\SiLU(x)-\ReLU(x)\to 0$ cuando $x\to\pm\infty$;
+  \item $\SiLU'(x)=\sigma(x)\bigl(1+x(1-\sigma(x))\bigr)$; en particular, $\SiLU(0)=0$ y $\SiLU'(0)=1/2$;
+  \item tiene un único punto crítico $x^{*}<0$, que es un mínimo global, con $\SiLU(x^{*})=x^{*}+1$. Numéricamente, $x^{*}\approx-1{,}2785$ y $\SiLU(x^{*})\approx-0{,}2785$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Para $x>0$, $\SiLU(x)-\ReLU(x)=x(\sigma(x)-1)=-x/(1+e^{x})\to 0$. Para $x<0$, $\SiLU(x)-0=x/(1+e^{-x})=xe^{x}/(1+e^{x})\to 0$, porque $xe^{x}\to 0$ cuando $x\to-\infty$.
+
+(ii) Con $\sigma'=\sigma(1-\sigma)$ y la regla del producto, $\SiLU'(x)=\sigma(x)+x\sigma(x)(1-\sigma(x))$. En $x=0$, $\sigma(0)=1/2$.
+
+(iii) Como $\sigma(x)>0$, los puntos críticos son las raíces de $g(x)=1+x(1-\sigma(x))$. Para $x\ge 0$, $g(x)\ge 1>0$. En $(-\infty,0)$,
+\[
+g'(x)=(1-\sigma)-x\sigma(1-\sigma)=(1-\sigma(x))\bigl(1-x\sigma(x)\bigr)>0,
+\]
+luego $g$ es estrictamente creciente; además $g(0)=1$ y $g(x)\to-\infty$ cuando $x\to-\infty$, porque $1-\sigma(x)\to 1$. Por el teorema de Bolzano y la monotonía, $g$ tiene una única raíz $x^{*}<0$, con $g<0$ a su izquierda y $g>0$ a su derecha: $\SiLU$ decrece y luego crece, y $x^{*}$ es el mínimo global. De $g(x^{*})=0$ se obtiene $\sigma(x^{*})=1+1/x^{*}$, luego $\SiLU(x^{*})=x^{*}\sigma(x^{*})=x^{*}+1$. La raíz numérica se obtiene por bisección.
+\end{proof}
+
+A diferencia de ReLU, SiLU es derivable en todo punto, no es monótona y deja pasar valores negativos pequeños, lo que evita las neuronas cuyo gradiente es nulo en todo el semieje negativo.
+
+\section{Unidades lineales con puerta y SwiGLU}
+
+\begin{definicion}[SwiGLU]\label{def:swiglu}
+Sean $W_g,W_u\in\R^{d\times\dff}$ y $\Wdown\in\R^{\dff\times d}$. La subcapa \emph{SwiGLU} es
+\[
+\SwiGLU(x)=\bigl(\SiLU(xW_g)\odot xW_u\bigr)\,\Wdown,
+\]
+donde $\odot$ es el producto componente a componente. La rama $xW_g$ es la \emph{puerta} y $xW_u$ la \emph{rama lineal}.
+\end{definicion}
+
+Las unidades lineales con puerta (GLU) de Dauphin \emph{et al.}~\cite{dauphin} multiplican una proyección lineal por una puerta sigmoide; Shazeer~\cite[§2]{shazeer} probó varias funciones en la puerta y encontró que la variante con Swish mejoraba la perplejidad del Transformer. Las componentes de la capa intermedia ya no son $\phi(\text{lineal})$, sino productos de dos formas lineales del token: la puerta decide cuánto de la rama lineal se transmite.
+
+\begin{proposicion}[Presupuesto de parámetros]\label{prop:presupuesto}
+Sin sesgos, el MLP de la \cref{def:ffn} tiene $2d\,\dff$ parámetros, y SwiGLU tiene $3d\,\dff$. Con $\dff=4d$, el primero tiene $8d^{2}$ parámetros; SwiGLU tiene el mismo número si y solo si $\dff=\frac83 d$.
+\end{proposicion}
+
+\begin{proof}
+$W_1$ y $W_2$ tienen $d\,\dff$ entradas cada una; $W_g$, $W_u$ y $\Wdown$, también. Con $\dff=4d$: $2d\cdot 4d=8d^{2}$. La ecuación $3d\,\dff=8d^{2}$ tiene la única solución $\dff=8d/3$.
+\end{proof}
+
+El mismo argumento iguala el cómputo, porque el coste de cada producto es proporcional al número de pesos (\cref{tema:6}). Shazeer~\cite[§2]{shazeer} reduce $\dff$ en un factor $2/3$ por esta razón: en sus experimentos, el MLP de dos matrices usa $\dff=3072$ y las variantes con puerta $\dff=2048$.
+
+\begin{ejemplo}[LLaMA]\label{ej:llama-dff}
+El código publicado de LLaMA~\cite{llamacode} calcula la dimensión intermedia como $\lfloor\frac23\cdot 4d\rfloor$ y la redondea hacia arriba al múltiplo de $256$ más próximo. Para $d=4096$ (LLaMA-2~7B): $\lfloor 10\,922{,}67\rfloor=10\,922$ y $\lceil 10\,922/256\rceil=43$, luego $\dff=43\cdot 256=11\,008$. El MLP tiene $3\cdot 4096\cdot 11\,008=135\,266\,304$ parámetros, un $0{,}78\,\%$ más que $8d^{2}=134\,217\,728$. Para $d=5120$ (LLaMA-2~13B), el mismo cálculo da $\dff=13\,824$. El redondeo a múltiplos de potencias de~$2$ aprovecha mejor las unidades de multiplicación de matrices de las GPU (módulo~17).
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+SwiGLU es el MLP de LLaMA~\cite[§2.2]{llama}, de Llama~3 y de Qwen~2.5, según la práctica de CS336~\cite[§3.4.2]{cs336}. Shazeer no ofrece una explicación teórica de la mejora; la práctica propone comprobarla empíricamente comparando SwiGLU con un MLP SiLU sin puerta de $\dff=4d$, que tiene aproximadamente el mismo número de parámetros (problema \texttt{swiglu\_ablation}). En los modelos con mezcla de expertos (módulo~18), cada experto es una subcapa de este tipo.
+\end{observacion}
+
+\begin{lecturas}
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.3 «Position-wise Feed-Forward Networks».
+\item Zhang \emph{et al.}~\cite{d2l}, §11.7.2 «Positionwise Feed-Forward Networks».
+\item Jurafsky y Martin~\cite{jm3}, §7.2.1 «Feedforward layer».
+\item Shazeer~\cite{shazeer}, §2 «Gated Linear Units (GLU) and Variants».
+\item Hashimoto y Liang~\cite{cs336}, §3.4.2 «Position-Wise Feed-Forward Network».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-base}
+Explique por qué el MLP no mezcla información entre tokens. Cuente los parámetros del MLP del Transformer base de Vaswani \emph{et al.}\ ($d=512$, $\dff=2048$, con sesgos) y diga qué fracción corresponde a los sesgos.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-llama}
+Justifique $\dff=\frac83 d$ en SwiGLU. Para $d=4096$, calcule $\frac83 d$, el múltiplo de $256$ inmediatamente superior y cuántos parámetros de más tiene el MLP de LLaMA-2~7B respecto de $8d^{2}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-swiglu}
+Sea $d=\dff=2$, $x=(1,-1)$ y
+\[
+W_g=\begin{pmatrix}2&0\\1&1\end{pmatrix},\qquad W_u=\begin{pmatrix}1&1\\0&2\end{pmatrix},\qquad \Wdown=\begin{pmatrix}1&-1\\2&0\end{pmatrix}.
+\]
+Calcule $\SwiGLU(x)$ indicando la puerta, la rama lineal y la capa intermedia. Use $\sigma(1)=0{,}7311$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-cs336}
+Para un modelo con $d=1600$: (a) compruebe que $\dff=4288$ es el múltiplo de $64$ más cercano a $\frac83 d$; (b) cuente los parámetros de la subcapa SwiGLU con ese $\dff$ y los de un MLP SiLU sin puerta, $\FFN_{\SiLU}(x)=\SiLU(xW_1)W_2$, con $\dff=4d$, ambos sin sesgos; (c) calcule el cociente entre ambos. (d) Repita (a) y (b) para $d=768$.
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, §3.4.2, problema \texttt{positionwise\_feedforward}, y §7.3, problema \texttt{swiglu\_ablation} (se sustituye el experimento por el recuento).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-silu}
+Demuestre las propiedades (ii) y (iii) de la \cref{prop:silu} sin consultar la demostración. Después demuestre que $\SiLU(x)=\frac{x}{2}\bigl(1+\tanh\frac{x}{2}\bigr)$ y deduzca que $\SiLU(x)-\SiLU(-x)=x$ y que $\SiLU(x)+\SiLU(-x)=x\tanh\frac{x}{2}$. ¿Qué dice la primera identidad sobre la parte impar de SiLU?
+\end{ejercicio}

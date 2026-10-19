@@ -1,0 +1,150 @@
+% =====================================================================
+\chapter{Transferencia y ajuste fino}
+\label{tema:1}
+% =====================================================================
+
+Este tema formula el ajuste fino como un problema de optimización que parte de un modelo ya entrenado y presenta las técnicas clásicas de transferencia que preceden al posentrenamiento de los modelos de lenguaje actuales. La distinción entre extracción de características y ajuste completo sigue el §14.2 de Zhang \emph{et al.}~\cite{d2l}; las técnicas de ULMFiT se toman del artículo de Howard y Ruder~\cite[§3.2 y~§3.3]{howard-ruder}, y la visión del posentrenamiento, del capítulo~8 de Jurafsky y Martin~\cite{jm3} y de la clase~8 de CS224N~\cite{cs224n}.
+
+\section{Modelo base, tarea de origen y tarea de destino}
+
+\begin{definicion}[Aprendizaje por transferencia]\label{def:transferencia}
+Sea $f_\theta$ una familia de modelos con parámetros $\theta\in\R^{D}$. Se llama \emph{tarea de origen} a la minimización de una pérdida $\mathcal{L}_{\mathrm{orig}}$ sobre un conjunto de datos grande, y \emph{modelo preentrenado} a unos parámetros $\theta_0$ que la minimizan aproximadamente. Dada una \emph{tarea de destino} con datos $\mathcal{D}$ y pérdida $\mathcal{L}_{\mathcal{D}}$, el \emph{ajuste fino} consiste en minimizar aproximadamente $\mathcal{L}_{\mathcal{D}}$ mediante un método iterativo de primer orden inicializado en $\theta_0$, normalmente con pocos pasos y una tasa de aprendizaje pequeña.
+\end{definicion}
+
+En los modelos de lenguaje, la tarea de origen es la predicción del token siguiente sobre un corpus masivo (módulos~15 y~16), y $\theta_0$ define un \emph{modelo base}.
+
+\begin{definicion}[Modelo base]\label{def:base}
+Un \emph{modelo base} es un modelo de lenguaje autorregresivo entrenado únicamente con la entropía cruzada del token siguiente sobre texto general. Para un contexto $x_{1:t-1}$, devuelve una aproximación de la distribución condicional del corpus, $p_{\theta_0}(x_t\mid x_{1:t-1})$.
+\end{definicion}
+
+\begin{ejemplo}[El modelo base no responde]\label{ej:base}
+En la práctica del módulo, un mini-GPT preentrenado sobre frases del tipo «roma es la capital de italia» recibe la entrada «p: capital de francia\textbackslash n r:» y continúa con un fragmento de texto del corpus en lugar de responder «paris». El dato está en los pesos, pero asociado a frases del corpus, no a un turno de respuesta; además, el modelo nunca ha recibido como objetivo un token de fin de turno, de modo que no sabe dónde parar. Lo que le falta es el formato, no el conocimiento (\cref{tema:2}).
+\end{ejemplo}
+
+\begin{observacion}\label{obs:implicita}
+Como el problema de destino no es convexo y la optimización es corta, el resultado depende de $\theta_0$ no solo como punto de partida: el método iterativo permanece cerca de $\theta_0$ y actúa como una regularización implícita. El \cref{tema:3} hace explícita esta regularización mediante una penalización de la distancia a $\theta_0$.
+\end{observacion}
+
+\section{Extracción de características y ajuste completo}
+
+Sea $\phi_\theta(x)\in\R^{h}$ la representación que la red asigna a una entrada (por ejemplo, el vector oculto de la última capa) y sea una \emph{cabeza} lineal $z=V\phi_\theta(x)+b$, con $V\in\R^{K\times h}$, que produce los logits de $K$ clases.
+
+\begin{definicion}[Extracción de características y ajuste completo]\label{def:sonda}
+En la \emph{extracción de características} (o \emph{sonda lineal}) se fijan los parámetros del cuerpo en $\theta=\theta_0$ y solo se entrenan $(V,b)$. En el \emph{ajuste completo} se entrenan a la vez $\theta$, inicializado en $\theta_0$, y la cabeza, inicializada al azar.
+\end{definicion}
+
+\begin{proposicion}[La sonda lineal es convexa]\label{prop:sonda-convexa}
+Con el cuerpo congelado, la pérdida de entropía cruzada media
+\[
+J(V,b)=\frac{1}{n}\sum_{i=1}^{n}\Bigl(\LSE\bigl(V\phi_{\theta_0}(x_i)+b\bigr)-\bigl(V\phi_{\theta_0}(x_i)+b\bigr)_{y_i}\Bigr)
+\]
+es una función convexa de $(V,b)$.
+\end{proposicion}
+
+\begin{proof}
+Para cada $i$, el vector $\phi_i=\phi_{\theta_0}(x_i)$ es constante, de modo que $z_i=V\phi_i+b$ es una función afín de $(V,b)$. La función $\LSE(z)=\ln\sum_k e^{z_k}$ es convexa (su hessiano es $\diag(p)-pp\T$, semidefinido positivo, con $p=\softmax(z)$; módulo~8, tema~4), y la composición de una función convexa con una aplicación afín es convexa. El término $-(z_i)_{y_i}$ es lineal en $(V,b)$. Cada sumando es convexo y la media de funciones convexas es convexa.
+\end{proof}
+
+En el ajuste completo, $\phi_\theta$ depende de $\theta$ de forma no lineal y la convexidad se pierde. A cambio, el cuerpo puede adaptar sus representaciones a la tarea. La receta habitual~\cite[§14.2]{d2l} usa una tasa de aprendizaje pequeña en el cuerpo, que ya está cerca de una buena solución, y una mayor (por ejemplo, diez veces mayor) en la cabeza, que parte de cero.
+
+\section{ULMFiT: ajuste fino de un modelo de lenguaje}
+
+Howard y Ruder~\cite{howard-ruder} propusieron en 2018 el primer procedimiento general para ajustar un modelo de lenguaje preentrenado a tareas de clasificación de textos. Consta de tres etapas: preentrenamiento del modelo de lenguaje en un corpus general, ajuste del modelo de lenguaje al texto del dominio de destino y ajuste del clasificador. Introduce tres técnicas para que el ajuste no destruya lo aprendido.
+
+\begin{definicion}[Tasas de aprendizaje discriminativas]\label{def:discriminativas}
+Sea una red de $L$ capas con parámetros $\theta^{1},\dots,\theta^{L}$. El \emph{ajuste discriminativo} asigna a cada capa su propia tasa, $\theta^{l}_t=\theta^{l}_{t-1}-\eta^{l}\nabla_{\theta^{l}}J$, con $\eta^{l-1}=\eta^{l}/2{,}6$: cada capa aprende $2{,}6$ veces más despacio que la siguiente. La tasa $\eta^{L}$ de la última capa se elige ajustando solo esa capa~\cite[§3.2]{howard-ruder}.
+\end{definicion}
+
+Por inducción, $\eta^{l}=\eta^{L}/2{,}6^{\,L-l}$. La justificación es que las capas inferiores capturan información más general, que conviene modificar menos.
+
+\begin{definicion}[Tasa triangular inclinada]\label{def:stlr}
+Sean $T$ el número total de iteraciones, $\mathrm{cf}\in(0,1)$ la fracción de calentamiento, $\rho>1$ el cociente entre la tasa máxima y la mínima y $\eta_{\max}$ la tasa máxima. Con $c=\lfloor T\,\mathrm{cf}\rfloor$, la \emph{tasa triangular inclinada} (STLR) en la iteración $t$ es
+\[
+p_t=\begin{cases} t/c, & t<c,\\[2pt] 1-\dfrac{t-c}{c\,(1/\mathrm{cf}-1)}, & t\ge c,\end{cases}\qquad
+\eta_t=\eta_{\max}\,\frac{1+p_t(\rho-1)}{\rho}.
+\]
+Los valores por defecto del artículo son $\mathrm{cf}=0{,}1$, $\rho=32$ y $\eta_{\max}=0{,}01$~\cite[§3.2]{howard-ruder}.
+\end{definicion}
+
+\begin{proposicion}[Forma de la tasa triangular]\label{prop:stlr}
+Supóngase que $T\,\mathrm{cf}$ es entero, de modo que $c=T\,\mathrm{cf}$. Entonces:
+\begin{enumerate}
+  \item $\eta_t$ es una función afín de $p_t$, creciente, con $\eta=\eta_{\max}/\rho$ si $p_t=0$ y $\eta=\eta_{\max}$ si $p_t=1$;
+  \item $p_t$ crece linealmente de $0$ a $1$ en $[0,c]$ y decrece linealmente de $1$ a $0$ en $[c,T]$;
+  \item en consecuencia, la tasa sube en $c$ iteraciones desde $\eta_{\max}/\rho$ hasta $\eta_{\max}$ y baja en $T-c$ iteraciones hasta $\eta_{\max}/\rho$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\eta_t=\frac{\eta_{\max}}{\rho}+\frac{\eta_{\max}(\rho-1)}{\rho}\,p_t$, con pendiente positiva porque $\rho>1$; los dos valores se obtienen sustituyendo $p_t=0$ y $p_t=1$. (ii) En $[0,c)$, $p_t=t/c$ es lineal, vale $0$ en $t=0$ y tiende a $1$ cuando $t\to c$. En $[c,T]$, $p_t$ es afín en $t$ con pendiente negativa, vale $1$ en $t=c$ y, como $c(1/\mathrm{cf}-1)=T-c$, vale $1-(T-c)/(T-c)=0$ en $t=T$. (iii) Se sigue de (i) y (ii).
+\end{proof}
+
+\begin{definicion}[Descongelación gradual]\label{def:descongelacion}
+En la \emph{descongelación gradual} se entrena primero solo la última capa durante una época; después se descongela la capa anterior y se entrenan todas las descongeladas otra época, y así sucesivamente hasta entrenar todas las capas~\cite[§3.3]{howard-ruder}.
+\end{definicion}
+
+\begin{ejemplo}[Tasas discriminativas]\label{ej:discriminativas}
+Con $L=3$ capas y $\eta^{3}=0{,}01$, la \cref{def:discriminativas} da $\eta^{2}=0{,}01/2{,}6=3{,}846\cdot 10^{-3}$ y $\eta^{1}=0{,}01/2{,}6^{2}=0{,}01/6{,}76=1{,}479\cdot 10^{-3}$. La primera capa aprende $6{,}76$ veces más despacio que la última.
+\end{ejemplo}
+
+\begin{observacion}
+Las tres técnicas persiguen el mismo fin: evitar que los primeros pasos del ajuste, con gradientes grandes procedentes de una cabeza aleatoria, destruyan las representaciones del modelo preentrenado. Howard y Ruder las presentan como remedio al \emph{olvido catastrófico}, que el \cref{tema:3} estudia con detalle. La tasa triangular es, además, un antecedente directo del calentamiento seguido de decaimiento que se usa en el entrenamiento de los Transformer (módulo~7).
+\end{observacion}
+
+\section{Del ajuste por tareas al posentrenamiento}
+
+ULMFiT añade una cabeza de clasificación y produce un modelo para una sola tarea. En los modelos de lenguaje generativos se conserva la cabeza de lenguaje: la tarea de destino se formula también como predicción del token siguiente, pero sobre textos que tienen la forma de una conversación entre un usuario y un asistente. Jurafsky y Martin~\cite[cap.~8]{jm3} llaman \emph{posentrenamiento} al conjunto de etapas que siguen al preentrenamiento y lo dividen en el ajuste con instrucciones (§8.1, \cref{tema:2}) y el aprendizaje a partir de preferencias (§8.3 y~§8.4, módulo~21). La receta en tres pasos de InstructGPT~\cite{ouyang} (ajuste supervisado, modelo de recompensa y aprendizaje por refuerzo) es la referencia publicada que siguen casi todos los asistentes (\cref{fig:posentrenamiento}).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},font=\small,
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=11mm,text width=21mm,align=center},
+  et/.style={font=\scriptsize}]
+  \node[caja] (c) at (0,0) {Corpus general\\ $10^{12}$ tokens};
+  \node[caja] (b) at (4.0,0) {Modelo base\\ continúa texto};
+  \node[caja] (i) at (8.0,0) {Modelo de\\ instrucciones};
+  \node[caja] (a) at (12.0,0) {Asistente};
+  \draw[->] (c) -- node[et,above] {preentren.} node[et,below] {M15--M16} (b);
+  \draw[->] (b) -- node[et,above] {SFT} node[et,below] {M20} (i);
+  \draw[->] (i) -- node[et,above] {preferencias} node[et,below] {M21} (a);
+  \draw[->,dashed] (b.south) to[bend right=25] node[et,below] {LoRA: $W$ congelada $+\,BA$ (\cref{tema:5})} (i.south);
+\end{tikzpicture}
+\caption{Etapas del entrenamiento de un asistente. El ajuste supervisado (SFT) usa entre miles y cientos de miles de diálogos; puede aplicarse a todos los pesos o, con LoRA, solo a una corrección de bajo rango.}
+\label{fig:posentrenamiento}
+\end{figure}
+
+\begin{observacion}[Información pública sobre modelos comerciales]
+Anthropic, Google y xAI no publican los datos ni los hiperparámetros del ajuste supervisado de Claude, Gemini y Grok. Lo público es el esquema general. Anthropic describió en 2022 el método \emph{Constitutional AI}~\cite{bai-cai}, que incluye una fase supervisada en la que el modelo critica y revisa sus propias respuestas según una lista de principios y se ajusta sobre las respuestas revisadas, seguida de aprendizaje por refuerzo con retroalimentación de un modelo (módulo~21). El informe técnico de Gemini~\cite[§6.3]{gemini} describe, a grandes rasgos, un ajuste supervisado seguido de aprendizaje por refuerzo con retroalimentación humana. xAI no ha publicado una descripción equivalente del posentrenamiento de Grok.
+\end{observacion}
+
+\begin{lecturas}
+\item Zhang \emph{et al.}~\cite{d2l}, §14.2 «Fine-Tuning»: modelo de origen, modelo de destino y tasas distintas para la cabeza.
+\item Howard y Ruder~\cite{howard-ruder}, §3.2 (ajuste discriminativo y tasa triangular) y §3.3 (descongelación gradual).
+\item Jurafsky y Martin~\cite{jm3}, introducción del cap.~8 «Post-training».
+\item CS224N~\cite{cs224n}, clase~8 «Post-training (RLHF, SFT, DPO)».
+\item CMU 11-711~\cite{cmu711}, bloque del temario dedicado al ajuste fino.
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-tasa}
+Se ajusta por completo una red preentrenada con una cabeza nueva y se aumenta progresivamente la tasa de aprendizaje del cuerpo. Explique cómo cabe esperar que evolucione la exactitud en el conjunto de destino y por qué, relacionando la respuesta con la \cref{obs:implicita}.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §14.2, ejercicio~1.}
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-convexa}
+Justifique si son verdaderas o falsas: (a) la sonda lineal tiene un único mínimo local que es global; (b) el ajuste completo de una red con una capa oculta es un problema convexo; (c) en ULMFiT, la tasa de la primera capa es la mayor.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-discriminativas}
+Una red tiene $L=12$ capas y $\eta^{12}=0{,}01$. Con el ajuste discriminativo de la \cref{def:discriminativas}, calcule $\eta^{11}$, $\eta^{10}$ y $\eta^{1}$. ¿Cuál es el menor número de capas $L$ para el que $\eta^{1}<10^{-6}$ si $\eta^{L}=0{,}01$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-stlr}
+Con $T=1000$ iteraciones y los valores por defecto $\mathrm{cf}=0{,}1$, $\rho=32$ y $\eta_{\max}=0{,}01$, calcule la tasa triangular inclinada en $t=0$, $50$, $100$, $550$ y $1000$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-media}
+Considérese la versión continua de la tasa triangular, con $t\in[0,T]$ real y $c=T\,\mathrm{cf}$. Demuestre que su valor medio, $\frac{1}{T}\int_0^{T}\eta(t)\,dt$, es $\eta_{\max}(\rho+1)/(2\rho)$, independiente de $\mathrm{cf}$, y calcúlelo con los valores por defecto.
+\end{ejercicio}

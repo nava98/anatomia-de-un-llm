@@ -1,0 +1,210 @@
+% =====================================================================
+\chapter{El modelo unigram, SentencePiece y el vocabulario}
+\label{tema:3}
+% =====================================================================
+
+BPE construye el vocabulario de abajo arriba y codifica de forma determinista. El modelo unigram de Kudo~\cite{kudo} sigue el camino inverso: parte de un vocabulario grande, asigna una probabilidad a cada token, segmenta eligiendo la segmentación más probable y entrena podando. Este tema define el modelo, demuestra la corrección del algoritmo de Viterbi que lo segmenta, describe la biblioteca SentencePiece~\cite{sentencepiece} y estudia el coste del vocabulario y los efectos de la tokenización sobre el comportamiento de los modelos. Se sigue~\cite[§3.2--3.4]{kudo}, \cite[§3]{sentencepiece} y~\cite[§2.4.3]{jm3}.
+
+\section{El modelo unigram}
+
+\begin{definicion}[Modelo unigram de segmentación]\label{def:unigram}
+Sea $\V$ un vocabulario de subpalabras y sea $p\colon\V\to(0,1]$ con $\sum_{t\in\V}p(t)=1$. Una \emph{segmentación} de una cadena $x$ es una secuencia $s=(t_1,\dots,t_m)$ de tokens de $\V$ con $t_1\Vert\dots\Vert t_m=x$; se denota $S(x)$ el conjunto de segmentaciones de $x$. El \emph{modelo unigram} asigna a cada segmentación la probabilidad
+\[
+P(s)=\prod_{i=1}^{m}p(t_i),
+\]
+y la segmentación elegida es $s^{*}=\arg\max_{s\in S(x)}P(s)$~\cite[§3.2]{kudo}.
+\end{definicion}
+
+El modelo es el de unigramas del módulo~1, ahora sobre subpalabras: los tokens se suponen independientes. Como cada factor es menor que~1, las segmentaciones con menos tokens tienden a ser más probables, igual que las palabras cortas en un modelo de bigramas.
+
+\begin{ejemplo}\label{ej:unigram}
+Sea $p(\tok{casa})=0{,}2$, $p(\tok{a})=0{,}2$, $p(\tok{as})=0{,}15$, $p(\tok{s})=0{,}1$, $p(\tok{cas})=0{,}1$, $p(\tok{c})=0{,}05$ (el resto de la masa corresponde a otros tokens). El \cref{tab:unigram} enumera las siete segmentaciones de «casas». La más probable es $s^{*}=(\tok{casa},\tok{s})$, con $P(s^{*})=0{,}02$.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Segmentaciones de «casas» con el vocabulario del \cref{ej:unigram}.}\label{tab:unigram}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Segmentación & Producto & $P(s)$ \\
+\midrule
+\tok{casa}\,\sep{}\,\tok{s} & $0{,}2\cdot 0{,}1$ & $0{,}02$ \\
+\tok{cas}\,\sep{}\,\tok{as} & $0{,}1\cdot 0{,}15$ & $0{,}015$ \\
+\tok{cas}\,\sep{}\,\tok{a}\,\sep{}\,\tok{s} & $0{,}1\cdot 0{,}2\cdot 0{,}1$ & $0{,}002$ \\
+\tok{c}\,\sep{}\,\tok{as}\,\sep{}\,\tok{as} & $0{,}05\cdot 0{,}15\cdot 0{,}15$ & $0{,}001125$ \\
+\tok{c}\,\sep{}\,\tok{a}\,\sep{}\,\tok{s}\,\sep{}\,\tok{as} y \tok{c}\,\sep{}\,\tok{as}\,\sep{}\,\tok{a}\,\sep{}\,\tok{s} & $0{,}05\cdot 0{,}2\cdot 0{,}1\cdot 0{,}15$ & $1{,}5\cdot 10^{-4}$ cada una \\
+\tok{c}\,\sep{}\,\tok{a}\,\sep{}\,\tok{s}\,\sep{}\,\tok{a}\,\sep{}\,\tok{s} & $0{,}05\cdot 0{,}2^{2}\cdot 0{,}1^{2}$ & $2\cdot 10^{-5}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Segmentación óptima: el algoritmo de Viterbi}
+
+El número de segmentaciones crece exponencialmente con la longitud: una cadena de $n$ caracteres tiene hasta $2^{n-1}$ (\cref{eje:3-viterbi}). La enumeración del \cref{tab:unigram} no es viable para textos reales, pero el problema tiene subestructura óptima.
+
+\begin{teorema}[Viterbi para el modelo unigram]\label{teo:viterbi}
+Sea $x=x_1\dots x_n$ y sea $\alpha(j)$ la probabilidad máxima de una segmentación del prefijo $x_{1:j}$, con $\alpha(0)=1$ y $\alpha(j)=0$ si el prefijo no admite segmentación. Entonces, para $j=1,\dots,n$,
+\[
+\alpha(j)=\max_{\substack{0\le i<j\\ x_{i+1:j}\in\V}}\ \alpha(i)\,p(x_{i+1:j}),
+\]
+y $\alpha(n)=\max_{s\in S(x)}P(s)$. Si $\ell$ es la longitud máxima de un token, el cálculo requiere $O(n\ell)$ productos.
+\end{teorema}
+
+\begin{proof}
+Sea $s=(t_1,\dots,t_m)$ una segmentación de $x_{1:j}$ y sea $t_m=x_{i+1:j}$ su último token. Entonces $(t_1,\dots,t_{m-1})$ es una segmentación de $x_{1:i}$ y $P(s)=P(t_1,\dots,t_{m-1})\,p(t_m)\le\alpha(i)\,p(x_{i+1:j})$. Esto prueba que $\alpha(j)$ no supera el máximo de la fórmula. Recíprocamente, para cada $i$ con $x_{i+1:j}\in\V$, si $s'$ es una segmentación de $x_{1:i}$ con $P(s')=\alpha(i)$, añadir el token $x_{i+1:j}$ da una segmentación de $x_{1:j}$ con probabilidad $\alpha(i)\,p(x_{i+1:j})$; luego $\alpha(j)$ alcanza el máximo. Por inducción sobre $j$ se obtiene la fórmula. Para cada $j$ solo hay que considerar los $i$ con $j-i\le\ell$, lo que da $O(\ell)$ productos por posición y $O(n\ell)$ en total. La segmentación óptima se recupera guardando el $i$ que alcanza cada máximo y recorriendo esos punteros desde $n$ hacia atrás.
+\end{proof}
+
+\begin{ejemplo}
+Para «casas» con el vocabulario del \cref{ej:unigram}:
+\[
+\begin{aligned}
+\alpha(1)&=p(\tok{c})=0{,}05, \qquad \alpha(2)=\alpha(1)\,p(\tok{a})=0{,}01,\\
+\alpha(3)&=\max\{p(\tok{cas}),\ \alpha(1)\,p(\tok{as}),\ \alpha(2)\,p(\tok{s})\}=\max\{0{,}1;\ 0{,}0075;\ 0{,}001\}=0{,}1,\\
+\alpha(4)&=\max\{p(\tok{casa}),\ \alpha(3)\,p(\tok{a})\}=\max\{0{,}2;\ 0{,}02\}=0{,}2,\\
+\alpha(5)&=\max\{\alpha(4)\,p(\tok{s}),\ \alpha(3)\,p(\tok{as})\}=\max\{0{,}02;\ 0{,}015\}=0{,}02,
+\end{aligned}
+\]
+que coincide con el \cref{tab:unigram}.
+\end{ejemplo}
+
+\section{Entrenamiento por EM y poda}
+
+Las probabilidades $p(t)$ no se observan, porque el corpus no viene segmentado. Kudo trata la segmentación como una variable oculta y maximiza la verosimilitud marginal~\cite[§3.2]{kudo}
+\[
+\mathcal{L}=\sum_{x\in\mathcal{D}}\ln\sum_{s\in S(x)}P(s),
+\]
+donde $\mathcal{D}$ es el corpus de frases. El algoritmo EM alterna dos pasos: el paso E calcula, con las probabilidades actuales, el número esperado de veces que aparece cada token en las segmentaciones de cada frase, y el paso M reestima $p(t)$ como esos recuentos esperados normalizados. Es la misma idea que el estimador de máxima verosimilitud por frecuencias relativas del módulo~1, con recuentos esperados en lugar de observados.
+
+El vocabulario se obtiene podando~\cite[§3.2]{kudo}:
+\begin{enumerate}[label=\arabic*.]
+  \item se parte de un vocabulario semilla grande: todos los caracteres y las subcadenas frecuentes del corpus;
+  \item con el vocabulario fijo, se optimizan las $p(t)$ por EM;
+  \item para cada token se estima cuánto bajaría $\mathcal{L}$ si se eliminara, y se conserva el $\eta\,\%$ de los tokens con mayor pérdida (por ejemplo, el $80\,\%$);
+  \item se repiten los pasos 2 y 3 hasta alcanzar el tamaño deseado.
+\end{enumerate}
+Los caracteres individuales nunca se eliminan, de modo que toda cadena sigue teniendo al menos una segmentación.
+
+\begin{observacion}[Regularización por subpalabras]
+Como el modelo define una distribución sobre $S(x)$, durante el entrenamiento de un modelo neuronal se puede muestrear una segmentación distinta en cada paso, con probabilidad proporcional a $P(s)^{\alpha}$. Un $\alpha$ pequeño da muestras casi uniformes; uno grande se acerca a la segmentación de Viterbi. Kudo muestra que este ruido hace más robustos los modelos de traducción~\cite[§3.3]{kudo}.
+\end{observacion}
+
+\begin{table}[h]
+\centering\small
+\caption{Comparación de BPE y del modelo unigram~\cite[§3.4]{kudo}.}\label{tab:bpe-unigram}
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & BPE & Unigram \\
+\midrule
+Construcción & de abajo arriba (fusiona) & de arriba abajo (poda) \\
+Resultado del entrenamiento & lista ordenada de fusiones & probabilidad de cada token \\
+Codificación & aplicar las fusiones en orden & Viterbi: segmentación más probable \\
+Varias segmentaciones & no; es determinista & sí; se pueden muestrear \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{SentencePiece}
+
+SentencePiece es una biblioteca que entrena tanto BPE como el modelo unigram directamente sobre frases sin pretokenizar~\cite{sentencepiece}. Trata el texto como una secuencia de caracteres Unicode en la que el espacio es un símbolo más, que se escribe con el metasímbolo \ESP\ (\hx{U+2581}); así, «Hello world.» puede segmentarse como \tok{[Hello] [\ESP wor] [ld] [.]}~\cite[§3.1]{sentencepiece}. Como el espacio forma parte de los tokens, decodificar consiste en concatenar y sustituir \ESP\ por un espacio, y la tokenización es \emph{sin pérdida}:
+\[
+\Dec(\Enc(\mathcal{N}(x)))=\mathcal{N}(x),
+\]
+donde $\mathcal{N}$ es la normalización del texto, por defecto una variante de la forma NFKC de Unicode~\cite[§3.4]{sentencepiece}. Al no depender de los espacios para pretokenizar, el método se aplica igual a idiomas que no separan las palabras, como el japonés. En la literatura, «SentencePiece» se usa a veces como sinónimo de tokenización unigram~\cite[§2.4.3]{jm3}.
+
+\section{El tamaño del vocabulario}
+
+\begin{proposicion}\label{prop:coste-vocab}
+Un modelo con vocabulario de tamaño $K$ y dimensión $d$ tiene $Kd$ parámetros en la matriz de embeddings de entrada y otros $Kd$ en la matriz de salida que produce los logits, salvo que ambas se compartan. El coste es lineal en $K$.
+\end{proposicion}
+
+\begin{proof}
+La matriz de entrada $E\in\R^{K\times d}$ tiene una fila por token (\cref{tema:4}); la de salida, $W\in\R^{d\times K}$, una columna por token. Cada una tiene $Kd$ entradas, y duplicar $K$ con $d$ fijo duplica ese número.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\caption{Coste de la matriz de embeddings en modelos con datos públicos.}\label{tab:vocab-modelos}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Modelo & $K$ & $d$ & $Kd$ \\
+\midrule
+GPT-2 pequeño (2019)~\cite{gpt2} & $50\,257$ & $768$ & $38\,597\,376$ \\
+Llama~2 7B (2023)~\cite{llama2} & $32\,000$ & $4096$ & $131\,072\,000$ \\
+Llama~3 8B (2024)~\cite{llama3} & $128\,256$ & $4096$ & $525\,336\,576$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+En Llama~3 8B, solo la matriz de entrada tiene unos $5{,}25\cdot 10^{8}$ parámetros, que en \texttt{bf16} (2 bytes por parámetro) ocupan $1{,}05$~GB. Según la información publicada, Grok-1 usa $131\,072$ tokens y Gemma, $256\,000$.
+
+\begin{definicion}[Compresión]
+La \emph{compresión} de un tokenizador sobre un texto es el cociente entre el número de bytes UTF-8 del texto y el número de tokens que produce, medido en bytes por token.
+\end{definicion}
+
+Por la \cref{prop:compresion}, sobre el propio corpus de entrenamiento cada fusión reduce el número de tokens, de modo que la compresión crece con $k$; el aumento es cada vez menor, porque los pares que se fusionan son cada vez menos frecuentes. El \cref{tab:compresion} muestra los resultados de la práctica del módulo, con un BPE de bytes entrenado sobre el fragmento de $2536$ bytes de \emph{El Quijote}. Estas cifras sobre el texto de entrenamiento son optimistas: en la misma práctica, entrenando con los dos primeros párrafos y 200 fusiones, la compresión es de $2{,}616$ bytes por token en el texto de entrenamiento y de $1{,}953$ en el tercer párrafo, que el tokenizador no vio.
+
+\begin{table}[h]
+\centering\small
+\caption{Compresión de un BPE de bytes sobre su propio corpus de entrenamiento (práctica del módulo).}\label{tab:compresion}
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+Fusiones & 0 & 10 & 25 & 50 & 100 & 200 & 300 \\
+\midrule
+Tokens & 2536 & 2047 & 1751 & 1483 & 1230 & 982 & 819 \\
+Bytes por token & $1{,}000$ & $1{,}239$ & $1{,}448$ & $1{,}710$ & $2{,}062$ & $2{,}582$ & $3{,}096$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Efectos de la tokenización}
+
+\begin{observacion}[Letras]
+El modelo recibe enteros, no letras. Para contar las «r» de «ferrocarril», segmentada por ejemplo como \tok{ferro}\,\sep{}\,\tok{carril}, tendría que conocer la ortografía interna de cada token, que no figura en la entrada y solo se aprende de forma indirecta.
+\end{observacion}
+
+\begin{observacion}[Números]
+Si los números se segmentan de forma irregular, el mismo dígito ocupa posiciones distintas dentro de los tokens según el número, lo que dificulta la aritmética~\cite[ejercicio~2.2]{jm3}. Por eso algunos tokenizadores pretrocean los números en grupos de hasta tres dígitos antes de aplicar BPE.
+\end{observacion}
+
+\begin{observacion}[Idiomas]
+Un tokenizador entrenado con poco texto de un idioma lo segmenta en muchos tokens. Con el tokenizador de la práctica, entrenado en español, «El perro ladra en la plaza.» (27 bytes) da 15 tokens; «The dog barks in the square.» (28 bytes), 21, y una frase rusa de 22 bytes, 22 tokens: ninguna fusión encaja con los bytes del alfabeto cirílico. Petrov \emph{et al.} midieron, en tokenizadores comerciales, diferencias de longitud de hasta 15 veces para un mismo texto traducido~\cite{petrov}. El mismo mensaje cuesta más y cabe menos en el contexto.
+\end{observacion}
+
+\begin{lecturas}
+\item Kudo~\cite{kudo}, §3.2 «Unigram language model», §3.3 «Subword sampling» y §3.4 «BPE vs. Unigram language model».
+\item Kudo y Richardson~\cite{sentencepiece}, §3.1 «Lossless Tokenization» y §3.4 «Customizable character normalization».
+\item Jurafsky y Martin~\cite{jm3}, §2.4.3 «BPE in practice».
+\item Petrov \emph{et al.}~\cite{petrov}, sobre las diferencias de longitud entre idiomas.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-palabras}
+Dé dos razones por las que un vocabulario de palabras completas es mala idea para un LLM multilingüe.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:3-letras}
+Un LLM falla al contar cuántas «r» tiene «ferrocarril». Explique el papel de la tokenización y cómo se puede facilitar la tarea.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:3-vf}
+Justifique si son verdaderas o falsas: (a) BPE puede devolver varias segmentaciones de la misma palabra; (b) el tokenizador se entrena a la vez que el Transformer; (c) duplicar $K$ duplica los parámetros de la matriz de embeddings.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-perdida}
+Con el vocabulario del \cref{ej:unigram}, calcule la pérdida $-\ln P(s^{*})$ de «casas». ¿Cuántos nats se pierden si se usa la segmentación $(\tok{cas},\tok{as})$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-param}
+Un modelo tiene $K=32\,000$, $d=4096$ y no comparte la matriz de entrada con la de salida. ¿Cuántos parámetros suman ambas? ¿Cuánto ocupan en \texttt{bf16}?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-numeros}
+Un tokenizador pretrocea los números en grupos de hasta tres dígitos, de izquierda a derecha, antes de aplicar BPE. (a) Segmente 1605, 2026, 123456 y 1234567. (b) Compare las segmentaciones de 999 y de $999+1$. (c) Explique por qué la agrupación de izquierda a derecha dificulta la suma y proponga otra agrupación que respete las unidades, decenas y centenas.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~2, ejercicio~2.2 (se sustituye el uso de un visualizador por una regla de agrupación explícita).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-viterbi}
+(a) Demuestre que una cadena de $n\ge 1$ caracteres admite exactamente $2^{n-1}$ segmentaciones en subcadenas no vacías. (b) Sea $\V$ un vocabulario que contiene todos los caracteres y cuyos tokens tienen longitud a lo sumo $\ell$. Demuestre que el número de segmentaciones con tokens de $\V$ está acotado por el número de composiciones de $n$ con partes en $\{1,\dots,\ell\}$, y compare con el coste $O(n\ell)$ del \cref{teo:viterbi}.
+\end{ejercicio}

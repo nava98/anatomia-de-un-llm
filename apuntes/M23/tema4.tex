@@ -1,0 +1,163 @@
+% =====================================================================
+\chapter{Autoencoders dispersos}
+\label{tema:4}
+% =====================================================================
+
+Si las activaciones de un modelo son superposiciones de muchas características dispersas (\cref{tema:3}), cabe intentar recuperarlas aprendiendo un diccionario sobrecompleto de direcciones tal que cada activación se escriba como combinación de unas pocas. Este tema formula ese problema, estudia el efecto de la penalización $L^{1}$ y describe los resultados publicados. El autoencoder disperso y sus métricas siguen a Bricken \emph{et al.}~\cite{bricken} y a Templeton \emph{et al.}~\cite{templeton}, de Anthropic; la variante JumpReLU, a Lieberum \emph{et al.}~\cite{gemmascope}, de Google DeepMind. El umbral suave y la interpretación bayesiana de la penalización $L^{1}$ remiten al módulo~8, al §3.7 de Zhang \emph{et al.}~\cite{d2l} y al curso CS229 de Stanford~\cite{cs229ps2}.
+
+\section{Aprendizaje de diccionarios}
+
+\begin{definicion}[Diccionario y código disperso]\label{def:diccionario}
+Sea $x\in\R^{d}$ una activación. Un \emph{diccionario} es una familia de $F$ direcciones $d_1,\dots,d_F\in\R^{d}$, con $F\ge d$ (diccionario \emph{sobrecompleto} si $F>d$). Un \emph{código} es un vector $f\in\R^{F}_{\ge 0}$ con $x\approx\sum_jf_jd_j$. Se definen $\norm{f}_0=\abs{\{j:f_j\neq 0\}}$, el número de latentes activos, y $\norm{f}_1=\sum_jf_j$.
+\end{definicion}
+
+Con $F>d$, la ecuación $x=\sum_jf_jd_j$ tiene en general infinitas soluciones. Se busca la más dispersa, con pocos $f_j$ no nulos. Minimizar $\norm{f}_0$ es un problema combinatorio; la penalización $\norm{f}_1$ es su relajación convexa habitual, ya usada en la regresión LASSO del módulo~8.
+
+\section{El autoencoder disperso}
+
+\begin{definicion}[Autoencoder disperso]\label{def:sae}
+Sean $W_e\in\R^{d\times F}$, $b_e\in\R^{F}$, $W_d\in\R^{F\times d}$ con filas $d_1\T,\dots,d_F\T$, y $b_d\in\R^{d}$. El \emph{autoencoder disperso} (SAE) calcula
+\[
+f(x)=\relu\bigl(W_e\T(x-b_d)+b_e\bigr)\in\R^{F},\qquad \hat x=W_d\T f(x)+b_d=\sum_{j=1}^{F}f_j(x)\,d_j+b_d,
+\]
+y se entrena sobre activaciones del modelo con la pérdida
+\[
+\mathcal{L}(x)=\norm{x-\hat x}_2^{2}+\lambda\sum_{j=1}^{F}f_j(x)\,\norm{d_j}_2,
+\]
+donde $\lambda>0$ es el \emph{coeficiente de dispersión}. La fila $d_j$ es la dirección que escribe el latente $j$~\cite{bricken,templeton}.
+\end{definicion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,rounded corners=2pt,minimum height=8mm,align=center}]
+  \node[caja,minimum width=18mm] (x) at (0,0) {$x\in\R^{d}$};
+  \node[caja,minimum width=24mm] (enc) at (3.2,0) {codificador\\$\relu(W_e\T(x-b_d)+b_e)$};
+  \node[caja,minimum width=20mm] (f) at (6.6,0) {$f\in\R^{F}$\\casi todo ceros};
+  \node[caja,minimum width=22mm] (dec) at (9.8,0) {decodificador\\$\sum_jf_jd_j+b_d$};
+  \node (xh) at (9.8,-1.4) {$\hat x\approx x$};
+  \node[align=center] (ins) at (6.6,-1.5) {inspección: ¿qué textos\\activan $f_j$?};
+  \draw[->] (x) -- (enc); \draw[->] (enc) -- (f); \draw[->] (f) -- (dec); \draw[->] (dec) -- (xh);
+  \draw[->,dashed] (f) -- (ins);
+\end{tikzpicture}
+\caption{Un autoencoder disperso. El código $f$ tiene $F\gg d$ coordenadas, de las que solo unas pocas son positivas para cada entrada.}
+\label{fig:sae}
+\end{figure}
+
+\begin{proposicion}[El factor $\norm{d_j}$ evita una trampa de escala]\label{prop:escala}
+Sea $c>0$ y considérese la transformación $W_e\mapsto W_e/c$, $b_e\mapsto b_e/c$, $d_j\mapsto c\,d_j$ para todo $j$, que deja $b_d$ fijo.
+\begin{enumerate}
+  \item La transformación no cambia la reconstrucción $\hat x$ y multiplica cada $f_j$ por $1/c$.
+  \item Si la penalización fuera $\lambda\sum_jf_j$, el valor de la penalización se dividiría por $c$; tomando $c\to\infty$, el ínfimo de la pérdida sería el de la reconstrucción sola y la penalización no tendría efecto.
+  \item Con la penalización $\lambda\sum_jf_j\norm{d_j}$ de la \cref{def:sae}, la pérdida es invariante frente a la transformación.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) La $\relu$ es positivamente homogénea: $\relu(z/c)=\relu(z)/c$ para $c>0$. Por tanto, el nuevo código es $f'=f/c$, y la nueva reconstrucción es $\sum_j(f_j/c)(c\,d_j)+b_d=\hat x$. (ii) La penalización pasa a $\lambda\sum_jf_j/c$, que tiende a~0 cuando $c\to\infty$ sin que cambie el término de reconstrucción. (iii) $f'_j\norm{c\,d_j}=(f_j/c)\,c\norm{d_j}=f_j\norm{d_j}$.
+\end{proof}
+
+Una alternativa equivalente, usada por Bricken \emph{et al.}, es imponer $\norm{d_j}=1$ durante el entrenamiento.
+
+\begin{ejemplo}[La penalización prefiere un solo latente]\label{ej:sae}
+Sean $d_1=(1,0)$, $d_2=(0,1)$, $d_3=(0{,}6;\allowbreak\ 0{,}8)$, todos unitarios, y $x=(0{,}6;\allowbreak\ 0{,}8)$. Los códigos $f=(0{,}6;\allowbreak\ 0{,}8;\allowbreak\ 0)$ y $f=(0,0,1)$ reconstruyen $x$ sin error, con $\norm{f}_1=1{,}4$ y $\norm{f}_1=1$ respectivamente. Con $\lambda=0{,}1$, sus pérdidas son $0{,}14$ y $0{,}10$: la penalización elige el código con un solo latente, alineado con $x$.
+\end{ejemplo}
+
+\section{La penalización \texorpdfstring{$L^{1}$}{L1}: umbral suave y encogimiento}
+
+\begin{proposicion}[Umbral suave]\label{prop:umbral}
+Sean $a\in\R$ y $\lambda>0$. El problema $\min_{f\ge 0}\,g(f)$, con $g(f)=(a-f)^{2}+\lambda f$, tiene solución única
+\[
+f^{*}=\max\bigl(a-\tfrac{\lambda}{2},\ 0\bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+$g$ es una parábola con $g''=2>0$, estrictamente convexa. Su derivada es $g'(f)=-2(a-f)+\lambda$, que se anula en $f_0=a-\lambda/2$. Si $f_0\ge 0$, $f_0$ es el mínimo global y pertenece a la región admisible. Si $f_0<0$, $g'(f)=2(f-f_0)>0$ para todo $f\ge 0$, de modo que $g$ es creciente en $[0,\infty)$ y el mínimo está en $f=0$. Ambos casos se resumen en $f^{*}=\max(a-\lambda/2,0)$; la unicidad se sigue de la convexidad estricta.
+\end{proof}
+
+La penalización $L^{1}$ tiene dos efectos: anula las activaciones menores que $\lambda/2$, lo que produce la dispersión, y \emph{encoge} en $\lambda/2$ las que sobreviven. El encogimiento es un sesgo sistemático: el SAE subestima la intensidad de las características activas. La forma $\max(a-\lambda/2,0)=\relu(a-\lambda/2)$ coincide con la de un codificador con sesgo negativo, lo que explica la elección del codificador de la \cref{def:sae} (\cref{eje:4-ortonormal}). Para reducir el encogimiento se han propuesto otras activaciones; Gemma Scope usa \emph{JumpReLU}, que pone a cero las preactivaciones por debajo de un umbral aprendido y deja pasar las demás sin restarles nada~\cite{gemmascope}.
+
+La penalización tiene también una interpretación bayesiana: minimizar el error cuadrático más $\lambda\norm{f}_1$ equivale a buscar el código más probable \emph{a posteriori} con ruido gaussiano en la reconstrucción y una distribución \emph{a priori} de Laplace (exponencial, si $f\ge 0$) para cada latente (\cref{eje:4-map}). Suponer que las características son dispersas es elegir esa distribución \emph{a priori}.
+
+\section{Métricas de un diccionario}
+
+\begin{definicion}[Métricas de un SAE]\label{def:metricas}
+Sean $x^{(1)},\dots,x^{(N)}$ activaciones con media $\bar x$, y sean $\hat x^{(k)}$ y $f^{(k)}$ sus reconstrucciones y códigos.
+\begin{enumerate}
+  \item La \emph{fracción de varianza no explicada} es $\FVU=\sum_k\norm{x^{(k)}-\hat x^{(k)}}^{2}\big/\sum_k\norm{x^{(k)}-\bar x}^{2}$.
+  \item El \emph{L0 medio} es $\frac1N\sum_k\norm{f^{(k)}}_0$, el número medio de latentes activos.
+  \item Un latente $j$ está \emph{muerto} si $f^{(k)}_j=0$ para todo $k$ en un conjunto amplio de datos.
+  \item La \emph{pérdida recuperada} compara la entropía cruzada del modelo cuando se sustituye $x$ por $\hat x$ con la del modelo original y con la del modelo con la activación anulada.
+\end{enumerate}
+\end{definicion}
+
+Ninguna métrica basta sola. Un FVU bajo con un L0 alto indica que el SAE reconstruye bien pero no descompone; un L0 bajo con un FVU alto indica que descompone pero pierde información. La pérdida recuperada mide lo que importa para el modelo: un error de reconstrucción pequeño en una dirección que el modelo lee puede ser más dañino que uno grande en una dirección que ignora.
+
+\begin{ejemplo}[El compromiso de $\lambda$]\label{ej:lambda}
+En la práctica del módulo se generan datos sintéticos con 16 características conocidas en $d=8$, con una media de $0{,}96$ características activas por ejemplo, y se entrena un SAE para varios valores de $\lambda$:
+\begin{center}\small
+\begin{tabular}{@{}cccc@{}}
+\toprule
+$\lambda$ & FVU & L0 medio & Recuperadas ($\cos>0{,}9$) \\
+\midrule
+$0{,}03$ & $0{,}006$ & $9{,}3$ & 15/16 \\
+$0{,}3$ & $0{,}059$ & $2{,}7$ & 15/16 \\
+$1$ & $0{,}215$ & $1{,}5$ & 16/16 \\
+\bottomrule
+\end{tabular}
+\end{center}
+Con $\lambda$ pequeño la reconstrucción es casi perfecta, pero se usan nueve latentes donde bastaría uno; con $\lambda$ grande el código se acerca a la dispersión real a costa de un FVU mayor.
+\end{ejemplo}
+
+\section{Resultados publicados}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \emph{Towards Monosemanticity} (Bricken \emph{et al.}, 2023)~\cite{bricken} entrena SAE sobre las 512 neuronas del MLP de un Transformer de una capa, con diccionarios de hasta $131\,072$ latentes. Los latentes son mucho más interpretables que las neuronas: aparecen características para texto en árabe, secuencias de ADN o codificación base64. El trabajo documenta los latentes muertos y el fenómeno de \emph{división de características}: al aumentar $F$, una característica se parte en varias más específicas.
+  \item \emph{Scaling Monosemanticity} (Templeton \emph{et al.}, 2024)~\cite{templeton} entrena SAE sobre el flujo residual de una capa intermedia de Claude~3 Sonnet, con 1, 4 y 34 millones de latentes. Encuentra características abstractas, multilingües y multimodales (el puente Golden Gate en texto y en imágenes) y otras relevantes para la seguridad, como el engaño, la adulación o el código inseguro. Fijar una característica en un valor alto cambia la conducta: con la del puente activada, el modelo lo menciona en casi cualquier respuesta, demostración pública conocida como \emph{Golden Gate Claude} (mayo de 2024).
+  \item \emph{Gemma Scope} (Lieberum \emph{et al.}, 2024)~\cite{gemmascope} publica SAE JumpReLU abiertos para todas las capas y subcapas de Gemma~2 2B y 9B y para algunas capas de Gemma~2 27B.
+\end{itemize}
+
+\begin{observacion}[Límites]\label{obs:limites-sae}
+Siempre queda varianza sin explicar; el diccionario obtenido depende de $\lambda$ y de $F$, y un latente interpretable no es necesariamente una variable que el modelo use. Como en las sondas (\cref{obs:usado}), la prueba de que una característica es causal exige intervenir sobre ella (\cref{tema:5}).
+\end{observacion}
+
+\begin{lecturas}
+\item Bricken \emph{et al.}~\cite{bricken}, \emph{Towards Monosemanticity}.
+\item Templeton \emph{et al.}~\cite{templeton}, \emph{Scaling Monosemanticity}.
+\item Lieberum \emph{et al.}~\cite{gemmascope}, Gemma Scope y la activación JumpReLU.
+\item Zhang \emph{et al.}~\cite{d2l}, §3.7 «Weight Decay», para la comparación entre penalizaciones $L^{1}$ y $L^{2}$.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-vf}
+Justifique si son verdaderas o falsas: (a) sin la $\relu$ de salida, el modelo de juguete del \cref{tema:3} no gana nada con la superposición; (b) cada latente de un SAE corresponde, por construcción, a un concepto; (c) si una sonda lineal acierta el $99\,\%$, el modelo usa esa propiedad; (d) la \emph{logit lens} suele ser más fiable en las últimas capas.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-sae}
+Sean $d_1=(1,0)$, $d_2=(0,1)$, $d_3=(1/\sqrt2,\ 1/\sqrt2)$ y $x=(1,1)$. Compare la pérdida del SAE con $\lambda=0{,}2$ para los códigos $f=(1,1,0)$ y $f=(0,0,\sqrt2)$. Relacione el resultado con una desigualdad entre normas.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-umbral}
+Con $g(f)=(a-f)^{2}+\lambda f$, $f\ge 0$ y $\lambda=0{,}6$, calcule $f^{*}$ para $a=0{,}8$ y $a=0{,}2$, y compruebe el primer caso evaluando $g$ en $f^{*}$, en $f=a$ y en $f=0$. ¿Qué dos efectos tiene la penalización sobre las activaciones?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-metricas}
+Un SAE con $F=4$ latentes procesa tres activaciones $x^{(1)}=(1,0)$, $x^{(2)}=(0,2)$ y $x^{(3)}=(1,1)$, con reconstrucciones $(0{,}9;\allowbreak\ 0)$, $(0;\allowbreak\ 1{,}8)$ y $(0{,}8;\allowbreak\ 0{,}8)$ y códigos $f^{(1)}=(0{,}9;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$, $f^{(2)}=(0;\allowbreak\ 1{,}8;\allowbreak\ 0;\allowbreak\ 0)$ y $f^{(3)}=(0{,}4;\allowbreak\ 0;\allowbreak\ 0{,}57;\allowbreak\ 0)$. Calcule el FVU, el L0 medio y la fracción de latentes muertos en esta muestra.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-d2l}
+Se sustituye la penalización $\tfrac{\lambda}{2}\norm{w}^{2}$ por $\lambda\norm{w}_1$. (a) Escriba la regla de actualización por subgradiente. (b) Con $\eta=0{,}1$ y $\lambda=0{,}5$, aplíquela a $w=0{,}3$ con gradiente de la pérdida $g=0{,}2$ y a $w=0{,}02$ con $g=-0{,}1$. (c) Compare el segundo caso con la regla proximal $w\leftarrow\signo(z)\max(\abs{z}-\eta\lambda,0)$, con $z=w-\eta g$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §3.7 «Weight Decay», ejercicio~3.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-ortonormal}
+Sea un SAE con $F=d$, $b_d=0$ y filas de $W_d$ ortonormales ($W_dW_d\T=I$). (a) Demuestre que $\norm{x-W_d\T f}^{2}=\norm{W_dx-f}^{2}$. (b) Deduzca que el problema $\min_{f\ge 0}\norm{x-W_d\T f}^{2}+\lambda\norm{f}_1$ se separa en $F$ problemas escalares y que su solución es $f_j^{*}=\relu(d_j\T x-\lambda/2)$. (c) Concluya que el codificador de la \cref{def:sae} con $W_e=W_d\T$ y $b_e=-\tfrac{\lambda}{2}\mathbf{1}$ calcula el código óptimo. (d) Explique por qué el argumento falla si $F>d$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-map}
+Sea la regresión $y=\theta\T x+\varepsilon$ con $\varepsilon\sim\mathcal{N}(0,\sigma^{2})$ independiente y una distribución \emph{a priori} de Laplace independiente para cada $\theta_i$, de densidad $\frac{1}{2b}e^{-\abs{\theta_i}/b}$. (a) Demuestre que el estimador MAP minimiza $\norm{X\theta-y}^{2}+\gamma\norm{\theta}_1$ y halle $\gamma$. (b) Calcule $\gamma$ para $\sigma=0{,}5$ y $b=0{,}1$. (c) Relacione el resultado con la penalización de un SAE.
+\fuente{adaptado de Stanford CS229~\cite{cs229ps2}, verano de 2020, \emph{Problem Set}~2, problema~6(d) «Bayesian Interpretation of Regularization».}
+\end{ejercicio}

@@ -1,0 +1,138 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase III — Módulo 15
+%  Construye tu GPT
+%  Compilar: latexmk -r ../latexmkrc M15-mini-gpt.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 15}
+
+% Notación propia del módulo
+\newcommand{\tok}[1]{\texttt{#1}}
+\newcommand{\vs}{\texttt{\textvisiblespace}}
+\newcommand{\nl}{\texttt{\textbackslash n}}
+\newcommand{\LN}{\operatorname{LN}}
+\newcommand{\MHA}{\operatorname{MHA}}
+\newcommand{\MLP}{\operatorname{MLP}}
+\newcommand{\GELU}{\operatorname{GELU}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\KL}{D_{\mathrm{KL}}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\topk}{\operatorname{top}_k}
+\newcommand{\ind}{\mathbb{1}}
+\newcommand{\Qm}{\bm{Q}}
+\newcommand{\Km}{\bm{K}}
+\newcommand{\Vm}{\bm{V}}
+\newcommand{\Mm}{\bm{M}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 15. Construye tu GPT},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase III \textperiodcentered\ Secuencias y Transformer}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 15\par}\vspace{0.3cm}
+{\LARGE Construye tu GPT\par}
+\vspace{0.2cm}
+{\large Entrenamiento, evaluación y generación de un Transformer decoder\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Los módulos~12 a~14 han presentado por separado las piezas de un gran modelo de lenguaje: el tokenizador, la atención y el bloque Transformer. Este módulo las reúne en un modelo completo, un \emph{mini-GPT} de unos $10^{5}$ parámetros, y estudia todo lo que hace falta para entrenarlo y usarlo: cómo se convierte un corpus en ejemplos de entrenamiento, qué función se minimiza, con qué optimizador y con qué calendario de la tasa de aprendizaje, cómo se mide el progreso y se guardan puntos de control, cómo se leen las curvas de pérdida y cómo se genera texto con temperatura, top-$k$ y top-$p$. La receta es, a escala reducida, la que documentan los modelos abiertos como GPT-2 y LLaMA; los detalles de entrenamiento de Claude, Gemini y Grok no se han publicado.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item construir las ventanas de contexto y los lotes a partir de un corpus tokenizado, contar las predicciones que contienen y definir la pérdida de entropía cruzada y la perplejidad;
+  \item derivar el gradiente de la entropía cruzada respecto de los logits, demostrar la invariancia de la softmax frente a traslaciones y justificar el valor $\ln K$ de la pérdida inicial;
+  \item describir la arquitectura completa de un Transformer decoder, contar sus parámetros y demostrar que la máscara causal hace que una sola pasada produzca las $T$ predicciones de una ventana;
+  \item definir AdamW, el calendario de calentamiento lineal y decaimiento coseno y el recorte del gradiente por norma global, y demostrar sus propiedades principales;
+  \item estimar la pérdida de validación, diseñar puntos de control, interpretar una curva de pérdida con sus tres referencias y demostrar que la entropía del proceso generador es una cota inferior de la pérdida esperada;
+  \item definir la temperatura, el muestreo top-$k$ y el muestreo de núcleo (top-$p$), demostrar que la entropía de la distribución crece con la temperatura y razonar el efecto de los hiperparámetros principales.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1 se usan la regla de la cadena, la softmax con temperatura, la entropía cruzada y la perplejidad; del módulo~6, la divergencia de Kullback--Leibler y la desigualdad de Gibbs; del módulo~7, Adam, AdamW y el calendario coseno; del módulo~8, la softmax con entropía cruzada; del módulo~10, la diferenciación automática y PyTorch; del módulo~11, la normalización de capa, las conexiones residuales y el recorte del gradiente; del módulo~12, la tokenización; del módulo~13, la atención con máscara causal y multicabeza, y del módulo~14, el bloque Transformer y la regla $C\approx 6ND$.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Datos, ventanas y objetivo de entrenamiento & \cite{cs336}, \cite{d2l}, \cite{cs224n} \\
+2 & La arquitectura mini-GPT & \cite{gpt2}, \cite{vaswani}, \cite{cs336}, \cite{d2l}, \cite{llama} \\
+3 & Optimización: AdamW, calendario y recorte & \cite{cs336}, \cite{adamw}, \cite{sgdr}, \cite{llama}, \cite{gbc} \\
+4 & Evaluación, puntos de control y curvas de pérdida & \cite{gbc}, \cite{cs336}, \cite{ct}, \cite{llama3} \\
+5 & Generación e hiperparámetros & \cite{cs336}, \cite{fan}, \cite{holtzman}, \cite{gbc} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La organización sigue la tarea~1 (\emph{basics}) del curso CS336 de Stanford, «Language Modeling from Scratch»~\cite{cs336}, en la que se programa un modelo de lenguaje Transformer completo: el §4 (entropía cruzada, AdamW, calendario de la tasa y recorte del gradiente), el §5 (cargador de datos, puntos de control y bucle de entrenamiento) y el §6 (decodificación con temperatura y top-$p$). Se complementa con las clases~5 («Transformers») y~7 («Pretraining») del curso CS224N~\cite{cs224n}, con los capítulos~9 y~11 de Zhang \emph{et al.}~\cite{d2l} (§9.3 sobre la partición de secuencias, §9.5 sobre recorte y decodificación, §11.9.3 sobre los modelos decoder) y con los capítulos~7, 8 y~11 de Goodfellow, Bengio y Courville~\cite{gbc} para la parada temprana, los algoritmos de optimización y la metodología práctica. Los métodos se toman de sus artículos originales: Vaswani \emph{et al.}~\cite{vaswani} para el Transformer, Radford \emph{et al.}~\cite{gpt2} para GPT-2, Touvron \emph{et al.}~\cite{llama} para la receta de entrenamiento de LLaMA, Loshchilov y Hutter para AdamW~\cite{adamw} y para el calendario coseno~\cite{sgdr}, Fan, Lewis y Dauphin~\cite{fan} para el muestreo top-$k$ y Holtzman \emph{et al.}~\cite{holtzman} para el muestreo de núcleo. El código de referencia de la práctica sigue la estructura del repositorio nanoGPT de Karpathy~\cite{nanogpt}. Los resultados numéricos de entrenamiento proceden del cuaderno de prácticas del módulo, ejecutado con la semilla indicada en él. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\V$, $K=\abs{\V}$ & vocabulario y su tamaño \\
+$u_{1:n}$ & corpus tokenizado de $n$ tokens \\
+$T$, $B$ & longitud de la ventana de contexto y tamaño del lote \\
+$x_{1:T}$, $y_{1:T}$ & ventana de entrada y ventana objetivo, con $y_t=x_{t+1}$ \\
+$d$, $L$, $n_h$, $d_k=d/n_h$ & dimensión del modelo, número de bloques, de cabezas y dimensión por cabeza \\
+$\Qm,\Km,\Vm$, $\Mm$ & matrices de consultas, claves y valores, y máscara causal \\
+$z\in\R^{K}$, $p=\softmax(z)$ & logits y distribución predicha en una posición \\
+$\ell$, $\mathcal{L}$ & pérdida de una posición y pérdida media \\
+$\theta$, $N$ & parámetros del modelo y su número \\
+$s$, $S$, $W$ & paso de entrenamiento, número total de pasos y pasos de calentamiento \\
+$\eta_s$, $\eta_{\max}$, $\eta_{\min}$ & tasa de aprendizaje en el paso $s$ y sus valores máximo y mínimo \\
+$\lambda$, $\beta_1,\beta_2$ & decaimiento de pesos y coeficientes de los momentos de AdamW \\
+$c$, $\clip_c$ & umbral y operador de recorte del gradiente \\
+$\tau$, $k$, $\rho$ & temperatura, parámetro de top-$k$ y umbral de top-$p$ \\
+$H(p)$, $H(p,q)$, $\KL(p\Vert q)$ & entropía, entropía cruzada y divergencia de Kullback--Leibler (en nats) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

@@ -1,0 +1,226 @@
+{
+"cells": [
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "# Módulo 9 · Práctica: un MLP de caracteres al estilo Bengio (2003)\n\nEn el módulo 1 predijiste la siguiente letra mirando **una** letra y contando. Ahora mirarás **tres** y aprenderás con gradientes: embeddings, capa oculta y softmax (Bengio et al., 2003). Todo en NumPy y con **retropropagación a mano**; en el módulo 10 lo hará PyTorch.\n\n| Parte | Qué haces |\n| --- | --- |\n| 0 | Datos, vocabulario y la línea base de bigramas |\n| 1 | Construir el conjunto de contextos de 3 letras |\n| 2 | Inicialización de He |\n| 3 | Pasada hacia delante y entropía cruzada |\n| 4 | Retropropagación manual y comprobación numérica |\n| 5 | Entrenamiento y comparación de perplejidades |\n| 6 | Generar nombres y mirar los embeddings |\n| 7 | Retos |\n\nCompleta cada `# TU CÓDIGO` y ejecuta la `# Comprobación` siguiente. Ejecución total: < 1 min en CPU."
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "## Parte 0 · Datos y línea base\n\nUn solo hilo de BLAS: con matrices tan pequeñas, varios hilos van *más lentos*."
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "import os\nos.environ[\"OMP_NUM_THREADS\"] = \"1\"\nos.environ[\"OPENBLAS_NUM_THREADS\"] = \"1\"\nimport time\nimport numpy as np\nimport matplotlib.pyplot as plt"
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "nombres = [\n    'alejandro', 'antonio', 'manuel', 'jose', 'francisco', 'david', 'juan', 'javier', 'daniel', 'carlos',\n    'jesus', 'miguel', 'rafael', 'pablo', 'pedro', 'angel', 'sergio', 'fernando', 'jorge', 'luis',\n    'alberto', 'alvaro', 'adrian', 'diego', 'raul', 'enrique', 'ramon', 'ivan', 'ruben', 'oscar',\n    'andres', 'vicente', 'joaquin', 'santiago', 'victor', 'eduardo', 'mario', 'roberto', 'jaime', 'ignacio',\n    'marcos', 'alfonso', 'jordi', 'hugo', 'ricardo', 'salvador', 'guillermo', 'gabriel', 'emilio', 'gonzalo',\n    'julio', 'julian', 'martin', 'tomas', 'marc', 'agustin', 'nicolas', 'samuel', 'felix', 'ismael',\n    'cristian', 'aitor', 'joan', 'josep', 'lucas', 'mateo', 'leo', 'bruno', 'enzo', 'izan',\n    'alex', 'gael', 'thiago', 'marco', 'dario', 'unai', 'iker', 'eric', 'rodrigo', 'aaron',\n    'nil', 'pau', 'oliver', 'liam', 'adam', 'biel', 'mauro', 'saul', 'cesar', 'lorenzo',\n    'benito', 'esteban', 'felipe', 'gregorio', 'hector', 'horacio', 'jacinto', 'leandro', 'lisandro', 'matias',\n    'nestor', 'octavio', 'patricio', 'ramiro', 'sebastian', 'teodoro', 'ulises', 'valentin', 'xavier', 'yago',\n    'zacarias', 'aurelio', 'baltasar', 'ceferino', 'domingo', 'elias', 'fabian', 'gaspar', 'hilario', 'iñigo',\n    'nuño', 'toño', 'maria', 'carmen', 'ana', 'isabel', 'laura', 'cristina', 'marta', 'lucia',\n    'paula', 'elena', 'sara', 'raquel', 'rosa', 'pilar', 'manuela', 'concepcion', 'mercedes', 'julia',\n    'beatriz', 'nuria', 'silvia', 'irene', 'patricia', 'rocio', 'andrea', 'montserrat', 'monica', 'alba',\n    'sonia', 'sandra', 'marina', 'angela', 'sofia', 'alicia', 'susana', 'yolanda', 'claudia', 'natalia',\n    'margarita', 'eva', 'inmaculada', 'noelia', 'veronica', 'esther', 'carla', 'nerea', 'daniela', 'alejandra',\n    'martina', 'valeria', 'chloe', 'emma', 'olivia', 'jimena', 'vega', 'lola', 'carlota', 'mia',\n    'valentina', 'aitana', 'noa', 'alma', 'triana', 'candela', 'ainhoa', 'ines', 'adriana', 'aroa',\n    'blanca', 'celia', 'diana', 'elsa', 'fatima', 'gloria', 'helena', 'iria', 'lara', 'lidia',\n    'lorena', 'luna', 'maite', 'mar', 'miriam', 'nadia', 'nieves', 'noemi', 'olga', 'paloma',\n    'regina', 'rebeca', 'salma', 'tamara', 'teresa', 'ursula', 'victoria', 'ximena', 'zoe', 'aurora',\n    'begoña', 'catalina', 'dolores', 'encarnacion', 'francisca', 'gema', 'juana', 'leire', 'macarena', 'nayara',\n    'oihane', 'piedad', 'remedios', 'soledad', 'trinidad', 'vanesa', 'yaiza', 'amparo', 'araceli', 'asuncion',\n    'cecilia', 'consuelo', 'emilia', 'esperanza', 'estefania', 'eugenia', 'guadalupe', 'josefa', 'lourdes', 'maribel',\n    'purificacion', 'rosario', 'virginia', 'almudena', 'ariadna', 'berta', 'carolina', 'debora', 'estela', 'fernanda',\n    'graciela', 'jazmin', 'magdalena', 'ofelia', 'pepa', 'rut', 'sabina', 'tatiana', 'yasmina', 'zaira',\n    'ainara', 'arantxa', 'iratxe', 'naia', 'uxue', 'ane', 'june', 'maialen', 'itziar', 'alonso',\n    'ernesto', 'marcelo', 'bernardo', 'cayetano', 'rosalia', 'anabel', 'candido', 'clemente', 'efren', 'genaro',\n    'isidro', 'leonardo', 'maximo', 'norberto', 'rogelio', 'silvestre', 'tadeo', 'amelia', 'bianca', 'cintia',\n    'dafne', 'erika', 'flor', 'ivonne', 'judith', 'karen', 'leticia', 'micaela', 'nora', 'perla',\n    'rita', 'selena', 'telma', 'vera', 'wendy', 'abril',\n]\nprint(len(nombres), 'nombres')"
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "vocab = list(\".abcdefghijklmnñopqrstuvwxyz\")\nV = len(vocab)\nstoi = {c: i for i, c in enumerate(vocab)}\nitos = {i: c for i, c in enumerate(vocab)}\n\n# Misma partición que en el módulo 1\nrng = np.random.default_rng(7)\nidx = rng.permutation(len(nombres))\nn_val = round(0.15 * len(nombres))\nval = [nombres[i] for i in idx[:n_val]]\ntrain = [nombres[i] for i in idx[n_val:]]\nprint(V, \"tokens ·\", len(train), \"entrenamiento ·\", len(val), \"validación\")"
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "**Línea base:** el bigrama suavizado del módulo 1, con α elegido en validación."
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "def tokenizar(p):\n    return [stoi[c] for c in \".\" + p + \".\"]\n\nN = np.zeros((V, V))\nfor p in train:\n    t = tokenizar(p)\n    for a, b in zip(t, t[1:]):\n        N[a, b] += 1\n\ndef ppl_bigrama(alpha, palabras):\n    P = (N + alpha) / (N + alpha).sum(axis=1, keepdims=True)\n    ll = [np.log(P[a, b]) for p in palabras for a, b in zip(tokenizar(p), tokenizar(p)[1:])]\n    return np.exp(-np.mean(ll))\n\nalphas = [0.05, 0.1, 0.2, 0.3, 0.5, 1.0]\nppls = [ppl_bigrama(a, val) for a in alphas]\nalpha_opt = alphas[int(np.argmin(ppls))]\nPPL_BIGRAMA = min(ppls)\nprint(f\"Mejor alpha = {alpha_opt}: PPL validación del bigrama = {PPL_BIGRAMA:.2f}  (uniforme: {V})\")"
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "## Parte 1 · Contextos de 3 letras\n\nCada nombre genera un ejemplo por letra (más el `.` final). El contexto son las 3 letras anteriores, rellenando con `.` al principio:\n\n| contexto | siguiente |\n| --- | --- |\n| `. . .` | a |\n| `. . a` | n |\n| `. a n` | a |\n| `a n a` | . |\n\n**Ejercicio 1.** Completa `construir_dataset(palabras, B)`: devuelve `X` (enteros, forma n × B) e `Y` (forma n)."
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "B = 3   # longitud del contexto\n\ndef construir_dataset(palabras, B=3):\n    X, Y = [], []\n    for p in palabras:\n        ctx = [0] * B\n        for c in p + \".\":\n            # TU CÓDIGO: añade ctx a X, el índice de c a Y, y desplaza ctx\n            pass\n    return np.array(X, dtype=int).reshape(-1, B), np.array(Y, dtype=int)\n\nXtr, Ytr = construir_dataset(train, B)\nXva, Yva = construir_dataset(val, B)\nprint(Xtr.shape, Ytr.shape, Xva.shape)"
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "# Comprobación\nXa, Ya = construir_dataset([\"ana\"], 3)\nassert Xa.tolist() == [[0,0,0],[0,0,1],[0,1,14],[1,14,1]], f\"Contextos de 'ana' incorrectos: {Xa.tolist()}\"\nassert Ya.tolist() == [1, 14, 1, 0], \"Objetivos de 'ana' incorrectos\"\nassert len(Xtr) == sum(len(p) + 1 for p in train), \"Cada nombre de longitud L aporta L + 1 ejemplos\"\nprint(\"Correcto\")"
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "## Parte 2 · Parámetros e inicialización\n\nArquitectura (d = 10, H = 64):\n\n$$E = C[X] \\in \\mathbb{R}^{n\\times 3d},\\quad Z = E W_1 + b_1,\\quad A = \\mathrm{ReLU}(Z),\\quad \\text{logits} = A W_2 + b_2$$\n\n**Ejercicio 2.** Inicializa `W1` con **He** (desviación $\\sqrt{2/n_\\text{in}}$, con $n_\\text{in}=3d$), `b1` y `b2` a cero y `W2` con desviación $0{,}1/\\sqrt{H}$ (logits iniciales casi nulos: la red empieza «sin opinión»). `C` ya está: normal estándar."
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "d, H = 10, 64\n\ndef init_params(seed=0):\n    r = np.random.default_rng(seed)\n    C = r.normal(0, 1, (V, d))\n    # TU CÓDIGO\n    W1 = None\n    b1 = None\n    W2 = None\n    b2 = None\n    return {\"C\": C, \"W1\": W1, \"b1\": b1, \"W2\": W2, \"b2\": b2}\n\nparams = init_params()\nprint(\"Parámetros:\", sum(v.size for v in params.values()), \"  (bigrama:\", V * V, \")\")"
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "# Comprobación\nassert params[\"W1\"].shape == (B * d, H) and params[\"W2\"].shape == (H, V), \"Formas de W1 o W2 incorrectas\"\nassert params[\"b1\"].shape == (H,) and np.all(params[\"b1\"] == 0) and np.all(params[\"b2\"] == 0), \"Sesgos a cero\"\nassert abs(params[\"W1\"].std() - np.sqrt(2 / (B * d))) < 0.03, \"W1 no sigue la inicialización de He\"\nassert abs(params[\"W2\"].std() - 0.1 / np.sqrt(H)) < 0.003, \"Desviación de W2 incorrecta\"\nassert sum(v.size for v in params.values()) == 4084\nprint(\"Correcto\")"
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "## Parte 3 · Hacia delante\n\n**Ejercicio 3a.** `softmax_ce(logits, Y)` devuelve la pérdida media y su gradiente respecto a los logits:\n\n$$\\mathcal{L} = -\\frac{1}{n}\\sum_i \\log p_{i,y_i},\\qquad \\frac{\\partial \\mathcal{L}}{\\partial \\text{logits}} = \\frac{1}{n}\\,(P - \\text{onehot}(Y))$$\n\nHazla estable restando el máximo de cada fila y calcula $\\log p$ como $z_y - \\log\\sum_j e^{z_j}$ (log-sum-exp) para no hacer nunca `log(0)`."
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "def softmax_ce(logits, Y):\n    n = len(Y)\n    # TU CÓDIGO\n    loss, dlogits = None, None\n    return loss, dlogits"
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "# Comprobación con el ejemplo resuelto del documento (sección 9.6): z = (2, 1, -2), clase correcta 1\nL_ej, dz_ej = softmax_ce(np.array([[2., 1., -2.]]), np.array([1]))\nassert abs(L_ej - 1.3266) < 1e-3, f\"Pérdida {L_ej}, esperaba 1,3266\"\nassert np.allclose(dz_ej, [[0.7214, -0.7346, 0.0132]], atol=1e-4), f\"Gradiente {dz_ej}\"\nassert np.isfinite(softmax_ce(np.array([[1000., 0., -1000.]]), np.array([2]))[0]), \"No es estable con logits grandes\"\nprint(\"Correcto\")"
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "**Ejercicio 3b.** `forward(params, X)` devuelve los logits y una caché con lo que necesitará la retropropagación."
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "def forward(params, X):\n    C, W1, b1, W2, b2 = (params[k] for k in (\"C\", \"W1\", \"b1\", \"W2\", \"b2\"))\n    # TU CÓDIGO: E (n, 3d), Z, A, logits\n    E = Z = A = logits = None\n    cache = (X, E, Z, A)\n    return logits, cache\n\nlogits, _ = forward(params, Xtr)\nprint(\"Pérdida inicial:\", softmax_ce(logits, Ytr)[0], \"  ln V =\", np.log(V))"
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "# Comprobación\nassert logits.shape == (len(Xtr), V), \"Los logits deben tener forma (n, V)\"\nL0 = softmax_ce(logits, Ytr)[0]\nassert abs(L0 - np.log(V)) < 0.1, f\"Con logits casi nulos la pérdida debe rondar ln V = {np.log(V):.3f}; sale {L0:.3f}\"\nprint(\"Correcto: la red empieza como un modelo uniforme\")"
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "## Parte 4 · Retropropagación a mano\n\nSigue el grafo hacia atrás (sección 9.6 del documento). Con $G = \\partial\\mathcal{L}/\\partial\\text{logits}$:\n\n$$\\nabla W_2 = A^\\top G,\\quad \\nabla b_2 = \\textstyle\\sum_i G_i,\\quad \\nabla A = G W_2^\\top,\\quad \\nabla Z = \\nabla A \\odot \\mathbb{1}[Z>0]$$\n$$\\nabla W_1 = E^\\top \\nabla Z,\\quad \\nabla b_1 = \\textstyle\\sum_i \\nabla Z_i,\\quad \\nabla E = \\nabla Z\\, W_1^\\top$$\n\nPara `C`: cada fila de $\\nabla E$ se reparte en 3 trozos de tamaño d y se **suma** en la fila de `C` del carácter correspondiente. Usa `np.add.at(dC, X, dE.reshape(n, B, d))` (con `dC[X] += …` se perderían las repeticiones).\n\n**Ejercicio 4.** Completa `backward`."
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "def backward(params, cache, dlogits):\n    X, E, Z, A = cache\n    n = len(X)\n    # TU CÓDIGO\n    grads = {\"C\": None, \"W1\": None, \"b1\": None, \"W2\": None, \"b2\": None}\n    return grads"
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "# Comprobación: gradiente numérico por diferencias centradas (módulo 4)\ndef perdida_total(p, X, Y):\n    return softmax_ce(forward(p, X)[0], Y)[0]\n\npc = init_params(seed=3)\npc[\"W2\"] = pc[\"W2\"] * 30           # logits no triviales para que el test sea exigente\npc[\"b1\"] = pc[\"b1\"] + 0.1\nXc, Yc = Xtr[:50], Ytr[:50]\nlg, cache = forward(pc, Xc)\ng = backward(pc, cache, softmax_ce(lg, Yc)[1])\nr = np.random.default_rng(0)\nfor k in pc:\n    for _ in range(5):\n        i = tuple(r.integers(0, s) for s in pc[k].shape)\n        if k == \"C\":\n            i = (int(r.choice(Xc.ravel())), i[1])   # una fila de C que sí se usa\n        old = pc[k][i]; h = 1e-5\n        pc[k][i] = old + h; Lp = perdida_total(pc, Xc, Yc)\n        pc[k][i] = old - h; Lm = perdida_total(pc, Xc, Yc)\n        pc[k][i] = old\n        num = (Lp - Lm) / (2 * h)\n        assert abs(num - g[k][i]) < 1e-6 + 1e-4 * abs(num), f\"Gradiente de {k}{i}: analítico {g[k][i]:.6g}, numérico {num:.6g}\"\nprint(\"Correcto: los 25 gradientes analíticos coinciden con los numéricos\")"
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "## Parte 5 · Entrenamiento\n\nCon 1.885 ejemplos cabe todo en un lote: usamos descenso de gradiente por lotes completos con η = 0,5. El corpus es diminuto y la red tiene 4.084 parámetros, así que sobreajusta: añadimos **decaimiento de pesos** (módulo 7), que suma λ·θ a cada gradiente, con λ = 0,005.\n\n**Ejercicio 5.** Escribe el paso de actualización dentro del bucle."
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "def entrenar(pasos=1000, lr=0.5, wd=5e-3, seed=0, cada=50):\n    p = init_params(seed)\n    hist = []\n    for paso in range(pasos):\n        logits, cache = forward(p, Xtr)\n        loss, dlog = softmax_ce(logits, Ytr)\n        grads = backward(p, cache, dlog)\n        # TU CÓDIGO: para cada k, p[k] -= lr * (grads[k] + wd * p[k])\n        if paso % cada == 0 or paso == pasos - 1:\n            lv = softmax_ce(forward(p, Xva)[0], Yva)[0]\n            hist.append((paso, loss, lv))\n    return p, hist\n\nt0 = time.time()\nparams, hist = entrenar()\nprint(f\"Entrenado en {time.time() - t0:.1f} s\")\npasos_h, ltr, lva = map(np.array, zip(*hist))\nplt.plot(pasos_h, np.exp(ltr), label=\"entrenamiento\")\nplt.plot(pasos_h, np.exp(lva), label=\"validación\")\nplt.axhline(PPL_BIGRAMA, ls=\"--\", c=\"gray\", label=\"bigrama (validación)\")\nplt.yscale(\"log\"); plt.xlabel(\"paso\"); plt.ylabel(\"perplejidad\"); plt.legend(); plt.show()"
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "# Comprobación\nppl_tr = np.exp(softmax_ce(forward(params, Xtr)[0], Ytr)[0])\nppl_va = np.exp(softmax_ce(forward(params, Xva)[0], Yva)[0])\nprint(f\"MLP: PPL entrenamiento {ppl_tr:.2f} · validación {ppl_va:.2f}   |   bigrama validación {PPL_BIGRAMA:.2f}\")\nassert ppl_tr < 8, \"La pérdida de entrenamiento no ha bajado lo suficiente: revisa la actualización\"\nassert ppl_va < PPL_BIGRAMA, \"El MLP debería superar al bigrama en validación\"\nprint(f\"Correcto: el MLP reduce la perplejidad de validación un {100 * (1 - ppl_va / PPL_BIGRAMA):.0f} %\")"
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "**Preguntas.** (1) La PPL de entrenamiento queda muy por debajo de la de validación: ¿qué indica? Prueba `wd=0`. (2) Una tabla de cuatrigramas tendría 28⁴ = 614.656 casillas para 1.885 ejemplos. ¿Por qué el MLP, con 4.084 parámetros, sí aprovecha ese contexto?"
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "## Parte 6 · Generar y mirar dentro\n\n**Ejercicio 6.** Completa `generar`: calcula la distribución con `forward` sobre el contexto actual, aplica la temperatura, sortea y desplaza el contexto."
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "def generar(params, rng, T=1.0, max_len=20):\n    ctx = [0] * B\n    out = \"\"\n    for _ in range(max_len):\n        logits, _ = forward(params, np.array([ctx]))\n        # TU CÓDIGO: probabilidades con temperatura T, sortear j, parar si j == 0\n        break\n    return out\n\ng_rng = np.random.default_rng(42)\nprint([generar(params, g_rng) for _ in range(15)])"
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "# Comprobación\nmuestras = [generar(params, np.random.default_rng(s)) for s in range(200)]\nassert all(set(m) <= set(vocab[1:]) for m in muestras), \"Los nombres no deben contener '.'\"\nassert np.mean([len(m) for m in muestras]) > 3, \"Los nombres generados son demasiado cortos\"\nnuevos = sum(m not in nombres for m in muestras)\nprint(f\"Correcto. {nuevos} de 200 nombres no estaban en el corpus\")"
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "# Embeddings aprendidos proyectados en 2D con PCA (módulo 3)\nCc = params[\"C\"] - params[\"C\"].mean(axis=0)\nU, S, Vt = np.linalg.svd(Cc, full_matrices=False)\nP2 = Cc @ Vt[:2].T\nplt.figure(figsize=(6, 6))\nfor i, c in enumerate(vocab):\n    plt.scatter(*P2[i], c=\"tab:red\" if c in \"aeiou\" else \"tab:blue\")\n    plt.annotate(c, P2[i], fontsize=13)\nplt.title(\"Embeddings de caracteres (rojo: vocales)\"); plt.show()"
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "**Pregunta.** ¿Se agrupan las vocales? Nadie le dijo a la red qué es una vocal: aparecen en contextos parecidos. Así funcionan los embeddings de un LLM."
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "## Parte 7 · Retos\n\n1. **Test.** Separa también un conjunto de *test*: elige α y λ en validación y compara en *test*.\n2. **GELU.** Sustituye ReLU por GELU en `forward` y `backward` y repite la comprobación numérica.\n3. **SwiGLU.** Usa $A = \\mathrm{SiLU}(EW_g)\\odot(EW_u)$ con H = 43 (mismos parámetros) y deriva su retropropagación.\n4. **Contexto.** Prueba B = 2, 4, 5. ¿Mejora siempre la validación?\n5. **Inicialización.** Pon `W2` con desviación 1. ¿Qué pasa con la pérdida inicial?"
+},
+{
+"cell_type": "markdown",
+"metadata": {},
+"source": "---\n### Soluciones de referencia\nInténtalo antes de mirar."
+},
+{
+"cell_type": "code",
+"execution_count": null,
+"metadata": {},
+"outputs": [],
+"source": "# Ejercicio 1 (dentro del bucle)\n#             X.append(ctx); Y.append(stoi[c]); ctx = ctx[1:] + [stoi[c]]\n# Ejercicio 2\n#     W1 = r.normal(0, np.sqrt(2 / (B * d)), (B * d, H))\n#     b1 = np.zeros(H)\n#     W2 = r.normal(0, 0.1 / np.sqrt(H), (H, V))\n#     b2 = np.zeros(V)\n# Ejercicio 3a\n#     z = logits - logits.max(axis=1, keepdims=True)\n#     P = np.exp(z); P /= P.sum(axis=1, keepdims=True)\n#     loss = -(z[np.arange(n), Y] - np.log(np.exp(z).sum(axis=1))).mean()\n#     dlogits = P.copy(); dlogits[np.arange(n), Y] -= 1; dlogits /= n\n# Ejercicio 3b\n#     E = C[X].reshape(len(X), -1)\n#     Z = E @ W1 + b1\n#     A = np.maximum(Z, 0)\n#     logits = A @ W2 + b2\n# Ejercicio 4\n#     dW2 = A.T @ dlogits;  db2 = dlogits.sum(axis=0)\n#     dA = dlogits @ params[\"W2\"].T\n#     dZ = dA * (Z > 0)\n#     dW1 = E.T @ dZ;  db1 = dZ.sum(axis=0)\n#     dE = dZ @ params[\"W1\"].T\n#     dC = np.zeros_like(params[\"C\"]); np.add.at(dC, X, dE.reshape(n, B, d))\n#     grads = {\"C\": dC, \"W1\": dW1, \"b1\": db1, \"W2\": dW2, \"b2\": db2}\n# Ejercicio 5 (dentro del bucle)\n#         for k in p:\n#             p[k] -= lr * (grads[k] + wd * p[k])\n# Ejercicio 6 (dentro del bucle)\n#         z = logits[0] / T\n#         pr = np.exp(z - z.max()); pr /= pr.sum()\n#         j = rng.choice(V, p=pr)\n#         if j == 0:\n#             break\n#         out += itos[j]; ctx = ctx[1:] + [j]"
+}
+],
+"metadata": {
+"kernelspec": {
+"display_name": "Python 3",
+"language": "python",
+"name": "python3"
+},
+"language_info": {
+"name": "python"
+}
+},
+"nbformat": 4,
+"nbformat_minor": 4
+}

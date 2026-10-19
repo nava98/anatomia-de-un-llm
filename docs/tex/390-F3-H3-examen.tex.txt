@@ -1,0 +1,1170 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase III — Hito 3
+%  Examen de hito: el Transformer (módulos 12 a 15)
+%  Compilar desde esta carpeta: latexmk -r ../latexmkrc H3-examen.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+\usepackage{float}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Hito 3}
+
+\newcommand{\T}{^{\top}}
+\newcommand{\dff}{d_{\mathrm{ff}}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+\newcommand{\MHA}{\operatorname{MHA}}
+\newcommand{\SwiGLU}{\operatorname{SwiGLU}}
+\newcommand{\SiLU}{\operatorname{SiLU}}
+\newcommand{\Norm}{\operatorname{Norm}}
+\newcommand{\Attn}{\operatorname{Attn}}
+\newcommand{\tok}[1]{\textmd{\texttt{#1}}}
+\newcommand{\pts}[1]{\textup{(#1~p)}}
+\newcommand{\punto}{\textup{[1~p]}}
+\newcommand{\apartado}[2]{\par\medskip\noindent\textbf{Apartado (#1)} \pts{#2}.\par\nopagebreak}
+\newcommand{\repasar}[1]{\par\smallskip\noindent\textbf{Repasar:} #1.}
+
+% La parte A, la parte B y el proyecto se numeran con letras.
+\renewcommand{\thechapter}{\Alph{chapter}}
+\setlocalecaption{spanish}{chapter}{Parte}
+\crefname{chapter}{parte}{partes}
+
+\hypersetup{pdftitle={Hito 3. Examen de hito: el Transformer},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase III \textperiodcentered\ Hito 3 \textperiodcentered\ Examen de hito}\par\vspace{0.3cm}
+{\Huge\bfseries Hito 3\par}\vspace{0.3cm}
+{\LARGE El Transformer\par}
+\vspace{0.3cm}
+{\large Tokenización, atención, Transformer y mini-GPT\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Examen, proyecto de fase y soluciones}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% =====================================================================
+\chapter*{Instrucciones}
+\addcontentsline{toc}{chapter}{Instrucciones}
+\markboth{Instrucciones}{}
+% =====================================================================
+
+Este examen cierra la fase~III del curso, dedicada al Transformer. Cubre los módulos~12 (tokenización y modelos secuenciales), 13 (atención), 14 (el Transformer decoder-only) y 15 (entrenamiento de un mini-GPT). Debe aprobarse antes de comenzar la fase~IV.
+
+\section*{Condiciones}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Duración & 2~h 30~min: unos 20~min para la parte~A y 2~h para la parte~B \\
+Material permitido & calculadora científica y una hoja de fórmulas manuscrita (una cara) \\
+Puntuación total & 100 puntos: parte~A, 20; parte~B, 80 \\
+Aprobado & 70 puntos (70\,\%) \\
+Módulos & M12, M13, M14 y M15 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section*{Estructura}
+\begin{itemize}[leftmargin=1.4em,label=\textendash]
+  \item \textbf{Parte A. Cuestiones} (20 puntos). Veinte preguntas de opción múltiple, de 1~punto cada una, con una sola respuesta correcta entre las cuatro propuestas. Las respuestas en blanco o incorrectas valen~0; no se penalizan los errores.
+  \item \textbf{Parte B. Problemas} (80 puntos). Seis ejercicios de desarrollo, con la puntuación de cada apartado indicada entre paréntesis. Debe justificarse cada paso: un resultado sin razonamiento vale como máximo la mitad de su puntuación.
+  \item \textbf{Proyecto de fase}. Se entrega aparte y se evalúa con la rúbrica del capítulo \hyperref[chap:proyecto]{«Proyecto de fase»}; no suma puntos al examen.
+\end{itemize}
+
+\section*{Convenios}
+\begin{itemize}[leftmargin=1.4em,label=\textendash]
+  \item Se redondea a tres decimales salvo que se indique otra cosa. Pueden usarse $e\approx 2{,}718$, $e^{2}\approx 7{,}389$ y $\ln 2\approx 0{,}693$.
+  \item Las matrices de pesos multiplican por la derecha ($Y=XW$) y no hay sesgos salvo que se diga lo contrario.
+  \item $1~\mathrm{GB}=10^{9}$~bytes. Una multiplicación seguida de una suma cuenta como 2~FLOPs.
+  \item Los modelos con nombre inventado, como «Lince-1B», son ficticios. Los datos de GPT-2 y de LLaMA-2 son los publicados por sus autores.
+  \item Las referencias del tipo «M13, §2.3» remiten al módulo y a la sección de los apuntes del curso.
+\end{itemize}
+
+\section*{Sobre las fuentes}
+Los enunciados son de redacción propia. Los ejercicios marcados con \emph{Fuente} están adaptados de tareas y ejemplos de cursos universitarios publicados: la tarea~1 de Stanford CS336~\cite{cs336}, la tarea~3 de Stanford CS224N~\cite{cs224n} y los ejercicios del libro de Jurafsky y Martin~\cite{jm3}, texto de los cursos de procesamiento del lenguaje de Stanford. En todos los casos se han cambiado los datos para que el ejercicio pueda resolverse a mano.
+
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Cuestiones}
+\label{chap:parteA}
+% =====================================================================
+
+Cada cuestión vale 1~punto y tiene una sola respuesta correcta. Las cuestiones A.1 a A.5 corresponden al módulo~12; A.6 a A.10, al módulo~13; A.11 a A.18, al módulo~14, y A.19 y A.20, al módulo~15.
+
+\begin{enumerate}[label=\textbf{A.\arabic*.},ref=A.\arabic*,leftmargin=2.6em,itemsep=8pt]
+
+% ---------------------------------------------------------------- M12
+\item\label{q:bpe-paso} ¿Qué hace el algoritmo BPE en cada paso de su entrenamiento? \punto
+\begin{enumerate}[label=(\alph*)]
+  \item Elimina del vocabulario el token menos probable.
+  \item Divide la palabra más larga del corpus en dos mitades.
+  \item Fusiona el par de símbolos adyacentes más frecuente en el corpus.
+  \item Asigna a cada palabra un entero según su frecuencia.
+\end{enumerate}
+
+\item\label{q:bytes} Sin contar los tokens especiales, un tokenizador BPE a nivel de byte parte de un vocabulario de: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item 128 símbolos.
+  \item 256 símbolos.
+  \item 65\,536 símbolos.
+  \item tantos símbolos como caracteres distintos aparezcan en el corpus.
+\end{enumerate}
+
+\item\label{q:pinon} ¿Cuántos bytes ocupa la palabra «piñón» codificada en UTF-8? \punto
+\begin{enumerate}[label=(\alph*)]
+  \item 5.
+  \item 6.
+  \item 7.
+  \item 10.
+\end{enumerate}
+
+\item\label{q:orden} Al codificar una palabra nueva con un tokenizador BPE ya entrenado, las reglas de fusión se aplican: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item en el orden en que se aprendieron.
+  \item de la que produce el token más largo a la que produce el más corto.
+  \item en orden aleatorio, para dar variedad a la segmentación.
+  \item solo la regla más frecuente.
+\end{enumerate}
+
+\item\label{q:rnn} ¿Por qué las redes recurrentes escalan peor que el Transformer? \punto
+\begin{enumerate}[label=(\alph*)]
+  \item Porque tienen más parámetros por capa.
+  \item Porque no pueden usar embeddings.
+  \item Porque solo admiten vocabularios de caracteres.
+  \item Porque procesan los tokens uno tras otro, lo que impide paralelizar el entrenamiento a lo largo de la secuencia, y sus gradientes se desvanecen con la distancia.
+\end{enumerate}
+
+% ---------------------------------------------------------------- M13
+\item\label{q:forma} En la atención de una cabeza sobre $n$ tokens, la matriz $A=\softmax\bigl(QK\T/\sqrt{d_k}\bigr)$ tiene forma: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item $n\times d_k$.
+  \item $d_k\times d_k$.
+  \item $n\times n$.
+  \item $n\times d_v$.
+\end{enumerate}
+
+\item\label{q:varianza} Si las componentes de $q,k\in\R^{d_k}$ son variables independientes de media~0 y varianza~1, la varianza de $q\cdot k$ es: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item $1$.
+  \item $d_k$.
+  \item $\sqrt{d_k}$.
+  \item $d_k^{2}$.
+\end{enumerate}
+
+\item\label{q:mascara} La máscara causal se implementa: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item poniendo a~0 las puntuaciones de los tokens futuros antes de la softmax.
+  \item poniendo a~0 los pesos de los tokens futuros después de la softmax, sin renormalizar.
+  \item eliminando de $V$ las filas de los tokens futuros.
+  \item sumando $-\infty$ a las puntuaciones de los tokens futuros antes de la softmax.
+\end{enumerate}
+
+\item\label{q:mha} Con $d=768$ y 12 cabezas, ¿cuántos parámetros tiene la atención multi-cabeza, sin sesgos? \punto
+\begin{enumerate}[label=(\alph*)]
+  \item 196\,608.
+  \item 589\,824.
+  \item 1\,179\,648.
+  \item 2\,359\,296.
+\end{enumerate}
+
+\item\label{q:contexto} Pasar de un contexto de 1024 a uno de 8192 tokens multiplica la memoria de la matriz de atención, almacenada completa, por: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item 8.
+  \item 64.
+  \item 512.
+  \item 4096.
+\end{enumerate}
+
+% ---------------------------------------------------------------- M14
+\item\label{q:prenorm} En un bloque pre-norm, la subcapa de atención se escribe: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item $h=x+\Attn(\Norm(x))$.
+  \item $h=\Norm(x+\Attn(x))$.
+  \item $h=\Norm(\Attn(x))$.
+  \item $h=\Attn(x)+\Norm(x)$.
+\end{enumerate}
+
+\item\label{q:normfinal} ¿Por qué un Transformer pre-norm necesita una normalización final antes del unembedding? \punto
+\begin{enumerate}[label=(\alph*)]
+  \item Porque la norma del flujo residual crece con la profundidad.
+  \item Porque la softmax exige entradas positivas.
+  \item Para poder atar los pesos de entrada y de salida.
+  \item No la necesita; solo la llevan los modelos post-norm.
+\end{enumerate}
+
+\item\label{q:swiglu} Un MLP SwiGLU tiene el mismo número de parámetros que un MLP clásico de dimensión oculta $4d$ cuando su dimensión oculta vale: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item $2d$.
+  \item $\tfrac{8}{3}d$.
+  \item $3d$.
+  \item $4d$.
+\end{enumerate}
+
+\item\label{q:rope-rel} RoPE consigue que la puntuación $\tilde q_m\cdot\tilde k_n$ entre el token~$m$ y el token~$n$: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item dependa de las posiciones solo a través de $n-m$.
+  \item dependa de las posiciones solo a través de $m+n$.
+  \item sea independiente de las posiciones.
+  \item crezca linealmente con la posición.
+\end{enumerate}
+
+\item\label{q:rope-v} RoPE gira las consultas y las claves, pero no los valores, porque: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item $v$ tiene dimensión impar.
+  \item girar $v$ cambiaría su norma.
+  \item la posición debe influir en a quién se atiende, no en qué contenido se copia.
+  \item $v$ no participa en la atención.
+\end{enumerate}
+
+\item\label{q:llama-emb} LLaMA-2~7B no ata sus embeddings ($V=32\,000$, $d=4096$). ¿Cuántos parámetros suman la matriz de entrada y la de salida? \punto
+\begin{enumerate}[label=(\alph*)]
+  \item 65\,536\,000.
+  \item 131\,072\,000.
+  \item 262\,144\,000.
+  \item 524\,288\,000.
+\end{enumerate}
+
+\item\label{q:16bytes} Entrenar con Adam en precisión mixta (pesos y gradientes en bf16, copia maestra en fp32 y momentos $m$ y $v$ en fp32) ocupa, sin contar las activaciones: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item 4 bytes por parámetro.
+  \item 8 bytes por parámetro.
+  \item 12 bytes por parámetro.
+  \item 16 bytes por parámetro.
+\end{enumerate}
+
+\item\label{q:6nd} Según la regla $6ND$, ¿cuántos FLOPs cuesta, aproximadamente, entrenar un modelo de $10^{9}$ parámetros con $2\cdot 10^{10}$ tokens? \punto
+\begin{enumerate}[label=(\alph*)]
+  \item $6\cdot 10^{18}$.
+  \item $2\cdot 10^{19}$.
+  \item $4\cdot 10^{19}$.
+  \item $1{,}2\cdot 10^{20}$.
+\end{enumerate}
+
+% ---------------------------------------------------------------- M15
+\item\label{q:lnV} Un GPT con $V=50\,257$ tokens, recién inicializado con logits casi nulos, debe mostrar una pérdida inicial (en nats por token) cercana a: \punto
+\begin{enumerate}[label=(\alph*)]
+  \item $10{,}82$.
+  \item $1$.
+  \item $0$.
+  \item $50\,257$.
+\end{enumerate}
+
+\item\label{q:checkpoint} Durante el entrenamiento, la pérdida de entrenamiento sigue bajando y la de validación empieza a subir. ¿Qué punto de control debe conservarse como modelo final? \punto
+\begin{enumerate}[label=(\alph*)]
+  \item El último.
+  \item El de menor pérdida de validación.
+  \item El de menor pérdida de entrenamiento.
+  \item El primero, porque aún no ha sobreajustado.
+\end{enumerate}
+
+\end{enumerate}
+
+% =====================================================================
+\chapter{Problemas}
+\label{chap:parteB}
+% =====================================================================
+
+La parte~B consta de seis ejercicios con un total de 80~puntos. La puntuación de cada apartado figura entre paréntesis. Debe justificarse cada paso y expresarse cada resultado con sus unidades.
+
+% ---------------------------------------------------------------------
+\section*{Módulo 14. El bloque decoder}
+
+\begin{ejercicio}{2}{eje:B-bloque}
+\textbf{(15 puntos.)} Un Transformer decoder-only del estilo de LLaMA recibe $n$ tokens y tiene dimensión de modelo $d$, $L$ bloques, $h$ cabezas de atención, MLP SwiGLU de dimensión oculta $\dff$, normalización RMSNorm, codificación de posición RoPE y un vocabulario de $V$ tokens con embeddings sin atar.
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{5} Dibuje el diagrama completo, desde los tokens enteros hasta la distribución del token siguiente, con un bloque detallado. Señale las dos conexiones residuales y las dos normalizaciones del bloque, el lugar en que entra la información de posición y la normalización final.
+  \item \pts{3} Escriba las ecuaciones del bloque $\ell$, con entrada $h^{\ell-1}$ y salida $h^{\ell}$, y la ecuación de los logits.
+  \item \pts{3} Indique la forma de: la entrada al primer bloque; $Q$ tras separar las cabezas; la matriz de atención de una cabeza; la salida de la proyección $W_{\mathrm{gate}}$; la salida de un bloque, y los logits.
+  \item \pts{2} ¿Qué subcapa mezcla información \emph{entre} tokens y cuál procesa cada token \emph{por separado}? ¿Por qué cada subcapa debe devolver un vector de $\R^{d}$?
+  \item \pts{2} Dé dos razones por las que los modelos de lenguaje actuales prefieren la variante pre-norm a la post-norm.
+\end{enumerate}
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §3.4 y §3.5, ecuación~(15) y problemas \emph{transformer\_block} y \emph{transformer\_lm}, y §7.3, problema \emph{pre\_norm\_ablation} (la implementación y el experimento se sustituyen por el diagrama, las ecuaciones y el análisis).}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\section*{Módulo 13. Atención con máscara causal}
+
+\begin{ejercicio}{2}{eje:B-atencion}
+\textbf{(15 puntos.)} Tres tokens tienen embeddings de dimensión $d=2$: $x_1=(1,0)$, $x_2=(0,1)$ y $x_3=(1,1)$, apilados como filas de una matriz $X\in\R^{3\times 2}$. Una cabeza de atención usa $d_k=4$, $d_v=2$ y
+\[
+W_Q=\begin{pmatrix}1&1&0&0\\0&0&1&1\end{pmatrix},\qquad
+W_K=\begin{pmatrix}2&0&0&0\\0&0&2&0\end{pmatrix},\qquad
+W_V=\begin{pmatrix}1&1\\0&1\end{pmatrix}.
+\]
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{3} Calcule $Q=XW_Q$, $K=XW_K$ y $V=XW_V$.
+  \item \pts{3} Calcule $S=QK\T$ y $S/\sqrt{d_k}$.
+  \item \pts{2} Escriba la matriz de máscara causal $M$ y la matriz $Z=S/\sqrt{d_k}+M$. ¿Por qué la máscara usa $-\infty$ y no~$0$?
+  \item \pts{3} Calcule $A=\softmax(Z)$, aplicada por filas, y la salida $O=AV$.
+  \item \pts{2} Se sustituye $x_3$ por $(5,-3)$. Sin hacer cuentas largas, indique qué filas de $O$ cambian, justificándolo con la estructura de $A$, y calcule la nueva fila $o_3$. ¿Qué hace la cabeza en este caso?
+  \item \pts{2} Calcule $\partial a_{22}/\partial z_{22}$ con los valores del apartado~(d). ¿Qué ocurriría con esta derivada si no se dividiera por $\sqrt{d_k}$ y las puntuaciones fueran muy grandes?
+\end{enumerate}
+\fuente{adaptado de Stanford CS224N~\cite{cs224n}, tarea~3, pregunta~1(a), «Copying in attention» (apartado~e), y de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.2 (apartado~c); datos numéricos propios.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\section*{Módulo 12. BPE a mano}
+
+\begin{ejercicio}{2}{eje:B-bpe}
+\textbf{(12 puntos.)} Un corpus contiene estas palabras con sus frecuencias: \tok{pino}~$\times 4$, \tok{pinos}~$\times 2$, \tok{vino}~$\times 3$, \tok{vinos}~$\times 1$ y \tok{pinta}~$\times 2$. Los símbolos iniciales son los caracteres y las fusiones no cruzan los límites entre palabras.
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{1} ¿Cuántos símbolos tiene el corpus al empezar?
+  \item \pts{6} Aplique cuatro fusiones BPE. En cada paso indique el par elegido y su frecuencia, el par que queda en segundo lugar y el número total de símbolos del corpus tras la fusión.
+  \item \pts{3} Codifique con las cuatro reglas obtenidas las palabras \tok{vinos}, \tok{pinto}, \tok{sino} y \tok{ovino}, e indique el número de tokens de cada una.
+  \item \pts{2} Un tokenizador BPE a nivel de byte procesa la palabra «piñón». ¿Cuántos símbolos iniciales tiene? ¿Qué pares de bytes conviene fusionar pronto en un corpus en español y por qué?
+\end{enumerate}
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §2.4, ejemplo \emph{bpe\_example}, y §2.6.1, ejemplo \emph{bpe\_encoding}, y de Jurafsky y Martin~\cite{jm3}, §2.4.1 y ejercicio~2.3 (corpus y palabras cambiados).}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\section*{Módulo 14. Parámetros, FLOPs y memoria}
+
+\begin{ejercicio}{3}{eje:B-lince}
+\textbf{(15 puntos.)} El modelo ficticio \textbf{Lince-1B} tiene $d=2048$, $L=24$, $h=16$, MLP SwiGLU, $V=48\,000$, embeddings \emph{atados}, RMSNorm con solo vector de pesos, RoPE y ningún sesgo.
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{2} Calcule $\tfrac{8}{3}d$ y redondéelo al múltiplo de 256 inmediatamente superior para obtener $\dff$.
+  \item \pts{4} Calcule el número de parámetros de un bloque y el total~$N$. Compare $N$ con la aproximación $12Ld^{2}$ e indique qué fracción de $N$ corresponde a los MLP.
+  \item \pts{3} Estime los FLOPs por token en la generación y los FLOPs del entrenamiento con $D=2\cdot 10^{11}$ tokens. ¿Cuántas horas de GPU H100 ($989\cdot 10^{12}$~FLOP/s en bf16) se necesitan con un aprovechamiento del 40\,\%? ¿Cuántas horas de reloj con 64~GPU?
+  \item \pts{3} Calcule la memoria que ocupan los pesos en bf16 y en int4, y la del estado del entrenamiento con Adam en precisión mixta. ¿Cabe el entrenamiento en una GPU de 24~GB?
+  \item \pts{3} La atención añade unos $4Lnd$ FLOPs por token con un contexto de $n$ tokens. ¿Qué fracción de $2N$ supone con $n=4096$? ¿Para qué $n$ iguala a $2N$?
+\end{enumerate}
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §3.5, problema \emph{transformer\_accounting}, apartados (a) a~(e), y §4.3, problema \emph{adamw\_accounting}, apartado~(d), y de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.1 (se sustituye GPT-2~XL por un modelo ficticio y la precisión fp32 por la mixta).}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\section*{Módulos 13 y 14. Posiciones y coste de la atención}
+
+\begin{ejercicio}{2}{eje:B-rope}
+\textbf{(11 puntos.)}
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{5} Se aplica RoPE en dimensión $d_k=2$ con $\theta=\pi/4$, $q=(1,0)$ y $k=(1,1)$. Use la identidad
+  \[
+  q\T R(\varphi)\,k=(q\cdot k)\cos\varphi-(q_1k_2-q_2k_1)\sin\varphi,\qquad \varphi=(n-m)\theta,
+  \]
+  para calcular la puntuación entre la consulta en la posición~$m$ y la clave en la posición~$n$ en los pares $(m,n)=(2,1)$, $(5,4)$, $(3,3)$, $(1,2)$ y $(0,4)$. ¿Qué se observa en los dos primeros?
+  \item \pts{2} En Lince-1B (\cref{eje:B-lince}), ¿cuánto vale $d_k$? Si se duplica $h$ manteniendo $d$, ¿cuántos parámetros de atención se ganan?
+  \item \pts{4} Con un contexto de $n=32\,768$ tokens, calcule la memoria en fp16 de la matriz de atención de una cabeza y la de todas las cabezas y capas de Lince-1B. ¿A partir de qué $n$ dominan los FLOPs cuadráticos de la atención, $4n^{2}d$ por capa, sobre los de las proyecciones, $8nd^{2}$ por capa? ¿Qué técnica evita almacenar $A$ completa?
+\end{enumerate}
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §3.4.3, ecuaciones~(8) y~(9) (RoPE), y §3.5, problema \emph{transformer\_accounting}, apartado~(e) (se pide el cálculo a mano en dimensión~2 y la memoria de $A$).}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\section*{Módulo 15. Entrenar y leer un mini-GPT}
+
+\begin{ejercicio}{2}{eje:B-minigpt}
+\textbf{(12 puntos.)} Un mini-GPT de caracteres tiene $V=80$, contexto $T=128$, $d=128$, $L=4$, $h=4$, MLP clásico de dimensión oculta $4d$ con GELU, LayerNorm con peso y sesgo, posiciones aprendidas, embeddings atados y ninguna capa lineal con sesgo. Se entrena con lotes de $B=32$ secuencias durante 5000~pasos sobre un corpus de $10^{6}$ caracteres. El \cref{tab:curvas} recoge sus pérdidas medias.
+
+\begin{table}[H]
+\centering\small
+\setlength{\tabcolsep}{3.6pt}
+\caption{Pérdidas del mini-GPT, en nats por carácter.}\label{tab:curvas}
+\begin{tabular}{@{}lccccccccccc@{}}
+\toprule
+Paso & 0 & 500 & 1000 & 1500 & 2000 & 2500 & 3000 & 3500 & 4000 & 4500 & 5000 \\
+\midrule
+Entrenamiento & 4{,}39 & 2{,}12 & 1{,}66 & 1{,}47 & 1{,}38 & 1{,}30 & 1{,}22 & 1{,}15 & 1{,}08 & 1{,}03 & 0{,}98 \\
+Validación & 4{,}39 & 2{,}14 & 1{,}70 & 1{,}52 & 1{,}46 & 1{,}44 & 1{,}45 & 1{,}48 & 1{,}52 & 1{,}57 & 1{,}62 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{3} Cuente los parámetros del modelo.
+  \item \pts{2} Explique por qué la pérdida inicial vale unos $4{,}39$ nats.
+  \item \pts{3} ¿Qué punto de control debe conservarse? Calcule su perplejidad de validación y sus bits por carácter. Un modelo de bigramas alcanza una pérdida de validación de $2{,}45$ nats: ¿cuál es su perplejidad?
+  \item \pts{2} ¿Cuántos tokens procesa el entrenamiento? ¿A cuántas épocas equivale? Relacione el resultado con el \cref{tab:curvas} y proponga dos remedios.
+  \item \pts{2} Al generar, el modelo produce los logits $(2,1,0)$ para tres caracteres. Calcule las probabilidades con temperatura $\tau=1$ y $\tau=0{,}5$. ¿Qué efecto tiene bajar la temperatura sobre las muestras?
+\end{enumerate}
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §4.1, ecuación~(18) (perplejidad), y §6, ecuación~(23) y problema \emph{decoding} (temperatura), y de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicios~7.4 y~7.5 (curvas y logits propios).}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Proyecto de fase}
+\label{chap:proyecto}
+% =====================================================================
+
+\section*{Mini-GPT en español con informe técnico}
+
+\paragraph{Objetivo.} Entrenar desde cero, en PyTorch y en CPU, un Transformer decoder-only de caracteres, y redactar un informe técnico con las curvas de pérdida, muestras generadas e interpretación de mapas de atención. El proyecto integra los cuatro módulos de la fase: el vocabulario de caracteres (M12), la atención causal multi-cabeza (M13), el bloque pre-norm (M14) y el bucle de entrenamiento y generación (M15).
+
+\paragraph{Datos.} Se usará un corpus en español escrito por el estudiante o generado con plantillas (frases que combinan al azar sujetos, verbos, objetos y lugares). No deben usarse textos literarios existentes, ni siquiera de dominio público. Bastan entre $300\,000$ y $10^{6}$ caracteres.
+
+\section*{Entregables}
+\begin{enumerate}[label=\arabic*.]
+  \item \texttt{H3-minigpt.ipynb}: código completo, que se ejecute en CPU en menos de 10~minutos.
+  \item \texttt{H3-informe.md}, de 2 a 4 páginas, con:
+  \begin{itemize}[label=\textendash]
+    \item la configuración ($d$, $L$, $h$, $T$, $V$, $B$, número de pasos y tasa de aprendizaje) y el número de parámetros, contado a mano y con código;
+    \item las curvas de pérdida de entrenamiento y de validación en la misma gráfica, con la pérdida de un modelo de bigramas como línea de referencia y el valor $\ln V$ marcado en el paso~0;
+    \item tres muestras de 300~caracteres con temperaturas $0{,}5$, $1{,}0$ y $1{,}5$, comentadas;
+    \item mapas de atención de al menos dos cabezas en dos capas sobre una frase del corpus, con su interpretación (qué cabeza atiende al carácter anterior, al inicio de palabra o a sí misma);
+    \item un experimento de ablación: eliminar las posiciones, usar una cabeza en lugar de cuatro o pasar de pre-norm a post-norm, comparando las pérdidas.
+  \end{itemize}
+\end{enumerate}
+
+\section*{Pasos sugeridos}
+\begin{enumerate}[label=\arabic*.]
+  \item Generar el corpus y dividirlo en un 90\,\% para entrenamiento y un 10\,\% para validación, con un corte contiguo, no aleatorio.
+  \item Calcular la pérdida de validación de un modelo de bigramas con suavizado de Laplace (módulo~1): es el listón que hay que superar.
+  \item Implementar el bloque pre-norm con atención causal multi-cabeza y MLP. Inicializar los embeddings con desviación típica $0{,}02$: con $\mathcal N(0,1)$ y pesos atados, la pérdida inicial queda muy por encima de $\ln V$ (M15, §1.4).
+  \item Comprobar la causalidad: al cambiar el último carácter, los logits de las posiciones anteriores no deben cambiar (M13, §3.2).
+  \item Entrenar con AdamW, calentamiento lineal y decaimiento coseno, y recorte del gradiente a norma~$1{,}0$ (M15, §3.2 a §3.4). Evaluar cada 100~pasos y conservar el punto de control con menor pérdida de validación (M15, §4.2).
+  \item Generar muestras y extraer las matrices $A$ de cada capa, devueltas por \texttt{forward}. Dibujarlas con \texttt{imshow}, con los caracteres en los ejes.
+\end{enumerate}
+
+\paragraph{Orientación.} En una prueba con un corpus de plantillas de $717\,000$ caracteres ($V=33$), un modelo con $d=64$, $L=2$, $h=4$ y $T=32$ ($103\,104$ parámetros) redujo la pérdida de validación de $3{,}50$ a $0{,}36$ nats en 800~pasos, frente a $1{,}75$ del modelo de bigramas, y tardó menos de 30~s en CPU. Las muestras eran ya frases gramaticales del estilo de las plantillas.
+
+\section*{Criterios de evaluación}
+El proyecto se califica sobre 100 con los pesos del \cref{tab:rubrica}. Se considera superado con 70 o más.
+
+\begin{table}[ht]
+\centering\footnotesize
+\renewcommand{\arraystretch}{1.15}
+\caption{Rúbrica del proyecto de fase.}\label{tab:rubrica}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.45cm}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Criterio & Peso & Excelente & Suficiente & Insuficiente \\
+\midrule
+Implementación del modelo & 25\,\% & Bloque pre-norm correcto, causalidad comprobada con una prueba, recuento a mano igual al del código & Funciona y entrena; recuento con pequeñas discrepancias explicadas & Errores en la máscara o en las formas; no entrena \\
+\addlinespace
+Entrenamiento y curvas & 20\,\% & Curvas de entrenamiento y validación con bigramas y $\ln V$ como referencias; validación $\le 75\,\%$ de la de bigramas; mejor punto de control justificado & Curvas correctas y validación por debajo de bigramas & Solo pérdida de entrenamiento, o no supera a bigramas \\
+\addlinespace
+Muestras generadas & 15\,\% & Tres temperaturas comentadas con criterio (repetición frente a incoherencia) & Muestras presentadas con un comentario breve & Sin muestras o sin comentar \\
+\addlinespace
+Mapas de atención & 20\,\% & Mapas legibles con ejes etiquetados, triángulo inferior visible, interpretación de cada cabeza con ejemplos & Mapas correctos con interpretación genérica & Mapas sin máscara visible o sin interpretar \\
+\addlinespace
+Ablación & 10\,\% & Experimento controlado (misma semilla y número de pasos) con conclusión cuantitativa & Experimento realizado con comparación cualitativa & No hay ablación \\
+\addlinespace
+Informe & 10\,\% & Claro y reproducible, con cifras en formato español y relación con los LLM reales & Completo pero desordenado & Faltan secciones \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones}
+\label{ap:soluciones}
+% =====================================================================
+
+Las soluciones de la parte~B se presentan apartado por apartado, en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. Se indican también los criterios de corrección cuando el reparto de puntos de un apartado no es evidente. Todos los valores numéricos se han comprobado con Python; en los pasos intermedios se conservan cuatro cifras significativas.
+
+% ---------------------------------------------------------------------
+\section{Clave de respuestas de la parte A}
+
+\begin{table}[H]
+\centering\footnotesize
+\renewcommand{\arraystretch}{1.05}
+\caption{Clave de respuestas de la parte~A.}\label{tab:clave}
+\begin{tabularx}{\textwidth}{@{}clX>{\raggedright\arraybackslash}p{1.95cm}@{}}
+\toprule
+N.º & Resp. & Justificación & Apuntes \\
+\midrule
+A.1 & (c) & BPE cuenta los pares adyacentes, ponderados por frecuencia, y fusiona el más frecuente. & M12, §2.1 \\
+A.2 & (b) & Parte de los 256 valores posibles de un byte; por eso nunca aparece un token desconocido. & M12, §2.4 \\
+A.3 & (c) & «p», «i» y «n» (ASCII) ocupan 1~byte cada una; «ñ» y «ó», 2 cada una: $3\cdot 1+2\cdot 2=7$. & M12, §1.3 \\
+A.4 & (a) & Las reglas se aplican en el orden en que se aprendieron; así la codificación es determinista. & M12, §2.2 \\
+A.5 & (d) & La recurrencia $h_t=f(h_{t-1},x_t)$ exige $n$ pasos secuenciales y el gradiente se multiplica $n$ veces. & M12, §5.5 \\
+A.6 & (c) & Cada token (fila) tiene un peso para cada token (columna). & M13, §2.1 \\
+A.7 & (b) & $q\cdot k$ es la suma de $d_k$ productos independientes de media~0 y varianza~1. & M13, §2.3 \\
+A.8 & (d) & $e^{-\infty}=0$ y los pesos permitidos siguen sumando~1; un~0 antes de la softmax no anula nada. & M13, §3.1 \\
+A.9 & (d) & $4d^{2}=4\cdot 768^{2}=2\,359\,296$, sin dependencia de $h$; (c) es $2d^{2}$. & M13, §4.2 \\
+A.10 & (b) & La memoria de $A$ crece como $n^{2}$: $(8192/1024)^{2}=8^{2}=64$. & M13, §4.4 \\
+A.11 & (a) & Pre-norm normaliza la entrada de la subcapa y deja limpio el camino residual; (b) es post-norm. & M14, §2.2 \\
+A.12 & (a) & En pre-norm, $h^{L}=h^{0}+\sum$ aportaciones y su norma crece con $L$. & M14, §2.3 \\
+A.13 & (b) & $3d\,\dff=2d\cdot 4d=8d^{2}$, luego $\dff=\tfrac{8}{3}d$. & M14, §3.3 \\
+A.14 & (a) & $R_m\T R_n=R_{n-m}$, luego $\tilde q_m\cdot\tilde k_n=q\T R_{n-m}k$. & M14, §4.3 \\
+A.15 & (c) & $v$ es el contenido que se copia; la posición solo debe decidir los pesos. & M14, §4.3 \\
+A.16 & (c) & $2Vd=2\cdot 32\,000\cdot 4096=262\,144\,000$. & M14, §1.4 y §5.2 \\
+A.17 & (d) & $2+2+4+4+4=16$~bytes por parámetro. & M14, §5.3 \\
+A.18 & (d) & $6ND=6\cdot 10^{9}\cdot 2\cdot 10^{10}=1{,}2\cdot 10^{20}$. & M14, §6.3 \\
+A.19 & (a) & Logits iguales dan la distribución uniforme y la pérdida $\ln V=\ln 50\,257=10{,}82$. & M15, §1.4 \\
+A.20 & (b) & La pérdida de validación estima el rendimiento sobre datos nuevos. & M15, §4.2 y §4.4 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ---------------------------------------------------------------------
+\section{Soluciones de la parte B}
+
+% ===================================================================== B1
+\begin{solucion}{eje:B-bloque}
+
+\apartado{a}{5}
+\datos Transformer decoder-only del estilo de LLaMA: $n$ tokens, dimensión $d$, $L$ bloques, $h$ cabezas, SwiGLU con $\dff$, RMSNorm, RoPE y $V$ tokens sin atar.
+\planteamiento recorrer el camino de los datos: enteros, embedding, $L$ bloques pre-norm, normalización final, unembedding y softmax (M14, §1.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Entrada: los $n$ enteros seleccionan filas de $W_E\in\R^{V\times d}$ y forman $h^{0}\in\R^{n\times d}$.
+  \item Primera subcapa del bloque: RMSNorm~1, proyecciones $Q$, $K$, $V$, rotación RoPE de $q$ y $k$ (aquí entra la posición), atención causal en cada cabeza, concatenación y $W_O$, y suma residual~1.
+  \item Segunda subcapa: RMSNorm~2, SwiGLU con $W_{\mathrm{gate}}$, $W_{\mathrm{up}}$ y $W_{\mathrm{down}}$, y suma residual~2.
+  \item Tras los $L$ bloques: RMSNorm final, $W_U\in\R^{d\times V}$ y softmax.
+\end{enumerate}
+\resultado \textbf{el diagrama de la \cref{fig:bloque}}, con dos residuales por bloque, una normalización antes de cada subcapa, RoPE aplicada a $q$ y $k$ y una RMSNorm final.
+\comprobacion todas las flechas entre bloques transportan matrices $n\times d$; solo cambian de forma la entrada (enteros a $\R^{d}$) y la salida ($\R^{d}$ a $\R^{V}$).
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[
+  caja/.style={draw,rounded corners=2pt,minimum width=7.2cm,minimum height=0.62cm,font=\small,align=center,fill=white},
+  suma/.style={draw,circle,inner sep=0.5pt,font=\small,fill=white},
+  flecha/.style={-{Stealth[length=2.2mm]}},
+  node distance=0.36cm]
+\node[caja] (tok) {Tokens $x_1,\dots,x_n$ (enteros)};
+\node[caja,below=of tok] (emb) {Embedding $W_E$ ($V\times d$) $\;\to\; h^{0}$ ($n\times d$)};
+\node[caja,below=0.75cm of emb] (n1) {RMSNorm 1};
+\node[caja,below=of n1] (qkv) {$Q=XW_Q$, $K=XW_K$, $V=XW_V$};
+\node[caja,below=of qkv] (rope) {RoPE sobre $q$ y $k$ (entra la posición)};
+\node[caja,below=of rope] (att) {$h$ cabezas: $\softmax\bigl(Q_iK_i\T/\sqrt{d_k}+M\bigr)V_i$};
+\node[caja,below=of att] (wo) {Concatenar y $W_O$ ($d\times d$)};
+\node[suma,below=of wo] (s1) {$+$};
+\node[caja,below=of s1] (n2) {RMSNorm 2};
+\node[caja,below=of n2] (mlp) {SwiGLU: $\bigl(\SiLU(XW_{\mathrm{gate}})\odot XW_{\mathrm{up}}\bigr)W_{\mathrm{down}}$};
+\node[suma,below=of mlp] (s2) {$+$};
+\node[caja,below=0.75cm of s2] (nf) {RMSNorm final};
+\node[caja,below=of nf] (wu) {Unembedding $W_U$ ($d\times V$): logits $n\times V$};
+\node[caja,below=of wu] (sm) {softmax $\to P(x_{n+1}\mid x_{1:n})$};
+\foreach \a/\b in {tok/emb,emb/n1,n1/qkv,qkv/rope,rope/att,att/wo,wo/s1,s1/n2,n2/mlp,mlp/s2,s2/nf,nf/wu,wu/sm}
+  \draw[flecha] (\a) -- (\b);
+\coordinate (r0) at ($(emb.south)!0.5!(n1.north)$);
+\draw[flecha] (r0) -- ++(-4.3,0) |- (s1.west) node[pos=0.25,left,font=\footnotesize,align=right] {residual\\1};
+\coordinate (r1) at ($(s1.south)!0.5!(n2.north)$);
+\draw[flecha] (r1) -- ++(-4.3,0) |- (s2.west) node[pos=0.25,left,font=\footnotesize,align=right] {residual\\2};
+\node[draw,dashed,rounded corners=4pt,inner sep=5pt,fit=(n1)(qkv)(rope)(att)(wo)(s1)(n2)(mlp)(s2)] (bl) {};
+\node[anchor=north west,font=\footnotesize\itshape] at (bl.north east) {$\times L$};
+\end{tikzpicture}
+\caption{Transformer decoder-only con bloques pre-norm del estilo de LLaMA. El recuadro discontinuo es un bloque y se repite $L$ veces.}\label{fig:bloque}
+\end{figure}
+
+Criterios: embedding y unembedding con sus formas (1~p); dos residuales que puentean cada subcapa (1~p); normalizaciones antes de cada subcapa y normalización final (1~p); atención causal con máscara y RoPE en $q$ y $k$ (1~p); MLP con sus tres matrices (1~p). Si se dibujan posiciones aprendidas sumadas al embedding, al estilo de GPT-2, se acepta siempre que se indique.
+
+\apartado{b}{3}
+\datos entrada del bloque $h^{\ell-1}$; arquitectura pre-norm.
+\planteamiento en pre-norm, cada subcapa lee su entrada normalizada y suma su salida al flujo residual (M14, §2.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Atención: $a^{\ell}=h^{\ell-1}+\MHA\bigl(\RMSNorm_1(h^{\ell-1})\bigr)$.
+  \item MLP: $h^{\ell}=a^{\ell}+\SwiGLU\bigl(\RMSNorm_2(a^{\ell})\bigr)$.
+  \item Salida: $\mathrm{logits}=\RMSNorm_f(h^{L})\,W_U$.
+\end{enumerate}
+\resultado \textbf{las tres ecuaciones anteriores}, 1~p cada una.
+\comprobacion desarrollando la recurrencia, $h^{L}=h^{0}+\sum_{\ell}\bigl(\text{aportación de la atención}+\text{aportación del MLP}\bigr)$: el camino identidad no atraviesa ninguna normalización (M14, §2.1).
+
+\apartado{c}{3}
+\datos $n$ tokens, $d$, $h$ cabezas, $\dff$, $V$.
+\planteamiento seguir las formas en cada producto $Y=XW$; 0,5~p por forma.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Entrada al primer bloque: $n$ filas de $W_E$, es decir, $n\times d$.
+  \item $Q=XW_Q$ es $n\times d$; separada en $h$ cabezas de dimensión $d/h$: $h\times n\times (d/h)$.
+  \item Atención de una cabeza: $(n\times d/h)(d/h\times n)$, es decir, $n\times n$.
+  \item $W_{\mathrm{gate}}\in\R^{d\times\dff}$: $(n\times d)(d\times\dff)$ da $n\times\dff$.
+  \item Salida de un bloque: $n\times d$, la misma forma que la entrada.
+  \item Logits: $(n\times d)(d\times V)$ da $n\times V$.
+\end{enumerate}
+\resultado \textbf{$n\times d$; $h\times n\times(d/h)$; $n\times n$; $n\times\dff$; $n\times d$; $n\times V$.}
+\comprobacion como $h\cdot(d/h)=d$, la concatenación de las cabezas recupera la forma $n\times d$.
+
+\apartado{d}{2}
+\datos subcapas de atención y MLP.
+\planteamiento comprobar si la operación combina filas distintas de la matriz $n\times d$ (M14, §3.1).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La atención mezcla tokens: la fila $i$ de $O=AV$ es $\sum_{j\le i}a_{ij}v_j$.
+  \item El MLP aplica la misma función a cada fila por separado: la salida del token~$i$ solo depende de la fila~$i$.
+  \item Cada subcapa \emph{suma} su salida al flujo residual, que vive en $\R^{d}$; la suma exige la misma dimensión, y por eso $W_O\in\R^{d\times d}$ y $W_{\mathrm{down}}\in\R^{\dff\times d}$ devuelven a $\R^{d}$.
+\end{enumerate}
+\resultado \textbf{la atención mezcla información entre tokens; el MLP actúa token a token; ambas devuelven $\R^{d}$ porque se suman al flujo residual.}
+\comprobacion si $W_{\mathrm{down}}$ fuera $\dff\times\dff$, la suma $a^{\ell}+\SwiGLU(\cdot)$ no estaría definida.
+
+\apartado{e}{2}
+\datos pre-norm, $h=x+F(\Norm(x))$, frente a post-norm, $h=\Norm(x+F(x))$.
+\planteamiento comparar el camino del gradiente y la estabilidad del entrenamiento (M14, §2.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item En pre-norm existe un camino identidad de la entrada a la salida: el jacobiano $\partial h^{L}/\partial h^{0}$ contiene el término $I$ y el gradiente llega a las primeras capas sin atravesar normalizaciones.
+  \item El entrenamiento es estable con muchas capas y con un calentamiento corto o nulo; en post-norm, el gradiente de las últimas capas es grande en la inicialización y obliga a un calentamiento largo y cuidadoso~\cite{xiong}.
+\end{enumerate}
+\resultado \textbf{gradiente limpio por el camino identidad y entrenamiento estable en profundidad, poco sensible al calentamiento}, 1~p por razón.
+\comprobacion GPT-2~\cite{gpt2}, LLaMA-2~\cite{llama2} y la tarea~1 de CS336~\cite[§3.4]{cs336} usan pre-norm; el problema \emph{pre\_norm\_ablation} de esa tarea compara ambas variantes experimentalmente.
+
+\repasar{M14, §1.2, §2.1, §2.2, §2.3 y §3.1}
+\end{solucion}
+
+% ===================================================================== B2
+\begin{solucion}{eje:B-atencion}
+
+\apartado{a}{3}
+\datos $X$ con filas $x_1=(1,0)$, $x_2=(0,1)$, $x_3=(1,1)$; $W_Q,W_K\in\R^{2\times 4}$, $W_V\in\R^{2\times 2}$.
+\planteamiento la fila $i$ de $XW$ es $x_iW$: $x_1$ selecciona la primera fila de $W$, $x_2$ la segunda y $x_3$ suma ambas (M13, §2.1).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $Q$: $(1,1,0,0)$, $(0,0,1,1)$ y su suma $(1,1,1,1)$.
+  \item $K$: $(2,0,0,0)$, $(0,0,2,0)$ y su suma $(2,0,2,0)$.
+  \item $V$: $(1,1)$, $(0,1)$ y su suma $(1,2)$.
+\end{enumerate}
+\resultado
+\[
+Q=\begin{pmatrix}1&1&0&0\\0&0&1&1\\1&1&1&1\end{pmatrix},\qquad
+K=\begin{pmatrix}2&0&0&0\\0&0&2&0\\2&0&2&0\end{pmatrix},\qquad
+V=\begin{pmatrix}1&1\\0&1\\1&2\end{pmatrix},
+\]
+1~p cada matriz.
+\comprobacion en las tres matrices, la fila~3 es la suma de las filas 1 y~2, porque $x_3=x_1+x_2$.
+
+\apartado{b}{3}
+\datos $Q$ y $K$ del apartado~(a); $d_k=4$.
+\planteamiento $S_{ij}=q_i\cdot k_j$; después se divide por $\sqrt{d_k}=2$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Fila 1, $q_1=(1,1,0,0)$: $q_1\cdot k_1=2$, $q_1\cdot k_2=0$, $q_1\cdot k_3=2$.
+  \item Fila 2, $q_2=(0,0,1,1)$: $q_2\cdot k_1=0$, $q_2\cdot k_2=2$, $q_2\cdot k_3=2$.
+  \item Fila 3, $q_3=(1,1,1,1)$: $q_3\cdot k_1=2$, $q_3\cdot k_2=2$, $q_3\cdot k_3=4$.
+\end{enumerate}
+\resultado
+\[
+S=\begin{pmatrix}2&0&2\\0&2&2\\2&2&4\end{pmatrix},\qquad
+\frac{S}{\sqrt{d_k}}=\begin{pmatrix}1&0&1\\0&1&1\\1&1&2\end{pmatrix};
+\]
+2~p por $S$ y 1~p por el escalado.
+\comprobacion la columna~3 de $S$ es la suma de las columnas 1 y~2, porque $k_3=k_1+k_2$.
+
+\apartado{c}{2}
+\datos tres posiciones; máscara causal.
+\planteamiento $M_{ij}=0$ si $j\le i$ y $M_{ij}=-\infty$ si $j>i$ (M13, §3.1).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $M$ es triangular superior estricta de $-\infty$; se suma elemento a elemento a $S/\sqrt{d_k}$:
+  \[
+  M=\begin{pmatrix}0&-\infty&-\infty\\0&0&-\infty\\0&0&0\end{pmatrix},\qquad
+  Z=\begin{pmatrix}1&-\infty&-\infty\\0&1&-\infty\\1&1&2\end{pmatrix}.
+  \]
+  \item Con $-\infty$, $e^{-\infty}=0$: el peso de cada token futuro es exactamente nulo y los pesos permitidos se renormalizan solos. Con~$0$, $e^{0}=1$ y el futuro conservaría peso; por ejemplo, la fila~1 sería $\softmax(1,0,1)=(0{,}422;\allowbreak\ 0{,}155;\allowbreak\ 0{,}422)$.
+\end{enumerate}
+\resultado \textbf{$M$ y $Z$ como arriba; $-\infty$ anula exactamente los pesos futuros}, mientras que $0$ no anula nada.
+\comprobacion la fila~$i$ de $Z$ conserva $i$ valores finitos: 1, 2 y~3.
+
+\apartado{d}{3}
+\datos $Z$ del apartado~(c); $e\approx 2{,}718$, $e^{2}\approx 7{,}389$; $V$ del apartado~(a).
+\planteamiento softmax por filas con $e^{-\infty}=0$; después $O=AV$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Fila 1: solo $z_{11}$ es finito, luego $a_1=(1,0,0)$.
+  \item Fila 2: $e^{0}=1$ y $e^{1}=2{,}718$, con suma $3{,}718$: $a_{21}=0{,}269$ y $a_{22}=0{,}731$.
+  \item Fila 3: dividiendo $e^{1},e^{1},e^{2}$ por $e$ quedan $1,1,e$, con suma $4{,}718$: $a_{31}=a_{32}=0{,}212$ y $a_{33}=0{,}576$.
+  \item $o_1=(1,1)$; $o_2=0{,}269\,(1,1)+0{,}731\,(0,1)=(0{,}269;\allowbreak\ 1)$.
+  \item $o_3=0{,}212\,(1,1)+0{,}212\,(0,1)+0{,}576\,(1,2)=(0{,}788;\allowbreak\ 1{,}576)$, con los pesos a cuatro cifras ($0{,}2119$ y $0{,}5761$).
+\end{enumerate}
+\resultado
+\[
+A=\begin{pmatrix}1&0&0\\0{,}269&0{,}731&0\\0{,}212&0{,}212&0{,}576\end{pmatrix},\qquad
+O=AV=\begin{pmatrix}1&1\\0{,}269&1\\0{,}788&1{,}576\end{pmatrix}.
+\]
+\comprobacion cada fila de $A$ suma~1; como la segunda componente de $v_1$ y de $v_2$ es~1, la de $o_2$ vale exactamente~1. Criterios: máscara aplicada antes de la softmax (1~p), $A$ correcta (1~p), $O$ correcta (1~p).
+
+\apartado{e}{2}
+\datos $x_3=(5,-3)$; el resto, igual.
+\planteamiento $A$ es triangular inferior: $o_1$ y $o_2$ solo dependen de los tokens 1 y~2 (M13, §3.2). Solo hay que recalcular la fila~3.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $o_1$ y $o_2$ no dependen de $x_3$: solo cambia $o_3$.
+  \item $q_3=5\,(1,1,0,0)-3\,(0,0,1,1)=(5,5,-3,-3)$; $k_3=5\,(2,0,0,0)-3\,(0,0,2,0)=(10,0,-6,0)$; $v_3=5\,(1,1)-3\,(0,1)=(5,2)$.
+  \item Puntuaciones escaladas: $q_3\cdot k_1/2=10/2=5$; $q_3\cdot k_2/2=-6/2=-3$; $q_3\cdot k_3/2=(50+18)/2=34$.
+  \item $e^{34}/e^{5}=e^{29}\approx 3{,}9\cdot 10^{12}$, luego $a_{33}\approx 1$, $a_{31}\approx e^{-29}\approx 2{,}5\cdot 10^{-13}$ y $a_{32}\approx e^{-37}\approx 8{,}5\cdot 10^{-17}$.
+  \item $o_3\approx v_3=(5,2)$.
+\end{enumerate}
+\resultado \textbf{solo cambia $o_3$, que pasa a ser $(5{,}000;\allowbreak\ 2{,}000)$}: la cabeza \emph{copia} el valor $v_3$, porque la puntuación de $k_3$ es mucho mayor que las demás.
+\comprobacion con Python, $1-a_{33}=2{,}5\cdot 10^{-13}$. Es la situación de «copia en la atención» de la tarea~3 de CS224N~\cite{cs224n}: casi todo el peso recae en un solo elemento cuando $q\cdot k_j\gg q\cdot k_i$ para todo $i\ne j$.
+
+\apartado{f}{2}
+\datos $a_{22}=0{,}731$, del apartado~(d).
+\planteamiento para la softmax, $\partial a_{ij}/\partial z_{ij}=a_{ij}(1-a_{ij})$; el escalado por $\sqrt{d_k}$ evita la saturación~\cite[§3.2.1]{vaswani} (M13, §2.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\partial a_{22}/\partial z_{22}=0{,}731\cdot 0{,}269=0{,}197$.
+  \item Si las puntuaciones crecen sin escalar, la softmax se satura: $a_{ij}\to 0$ o $a_{ij}\to 1$, y en ambos casos $a_{ij}(1-a_{ij})\to 0$.
+  \item Sin gradiente, la cabeza deja de aprender a quién atender.
+\end{enumerate}
+\resultado \textbf{$\partial a_{22}/\partial z_{22}=0{,}197$; con puntuaciones grandes tiende a~0 (softmax saturada).}
+\comprobacion el máximo de $a(1-a)$ es $0{,}25$, en $a=0{,}5$, y $0{,}197<0{,}25$. Respecto de la puntuación sin escalar $s=2z$, la regla de la cadena añade el factor $1/\sqrt{d_k}=1/2$: $0{,}098$.
+
+\repasar{M13, §2.1, §2.3, §3.1 y §3.2}
+\end{solucion}
+
+% ===================================================================== B3
+\begin{solucion}{eje:B-bpe}
+
+\apartado{a}{1}
+\datos \tok{pino}~$\times 4$, \tok{pinos}~$\times 2$, \tok{vino}~$\times 3$, \tok{vinos}~$\times 1$, \tok{pinta}~$\times 2$.
+\planteamiento número de símbolos $=\sum(\text{longitud}\times\text{frecuencia})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $4\cdot 4+5\cdot 2+4\cdot 3+5\cdot 1+5\cdot 2=16+10+12+5+10$.
+\end{enumerate}
+\resultado \textbf{53 símbolos.}
+\comprobacion hay $4+2+3+1+2=12$ palabras de 4 o 5 letras: el total debe estar entre 48 y~60.
+
+\apartado{b}{6}
+\datos el corpus del apartado~(a), partido en caracteres.
+\planteamiento en cada paso se cuentan los pares adyacentes ponderados por la frecuencia de la palabra, se fusiona el más frecuente y se restan sus apariciones del total de símbolos~\cite{sennrich} (M12, §2.1). 1,5~p por paso.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Recuento inicial: $(\tok{i},\tok{n})=4+2+3+1+2=12$; $(\tok{n},\tok{o})=4+2+3+1=10$; $(\tok{p},\tok{i})=4+2+2=8$; $(\tok{v},\tok{i})=4$; $(\tok{o},\tok{s})=3$. Gana $(\tok{i},\tok{n})$; símbolos: $53-12=41$.
+  \item Tras \tok{in}: $(\tok{in},\tok{o})=10$; $(\tok{p},\tok{in})=8$; $(\tok{v},\tok{in})=4$; $(\tok{o},\tok{s})=3$. Gana $(\tok{in},\tok{o})$; símbolos: $41-10=31$.
+  \item Tras \tok{ino}: $(\tok{p},\tok{ino})=4+2=6$; $(\tok{v},\tok{ino})=4$; $(\tok{ino},\tok{s})=3$. Gana $(\tok{p},\tok{ino})$; símbolos: $31-6=25$.
+  \item Tras \tok{pino}: $(\tok{v},\tok{ino})=4$; empatan con~2 $(\tok{pino},\tok{s})$, $(\tok{p},\tok{in})$, $(\tok{in},\tok{t})$ y $(\tok{t},\tok{a})$. Gana $(\tok{v},\tok{ino})$; símbolos: $25-4=21$.
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}cll>{\raggedright\arraybackslash}Xc@{}}
+\toprule
+Paso & Par (frec.) & Segundo (frec.) & Corpus tras la fusión & Símbolos \\
+\midrule
+1 & \tok{i n} (12) & \tok{n o} (10) & \tok{p in o}$\times4$, \tok{p in o s}$\times2$, \tok{v in o}$\times3$, \tok{v in o s}$\times1$, \tok{p in t a}$\times2$ & 41 \\
+2 & \tok{in o} (10) & \tok{p in} (8) & \tok{p ino}$\times4$, \tok{p ino s}$\times2$, \tok{v ino}$\times3$, \tok{v ino s}$\times1$, \tok{p in t a}$\times2$ & 31 \\
+3 & \tok{p ino} (6) & \tok{v ino} (4) & \tok{pino}$\times4$, \tok{pino s}$\times2$, \tok{v ino}$\times3$, \tok{v ino s}$\times1$, \tok{p in t a}$\times2$ & 25 \\
+4 & \tok{v ino} (4) & cuatro pares (2) & \tok{pino}$\times4$, \tok{pino s}$\times2$, \tok{vino}$\times3$, \tok{vino s}$\times1$, \tok{p in t a}$\times2$ & 21 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\resultado \textbf{reglas, en orden: \tok{in}, \tok{ino}, \tok{pino}, \tok{vino}; el corpus queda con 21 símbolos.}
+\comprobacion recuento directo: $1\cdot 4+2\cdot 2+1\cdot 3+2\cdot 1+4\cdot 2=21$. No hay empates en el primer puesto, de modo que la regla de desempate (M12, §2.3) no interviene. Error frecuente: tomar $(\tok{p},\tok{i})=8$ como máximo olvidando las apariciones en \tok{vino}.
+
+\apartado{c}{3}
+\datos reglas en orden: $(\tok{i},\tok{n})$, $(\tok{in},\tok{o})$, $(\tok{p},\tok{ino})$, $(\tok{v},\tok{ino})$.
+\planteamiento partir cada palabra en caracteres y aplicar las reglas en el orden aprendido (M12, §2.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item \tok{vinos}: \tok{v i n o s} $\to$ \tok{v in o s} $\to$ \tok{v ino s} $\to$ \tok{vino s}: 2 tokens.
+  \item \tok{pinto}: \tok{p i n t o} $\to$ \tok{p in t o}; la regla~2 no se aplica (tras \tok{in} viene \tok{t}) y la~3 necesita \tok{ino}: 4 tokens.
+  \item \tok{sino}: \tok{s i n o} $\to$ \tok{s in o} $\to$ \tok{s ino}; no existe la regla $(\tok{s},\tok{ino})$: 2 tokens.
+  \item \tok{ovino}: \tok{o v i n o} $\to$ \tok{o v in o} $\to$ \tok{o v ino} $\to$ \tok{o vino}: 2 tokens.
+\end{enumerate}
+\resultado \textbf{\tok{vinos} $=$ [\tok{vino}, \tok{s}] (2); \tok{pinto} $=$ [\tok{p}, \tok{in}, \tok{t}, \tok{o}] (4); \tok{sino} $=$ [\tok{s}, \tok{ino}] (2); \tok{ovino} $=$ [\tok{o}, \tok{vino}] (2).}
+\comprobacion ninguna palabra nueva produce un token desconocido, porque los caracteres sueltos pertenecen siempre al vocabulario.
+
+\apartado{d}{2}
+\datos «piñón» en UTF-8.
+\planteamiento los caracteres ASCII ocupan 1~byte; «ñ» y «ó», 2 (M12, §1.3 y §1.5).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Bytes en hexadecimal: \texttt{70}, \texttt{69}, \texttt{C3\,B1}, \texttt{C3\,B3}, \texttt{6E}: $1+1+2+2+1=7$.
+  \item En español, los pares $(\texttt{C3},\texttt{B1})$, que forman «ñ», y $(\texttt{C3},\texttt{B3})$, que forma «ó» (y análogos como $(\texttt{C3},\texttt{A1})$ para «á»), son muy frecuentes.
+  \item Sin esas fusiones, ninguna palabra con tilde o con «ñ» puede llegar a ser un único token.
+\end{enumerate}
+\resultado \textbf{7 símbolos iniciales; conviene fusionar pronto $(\tok{C3},\tok{B1})$ y $(\tok{C3},\tok{B3})$}, los dos bytes de «ñ» y de «ó».
+\comprobacion coincide con la cuestión~\ref{q:pinon} (7~bytes).
+
+\repasar{M12, §1.3, §1.5, §2.1, §2.2 y §2.4}
+\end{solucion}
+
+% ===================================================================== B4
+\begin{solucion}{eje:B-lince}
+
+\apartado{a}{2}
+\datos $d=2048$.
+\planteamiento $\dff=\tfrac{8}{3}d$ redondeado hacia arriba al múltiplo de 256~\cite{shazeer} (M14, §3.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $8\cdot 2048/3=16\,384/3=5461{,}33$.
+  \item $5461{,}33/256=21{,}33$; el entero siguiente es~22.
+  \item $22\cdot 256=5632$.
+\end{enumerate}
+\resultado \textbf{$\dff=5632$.}
+\comprobacion $21\cdot 256=5376<5461{,}33<5632$.
+
+\apartado{b}{4}
+\datos $d=2048$, $L=24$, $\dff=5632$, $V=48\,000$; embeddings atados; RMSNorm solo con pesos; sin sesgos.
+\planteamiento $N=L\,(4d^{2}+3d\,\dff+2d)+Vd+d$, con una sola matriz de embeddings por estar atados (M14, §5.1 y §5.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $d^{2}=4\,194\,304$; atención: $4d^{2}=16\,777\,216$.
+  \item MLP: $3\cdot 2048\cdot 5632=34\,603\,008$.
+  \item Dos RMSNorm: $2\cdot 2048=4096$. Bloque: $16\,777\,216+34\,603\,008+4096=51\,384\,320$.
+  \item 24 bloques: $24\cdot 51\,384\,320=1\,233\,223\,680$.
+  \item Embedding: $48\,000\cdot 2048=98\,304\,000$; RMSNorm final: $2048$.
+  \item $N=1\,233\,223\,680+98\,304\,000+2048=1\,331\,529\,728$.
+  \item $12Ld^{2}=12\cdot 24\cdot 4\,194\,304=1\,207\,959\,552$, que es el $90{,}7\,\%$ de $N$.
+  \item MLP: $24\cdot 34\,603\,008=830\,472\,192$, el $62{,}4\,\%$ de $N$.
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabular}{@{}llr@{}}
+\toprule
+Pieza & Fórmula & Parámetros \\
+\midrule
+Atención & $4d^{2}$ & $16\,777\,216$ \\
+MLP SwiGLU & $3d\,\dff$ & $34\,603\,008$ \\
+Dos RMSNorm & $2d$ & $4096$ \\
+\midrule
+\textbf{Bloque} & & $\mathbf{51\,384\,320}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\resultado \textbf{bloque: $51\,384\,320$; $N=1\,331\,529\,728\approx 1{,}33\cdot 10^{9}$; $12Ld^{2}$ es el $90{,}7\,\%$ de $N$; los MLP suponen el $62{,}4\,\%$.}
+\comprobacion la diferencia con la aproximación procede del embedding ($98\,304\,000/N=7{,}4\,\%$) y del redondeo de $\dff$ hacia arriba. Sin atar, $N$ sería $1\,429\,833\,728$.
+
+\apartado{c}{3}
+\datos $N=1{,}3315\cdot 10^{9}$; $D=2\cdot 10^{11}$; H100 a $989\cdot 10^{12}$~FLOP/s; aprovechamiento del 40\,\%; 64~GPU.
+\planteamiento inferencia, $\approx 2N$ FLOPs por token; entrenamiento, $C\approx 6ND$~\cite{kaplan}; tiempo $=C/\text{velocidad efectiva}$ (M14, §6.2 y §6.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Inferencia: $2\cdot 1{,}3315\cdot 10^{9}=2{,}663\cdot 10^{9}$ FLOPs por token.
+  \item Entrenamiento: $C=6\cdot 1{,}3315\cdot 10^{9}\cdot 2\cdot 10^{11}=1{,}598\cdot 10^{21}$ FLOPs.
+  \item Velocidad efectiva por GPU: $0{,}4\cdot 989\cdot 10^{12}=3{,}956\cdot 10^{14}$ FLOP/s.
+  \item Tiempo: $1{,}598\cdot 10^{21}/3{,}956\cdot 10^{14}=4{,}039\cdot 10^{6}$~s, es decir, $1122$~h de GPU.
+  \item Con 64~GPU: $1122/64=17{,}53$~h de reloj ($0{,}73$~días).
+\end{enumerate}
+\resultado \textbf{$2{,}66\cdot 10^{9}$ FLOPs por token; $C\approx 1{,}60\cdot 10^{21}$ FLOPs; unas $1122$~h de H100; $17{,}5$~h de reloj con 64~GPU.}
+\comprobacion LLaMA-2~7B~\cite{llama2} ($N=6{,}74\cdot 10^{9}$, $D=2\cdot 10^{12}$) cuesta $8{,}09\cdot 10^{22}$ FLOPs, unas $50{,}6$ veces más, coherente con un $N$ cinco veces mayor y un $D$ diez veces mayor.
+
+\apartado{d}{3}
+\datos $N=1\,331\,529\,728$; bf16, 2~bytes; int4, $0{,}5$~bytes; Adam en precisión mixta, 16~bytes por parámetro.
+\planteamiento memoria $=N\times$ bytes por parámetro (M14, §5.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item bf16: $2N=2{,}663\cdot 10^{9}$~bytes $=2{,}66$~GB.
+  \item int4: $0{,}5N=6{,}658\cdot 10^{8}$~bytes $=0{,}67$~GB.
+  \item Adam en precisión mixta: $16N=2{,}130\cdot 10^{10}$~bytes $=21{,}3$~GB.
+  \item $21{,}3<24$: los estados caben, pero solo quedan unos $2{,}7$~GB para las activaciones.
+\end{enumerate}
+\resultado \textbf{$2{,}66$~GB en bf16, $0{,}67$~GB en int4 y $21{,}3$~GB para el estado del entrenamiento.} El estado cabe en 24~GB, pero las activaciones, que crecen con el lote y el contexto, no caben con holgura.
+\comprobacion $21{,}3/2{,}66=8=16/2$. En la práctica se recurriría a la recomputación de activaciones o al reparto entre varias GPU (ZeRO, módulo~17).
+
+\apartado{e}{3}
+\datos $L=24$, $d=2048$, $n=4096$; $2N=2{,}663\cdot 10^{9}$.
+\planteamiento comparar $4Lnd$ con $2N$ y despejar $n$ en la igualdad: $n^{*}=N/(2Ld)$ (M14, §6.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $4\cdot 24\cdot 4096\cdot 2048=805\,306\,368\approx 8{,}053\cdot 10^{8}$ FLOPs por token.
+  \item Fracción: $8{,}053\cdot 10^{8}/2{,}663\cdot 10^{9}=0{,}302$.
+  \item Igualdad: $n^{*}=2N/(4Ld)=2{,}663\cdot 10^{9}/196\,608=13\,545$.
+\end{enumerate}
+\resultado \textbf{la atención añade un $30{,}2\,\%$ a $2N$ con $n=4096$, y lo iguala con $n\approx 13\,545$ tokens.}
+\comprobacion la fracción es lineal en $n$: $4096/13\,545=0{,}302$.
+
+\repasar{M14, §3.3, §5.1, §5.2, §5.3, §6.2 y §6.3}
+\end{solucion}
+
+% ===================================================================== B5
+\begin{solucion}{eje:B-rope}
+
+\apartado{a}{5}
+\datos $d_k=2$, $\theta=\pi/4$, $q=(1,0)$, $k=(1,1)$; $\cos(\pi/4)=\sin(\pi/4)=0{,}707$.
+\planteamiento calcular las dos constantes de la identidad y evaluar en cada $\varphi=(n-m)\theta$~\cite{roformer} (M14, §4.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $q\cdot k=1$ y $q_1k_2-q_2k_1=1$; la puntuación es $\cos\varphi-\sin\varphi$.
+  \item $(2,1)$ y $(5,4)$: $n-m=-1$, $\varphi=-\pi/4$, puntuación $0{,}707+0{,}707=1{,}414$.
+  \item $(3,3)$: $\varphi=0$, puntuación $1$.
+  \item $(1,2)$: $\varphi=\pi/4$, puntuación $0$.
+  \item $(0,4)$: $\varphi=\pi$, puntuación $-1$.
+\end{enumerate}
+
+\begin{center}\small
+\begin{tabular}{@{}cccc@{}}
+\toprule
+$(m,n)$ & $n-m$ & $\varphi$ & $\cos\varphi-\sin\varphi$ \\
+\midrule
+$(2,1)$ & $-1$ & $-\pi/4$ & $1{,}414$ \\
+$(5,4)$ & $-1$ & $-\pi/4$ & $1{,}414$ \\
+$(3,3)$ & $0$ & $0$ & $1$ \\
+$(1,2)$ & $+1$ & $\pi/4$ & $0$ \\
+$(0,4)$ & $+4$ & $\pi$ & $-1$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\resultado \textbf{$1{,}414$; $1{,}414$; $1$; $0$; $-1$.} Los dos primeros pares ocupan posiciones distintas a la misma distancia y dan la misma puntuación: RoPE codifica la posición relativa.
+\comprobacion con distancia nula se recupera $q\cdot k=1$; además, $\cos\varphi-\sin\varphi=\sqrt2\cos(\varphi+\pi/4)$, cuyo máximo, $\sqrt2=1{,}414$, se alcanza en $\varphi=-\pi/4$. Criterios: 1~p por las dos primeras filas, 1~p por cada una de las otras tres; la observación es necesaria para obtener la puntuación completa.
+
+\apartado{b}{2}
+\datos $d=2048$, $h=16$.
+\planteamiento $d_k=d/h$; los parámetros de la atención son $4d^{2}$, sin dependencia de $h$ (M13, §4.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $d_k=2048/16=128$.
+  \item Con $h=32$, $d_k=64$, pero las 32 cabezas siguen formando $W_Q$, $W_K$, $W_V$ y $W_O$ de tamaño $d\times d$: $4d^{2}=16\,777\,216$ en ambos casos.
+\end{enumerate}
+\resultado \textbf{$d_k=128$; duplicar $h$ no añade parámetros.}
+\comprobacion coincide con la cuestión~\ref{q:mha}: el recuento $4d^{2}$ no depende de~$h$.
+
+\apartado{c}{4}
+\datos $n=32\,768$; fp16, 2~bytes; $h=16$; $L=24$; $d=2048$.
+\planteamiento cada matriz $A$ es $n\times n$; FLOPs cuadráticos $4n^{2}d$ frente a lineales $8nd^{2}$ (M13, §4.3 y §4.4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Una cabeza: $n^{2}=1\,073\,741\,824$ elementos; por 2~bytes, $2{,}147\cdot 10^{9}$~bytes $=2{,}15$~GB.
+  \item Todas las cabezas y capas: $2{,}147\cdot 10^{9}\cdot 16\cdot 24=8{,}246\cdot 10^{11}$~bytes $\approx 825$~GB.
+  \item Cruce: $4n^{2}d>8nd^{2}$ equivale, dividiendo por $4nd>0$, a $n>2d=4096$.
+  \item FlashAttention calcula la softmax por bloques y nunca almacena $A$ completa: la memoria adicional es lineal en $n$, aunque el número de FLOPs sigue siendo $O(n^{2}d)$~\cite{dao}.
+\end{enumerate}
+\resultado \textbf{$2{,}15$~GB por cabeza y unos 825~GB en total; la atención domina en FLOPs a partir de $n=4096$; FlashAttention evita almacenar~$A$.}
+\comprobacion 825~GB supera con mucho los 80~GB de una GPU actual: sin FlashAttention, ese contexto es inviable.
+
+\repasar{M13, §4.2, §4.3 y §4.4; M14, §4.3}
+\end{solucion}
+
+% ===================================================================== B6
+\begin{solucion}{eje:B-minigpt}
+
+\apartado{a}{3}
+\datos $V=80$, $T=128$, $d=128$, $L=4$; MLP de $4d$; LayerNorm con peso y sesgo; posiciones aprendidas; embeddings atados; lineales sin sesgo.
+\planteamiento bloque: $4d^{2}+8d^{2}+2\cdot 2d$; fuera de los bloques: $Vd$ (una vez), $Td$ y la LayerNorm final, $2d$ (M15, §2.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $d^{2}=16\,384$; atención: $65\,536$; MLP: $8d^{2}=131\,072$.
+  \item Dos LayerNorm: $2\cdot 2\cdot 128=512$. Bloque: $197\,120$.
+  \item Cuatro bloques: $788\,480$.
+  \item Embedding: $80\cdot 128=10\,240$; posiciones: $128\cdot 128=16\,384$; LayerNorm final: $256$.
+  \item $N=788\,480+10\,240+16\,384+256=815\,360$.
+\end{enumerate}
+\resultado \textbf{$N=815\,360$ parámetros.}
+\comprobacion $12Ld^{2}=786\,432$, el $96{,}5\,\%$ de $N$.
+
+\apartado{b}{2}
+\datos $V=80$; pérdida inicial $\approx 4{,}39$.
+\planteamiento logits casi iguales dan una softmax casi uniforme y una pérdida $\ln V$ (M15, §1.4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Con pesos pequeños, los logits son casi iguales y $p_i\approx 1/80$.
+  \item $-\ln(1/80)=\ln 80=\ln 8+\ln 10=2{,}079+2{,}303=4{,}382$.
+\end{enumerate}
+\resultado \textbf{$\ln 80=4{,}382\approx 4{,}39$.}
+\comprobacion una pérdida inicial mucho mayor indicaría una inicialización defectuosa, por ejemplo embeddings $\mathcal N(0,1)$ atados.
+
+\apartado{c}{3}
+\datos \cref{tab:curvas}; bigramas, $2{,}45$; $\ln 2=0{,}693$.
+\planteamiento se elige el mínimo de validación; $\PPL=e^{\ell}$ y bits por carácter $=\ell/\ln 2$ (M15, §1.3 y §4.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Mínimo de validación: paso 2500, con $1{,}44$ (antes, $1{,}46$; después, $1{,}45$).
+  \item $\PPL=e^{1{,}44}=4{,}221$.
+  \item Bits por carácter: $1{,}44/0{,}693=2{,}078$.
+  \item Bigramas: $e^{2{,}45}=11{,}59$; cociente $11{,}59/4{,}221=2{,}75$.
+\end{enumerate}
+\resultado \textbf{punto de control del paso 2500; $\PPL\approx 4{,}22$ y $2{,}08$ bits por carácter; el modelo de bigramas tiene $\PPL\approx 11{,}59$}: el mini-GPT duda entre casi tres veces menos opciones.
+\comprobacion $2^{2{,}078}=4{,}22$: la perplejidad no depende de la base del logaritmo.
+
+\apartado{d}{2}
+\datos $B=32$, $T=128$, 5000~pasos; corpus de $10^{6}$ caracteres.
+\planteamiento tokens $=B\cdot T\cdot\text{pasos}$; épocas $=$ tokens $/$ tamaño del corpus (M15, §1.2 y §4.4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $32\cdot 128=4096$ tokens por paso; por 5000 pasos, $20\,480\,000$ tokens.
+  \item Épocas: $20\,480\,000/10^{6}=20{,}48$.
+  \item Brecha entre validación y entrenamiento: $1{,}44-1{,}30=0{,}14$ en el paso 2500 y $1{,}62-0{,}98=0{,}64$ en el 5000.
+  \item El modelo ve cada carácter unas 20 veces y memoriza: la validación sube desde el paso 2500.
+\end{enumerate}
+\resultado \textbf{$20\,480\,000$ tokens, unas $20{,}5$ épocas: sobreajuste.} Remedios: más datos (el mejor), parada temprana, \emph{dropout}, más decaimiento de pesos o un modelo más pequeño.
+\comprobacion la pérdida de entrenamiento baja mientras la de validación sube: es la firma del sobreajuste en la tabla de síntomas de M15, §4.4.
+
+\apartado{e}{2}
+\datos logits $(2,1,0)$; $\tau=1$ y $\tau=0{,}5$.
+\planteamiento $p=\softmax(z/\tau)$ (M15, §5.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\tau=1$: $e^{2}=7{,}389$, $e^{1}=2{,}718$, $e^{0}=1$, con suma $11{,}107$: $p=(0{,}665;\allowbreak\ 0{,}245;\allowbreak\ 0{,}090)$.
+  \item $\tau=0{,}5$: $z/\tau=(4,2,0)$; $e^{4}=54{,}60$, $e^{2}=7{,}389$, $e^{0}=1$, con suma $62{,}99$: $p=(0{,}867;\allowbreak\ 0{,}117;\allowbreak\ 0{,}016)$.
+  \item Bajar $\tau$ concentra la masa en el carácter más probable: las muestras son más correctas, pero más repetitivas. Subir $\tau$ (con $\tau=2$, $p=(0{,}506;\allowbreak\ 0{,}307;\allowbreak\ 0{,}186)$) da más variedad y más errores.
+\end{enumerate}
+\resultado \textbf{$\tau=1$: $(0{,}665;\allowbreak\ 0{,}245;\allowbreak\ 0{,}090)$; $\tau=0{,}5$: $(0{,}867;\allowbreak\ 0{,}117;\allowbreak\ 0{,}016)$.} Bajar la temperatura hace las muestras más predecibles y repetitivas.
+\comprobacion ambas distribuciones suman~1 y, cuando $\tau\to 0^{+}$, la distribución tiende a $(1,0,0)$.
+
+\repasar{M15, §1.2, §1.3, §1.4, §2.3, §4.2, §4.4 y §5.2}
+\end{solucion}
+
+% =====================================================================
+\chapter{Autoevaluación}
+\label{ap:autoevaluacion}
+% =====================================================================
+
+\section{Cálculo de la nota}
+
+La nota es la suma de los puntos de la parte~A y de la parte~B, sobre 100. El examen se aprueba con \textbf{70 puntos} (70\,\%). Aunque se apruebe, si en alguna parte o en algún módulo se obtiene menos del 50\,\% de los puntos posibles, debe repasarse ese contenido antes de continuar.
+
+\begin{table}[ht]
+\centering\small
+\caption{Puntuación por parte.}\label{tab:partes}
+\begin{tabular}{@{}lllcc@{}}
+\toprule
+Parte & Contenido & Módulos & Puntos & Obtenidos \\
+\midrule
+A & Cuestiones (20 $\times$ 1~p) & M12--M15 & 20 & \\
+B.1 & Bloque decoder & M14 & 15 & \\
+B.2 & Atención con máscara causal & M13 & 15 & \\
+B.3 & BPE a mano & M12 & 12 & \\
+B.4 & Parámetros, FLOPs y memoria & M14 & 15 & \\
+B.5 & RoPE y coste de la atención & M13, M14 & 11 & \\
+B.6 & Entrenamiento del mini-GPT & M15 & 12 & \\
+\midrule
+\textbf{Total} & & & \textbf{100} & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[ht]
+\centering\small
+\caption{Puntuación por módulo. En el ejercicio B.5, el apartado~(a) corresponde a M14 y los apartados (b) y~(c), a M13.}\label{tab:modulos}
+\begin{tabular}{@{}llccc@{}}
+\toprule
+Módulo & Elementos & Puntos & 50\,\% & Obtenidos \\
+\midrule
+M12. Tokenización & A.1--A.5; B.3 & $5+12=17$ & $8{,}5$ & \\
+M13. Atención & A.6--A.10; B.2; B.5(b,c) & $5+15+6=26$ & $13$ & \\
+M14. Transformer & A.11--A.18; B.1; B.4; B.5(a) & $8+15+15+5=43$ & $21{,}5$ & \\
+M15. Mini-GPT & A.19--A.20; B.6 & $2+12=14$ & $7$ & \\
+\midrule
+\textbf{Total} & & \textbf{100} & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Puerta de salida de la fase III}
+
+Para pasar a la fase~IV deben cumplirse las tres condiciones del método de estudio del curso:
+\begin{enumerate}[label=\arabic*.]
+  \item en el test de cada módulo (M12, M13, M14 y M15), al menos 9 aciertos de 12;
+  \item en la autoevaluación del laboratorio interactivo de la fase, al menos un 70\,\%;
+  \item en este examen de hito, al menos 70 puntos de 100.
+\end{enumerate}
+El proyecto de fase se considera superado con al menos 70 puntos en la rúbrica del \cref{tab:rubrica}.
+
+\section{Qué hacer si no se alcanza el umbral}
+
+\begin{itemize}[leftmargin=1.4em,label=\textendash]
+  \item Localizar en el \cref{tab:repaso} las secciones correspondientes a cada fallo y anotar el error en el registro de errores, clasificado como de concepto, de cálculo o de despiste.
+  \item Releer esas secciones y rehacer, sin consultar la solución, los ejercicios $\star\star$ y $\star\star\star$ del tema correspondiente de los apuntes del módulo.
+  \item Repetir el test del módulo afectado hasta alcanzar 9 de 12 y volver a resolver, al cabo de unos días, los ejercicios de la parte~B en los que se perdió más de la mitad de los puntos.
+  \item Si la nota está por debajo de 50, repasar la fase completa siguiendo el ciclo del método de estudio (teoría, laboratorio, práctica, ejercicios, test y tarjetas) antes de repetir el examen.
+\end{itemize}
+
+\begin{table}[ht]
+\centering\small
+\caption{Secciones que deben repasarse según los fallos.}\label{tab:repaso}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{4.3cm}X@{}}
+\toprule
+Fallos & Repasar \\
+\midrule
+A.1, A.4; B.3(b,c) & M12, §2.1 (entrenamiento de BPE) y §2.2 (codificación) \\
+A.2, A.3; B.3(d) & M12, §1.3 (UTF-8), §1.5 (consecuencias para el español) y §2.4 (BPE a nivel de byte) \\
+A.5 & M12, §5.5 (secuencialidad y paso al Transformer) \\
+A.6; B.2(a,b,d) & M13, §2.1 (forma matricial de la atención) \\
+A.7; B.2(f) & M13, §2.3 (por qué se divide por $\sqrt{d_k}$) \\
+A.8; B.2(c,e) & M13, §3.1 (máscaras aditivas) y §3.2 (causalidad) \\
+A.9; B.5(b) & M13, §4.2 (parámetros de la atención multi-cabeza) \\
+A.10; B.5(c) & M13, §4.3 (coste en operaciones) y §4.4 (memoria y contexto largo) \\
+B.1(a--d) & M14, §1.2 (bloque decoder-only), §2.1 (flujo residual) y §3.1 (MLP posición a posición) \\
+A.11, A.12; B.1(e) & M14, §2.2 (pre-norm frente a post-norm) y §2.3 (crecimiento del flujo) \\
+A.13; B.4(a) & M14, §3.3 (SwiGLU) \\
+A.14, A.15; B.5(a) & M14, §4.3 (RoPE) \\
+A.16 & M14, §1.4 (embeddings atados) y §5.2 (parámetros del modelo completo) \\
+A.17, A.18; B.4(b--e) & M14, §5.1 a §5.3 (parámetros y memoria) y §6.2 y §6.3 (FLOPs y regla $6ND$) \\
+A.19; B.6(a,b) & M15, §1.4 (pérdida de la predicción uniforme) y §2.3 (recuento de parámetros) \\
+A.20; B.6(c,d) & M15, §1.3 (perplejidad), §4.2 (puntos de control) y §4.4 (lectura de curvas) \\
+B.6(e) & M15, §5.2 (temperatura) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Siguiente paso.} Superada la puerta de salida, se continúa con la fase~IV, módulo~16: preentrenamiento a escala.
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{cs224n}
+D.~Yang y Y.~Choi.
+\newblock CS224N: Natural Language Processing with Deep Learning.
+\newblock Stanford University, invierno de 2026. Tarea~3, «Self-Attention and Transformers»: pregunta~1, «Attention exploration», y pregunta~2, «Position embeddings exploration».
+\newblock \url{https://web.stanford.edu/class/cs224n/}
+
+\bibitem{cs336}
+Equipo docente de CS336 (T.~Hashimoto y P.~Liang).
+\newblock CS336: Language Modeling from Scratch. Tarea~1, «Basics: Building a Transformer LM», versión 26.0.3.
+\newblock Stanford University, primavera de 2026. Se citan el §2.4 (ejemplo \emph{bpe\_example}), el §2.6.1 (ejemplo \emph{bpe\_encoding}), los §3.4 y §3.5 (problemas \emph{rope}, \emph{transformer\_block}, \emph{transformer\_lm} y \emph{transformer\_accounting}), el §4.1 (perplejidad), el §4.3 (problema \emph{adamw\_accounting}), el §6 (problema \emph{decoding}) y el §7.3 (problema \emph{pre\_norm\_ablation}).
+\newblock \url{https://github.com/stanford-cs336/assignment1-basics}
+
+\bibitem{dao}
+T.~Dao, D.~Y. Fu, S.~Ermon, A.~Rudra y C.~Ré.
+\newblock FlashAttention: Fast and memory-efficient exact attention with IO-awareness.
+\newblock En \emph{Advances in Neural Information Processing Systems 35}, 2022.
+\newblock \url{https://arxiv.org/abs/2205.14135}
+
+\bibitem{jm3}
+D.~Jurafsky y J.~H. Martin.
+\newblock \emph{Speech and Language Processing}, 3.ª ed., borrador del 19 de agosto de 2026.
+\newblock Cap.~2, «Words and Tokens» (§2.4.1 y ejercicio~2.3); cap.~7, «Transformers and Pretraining» (ejercicios~7.1, 7.2, 7.4 y~7.5).
+\newblock \url{https://web.stanford.edu/~jurafsky/slp3/}
+
+\bibitem{kaplan}
+J.~Kaplan, S.~McCandlish, T.~Henighan, T.~B. Brown, B.~Chess, R.~Child, S.~Gray, A.~Radford, J.~Wu y D.~Amodei.
+\newblock Scaling laws for neural language models.
+\newblock Prepublicación, 2020.
+\newblock \url{https://arxiv.org/abs/2001.08361}
+
+\bibitem{gpt2}
+A.~Radford, J.~Wu, R.~Child, D.~Luan, D.~Amodei e I.~Sutskever.
+\newblock Language models are unsupervised multitask learners.
+\newblock Informe técnico, OpenAI, 2019.
+
+\bibitem{sennrich}
+R.~Sennrich, B.~Haddow y A.~Birch.
+\newblock Neural machine translation of rare words with subword units.
+\newblock En \emph{Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (ACL)}, págs.~1715--1725, 2016.
+\newblock \url{https://aclanthology.org/P16-1162/}
+
+\bibitem{shazeer}
+N.~Shazeer.
+\newblock GLU variants improve Transformer.
+\newblock Prepublicación, 2020.
+\newblock \url{https://arxiv.org/abs/2002.05202}
+
+\bibitem{roformer}
+J.~Su, Y.~Lu, S.~Pan, A.~Murtadha, B.~Wen e Y.~Liu.
+\newblock RoFormer: Enhanced Transformer with rotary position embedding.
+\newblock \emph{Neurocomputing}, 568, 2024. Prepublicación de 2021.
+\newblock \url{https://arxiv.org/abs/2104.09864}
+
+\bibitem{llama2}
+H.~Touvron \emph{et al.}
+\newblock Llama 2: Open foundation and fine-tuned chat models.
+\newblock Prepublicación, 2023.
+\newblock \url{https://arxiv.org/abs/2307.09288}
+
+\bibitem{vaswani}
+A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N. Gomez, Ł.~Kaiser e I.~Polosukhin.
+\newblock Attention is all you need.
+\newblock En \emph{Advances in Neural Information Processing Systems 30}, 2017.
+\newblock \url{https://arxiv.org/abs/1706.03762}
+
+\bibitem{xiong}
+R.~Xiong, Y.~Yang, D.~He, K.~Zheng, S.~Zheng, C.~Xing, H.~Zhang, Y.~Lan, L.~Wang y T.-Y. Liu.
+\newblock On layer normalization in the Transformer architecture.
+\newblock En \emph{International Conference on Machine Learning (ICML)}, 2020.
+\newblock \url{https://arxiv.org/abs/2002.04745}
+
+\end{thebibliography}
+
+
+\end{document}

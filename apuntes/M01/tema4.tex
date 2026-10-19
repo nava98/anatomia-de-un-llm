@@ -1,0 +1,137 @@
+% =====================================================================
+\chapter{Logits, softmax y generación}
+\label{tema:4}
+% =====================================================================
+
+Una red neuronal no produce probabilidades directamente, sino un vector de números reales sin restricciones. Este tema estudia la función softmax, que transforma ese vector en una distribución, su versión con temperatura y los procedimientos de muestreo con los que un modelo genera texto. Se sigue~\cite[§4.1]{d2l}, \cite[§4.1]{gbc} y~\cite[§3.4]{jm3}.
+
+\section{La función softmax}
+
+\begin{definicion}[Softmax con temperatura]\label{def:softmax}
+Sea $z\in\R^{K}$ un vector de \emph{logits} y $T>0$ una \emph{temperatura}. Se define
+\[
+\softmax_T(z)_i=\frac{e^{z_i/T}}{\sum_{j=1}^{K}e^{z_j/T}},\qquad i=1,\dots,K.
+\]
+Con $T=1$ se escribe simplemente $\softmax(z)$.
+\end{definicion}
+
+\begin{proposicion}[Propiedades]\label{prop:softmax}
+Sean $z\in\R^{K}$ y $T>0$.
+\begin{enumerate}
+  \item $\softmax_T(z)$ pertenece al símplex: sus componentes son positivas y suman~1.
+  \item Invariancia por traslación: $\softmax_T(z+c\mathbf{1})=\softmax_T(z)$ para todo $c\in\R$.
+  \item Monotonía: si $z_i>z_j$, entonces $\softmax_T(z)_i>\softmax_T(z)_j$.
+  \item Si el máximo $z_k$ es único, $\lim_{T\to 0^{+}}\softmax_T(z)=e_k$, el vector con un~1 en la posición $k$.
+  \item $\lim_{T\to\infty}\softmax_T(z)=(1/K,\dots,1/K)$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Cada término $e^{z_i/T}$ es positivo y el denominador es la suma de todos ellos. (ii) $e^{(z_i+c)/T}=e^{c/T}e^{z_i/T}$ y el factor común $e^{c/T}>0$ se cancela entre numerador y denominador. (iii) La función $s\mapsto e^{s/T}$ es estrictamente creciente y el denominador es común. (iv) Por (ii) con $c=-z_k$, $\softmax_T(z)_i=e^{(z_i-z_k)/T}/\sum_j e^{(z_j-z_k)/T}$. El término $j=k$ vale~1; para $j\ne k$, $z_j-z_k<0$ y $e^{(z_j-z_k)/T}\to 0$. El denominador tiende a~1, luego la componente $k$ tiende a~1 y las demás a~0. (v) Cada $z_j/T\to 0$ y, por continuidad de la exponencial, cada término tiende a~1; el cociente tiende a $1/K$.
+\end{proof}
+
+El \cref{tab:temperatura} ilustra la proposición para $z=(2,1,0)$. La temperatura no altera el orden de los tokens (propiedad~(iii)); solo controla cuánto se concentra la distribución.
+
+\begin{table}[h]
+\centering\small
+\caption{$\softmax_T(z)$ para $z=(2,1,0)$.}\label{tab:temperatura}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Temperatura & $p_1$ & $p_2$ & $p_3$ \\
+\midrule
+$T\to 0^{+}$ & $1$ & $0$ & $0$ \\
+$T=0{,}5$ & $0{,}867$ & $0{,}117$ & $0{,}016$ \\
+$T=1$ & $0{,}665$ & $0{,}245$ & $0{,}090$ \\
+$T=2$ & $0{,}506$ & $0{,}307$ & $0{,}186$ \\
+$T\to\infty$ & $1/3$ & $1/3$ & $1/3$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Relación con los modelos de $n$-gramas]
+Si en una fila de un modelo de bigramas se toman como logits $z_v=\ln\widehat{P}(v\mid u)$ para los $v$ con probabilidad positiva, entonces $\softmax(z)=\widehat{P}(\cdot\mid u)$. Elevar las probabilidades a $1/T$ y renormalizar equivale a aplicar la softmax con temperatura $T$.
+\end{observacion}
+
+\begin{observacion}[Relación con la física]
+La expresión de la \cref{def:softmax} es la distribución de Boltzmann de la mecánica estadística, $p_i\propto e^{-E_i/(k_BT)}$, con energías $E_i=-z_i$ y la temperatura medida en unidades de $k_B$. Los límites (iv) y (v) corresponden al estado fundamental a temperatura nula y a la equiprobabilidad a temperatura infinita.
+\end{observacion}
+
+\section{Estabilidad numérica}
+
+Para valores grandes de $z_i$, el cálculo directo de $e^{z_i}$ desborda la aritmética de coma flotante: en doble precisión el mayor número representable es aproximadamente $1{,}8\cdot 10^{308}$, y $e^{710}$ ya lo supera~\cite[§4.1]{gbc}.
+
+\begin{definicion}[Log-suma-exp]
+$\LSE(z)=\ln\sum_{i=1}^{K}e^{z_i}$. Se cumple $\ln\softmax(z)_i=z_i-\LSE(z)$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:lse}
+Sea $m=\max_i z_i$. Entonces $\LSE(z)=m+\LSE(z-m\mathbf{1})$ y
+\[
+m\le\LSE(z)\le m+\ln K.
+\]
+\end{proposicion}
+
+\begin{proof}
+$\sum_i e^{z_i}=e^{m}\sum_i e^{z_i-m}$; tomando logaritmos se obtiene la igualdad. En la suma $\sum_i e^{z_i-m}$ hay un término igual a~1 y los demás están en $(0,1]$, luego la suma está entre $1$ y $K$, y su logaritmo entre $0$ y $\ln K$.
+\end{proof}
+
+Tras restar el máximo, todos los exponentes son $\le 0$ y no se produce desbordamiento. Las bibliotecas numéricas calculan así la softmax y la entropía cruzada.
+
+\section{Muestreo}
+
+Generar texto consiste en aplicar repetidamente el \cref{cor:cadena-secuencias}: se obtiene la distribución $p=P(\cdot\mid x_{1:t-1})$, se elige un token $x_t$ y se añade al contexto, hasta que aparece \fin~\cite[§3.4]{jm3}.
+
+\begin{proposicion}[Muestreo por la inversa de la función de distribución]\label{prop:muestreo}
+Sea $p=(p_1,\dots,p_K)$ una distribución, $F_k=\sum_{i\le k}p_i$ con $F_0=0$, y sea $U$ una variable aleatoria uniforme en $[0,1)$. Defínase $X=\min\{k: U<F_k\}$. Entonces $P(X=k)=p_k$ para todo $k$.
+\end{proposicion}
+
+\begin{proof}
+$X=k$ si y solo si $F_{k-1}\le U<F_k$. Como $U$ es uniforme, la probabilidad de este suceso es la longitud del intervalo, $F_k-F_{k-1}=p_k$.
+\end{proof}
+
+\begin{definicion}[Estrategias de decodificación]
+Dada $p=P(\cdot\mid x_{1:t-1})$:
+\begin{enumerate}
+  \item \emph{decodificación voraz}: $x_t=\arg\max_i p_i$ (equivale a $T\to 0^{+}$);
+  \item \emph{muestreo top-$k$}: se conservan los $k$ tokens más probables, se renormaliza y se muestrea~\cite{fan};
+  \item \emph{muestreo de núcleo} o \emph{top-$p$}: se conserva el menor conjunto de tokens, ordenados por probabilidad decreciente, cuya probabilidad acumulada alcanza un umbral $p_0\in(0,1]$, se renormaliza y se muestrea~\cite{holtzman}.
+\end{enumerate}
+\end{definicion}
+
+Estas estrategias, combinadas con la temperatura, son los controles que exponen las interfaces de los modelos actuales. Se estudian con más detalle en el módulo~19.
+
+\begin{lecturas}
+\item Zhang \emph{et al.}~\cite{d2l}, §4.1 «Softmax Regression».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §4.1 «Overflow and Underflow».
+\item Jurafsky y Martin~\cite{jm3}, §3.4 «Sampling sentences from a language model».
+\item Holtzman \emph{et al.}~\cite{holtzman}, definición y análisis del muestreo de núcleo.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-orden}
+¿Puede un cambio de temperatura modificar cuál es el token más probable? Justifique la respuesta con la \cref{prop:softmax}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-softmax}
+Calcule $\softmax_T(z)$ para $z=(0,\ln 2,\ln 5)$ con $T=1$ y con $T=2$. ¿Cuál es el límite cuando $T\to 0^{+}$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-muestreo}
+Una fila del modelo da $p=(0{,}1;\,0{,}5;\,0{,}4)$ para los tokens $x$, $y$, $z$, en ese orden. Aplicando la \cref{prop:muestreo}, ¿qué token se obtiene para $u=0{,}05$, $0{,}35$, $0{,}6$ y $0{,}95$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-potencia}
+Dada una distribución $P$, se define $Q(i)\propto P(i)^{\beta}$ con $\beta>0$. (a) ¿Qué valor de $\beta$ equivale a duplicar la temperatura y cuál a reducirla a la mitad? (b) Calcule $Q$ para $P=(0{,}5;\,0{,}25;\,0{,}25)$ con $\beta=2$ y con $\beta=1/2$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §4.1, ejercicio~7.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-limites}
+Demuestre con detalle las propiedades (ii), (iv) y (v) de la \cref{prop:softmax}. Muestre con un ejemplo que (iv) falla si el máximo no es único.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-lse}
+Sea $g(x)=\LSE(x)$. (a) Demuestre que $\partial g/\partial x_i=\softmax(x)_i$. (b) Demuestre que $g(x+b\mathbf{1})=g(x)+b$. (c) Calcule $g(1000;\,1001;\,1002)$ a mano y explique qué ocurre si se evalúa directamente en doble precisión.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §4.1, ejercicio~6, apartados (b) y (d).}
+\end{ejercicio}

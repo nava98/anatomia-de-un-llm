@@ -1,0 +1,170 @@
+% =====================================================================
+\chapter{Inicialización y propagación de la varianza}
+\label{tema:4}
+% =====================================================================
+
+El descenso de gradiente necesita un punto de partida. Si los pesos iniciales son demasiado grandes, las activaciones crecen capa a capa o saturan; si son demasiado pequeños, la señal se apaga y los gradientes con ella. Este tema muestra primero por qué los pesos no pueden inicializarse todos iguales y deduce después, a partir de la varianza de una suma de variables independientes (módulo~5), las reglas de inicialización de LeCun, Xavier y He. Se sigue la §8.4 de~\cite{gbc}, la §5.4 de~\cite{d2l} y el apartado «Weight Initialization» de las notas «Neural Networks Part~2» de~\cite{cs231n}; los resultados proceden de Glorot y Bengio~\cite{glorot} y de He \emph{et al.}~\cite{he}.
+
+\section{La ruptura de la simetría}
+
+\begin{proposicion}[Simetría de las unidades ocultas]\label{prop:simetria}
+Sea un MLP con una capa oculta, $z=xW_1+b_1$, $h=\phi(z)$, $o=hW_2+b_2$, y sea $L$ cualquier pérdida que dependa de $o$. Si en la inicialización las columnas $i$ y $j$ de $W_1$ son iguales, $(b_1)_i=(b_1)_j$, y las filas $i$ y $j$ de $W_2$ son iguales, entonces tras cualquier número de pasos de descenso de gradiente (por lotes o estocástico) esas igualdades se mantienen.
+\end{proposicion}
+
+\begin{proof}
+Basta ver que se conservan en un paso. Si se cumplen, $z_i=z_j$ y $h_i=h_j$ para toda entrada. Con las ecuaciones de la \cref{tema:5}, $\partial L/\partial h_i=\sum_k(\partial L/\partial o_k)(W_2)_{ik}$ coincide con $\partial L/\partial h_j$, porque las filas $i$ y $j$ de $W_2$ son iguales; multiplicando por $\phi'(z_i)=\phi'(z_j)$ se obtiene $\delta_i=\delta_j$. Los gradientes de las columnas $i$ y $j$ de $W_1$ son $x^{\top}\delta_i$ y $x^{\top}\delta_j$, iguales; los de los sesgos, $\delta_i=\delta_j$; los de las filas $i$ y $j$ de $W_2$ son $h_i\,\partial L/\partial o$ y $h_j\,\partial L/\partial o$, iguales. Un paso de descenso resta cantidades iguales a parámetros iguales.
+\end{proof}
+
+En particular, si todos los pesos se inicializan a~0 (o a una misma constante), todas las unidades ocultas calculan siempre lo mismo y la capa equivale a una sola unidad~\cite{cs231n}, \cite[§5.4.1.3]{d2l}. Por eso los pesos se inicializan con valores \emph{aleatorios}. Los sesgos, en cambio, pueden empezar en~0. En un modelo lineal, como la regresión logística, el problema no se plantea (\cref{eje:4-simetria}).
+
+\section{La varianza de una preactivación}
+
+\begin{lema}\label{lem:var-producto}
+Sean $w$ y $h$ variables aleatorias independientes con $\E[w]=0$. Entonces $\E[wh]=0$ y $\Var(wh)=\Var(w)\,\E[h^{2}]$.
+\end{lema}
+
+\begin{proof}
+Por independencia, $\E[wh]=\E[w]\E[h]=0$ y $\E[w^{2}h^{2}]=\E[w^{2}]\E[h^{2}]$. Luego $\Var(wh)=\E[w^{2}h^{2}]-0=\Var(w)\E[h^{2}]$, porque $\E[w^{2}]=\Var(w)$ cuando la media es nula.
+\end{proof}
+
+\begin{proposicion}[Propagación hacia delante]\label{prop:var-adelante}
+Sea $z=\sum_{i=1}^{\nin}w_ih_i$ la preactivación de una unidad. Supóngase que los $w_i$ son independientes entre sí y de los $h_i$, con media~0 y varianza $s^{2}$, y que los $h_i$ tienen el mismo segundo momento $\E[h^{2}]$. Entonces $\E[z]=0$ y
+\[
+\Var(z)=\nin\,s^{2}\,\E[h^{2}].
+\]
+\end{proposicion}
+
+\begin{proof}
+Por el \cref{lem:var-producto}, cada término tiene media~0 y varianza $s^{2}\E[h^{2}]$. Los términos están incorrelados: para $i\neq k$, $\E[w_ih_iw_kh_k]=\E[w_i]\E[w_kh_ih_k]=0$, por la independencia de $w_i$ respecto de las demás variables. La varianza de una suma de variables incorreladas es la suma de las varianzas.
+\end{proof}
+
+El objetivo es elegir $s^{2}$ para que $\Var(z)$ sea la misma en todas las capas. Lo que relaciona $\E[h^{2}]$ con la varianza de la capa anterior es la activación.
+
+\section{Activaciones lineales o tanh: LeCun y Xavier}
+
+Si la activación es la identidad, o es tanh y opera cerca de~0, donde $\tanh t\approx t$, entonces $\E[h^{2}]\approx\Var(z_{\text{anterior}})$ y la \cref{prop:var-adelante} da $\Var(z)=\nin s^{2}\Var(z_{\text{anterior}})$. Conservar la varianza exige
+\[
+s^{2}=\frac{1}{\nin},
+\]
+que es la inicialización de \emph{LeCun}, la misma calibración $1/\sqrt{n}$ que recomiendan las notas de~\cite{cs231n}.
+
+\begin{proposicion}[Propagación hacia atrás]\label{prop:var-atras}
+En la retropropagación (\cref{tema:5}), el gradiente respecto a la activación $h_i$ de una capa es $g_i=\sum_{j=1}^{\nout}W_{ij}\delta_j$. Con las mismas hipótesis de independencia y media nula, $\Var(g_i)=\nout\,s^{2}\,\E[\delta^{2}]$.
+\end{proposicion}
+
+\begin{proof}
+Es la \cref{prop:var-adelante} aplicada a la suma sobre las $\nout$ salidas, con $\delta_j$ en el papel de $h_i$.
+\end{proof}
+
+Para que la varianza de los gradientes tampoco cambie de capa en capa hace falta $\nout s^{2}=1$. Las dos condiciones solo son compatibles si $\nin=\nout$; Glorot y Bengio~\cite{glorot} proponen el compromiso de tomar $1/s^{2}$ igual a la media aritmética de $\nin$ y $\nout$.
+
+\begin{definicion}[Inicialización de Xavier o Glorot]\label{def:xavier}
+Los pesos de una capa $\nin\to\nout$ se toman independientes con media~0 y varianza
+\[
+s^{2}=\frac{2}{\nin+\nout},
+\]
+bien con distribución normal $\mathcal{N}(0,s^{2})$, bien uniforme en $[-a,a]$ con $a=\sqrt{6/(\nin+\nout)}$.
+\end{definicion}
+
+\begin{lema}\label{lem:uniforme}
+Si $w\sim U(-a,a)$, entonces $\Var(w)=a^{2}/3$.
+\end{lema}
+
+\begin{proof}
+$\E[w]=0$ por simetría y $\E[w^{2}]=\frac{1}{2a}\int_{-a}^{a}t^{2}\,dt=\frac{1}{2a}\cdot\frac{2a^{3}}{3}=\frac{a^{2}}{3}$.
+\end{proof}
+
+Con $a^{2}=6/(\nin+\nout)$, el \cref{lem:uniforme} da $a^{2}/3=2/(\nin+\nout)$, de modo que las dos versiones de la \cref{def:xavier} tienen la misma varianza.
+
+\begin{ejemplo}\label{ej:xavier}
+Para una capa $300\to 100$, $s^{2}=2/400=0{,}005$ y $s=0{,}0707$; en la versión uniforme, $a=\sqrt{6/400}=0{,}1225$.
+\end{ejemplo}
+
+\section{Activaciones ReLU: la inicialización de He}
+
+\begin{lema}\label{lem:relu2}
+Si $z$ es una variable aleatoria con densidad simétrica respecto a~0 y varianza $\sigma^{2}$, entonces $\E[\ReLU(z)^{2}]=\sigma^{2}/2$.
+\end{lema}
+
+\begin{proof}
+Sea $f$ la densidad, con $f(-t)=f(t)$. Como $\ReLU(z)^{2}=z^{2}\ind[z>0]$, se tiene $\E[\ReLU(z)^{2}]=\int_0^{\infty}t^{2}f(t)\,dt$. La función $t^{2}f(t)$ es par, luego esa integral es la mitad de $\int_{-\infty}^{\infty}t^{2}f(t)\,dt=\E[z^{2}]$. Por simetría $\E[z]=0$ y $\E[z^{2}]=\sigma^{2}$.
+\end{proof}
+
+\begin{teorema}[Inicialización de He]\label{teo:he}
+En un MLP con activaciones ReLU, supóngase que las preactivaciones de cada capa tienen densidad simétrica y que se cumplen las hipótesis de la \cref{prop:var-adelante}. Entonces $\Var(z^{(\ell+1)})=\tfrac12\,\nin s^{2}\,\Var(z^{(\ell)})$, y la varianza se conserva capa a capa si y solo si
+\[
+s^{2}=\frac{2}{\nin}.
+\]
+\end{teorema}
+
+\begin{proof}
+Por la \cref{prop:var-adelante}, $\Var(z^{(\ell+1)})=\nin s^{2}\E[(h^{(\ell)})^{2}]$, y por el \cref{lem:relu2} con $h^{(\ell)}=\ReLU(z^{(\ell)})$, $\E[(h^{(\ell)})^{2}]=\tfrac12\Var(z^{(\ell)})$. La igualdad $\Var(z^{(\ell+1)})=\Var(z^{(\ell)})$ equivale a $\tfrac12\nin s^{2}=1$.
+\end{proof}
+
+He \emph{et al.}~\cite{he} obtienen esta regla y la generalizan a PReLU; las notas de~\cite{cs231n} la presentan como la recomendación práctica para redes ReLU. El factor~2 compensa exactamente que la ReLU anula la mitad del segundo momento. Con la inicialización de LeCun o de Xavier ($s^{2}=1/n$ cuando $\nin=\nout=n$), en cambio, la varianza se divide por~2 en cada capa ReLU y la desviación típica por $\sqrt2$.
+
+\begin{ejemplo}\label{ej:he}
+Para $\nin=512$, la inicialización de He da $s=\sqrt{2/512}=1/16=0{,}0625$.
+\end{ejemplo}
+
+\section{Un experimento}
+
+El \cref{tab:experimento} muestra la desviación típica de las activaciones de una red de diez capas de anchura~256, con entradas normales estándar, para cinco inicializaciones (media de 20 repeticiones con 1000 entradas cada una).
+
+\begin{table}[h]
+\centering\small
+\caption{Desviación típica de las activaciones en una red de diez capas de anchura~256.}\label{tab:experimento}
+\begin{tabular}{@{}llcccl@{}}
+\toprule
+Pesos & Activación & Capa 1 & Capa 4 & Capa 10 & Diagnóstico \\
+\midrule
+$\mathcal{N}(0,1)$ & tanh & $0{,}975$ & $0{,}974$ & $0{,}974$ & saturada: $86{,}5\,\%$ con $\abs{h}>0{,}99$ \\
+$\mathcal{N}(0;\,0{,}01^{2})$ & tanh & $0{,}156$ & $6{,}4\cdot 10^{-4}$ & $1{,}1\cdot 10^{-8}$ & señal apagada \\
+Xavier & tanh & $0{,}628$ & $0{,}357$ & $0{,}228$ & decae despacio \\
+Xavier & ReLU & $0{,}584$ & $0{,}205$ & $0{,}0254$ & se divide por $\sqrt2$ en cada capa \\
+He & ReLU & $0{,}826$ & $0{,}819$ & $0{,}812$ & estable \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Los números concuerdan con la teoría. Con He, la preactivación de la capa~1 es $\mathcal{N}(0,2)$ y la desviación típica de $\ReLU(z)$ es $\sqrt{1-1/\pi}=0{,}826$. Con Xavier y ReLU, el factor $2^{-1/2}$ por capa predice $0{,}584\cdot 2^{-9/2}=0{,}0258$ en la capa~10. Con $\mathcal{N}(0,1)$ y tanh la señal no desaparece, pero las unidades están saturadas: la derivada media $1-h^{2}$ vale $0{,}051$, y los gradientes se multiplican por números pequeños en cada capa (\cref{obs:desvanecimiento}).
+
+\begin{observacion}[Conexión con los LLM]
+GPT-1 inicializa los pesos con $\mathcal{N}(0;\,0{,}02^{2})$~\cite[§4.1]{radford2018}. GPT-2 añade un factor $1/\sqrt{N}$, donde $N$ es el número de capas residuales, en los pesos de las capas que escriben en el flujo residual~\cite[§2.3]{radford2019}. La justificación es la de este tema: el flujo residual es una suma de $N$ contribuciones, y si estas son incorreladas su varianza crece linealmente con $N$; dividir cada una por $\sqrt N$ mantiene la varianza total acotada con la profundidad (\cref{eje:4-residual}). Las conexiones residuales y la normalización se estudian en el módulo~11.
+\end{observacion}
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.4 «Parameter Initialization Strategies».
+\item Zhang \emph{et al.}~\cite{d2l}, §5.4 «Numerical Stability and Initialization».
+\item Stanford CS231n~\cite{cs231n}, «Neural Networks Part~2», apartado «Weight Initialization».
+\item Glorot y Bengio~\cite{glorot} y He \emph{et al.}~\cite{he}, derivaciones originales.
+\item Jurafsky y Martin~\cite{jm3}, §6.6.5 «More details on learning».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-simetria}
+(a) ¿Por qué no deben inicializarse a cero todos los pesos de un MLP? (b) En la regresión softmax del módulo~8, $p=\softmax(xW+b)$ sin capa oculta, ¿pueden inicializarse todos los pesos con el mismo valor? Justifique la respuesta calculando el gradiente respecto a dos columnas distintas de $W$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.4, ejercicio~2.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-xavier}
+Para una capa $512\to 2048$, calcule la desviación típica de Xavier en su versión normal y el límite $a$ de la versión uniforme. Calcule después la desviación típica de He para $\nin=512$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-uniforme}
+(a) ¿Qué límite $a$ debe tener una distribución uniforme $U(-a,a)$ para reproducir la varianza de He con $\nin=512$? (b) Para $\nin=200$, ¿qué desviación típica da He?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-decaimiento}
+Una red de diez capas ReLU de anchura $n$ se inicializa con $s^{2}=1/n$. (a) ¿Por qué factor se multiplica la varianza de la preactivación en cada capa? (b) Si la desviación típica de las activaciones de la capa~1 es $0{,}584$, ¿qué valor predice la teoría para la capa~10? Compárelo con el \cref{tab:experimento}. (c) ¿Qué varianza de los pesos corrige el problema?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-he}
+Demuestre que si $z\sim\mathcal{N}(0,\sigma^{2})$, entonces $\E[\ReLU(z)^{2}]=\sigma^{2}/2$, y calcule además $\E[\ReLU(z)]$ y $\Var(\ReLU(z))$. Deduzca la inicialización de He y compruebe el valor $0{,}826$ de la capa~1 del \cref{tab:experimento}.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-residual}
+Sea $r_N=r_0+\sum_{k=1}^{N}c\,f_k$, donde $r_0,f_1,\dots,f_N$ son variables aleatorias incorreladas de media~0, $\Var(r_0)=v_0$ y $\Var(f_k)=v$ para todo $k$, y $c>0$. (a) Calcule $\Var(r_N)$. (b) Demuestre que con $c=1$ la varianza crece sin límite con $N$ y que con $c=1/\sqrt N$ es $v_0+v$ para todo $N$. (c) Relacione el resultado con la inicialización de GPT-2.
+\end{ejercicio}

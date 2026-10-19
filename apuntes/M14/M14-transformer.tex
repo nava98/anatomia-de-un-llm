@@ -1,0 +1,144 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase III — Módulo 14
+%  El Transformer completo
+%  Compilar: latexmk -r ../latexmkrc M14-transformer.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 14}
+
+\hypersetup{pdftitle={Módulo 14. El Transformer completo},pdfauthor={Anatomía de un LLM}}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\uno}{\mathbf{1}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\RMS}{\operatorname{RMS}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+\newcommand{\Norm}{\operatorname{Norm}}
+\newcommand{\Attn}{\operatorname{Attn}}
+\newcommand{\MHA}{\operatorname{MHA}}
+\newcommand{\MLP}{\operatorname{MLP}}
+\newcommand{\FFN}{\operatorname{FFN}}
+\newcommand{\SwiGLU}{\operatorname{SwiGLU}}
+\newcommand{\SiLU}{\operatorname{SiLU}}
+\newcommand{\GELU}{\operatorname{GELU}}
+\newcommand{\ReLU}{\operatorname{ReLU}}
+\newcommand{\PE}{\operatorname{PE}}
+\newcommand{\RoPE}{\operatorname{RoPE}}
+\newcommand{\Real}{\operatorname{Re}}
+\newcommand{\Loss}{\mathcal{L}}
+\newcommand{\dff}{d_{\mathrm{ff}}}
+\newcommand{\nctx}{n_{\mathrm{ctx}}}
+\newcommand{\Wdown}{W_{\mathrm{d}}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase III \textperiodcentered\ Secuencias y Transformer}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 14\par}\vspace{0.3cm}
+{\LARGE El Transformer completo\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+En el módulo~13 se construyó la atención causal multicabeza. Este módulo la integra en la arquitectura completa de un modelo de lenguaje: el Transformer \emph{decoder-only}, una pila de $L$ bloques idénticos, cada uno formado por una subcapa de atención y una subcapa de perceptrón multicapa, unidas por conexiones residuales y precedidas por normalizaciones. Se completa con la tabla de embeddings de entrada, la codificación de la posición y la capa de salida que produce los logits. Es la arquitectura publicada de GPT-2 y de la familia LLaMA; Google y xAI han publicado que Gemini~1.5 y Grok-1 son Transformer con mezcla de expertos, y Anthropic no ha publicado la arquitectura de Claude. El módulo termina con la contabilidad de recursos: a partir de cinco números de configuración se calculan exactamente los parámetros, la memoria y el cómputo de entrenamiento de un modelo como LLaMA-2~7B.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item escribir las ecuaciones de un Transformer decoder-only pre-norm, indicar la forma de cada tensor y demostrar que la salida en la posición $t$ solo depende de los tokens $x_{1:t}$;
+  \item desarrollar el flujo residual como suma de aportaciones, comparar las variantes pre-norm y post-norm y justificar la normalización final;
+  \item definir las subcapas MLP con GELU y SwiGLU, demostrar las propiedades de la función SiLU y dimensionar $\dff$ para igualar presupuestos de parámetros;
+  \item construir la codificación sinusoidal y RoPE y demostrar que la primera se desplaza por una aplicación lineal y que la segunda solo depende de la posición relativa;
+  \item contar exactamente los parámetros de un Transformer, justificar la aproximación $12Ld^{2}$ y calcular la memoria de inferencia y de entrenamiento;
+  \item contar los FLOPs de una pasada hacia delante, derivar la regla $C\approx 6ND$ y estimar el tiempo de entrenamiento a partir del rendimiento del hardware.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1, los logits, la softmax y la entropía cruzada (temas~4 y~5). De los módulos~2 y~3, el producto de matrices, las matrices ortogonales y las matrices diagonales por bloques. Del módulo~4, la regla de la cadena y el jacobiano. Del módulo~7, el optimizador Adam y sus dos momentos (tema~5). Del módulo~9, el perceptrón multicapa y las funciones de activación. Del módulo~10, la retropropagación en capas lineales. Del módulo~11, las conexiones residuales, RMSNorm, la posición pre-norm y la precisión mixta (temas~2, 3 y~5). Del módulo~13, la atención escalada, la máscara causal y la atención multicabeza, que se usan en todos los temas.
+
+\section*{Organización}
+\begin{center}
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Arquitectura del Transformer decoder-only & \cite{vaswani}, \cite{gpt2}, \cite{jm3}, \cite{bishopdl} \\
+2 & Flujo residual y posición de la normalización & \cite{xiong}, \cite{gpt2}, \cite{elhage}, \cite{cs336} \\
+3 & La subcapa MLP: GELU y SwiGLU & \cite{vaswani}, \cite{shazeer}, \cite{llama}, \cite{cs336} \\
+4 & Codificación de la posición: sinusoidal y RoPE & \cite{vaswani}, \cite{roformer}, \cite{d2l}, \cite{cs224n} \\
+5 & Contar parámetros y memoria & \cite{kaplan}, \cite{llama2}, \cite{jm3}, \cite{cs336} \\
+6 & Contar el cómputo: FLOPs y la regla $6ND$ & \cite{kaplan}, \cite{llama2}, \cite{cs336} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La arquitectura sigue el capítulo~7 de Jurafsky y Martin~\cite{jm3} (§7.2 a §7.5), el capítulo~12 de Bishop y Bishop~\cite{bishopdl} (§12.1.7, §12.1.9 y §12.3.1) y las secciones~11.6 y~11.7 de Zhang \emph{et al.}~\cite{d2l}, junto con los artículos originales: Vaswani \emph{et al.}~\cite{vaswani} para el Transformer y la codificación sinusoidal, Radford \emph{et al.}~\cite{gpt2} para GPT-2, Touvron \emph{et al.}~\cite{llama,llama2} para LLaMA y Llama~2, Xiong \emph{et al.}~\cite{xiong} para la posición de la normalización, Zhang y Sennrich~\cite{rmsnorm} para RMSNorm, Shazeer~\cite{shazeer} para SwiGLU, Su \emph{et al.}~\cite{roformer} para RoPE, Press y Wolf~\cite{presswolf} para los embeddings atados y Kaplan \emph{et al.}~\cite{kaplan} para el recuento de parámetros y de cómputo. La descripción del flujo residual como espacio de comunicación procede de Elhage \emph{et al.}~\cite{elhage}. Los ejercicios universitarios proceden de la práctica~1 del curso CS336 de Stanford~\cite{cs336}, de la práctica~4 del curso CS224N~\cite{cs224n} y de los ejercicios del capítulo~7 de~\cite{jm3}. Las dimensiones de la capa intermedia de LLaMA se han comprobado en el código publicado por Meta~\cite{llamacode}. Sobre Claude, Gemini y Grok solo se usa información pública~\cite{gemini15,grok1}.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\V$, $V=\abs{\V}$ & vocabulario y su tamaño \\
+$n$, $\nctx$ & longitud de la secuencia y longitud máxima de contexto \\
+$d$, $h$, $d_k=d/h$ & dimensión del modelo, cabezas y dimensión por cabeza \\
+$L$, $\dff$ & número de bloques y dimensión de la capa intermedia del MLP \\
+$H^{\ell}\in\R^{n\times d}$, $h^{\ell}_t$ & flujo residual tras el bloque $\ell$ y su fila $t$ \\
+$W_E\in\R^{V\times d}$, $W_U\in\R^{d\times V}$ & matrices de embedding y de \emph{unembedding} \\
+$W_Q,W_K,W_V,W_O$ & proyecciones de la atención ($d\times d$) \\
+$W_g,W_u\in\R^{d\times\dff}$ & matrices de puerta y de subida de SwiGLU \\
+$\Wdown\in\R^{\dff\times d}$ & matriz de bajada de SwiGLU \\
+$M\in\{0,-\infty\}^{n\times n}$ & máscara causal \\
+$\sigma(x)$, $\SiLU(x)=x\,\sigma(x)$ & sigmoide logística y función SiLU \\
+$R(\alpha)$, $R_m$ & rotación de ángulo $\alpha$; matriz de RoPE en la posición $m$ \\
+$\PE(p)$ & codificación sinusoidal de la posición $p$ \\
+$N$, $D$, $C$ & número de parámetros, de tokens de entrenamiento y de FLOPs \\
+$P$ & matriz de permutación \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Los vectores de tokens son filas: una secuencia es una matriz $X\in\R^{n\times d}$ y una capa lineal actúa como $X\mapsto XW$, como en~\cite{jm3} y en el código de PyTorch. Los números grandes se escriben con espacio fino como separador de miles ($6\,738\,415\,616$).
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

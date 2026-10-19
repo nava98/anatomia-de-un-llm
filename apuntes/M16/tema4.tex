@@ -1,0 +1,183 @@
+% =====================================================================
+\chapter{El reparto óptimo del cómputo: Chinchilla}
+\label{tema:4}
+% =====================================================================
+
+Hoffmann \emph{et al.}~\cite{hoffmann} entrenaron más de $400$ modelos, de menos de $70$ millones a más de $16\,000$ millones de parámetros, con entre unos $5\,000$ millones y más de $400\,000$ millones de tokens, y concluyeron que, a cómputo fijo, el número de parámetros y el de tokens deben crecer aproximadamente al mismo ritmo. Este tema plantea el reparto como un problema de optimización con restricciones, lo resuelve en forma cerrada con multiplicadores de Lagrange para la ley paramétrica de Hoffmann \emph{et al.}\ y extrae sus consecuencias. Se sigue~\cite[§3.3, ecuaciones~(2) y~(4), y apéndice~D.2]{hoffmann}, la revisión de la práctica~3 de CS336~\cite[§2]{cs336a3} y, para la forma convexa del problema, la programación geométrica de Boyd y Vandenberghe~\cite[§4.5]{bv}. Los métodos empíricos con que se estiman las constantes se estudian en el \cref{tema:5}.
+
+\section{El problema del reparto}
+
+\begin{definicion}[Reparto óptimo del cómputo]\label{def:reparto}
+Sea $L(N,D)$ la pérdida esperada de un modelo de $N$ parámetros entrenado con $D$ tokens y sea $C>0$ un presupuesto de FLOP. El \emph{reparto óptimo} es la solución de
+\[
+\min_{N,D>0}\ L(N,D)\qquad\text{sujeto a}\qquad 6ND=C.
+\]
+Sus componentes se denotan $\Nopt(C)$ y $\Dopt(C)$. La \emph{frontera eficiente} es la curva $C\mapsto(\Nopt(C),\Dopt(C))$.
+\end{definicion}
+
+\section{La ley paramétrica de Chinchilla}
+
+\begin{definicion}[Ley de Chinchilla]\label{def:chinchilla}
+La ley paramétrica de Hoffmann \emph{et al.}~\cite[ecuación~(2)]{hoffmann} es
+\[
+L(N,D)=E+\frac{A}{N^{\alpha}}+\frac{B}{D^{\beta}},\qquad A,B,\alpha,\beta,E>0.
+\]
+El ajuste del enfoque~3 da~\cite[apéndice~D.2]{hoffmann}
+\[
+E=1{,}69,\qquad A=406{,}4,\qquad B=410{,}7,\qquad\alpha=0{,}34,\qquad\beta=0{,}28.
+\]
+\end{definicion}
+
+Los tres términos tienen una interpretación directa~\cite[§3.3]{hoffmann}. $E$ es la pérdida de un predictor ideal: la entropía del texto, que ningún modelo puede rebajar (desigualdad de Gibbs). $A/N^{\alpha}$ es el exceso de un modelo de tamaño finito entrenado con datos ilimitados. $B/D^{\beta}$ es el exceso por entrenar con un número finito de tokens, es decir, de pasos de optimización. A diferencia de las leyes de Kaplan, la ley tiene un suelo: con $N=D=10^{30}$, los dos términos de error valen $2{,}6\cdot 10^{-8}$ y $1{,}6\cdot 10^{-6}$, y $L\approx E$.
+
+\section{La solución en forma cerrada}
+
+\begin{teorema}[Frontera eficiente de Chinchilla]\label{teo:chinchilla}
+Sea $L$ como en la \cref{def:chinchilla}. Para cada $C>0$, el problema de la \cref{def:reparto} tiene una única solución,
+\[
+\Nopt(C)=G\Bigl(\frac{C}{6}\Bigr)^{a},\qquad\Dopt(C)=G^{-1}\Bigl(\frac{C}{6}\Bigr)^{b},
+\]
+con
+\[
+G=\Bigl(\frac{\alpha A}{\beta B}\Bigr)^{\frac{1}{\alpha+\beta}},\qquad a=\frac{\beta}{\alpha+\beta},\qquad b=\frac{\alpha}{\alpha+\beta}.
+\]
+\end{teorema}
+
+\begin{proof}
+\emph{Condiciones necesarias.} El término $E$ no influye en el óptimo. La lagrangiana es $\Lambda(N,D,\lambda)=AN^{-\alpha}+BD^{-\beta}+\lambda(6ND-C)$, y en un óptimo interior se anulan sus derivadas (módulo~4):
+\[
+\frac{\partial\Lambda}{\partial N}=-\alpha AN^{-\alpha-1}+6\lambda D=0,\qquad
+\frac{\partial\Lambda}{\partial D}=-\beta BD^{-\beta-1}+6\lambda N=0.
+\]
+Multiplicando la primera por $N$ y la segunda por $D$,
+\begin{equation}\label{eq:equilibrio}
+\alpha AN^{-\alpha}=6\lambda ND=\beta BD^{-\beta}.
+\end{equation}
+Sustituyendo $D=c/N$, con $c=C/6$, en la igualdad de los extremos: $\alpha AN^{-\alpha}=\beta Bc^{-\beta}N^{\beta}$, luego $N^{\alpha+\beta}=\frac{\alpha A}{\beta B}c^{\beta}$ y $N=Gc^{a}$. Entonces $D=c/N=G^{-1}c^{1-a}=G^{-1}c^{b}$, porque $1-a=\alpha/(\alpha+\beta)=b$.
+
+\emph{Unicidad y carácter de mínimo.} Sobre la restricción, con $u=\ln N$, la función objetivo es
+\[
+\phi(u)=Ae^{-\alpha u}+Bc^{-\beta}e^{\beta u},
+\]
+suma de dos exponenciales estrictamente convexas; $\phi$ es estrictamente convexa en $\R$ y tiende a $+\infty$ cuando $u\to\pm\infty$. Tiene, por tanto, un único mínimo global, que es el único punto crítico, y coincide con el hallado.
+\end{proof}
+
+\begin{corolario}[Equilibrio de los términos de error]\label{cor:equilibrio}
+En el óptimo, $\dfrac{A/\Nopt^{\alpha}}{B/\Dopt^{\beta}}=\dfrac{\beta}{\alpha}$. Con los valores de Chinchilla, el término de datos es $\alpha/\beta=1{,}214$ veces el de parámetros.
+\end{corolario}
+
+\begin{proof}
+Es la igualdad de los extremos de~\eqref{eq:equilibrio}, dividida por $\alpha B\Dopt^{-\beta}$.
+\end{proof}
+
+\begin{corolario}[Exponentes del reparto]\label{cor:exponentes}
+$\Nopt\propto C^{a}$ y $\Dopt\propto C^{b}$, con $a+b=1$. Con los valores de Chinchilla, $a=0{,}28/0{,}62=0{,}452$, $b=0{,}548$ y $G=1{,}345$.
+\end{corolario}
+
+\begin{proof}
+Se lee en el \cref{teo:chinchilla}; $a+b=(\beta+\alpha)/(\alpha+\beta)=1$ refleja que $\Nopt\Dopt=C/6$. Los valores numéricos: $\alpha A=138{,}2$, $\beta B=115{,}0$, $G=(1{,}202)^{1/0{,}62}=1{,}345$.
+\end{proof}
+
+El artículo da $a\approx 0{,}46$ para este enfoque y $a\approx 0{,}50$ y $0{,}49$ para los otros dos~\cite[tabla~2]{hoffmann}, frente al $0{,}73$ de Kaplan \emph{et al.}: el modelo y los datos crecen, aproximadamente, como $\sqrt C$.
+
+\begin{corolario}[Pérdida en la frontera]\label{cor:perdida}
+Sea $\gamma=\alpha\beta/(\alpha+\beta)$. Existe $K>0$ tal que $L(\Nopt(C),\Dopt(C))-E=K\,C^{-\gamma}$. Con los valores de Chinchilla, $\gamma=0{,}1535$.
+\end{corolario}
+
+\begin{proof}
+Con $c=C/6$, $A\Nopt^{-\alpha}=AG^{-\alpha}c^{-\alpha a}$ y $B\Dopt^{-\beta}=BG^{\beta}c^{-\beta b}$. Los dos exponentes son iguales: $\alpha a=\alpha\beta/(\alpha+\beta)=\beta b=\gamma$. La suma es $(AG^{-\alpha}+BG^{\beta})\,6^{\gamma}C^{-\gamma}$.
+\end{proof}
+
+El \cref{cor:perdida} reconcilia las dos líneas de trabajo: el exceso sobre la entropía irreducible decae como una ley de potencia en el cómputo, como observaron Kaplan \emph{et al.}, aunque el reparto que la produce es otro.
+
+\section{Gopher frente a Chinchilla}
+
+\begin{ejemplo}[El presupuesto de Gopher]\label{ej:gopher-chinchilla}
+Hoffmann \emph{et al.}\ toman como referencia el presupuesto de Gopher, $C=5{,}76\cdot 10^{23}$ FLOP~\cite[tabla~3]{hoffmann}. Con la aproximación $6ND$, Gopher gasta $5{,}04\cdot 10^{23}$ y Chinchilla $5{,}88\cdot 10^{23}$: ambos están cerca del mismo presupuesto. La ley de la \cref{def:chinchilla} da:
+\begin{center}\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Configuración & $N$ & $D$ & $L(N,D)$ \\
+\midrule
+Gopher & $2{,}8\cdot 10^{11}$ & $3\cdot 10^{11}$ & $1{,}993$ \\
+Chinchilla & $7\cdot 10^{10}$ & $1{,}4\cdot 10^{12}$ & $1{,}937$ \\
+Óptimo del \cref{teo:chinchilla} & $3{,}22\cdot 10^{10}$ & $2{,}98\cdot 10^{12}$ & $1{,}931$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Un modelo cuatro veces menor, con casi cinco veces más datos, mejora a Gopher en $0{,}056$ nats con el mismo cómputo. El óptimo del ajuste es aún menor, pero solo gana $0{,}006$ nats más: el mínimo es plano.
+\end{ejemplo}
+
+\section{La regla de los 20 tokens}
+
+Los enfoques~1 y~2 de Hoffmann \emph{et al.}\ conducen en la práctica a unos $20$ tokens por parámetro: la tabla~3 de~\cite{hoffmann} asigna $20{,}2\cdot 10^{9}$ tokens a un modelo de $10^{9}$ parámetros y $205{,}1\cdot 10^{9}$ a uno de $10^{10}$.
+
+\begin{proposicion}[Regla de proporción fija]\label{prop:regla20}
+Si se impone $D=\rho N$ con $\rho>0$ fijo, la restricción $6ND=C$ da $N=\sqrt{C/(6\rho)}$ y $D=\rho N$. Con $\rho=20$, $N=\sqrt{C/120}$.
+\end{proposicion}
+
+\begin{proof}
+$C=6N\cdot\rho N=6\rho N^{2}$; se despeja $N>0$.
+\end{proof}
+
+Por ejemplo, $C=1{,}2\cdot 10^{20}$ da $N=10^{9}$ y $D=2\cdot 10^{10}$, de acuerdo con la tabla~3 de~\cite{hoffmann}. El ajuste del enfoque~3 da, en cambio, unos $63$ tokens por parámetro a $10^{22}$ FLOP (\cref{eje:4-optimo}); la discrepancia entre los enfoques se discute en el \cref{tema:5}.
+
+\section{El mínimo es plano}
+
+\begin{proposicion}[Coste de desviarse del óptimo]\label{prop:plano}
+Sobre la restricción $6ND=C$, sea $\delta=\ln(N/\Nopt)$ la desviación logarítmica del tamaño, y sean $T_N=A\Nopt^{-\alpha}$ y $T_D=B\Dopt^{-\beta}$ los términos de error en el óptimo. El exceso de pérdida es
+\[
+\Delta(\delta)=T_N\bigl(e^{-\alpha\delta}-1\bigr)+T_D\bigl(e^{\beta\delta}-1\bigr)=\tfrac12\bigl(\alpha^{2}T_N+\beta^{2}T_D\bigr)\delta^{2}+O(\delta^{3}).
+\]
+\end{proposicion}
+
+\begin{proof}
+Si $N=\Nopt e^{\delta}$, la restricción obliga a $D=\Dopt e^{-\delta}$, y los términos de error pasan a $T_Ne^{-\alpha\delta}$ y $T_De^{\beta\delta}$; restando los valores en el óptimo se obtiene la expresión exacta. Desarrollando $e^{x}=1+x+x^{2}/2+O(x^{3})$, el término lineal es $(-\alpha T_N+\beta T_D)\delta$, que se anula por el \cref{cor:equilibrio} ($\alpha T_N=\beta T_D$), y queda el cuadrático.
+\end{proof}
+
+\begin{ejemplo}\label{ej:plano}
+Con $C=10^{22}$, $T_N=0{,}2026$ y $T_D=0{,}2460$ (\cref{eje:4-optimo}), luego $\tfrac12(\alpha^{2}T_N+\beta^{2}T_D)=\tfrac12(0{,}02342+0{,}01929)=0{,}02135$. Un modelo el doble de grande que el óptimo ($\delta=\ln 2$) pierde, según la aproximación, $0{,}02135\cdot 0{,}4805=0{,}0103$ nats; el valor exacto es $0{,}0102$. Equivocarse en un factor~2 en el tamaño cuesta un $0{,}5\,\%$ de la pérdida.
+\end{ejemplo}
+
+\section{Forma convexa del problema}
+
+El problema de la \cref{def:reparto} con la ley de Chinchilla es un \emph{programa geométrico}~\cite[§4.5]{bv}: el objetivo $AN^{-\alpha}+BD^{-\beta}$ es un posinomio (suma de monomios con coeficientes positivos y exponentes reales) y la restricción $6ND\le C$ es una cota sobre un monomio. Con el cambio de variables $u=\ln N$, $v=\ln D$, el objetivo pasa a ser $Ae^{-\alpha u}+Be^{-\beta v}$, convexo, y la restricción, $u+v\le\ln(C/6)$, afín. El problema transformado es convexo, y sus condiciones de Karush--Kuhn--Tucker son suficientes para el óptimo global (\cref{eje:4-gp}).
+
+\begin{lecturas}
+\item Hoffmann \emph{et al.}~\cite{hoffmann}, §3 «Estimating the optimal parameter/training tokens allocation», en particular §3.3 «Fitting a parametric loss function», tablas~2 y~3, y apéndice~D.
+\item Stanford CS336~\cite{cs336a3}, práctica~3, §2 «Scaling Laws Review».
+\item Stanford CS324~\cite{cs324}, clase «Scaling laws».
+\item Boyd y Vandenberghe~\cite{bv}, §4.5 «Geometric programming».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-vf}
+Justifique si son verdaderas o falsas: (a) Kaplan \emph{et al.}\ recomendaban hacer crecer $N$ más deprisa que $D$; (b) Chinchilla demostró que más parámetros siempre es mejor; (c) el término $E$ de la ley de Chinchilla puede reducirse con más datos.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-regla20}
+Con la regla $D=20N$, ¿qué $N$ y qué $D$ corresponden a $C=10^{23}$ FLOP? Compruebe el resultado.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-optimo}
+Con la ley de Chinchilla y $C=10^{22}$ FLOP, calcule $\Nopt$, $\Dopt$, $\Dopt/\Nopt$ y la pérdida. Compare con la regla de los 20 tokens.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-plano}
+Con los datos del \cref{ej:plano}, calcule el exceso de pérdida exacto y el aproximado de la \cref{prop:plano} para un modelo cuatro veces mayor y para uno cuatro veces menor que el óptimo. ¿Por qué no son iguales los dos excesos exactos?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-factor4}
+Demuestre que, si el cómputo se multiplica por~$4$, $\Nopt$ se multiplica por $4^{\beta/(\alpha+\beta)}$ y $\Dopt$ por $4^{\alpha/(\alpha+\beta)}$. Calcule ambos factores con los valores de Chinchilla y compruebe su producto.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-perdida}
+Obtenga explícitamente la constante $K$ del \cref{cor:perdida} en función de $A$, $B$, $\alpha$, $\beta$ y $G$, y calcúlela con los valores de Chinchilla. Calcule la reducción del exceso de pérdida al pasar de $10^{22}$ a $10^{24}$ FLOP y compruébela calculando directamente el óptimo en $10^{24}$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-gp}
+Considere el problema $\min AN^{-\alpha}+BD^{-\beta}$ sujeto a $6ND\le C$, con $N,D>0$. (a) Con $u=\ln N$ y $v=\ln D$, escriba el problema transformado y demuestre que es convexo. (b) Demuestre que en el óptimo la restricción es activa. (c) Escriba las condiciones de Karush--Kuhn--Tucker, compruebe que el punto del \cref{teo:chinchilla} las satisface con un multiplicador $\mu>0$ y demuestre que $\mu C=\alpha T_N$, con $T_N$ como en la \cref{prop:plano}. (d) Interprete $\mu$ como la derivada de la pérdida óptima respecto de $\ln C$ y compruébelo con el \cref{cor:perdida} y los datos del \cref{eje:4-optimo}.
+\fuente{adaptado de Boyd y Vandenberghe~\cite{bv}, §4.5 (forma convexa de un programa geométrico) y §5.5 (condiciones de optimalidad).}
+\end{ejercicio}

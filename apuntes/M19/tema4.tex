@@ -1,0 +1,211 @@
+% =====================================================================
+\chapter{Fundamentos de la cuantización}
+\label{tema:4}
+% =====================================================================
+
+Como la decodificación está limitada por la memoria (\cref{tema:2}), guardar los pesos con menos bits acelera casi en proporción a la reducción de bytes. \emph{Cuantizar} es representar números reales con un conjunto finito de niveles, normalmente enteros de $b$ bits acompañados de una escala. Este tema define los cuantizadores uniformes afín y simétrico, acota su error, deduce la relación entre bits y relación señal-ruido, analiza la granularidad de las escalas y el efecto de los valores atípicos, y muestra cómo se realiza un producto de matrices en aritmética entera. Se siguen las clases~5 y~6 («Quantization») de MIT 6.5940~\cite{mit65940}, el estudio de Gray y Neuhoff~\cite{grayneuhoff}, la sección~2 de Jacob \emph{et al.}~\cite{jacob}, la sección~2 de Xiao \emph{et al.}~\cite{smoothquant} y el §2.1 de Dettmers \emph{et al.}~\cite{llmint8}.
+
+\section{Cuantizadores uniformes}
+
+En todo el tema, $\rnd(u)$ denota el redondeo al entero más próximo con los empates resueltos lejos de cero. Es una función impar, $\rnd(-u)=-\rnd(u)$, y cumple $\abs{\rnd(u)-u}\le\frac12$ y $\rnd(u+n)=\rnd(u)+n$ para todo entero $n$.
+
+\begin{definicion}[Cuantizador afín]\label{def:afin}
+Sean $b\ge 1$ bits, un \emph{paso} o \emph{escala} $\Delta>0$ y un \emph{punto cero} entero $Z\in\{0,\dots,2^{b}-1\}$. El \emph{cuantizador afín} asigna a $x\in\R$ el entero
+\[
+Q(x)=\clip\bigl(\rnd(x/\Delta)+Z,\ 0,\ 2^{b}-1\bigr),
+\]
+y la \emph{descuantización} es $\hat x=\Delta\,(Q(x)-Z)$. Para un grupo de valores con rango $[x_{\min},x_{\max}]$, con $x_{\min}\le 0\le x_{\max}$, la calibración por mínimo y máximo toma
+\[
+\Delta=\frac{x_{\max}-x_{\min}}{2^{b}-1},\qquad Z=\rnd\Bigl(-\frac{x_{\min}}{\Delta}\Bigr).
+\]
+\end{definicion}
+
+\begin{definicion}[Cuantizador simétrico]\label{def:simetrico}
+El \emph{cuantizador simétrico} de $b$ bits usa $Z=0$, los enteros $\{-(2^{b-1}-1),\dots,2^{b-1}-1\}$ y la escala $\Delta=\max_i\abs{x_i}/(2^{b-1}-1)$, llamada de \emph{máximo absoluto} (\emph{absmax}). En int8 los enteros van de $-127$ a $127$; LLM.int8() escribe la misma regla como multiplicación por $s_x=127/\norm{x}_\infty=1/\Delta$~\cite[§2.1]{llmint8}.
+\end{definicion}
+
+El cuantizador simétrico es más sencillo y es el habitual para los pesos, cuya distribución está centrada en cero; el afín aprovecha mejor los niveles cuando el rango es asimétrico, como en las activaciones posteriores a una ReLU~\cite{mit65940}.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,x=0.62cm]
+  \draw[->] (-1,0) -- (16.2,0) node[right] {$x$};
+  \foreach \i in {0,...,15} {\draw (\i,0.12) -- (\i,-0.12); \node[below=3pt,font=\footnotesize] at (\i,0) {$\i$};}
+  \draw[very thick] (0,0) -- (15,0);
+  \node[above=5pt] at (0,0) {$x_{\min}=-1$}; \node[above=5pt] at (15,0) {$x_{\max}=2$};
+  \fill (5,0) circle (2pt) node[above=5pt] {$0$};
+  \draw[<->] (12,0.45) -- node[above] {$\Delta=0{,}2$} (13,0.45);
+  \fill[regla] (8.1,0) circle (2pt);
+  \draw[->,regla] (8.1,0.75) node[above,black] {$x=0{,}62$} -- (8.1,0.1);
+  \node[left,font=\footnotesize] at (-1,-0.42) {$Q$:};
+\end{tikzpicture}
+\caption{Rejilla del cuantizador afín de 4 bits del \cref{eje:4-int4}: los 16 enteros $Q=0,\dots,15$ cubren $[-1,2]$ con paso $\Delta=0{,}2$; el real $0$ corresponde al punto cero $Z=5$. El valor $x=0{,}62$ cae en $x/\Delta+Z=8{,}1$ y se lleva al entero $Q=8$, que se reconstruye como $\hat x=0{,}6$.}
+\label{fig:rejilla}
+\end{figure}
+
+\section{Error de cuantización}
+
+\begin{teorema}[Cota del error]\label{teo:error-cuant}
+Sea un cuantizador afín calibrado por mínimo y máximo (\cref{def:afin}). Para todo $x\in[x_{\min},x_{\max}]$, el recorte no actúa y
+\[
+\abs{\hat x-x}\le\frac{\Delta}{2}.
+\]
+Además, $x=0$ se representa sin error. Para $x$ fuera del rango, el recorte puede actuar y el error no está acotado (\emph{saturación}).
+\end{teorema}
+
+\begin{proof}
+Sea $x\in[x_{\min},x_{\max}]$. Como $\rnd$ es creciente, $\rnd(x/\Delta)$ está entre $\rnd(x_{\min}/\Delta)$ y $\rnd(x_{\max}/\Delta)$. Por ser $\rnd$ impar, $\rnd(x_{\min}/\Delta)+Z=\rnd(x_{\min}/\Delta)+\rnd(-x_{\min}/\Delta)=0$. Por la definición de $\Delta$, $x_{\max}/\Delta=x_{\min}/\Delta+(2^{b}-1)$, y como $2^{b}-1$ es entero, $\rnd(x_{\max}/\Delta)+Z=2^{b}-1$. Luego $\rnd(x/\Delta)+Z\in[0,2^{b}-1]$ y el recorte no actúa. Entonces $Q(x)-Z=\rnd(x/\Delta)$ y
+\[
+\abs{\hat x-x}=\Delta\,\Bigl|\rnd\Bigl(\frac{x}{\Delta}\Bigr)-\frac{x}{\Delta}\Bigr|\le\frac{\Delta}{2}.
+\]
+Si $x=0$, $\rnd(0)=0$, $Q=Z$ y $\hat x=0$. Si $x>x_{\max}$ es suficientemente grande, $Q(x)=2^{b}-1$ y $\hat x=\Delta(2^{b}-1-Z)$ es fijo, de modo que $\abs{\hat x-x}$ crece sin límite con $x$.
+\end{proof}
+
+La representación exacta del cero importa en la práctica: el relleno con ceros y las activaciones nulas no introducen error~\cite{jacob}.
+
+\begin{ejemplo}\label{ej:cuant}
+Sea $x=(-0{,}8;\allowbreak\ -0{,}1;\allowbreak\ 0{,}25;\allowbreak\ 1{,}6)$, con rango de anchura $2{,}4$.
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & int8 afín & int4 afín \\
+\midrule
+$\Delta$ & $2{,}4/255=0{,}009412$ & $2{,}4/15=0{,}16$ \\
+$Z$ & $\rnd(85{,}0)=85$ & $\rnd(5{,}0)=5$ \\
+$Q(x)$ & $(0;\allowbreak\ 74;\allowbreak\ 112;\allowbreak\ 255)$ & $(0;\allowbreak\ 4;\allowbreak\ 7;\allowbreak\ 15)$ \\
+$\hat x$ & $(-0{,}8;\allowbreak\ -0{,}10353;\allowbreak\ 0{,}25412;\allowbreak\ 1{,}6)$ & $(-0{,}8;\allowbreak\ -0{,}16;\allowbreak\ 0{,}32;\allowbreak\ 1{,}6)$ \\
+error máximo & $0{,}00412\le\Delta/2=0{,}00471$ & $0{,}07\le\Delta/2=0{,}08$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{ejemplo}
+
+\begin{proposicion}[Modelo de ruido uniforme]\label{prop:ruido}
+Si el error $e=\hat x-x$ se modela como una variable uniforme en $[-\Delta/2,\Delta/2]$, entonces $\E[e]=0$ y $\E[e^{2}]=\Delta^{2}/12$.
+\end{proposicion}
+
+El modelo es una aproximación clásica, buena cuando el paso es pequeño frente a la escala de variación de la densidad de $x$~\cite{grayneuhoff}; la demostración se pide en el \cref{eje:4-ruido}. Una simulación con $\Delta=0{,}01$ y $10^{6}$ muestras da $\E[e^{2}]\approx 8{,}345\cdot 10^{-6}$, frente a $\Delta^{2}/12=8{,}333\cdot 10^{-6}$.
+
+\begin{corolario}[Seis decibelios por bit]\label{cor:6db}
+Si el rango está fijo, cada bit adicional divide $\Delta$ entre~2 y el error cuadrático medio entre~4, de modo que la relación señal-ruido aumenta en $10\log_{10}4\approx 6{,}02$~dB por bit.
+\end{corolario}
+
+\begin{proof}
+Con rango fijo de anchura $R$, $\Delta_b=R/(2^{b}-1)$ y $\Delta_{b+1}/\Delta_b=(2^{b}-1)/(2^{b+1}-1)\approx\frac12$; por la \cref{prop:ruido}, el error cuadrático se multiplica por $\approx\frac14$, y la relación señal-ruido, que es la varianza de la señal dividida por la del error, por $\approx 4$.
+\end{proof}
+
+\section{Granularidad y valores atípicos}
+
+\begin{definicion}[Granularidad]\label{def:granularidad}
+Sea una matriz de pesos $W\in\R^{d_{\mathrm{in}}\times d_{\mathrm{out}}}$. La cuantización es \emph{por tensor} si usa una sola escala para toda la matriz; \emph{por canal} si usa una escala por cada canal de salida (columna de $W$), y \emph{por grupos} si divide cada canal en grupos de $g$ pesos consecutivos con una escala cada uno~\cite[§2]{smoothquant}. Para las activaciones se usa además la cuantización \emph{por token}, con una escala por fila.
+\end{definicion}
+
+\begin{proposicion}[Coste de las escalas]\label{prop:bits-grupo}
+Con pesos de $b$ bits y una escala de $b_\Delta$ bits por grupo de $g$ pesos, el almacenamiento medio es $b+b_\Delta/g$ bits por peso.
+\end{proposicion}
+
+\begin{proof}
+Cada grupo ocupa $gb+b_\Delta$ bits y contiene $g$ pesos.
+\end{proof}
+
+Con int4, grupos de $g=128$ y escalas en fp16, el coste es $4+16/128=4{,}125$ bits por peso. La \cref{tab:formatos} traslada estas cifras a la cota de velocidad del \cref{teo:cota-memoria}.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Formato & Bytes por peso & Pesos de un modelo de $7\cdot 10^{9}$ & Cota de tokens/s a $2$~TB/s \\
+\midrule
+fp16 / bf16 & 2 & 14~GB & 143 \\
+int8 & 1 & 7~GB & 286 \\
+int4, grupos de 128 & $0{,}5156$ & $3{,}61$~GB & 554 \\
+\bottomrule
+\end{tabular}
+\caption{Efecto del formato de los pesos en la memoria y en la cota de velocidad con lote~1.}
+\label{tab:formatos}
+\end{table}
+
+\begin{proposicion}[Efecto de un valor atípico]\label{prop:atipico}
+En un grupo cuantizado de forma simétrica con $b$ bits, si un valor tiene módulo $M=\max_i\abs{x_i}$, todos los valores con $\abs{x_i}<\Delta/2=M/\bigl(2(2^{b-1}-1)\bigr)$ se cuantizan a cero, y la cota de error del grupo es proporcional a $M$.
+\end{proposicion}
+
+\begin{proof}
+Si $\abs{x_i}<\Delta/2$, entonces $\abs{x_i/\Delta}<\frac12$ y $\rnd(x_i/\Delta)=0$. La cota del \cref{teo:error-cuant} es $\Delta/2=M/\bigl(2(2^{b-1}-1)\bigr)$.
+\end{proof}
+
+Por ejemplo, un grupo int8 con valores del orden de $0{,}1$ y un atípico $M=8$ tiene $\Delta=8/127=0{,}063$: los valores pequeños quedan representados con solo uno o dos niveles. Los remedios son grupos más pequeños, tratar los atípicos aparte y transformar la matriz antes de cuantizar; se estudian en el \cref{tema:5}.
+
+\section{Producto de matrices en aritmética entera}
+
+\begin{proposicion}[Producto cuantizado]\label{prop:producto-entero}
+Sean $X\in\R^{B\times n}$ y $W\in\R^{n\times d}$ cuantizadas con $X\approx\Delta_X(Q_X-Z_X)$ (afín, por tensor) y $W\approx\Delta_WQ_W$ (simétrica, por tensor). Entonces
+\[
+XW\approx\Delta_X\Delta_W\bigl(Q_XQ_W-Z_X\,\mathbf{1}\,\mathbf{1}\T Q_W\bigr),
+\]
+donde $\mathbf{1}\in\R^{B}$ y $\mathbf{1}\in\R^{n}$ son vectores de unos. El producto $Q_XQ_W$ se calcula con enteros y acumuladores de 32 bits, y el término $\mathbf{1}\T Q_W$ (sumas de las columnas de $Q_W$) puede precalcularse una vez~\cite[§2]{jacob}.
+\end{proposicion}
+
+\begin{proof}
+$(Q_X-Z_X\mathbf{1}\mathbf{1}\T)Q_W=Q_XQ_W-Z_X\mathbf{1}(\mathbf{1}\T Q_W)$, y basta multiplicar por $\Delta_X\Delta_W$.
+\end{proof}
+
+\begin{proposicion}[Qué escalas se pueden factorizar]\label{prop:factorizar}
+Sean escalas $\Delta^{X}_{i}$ por fila de $X$ (por token) y $\Delta^{W}_{j}$ por columna de $W$ (por canal de salida), con cuantización simétrica. Entonces
+\[
+(XW)_{ij}\approx\Delta^{X}_{i}\,\Delta^{W}_{j}\sum_{k=1}^{n}(Q_X)_{ik}(Q_W)_{kj},
+\]
+es decir, la descuantización es un reescalado del producto entero por el producto exterior de las escalas. En cambio, una escala por columna de $X$ (por canal de entrada) depende del índice $k$ que se suma y no se puede sacar del sumatorio.
+\end{proposicion}
+
+\begin{proof}
+$(XW)_{ij}=\sum_k X_{ik}W_{kj}\approx\sum_k\Delta^{X}_{i}(Q_X)_{ik}\,\Delta^{W}_{j}(Q_W)_{kj}$, y los factores $\Delta^{X}_{i}$ y $\Delta^{W}_{j}$ no dependen de $k$. Si la escala de $X$ fuese $\Delta^{X}_{k}$, cada término del sumatorio llevaría un factor distinto y el producto entero no bastaría.
+\end{proof}
+
+Esta es la cuantización vectorial de LLM.int8()~\cite[§3.1]{llmint8}, y su limitación explica por qué los atípicos de las activaciones, que se concentran en unos pocos \emph{canales}, son difíciles de tratar con núcleos de cálculo enteros~\cite[§3]{smoothquant}.
+
+\begin{observacion}[Cuantización durante o después del entrenamiento]
+La cuantización \emph{posterior al entrenamiento} (PTQ) calibra escalas y puntos cero con unos pocos datos y no modifica el entrenamiento; la cuantización \emph{consciente del entrenamiento} (QAT) simula el redondeo en la pasada hacia delante para que los pesos se adapten, a cambio de un coste de entrenamiento mucho mayor~\cite{cs336,mit65940}. Los formatos de coma flotante de 8 bits (fp8) se trataron en el módulo~17. Qué formatos usan Anthropic, Google o xAI para servir sus modelos no es público.
+\end{observacion}
+
+\begin{lecturas}
+\item MIT 6.5940~\cite{mit65940}, clases~5 y~6 «Quantization» (cuantización lineal, granularidad, PTQ y QAT).
+\item Gray y Neuhoff~\cite{grayneuhoff}, en especial el análisis del cuantizador uniforme y la aproximación de alta resolución.
+\item Jacob \emph{et al.}~\cite{jacob}, sección~2 (esquema de cuantización y producto de matrices en aritmética entera).
+\item Dettmers \emph{et al.}~\cite{llmint8}, §2.1 «8-bit Data Types and Quantization».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-conceptos}
+(a) ¿Por qué se usa habitualmente cuantización simétrica para los pesos y afín para activaciones no negativas? (b) ¿Por qué es deseable que el real~$0$ se represente exactamente? (c) ¿Qué ventaja tiene una escala por canal frente a una escala por tensor?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-int4}
+Cuantice $x=(-1;\allowbreak\ 0;\allowbreak\ 0{,}62;\allowbreak\ 2)$ en int4 afín calibrado por mínimo y máximo. Dé $\Delta$, $Z$, los enteros, los valores reconstruidos y el error máximo, y compruebe el \cref{teo:error-cuant}. ¿Qué ocurriría con $x=3$ y la misma calibración?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-3bits}
+Cuantice
+\[
+W=\begin{pmatrix}1{,}2 & -0{,}4 & 0{,}25\\ -1 & 2{,}6 & 0\\ 0{,}5 & -1{,}6 & 1{,}9\end{pmatrix}
+\]
+con cuantización afín de 3 bits (enteros $0,\dots,7$) por tensor. Dé $\Delta$, $Z$, la matriz de enteros, la reconstruida y la matriz de errores, y compruebe la cota $\Delta/2$.
+\fuente{adaptado de University of Washington, CSE 493G1/599G1~\cite{uwcse493}, sección~4 «Quantization», ejercicio de práctica de cuantización a 3 bits.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-atipico}
+Sea $v=(0{,}12;\allowbreak\ -0{,}31;\allowbreak\ 0{,}05;\allowbreak\ 0{,}27;\allowbreak\ -0{,}08;\allowbreak\ 0{,}19;\allowbreak\ -0{,}22;\allowbreak\ 6{,}4)$ y cuantización simétrica int4 (enteros $-7,\dots,7$). (a) Cuantice $v$ por tensor y dé el error máximo. (b) Cuantice por grupos de 4. (c) Guarde el atípico en fp16 y cuantice los otros 7 valores con una sola escala. Compare los errores máximos.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-entero}
+(a) En un producto int8 por int8 con enteros en $[-127,127]$ y acumulador int32 (máximo $2^{31}-1$), ¿cuál es la mayor dimensión interna $n$ que garantiza que no hay desbordamiento? (b) Calcule los bits por peso de int4 con escalas fp16 en grupos de 64 y de 128, y la memoria de un modelo de $7\cdot 10^{9}$ parámetros en cada caso.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-ruido}
+(a) Demuestre la \cref{prop:ruido}. (b) Sea una señal uniforme en $[-A,A]$ cuantizada con $2^{b}$ niveles equiespaciados de paso $\Delta=2A/2^{b}$. Demuestre que, con el modelo de ruido uniforme, la relación señal-ruido es exactamente $2^{2b}$, es decir, $20\,b\log_{10}2\approx 6{,}02\,b$~dB. (c) Calcúlela para $b=4$ y $b=8$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-granularidad}
+(a) Demuestre que, para cualquier matriz $W$ y cuantización simétrica, la cota de error $\Delta_j/2$ de la cuantización por canal no supera en ningún canal la cota $\Delta/2$ de la cuantización por tensor. (b) Sean $X=\begin{pmatrix}1 & 4\end{pmatrix}$ y $W=\begin{pmatrix}1 & 1\end{pmatrix}\T$. Con escalas por columna de $X$, $\Delta^{X}=(1,4)$, se tiene $Q_X=(1,1)$, y con $\Delta_W=1$, $Q_W=(1,1)\T$. Compruebe que $\sum_k\Delta^{X}_{k}(Q_X)_{k}\,\Delta_W(Q_W)_{k}=XW=5$, mientras que el producto entero $Q_XQ_W$ multiplicado por $\Delta_W$ y por cualquiera de las escalas disponibles de $X$ no da~5, como afirma la \cref{prop:factorizar}.
+\end{ejercicio}

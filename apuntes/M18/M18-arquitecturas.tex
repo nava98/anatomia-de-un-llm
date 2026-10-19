@@ -1,0 +1,149 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase IV — Módulo 18
+%  Arquitecturas modernas
+%  Compilar: latexmk -r ../latexmkrc M18-arquitecturas.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 18}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\uno}{\mathbf{1}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\RMS}{\operatorname{RMS}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+\newcommand{\LN}{\operatorname{LN}}
+\newcommand{\FFN}{\operatorname{FFN}}
+\newcommand{\Attn}{\operatorname{Attn}}
+\newcommand{\SwiGLU}{\operatorname{SwiGLU}}
+\newcommand{\SiLU}{\operatorname{SiLU}}
+\newcommand{\TopK}{\operatorname{TopK}}
+\newcommand{\softplus}{\operatorname{softplus}}
+\newcommand{\RoPE}{\operatorname{RoPE}}
+\newcommand{\Lbal}{\mathcal{L}_{\mathrm{bal}}}
+\newcommand{\dff}{d_{\mathrm{ff}}}
+\newcommand{\dhd}{d_{h}}
+\newcommand{\nkv}{n_{\mathrm{kv}}}
+\newcommand{\dc}{d_{c}}
+\newcommand{\Abar}{\bar{A}}
+\newcommand{\Bbar}{\bar{B}}
+\newcommand{\Icrit}{I^{\ast}}
+\newcommand{\Nact}{N_{\mathrm{act}}}
+\newcommand{\Ntot}{N_{\mathrm{tot}}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 18. Arquitecturas modernas},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase IV \textperiodcentered\ Escala, sistemas y arquitecturas modernas}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 18\par}\vspace{0.3cm}
+{\LARGE Arquitecturas modernas\par}
+\vspace{0.2cm}
+{\large Normalización, atención eficiente, contexto largo, mezcla de expertos, modelos de espacio de estados y multimodalidad\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+El Transformer de los módulos~13 a~15 gasta el mismo cómputo en cada token, guarda durante la generación las claves y los valores de todas las posiciones anteriores y solo procesa texto. Los modelos de lenguaje publicados desde 2023 conservan su estructura, pero modifican casi todas sus piezas para reducir el coste por token, la memoria de inferencia o la dependencia cuadrática de la longitud del contexto. En marzo de 2024 xAI publicó los pesos de Grok-1, un modelo de unos $3{,}1\cdot 10^{11}$ parámetros que, sin embargo, usa solo una cuarta parte de ellos en cada token; el informe técnico de Gemini~1.5 lo describe como un Transformer de mezcla de expertos dispersa que procesa contextos de millones de tokens con texto, audio y vídeo intercalados. Este módulo estudia, con la notación y el rigor de los anteriores, los mecanismos que hacen posibles esas cifras: las componentes de consenso del bloque moderno, las variantes de la atención que reducen la caché de claves y valores, la atención local y la extensión del contexto, la mezcla de expertos, los modelos de espacio de estados y la representación de imágenes y audio como tokens. Sobre Claude, Gemini y Grok solo se usa información pública; cuando un dato no lo es, se indica.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item describir el bloque Transformer de consenso (pre-norm, RMSNorm, SwiGLU, RoPE, sin sesgos), demostrar las propiedades de invariancia de RMSNorm y justificar los hiperparámetros de forma habituales;
+  \item calcular la memoria de la caché de claves y valores con MHA, GQA, MQA y MLA, demostrar que la decodificación con MHA tiene intensidad aritmética constante y explicar la absorción de matrices de MLA;
+  \item definir la atención con ventana deslizante, demostrar la fórmula de su campo receptivo y la corrección de la caché circular, y analizar la interpolación de posiciones, el cambio de base NTK y YaRN para extender el contexto de RoPE;
+  \item formular una capa de mezcla de expertos con enrutado top-$k$, distinguir parámetros totales y activos, demostrar las cotas de la pérdida de balanceo y reconstruir los recuentos publicados de Mixtral y Grok-1;
+  \item discretizar un modelo de espacio de estados, demostrar la equivalencia entre su forma recurrente y convolucional, la conexión del modelo selectivo de Mamba con una puerta recurrente y la asociatividad que permite el barrido paralelo;
+  \item explicar cómo un Vision Transformer y un modelo de voz convierten imágenes y audio en secuencias de vectores y calcular el número de tokens y el coste resultantes.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~2, el producto de matrices y la factorización de bajo rango; del módulo~4, la regla de la cadena; del módulo~5, la desigualdad de Cauchy--Schwarz; del módulo~11, LayerNorm, RMSNorm y las conexiones residuales; del módulo~12, las redes recurrentes y sus puertas; del módulo~13, la atención escalada, la máscara causal y la atención multicabeza; del módulo~14, el bloque decoder-only, SwiGLU, RoPE (tema~4) y el recuento de parámetros y FLOPs; del módulo~16, la regla $C\approx 6ND$, y del módulo~17, el modelo \emph{roofline} y la intensidad crítica de la A100, $\Icrit\approx 156$~FLOP/byte en bf16. La caché de claves y valores se introduce aquí y se implementa en el módulo~19.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Componentes de consenso del Transformer moderno & \cite{cs336}, \cite{rmsnorm}, \cite{shazeerglu}, \cite{llama3} \\
+2 & Atención eficiente en memoria: caché KV, MQA, GQA y MLA & \cite{mqa}, \cite{gqa}, \cite{deepseekv2}, \cite{cs336} \\
+3 & Atención local y contexto largo & \cite{mistral}, \cite{longformer}, \cite{pi}, \cite{yarn} \\
+4 & Mezcla de expertos & \cite{shazeer2017}, \cite{switch}, \cite{mixtral}, \cite{deepseekv3} \\
+5 & Modelos de espacio de estados & \cite{s4}, \cite{mamba}, \cite{mit6003}, \cite{cs25} \\
+6 & Multimodalidad: imágenes y audio como tokens & \cite{vit}, \cite{whisper}, \cite{soundstream}, \cite{d2l} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La organización sigue el bloque de arquitecturas del curso CS336 de Stanford, «Language Modeling from Scratch»~\cite{cs336}: la clase~3 sobre arquitecturas e hiperparámetros, la clase~4 sobre mezcla de expertos y la parte de la clase~10 (inferencia) dedicada a reducir la caché de claves y valores y a las alternativas al Transformer. Se complementa con el seminario CS25 de Stanford~\cite{cs25}, en particular la sesión de A.~Gu sobre modelos de espacio de estados, y con los temarios de los cursos CMU 11-711 (\emph{Advanced NLP})~\cite{cmu11711} y CMU 11-868 (\emph{Large Language Model Systems})~\cite{cmu11868}. Los métodos se toman de sus artículos originales: Zhang y Sennrich~\cite{rmsnorm} para RMSNorm, Shazeer~\cite{shazeerglu} para las unidades con puerta, Su \emph{et al.}~\cite{roformer} para RoPE, Shazeer~\cite{mqa} para MQA, Ainslie \emph{et al.}~\cite{gqa} para GQA, DeepSeek-AI~\cite{deepseekv2,deepseekv3} para MLA y DeepSeekMoE, Jiang \emph{et al.}~\cite{mistral} para la ventana deslizante, Beltagy \emph{et al.}~\cite{longformer} para Longformer, Chen \emph{et al.}~\cite{pi} y Peng \emph{et al.}~\cite{yarn} para la extensión del contexto, Shazeer \emph{et al.}~\cite{shazeer2017}, Fedus \emph{et al.}~\cite{switch} y Jiang \emph{et al.}~\cite{mixtral} para la mezcla de expertos, Gu \emph{et al.}~\cite{s4} y Gu y Dao~\cite{mamba} para los modelos de espacio de estados, Dosovitskiy \emph{et al.}~\cite{vit} para el Vision Transformer y Radford \emph{et al.}~\cite{whisper} para Whisper. Las configuraciones de Llama~2 y Llama~3 proceden de sus informes técnicos~\cite{llama2,llama3}, y las de Grok-1, del archivo \texttt{README} y del código publicados por xAI~\cite{grok1}. Los ejercicios universitarios proceden de la tarea~1 y de las clases de CS336~\cite{cs336a1,cs336}, del curso 6.003 del MIT~\cite{mit6003} y del libro \emph{Dive into Deep Learning}~\cite{d2l}. Sobre Claude no se usa ningún dato de arquitectura, porque Anthropic no lo ha publicado; sobre Gemini, solo el informe técnico~\cite{gemini15}, y sobre Grok, solo la versión de pesos abiertos~\cite{grok1}.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$d$, $L$, $\dff$ & dimensión del modelo, número de bloques y dimensión intermedia del MLP \\
+$H$, $\dhd=d/H$ & cabezas de consulta y dimensión por cabeza \\
+$\nkv$, $G$ & cabezas de clave y valor; número de grupos de GQA ($\nkv=G$) \\
+$T$, $b$, $s$ & longitud de la secuencia, tamaño del lote y bytes por número (2 en bf16) \\
+$\dc$, $d_h^{R}$ & dimensión latente de MLA y dimensión de la clave con RoPE desacoplada \\
+$W$ & tamaño de la ventana de atención local \\
+$\theta_i$, $\lambda_i=2\pi/\theta_i$, $\beta_0$ & frecuencias y longitudes de onda de RoPE; base ($10^{4}$ en el artículo original) \\
+$s_{\mathrm{e}}=L'/L_0$ & factor de extensión del contexto, de $L_0$ a $L'$ tokens \\
+$E_1,\dots,E_N$, $k$ & expertos y número de expertos activos por token \\
+$z=xW_r$, $p_i(x)$, $g_i(x)$ & logits del enrutador, probabilidades y pesos de combinación \\
+$f_i$, $P_i$, $\Lbal$ & fracción de tráfico, probabilidad media y pérdida de balanceo del experto $i$ \\
+$\Ntot$, $\Nact$ & parámetros totales y activos por token \\
+$A,B,C$, $\Delta$ & matrices de un modelo de espacio de estados continuo y paso de discretización \\
+$\Abar,\Bbar$, $h_t$ & matrices discretizadas y estado en el instante $t$ \\
+$\sigma$, $\softplus(z)=\ln(1+e^{z})$ & sigmoide logística y función \emph{softplus} \\
+$P$, $C_{\mathrm{in}}$ & lado del parche de un ViT y número de canales de la imagen \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Como en el módulo~14, los vectores de tokens son filas y una capa lineal actúa como $x\mapsto xW$. Los números grandes se escriben con espacio fino como separador de miles ($46\,702\,792\,704$). Las unidades binarias son $1$~KiB $=2^{10}$, $1$~MiB $=2^{20}$ y $1$~GiB $=2^{30}$~bytes; 1~GB son $10^{9}$~bytes.
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

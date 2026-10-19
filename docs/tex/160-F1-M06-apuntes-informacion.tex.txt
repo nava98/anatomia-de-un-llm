@@ -1,0 +1,1871 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase I — Módulo 6
+%  Teoría de la información
+%  Compilar: latexmk -r ../latexmkrc M06-informacion.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 6}
+
+\usetikzlibrary{shapes.geometric,calc,decorations.pathreplacing}
+
+% Anclas de hiperenlace únicas por tema para los enunciados
+\makeatletter
+\@for\nombre:=definicion,teorema,proposicion,lema,corolario,ejemplo,observacion\do{%
+  \expandafter\xdef\csname theH\nombre\endcsname{\noexpand\thechapter.\noexpand\arabic{definicion}}}
+\makeatother
+
+% Notación propia del módulo
+\newcommand{\KL}[2]{D(#1\,\|\,#2)}
+\newcommand{\X}{\mathcal{X}}
+\newcommand{\pref}{\pi_{\mathrm{ref}}}
+\DeclareMathOperator{\bpb}{bpb}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\newcommand{\bin}[1]{\textnormal{\texttt{#1}}}
+
+\hypersetup{pdftitle={Módulo 6. Teoría de la información},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase I \textperiodcentered\ Fundamentos matemáticos}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 6\par}\vspace{0.3cm}
+{\LARGE Teoría de la información\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+La pérdida que se minimiza al preentrenar un gran modelo de lenguaje es una entropía cruzada, y una entropía cruzada medida en bits es, literalmente, la longitud de un archivo comprimido. Este módulo desarrolla la teoría que da sentido a esa afirmación: la medida de la información de Shannon, la entropía relativa o divergencia de Kullback--Leibler, la información mutua y los teoremas de codificación de fuente. Su resultado central es la equivalencia entre predecir y comprimir: todo modelo probabilístico del texto define un compresor, mediante la codificación aritmética, y todo compresor define un modelo. El módulo termina con dos puentes: la entropía de la física estadística, de la que la función softmax es un caso particular, y la penalización de Kullback--Leibler con la que se ajustan los modelos a las preferencias humanas.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item caracterizar el contenido de información de un suceso, definir la entropía, la entropía conjunta y la condicionada, y demostrar la regla de la cadena;
+  \item enunciar y demostrar la desigualdad de Jensen y la desigualdad de Gibbs, y deducir de ellas las propiedades de la entropía cruzada, la divergencia de Kullback--Leibler y la información mutua;
+  \item demostrar la desigualdad de Kraft y las cotas $H\le L^{*}<H+1$ para códigos prefijo, y construir códigos de Huffman justificando su optimalidad;
+  \item codificar y descodificar mensajes con codificación aritmética, acotar la longitud obtenida con un modelo $q$ y explicar por qué minimizar la pérdida de un modelo de lenguaje equivale a comprimir;
+  \item calcular e interpretar los bits por byte como métrica independiente del tokenizador;
+  \item relacionar la entropía de Shannon con la de Boltzmann y Gibbs, obtener la distribución de máxima entropía y resolver el problema de recompensa con penalización de Kullback--Leibler que subyace al ajuste por preferencias.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1: regla de la cadena para secuencias, función softmax con temperatura, entropía cruzada, perplejidad y la desigualdad de Gibbs en la forma $H(p,q)\ge H(p)$. Del módulo~4: derivadas, convexidad y multiplicadores de Lagrange. Del módulo~5: variables aleatorias discretas, distribución conjunta y marginales, independencia, esperanza y ley de los grandes números. Se usan también series geométricas y la representación binaria de números del intervalo $[0,1)$.
+
+\section*{Organización}
+\begin{center}
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Información y entropía & \cite{ct}, \cite{mackay}, \cite{shannon} \\
+2 & Entropía relativa e información mutua & \cite{ct}, \cite{mackay}, \cite{camit} \\
+3 & Códigos de fuente y código de Huffman & \cite{ct}, \cite{mackay}, \cite{huffman} \\
+4 & Codificación aritmética: predecir es comprimir & \cite{ct}, \cite{mackay}, \cite{wnc}, \cite{deletang} \\
+5 & Entropía, física y ajuste por preferencias & \cite{ct}, \cite{jaynes}, \cite{instructgpt}, \cite{dpo} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. El orden de los temas y la notación siguen a Cover y Thomas~\cite{ct}, texto de referencia de los cursos de teoría de la información: capítulo~2 para los temas~1 y~2, capítulo~5 para el tema~3, secciones~5.9 y~13.3 para el tema~4 y capítulo~12 para la máxima entropía del tema~5. La presentación de la compresión como predicción sigue los capítulos~4 a~6 de MacKay~\cite{mackay}, libro base del curso \emph{Information Theory} de la Universidad de Cambridge~\cite{camit}, del que proceden varios ejercicios; otro procede del curso 6.441 del MIT~\cite{mit6441}. Las conexiones con los modelos de lenguaje se apoyan en los artículos originales~\cite{shannon51,deletang,pile,chinchilla,instructgpt,dpo}. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública; en particular, sus desarrolladores no publican los bits por byte de sus modelos actuales.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\X$, $K=\abs{\X}$ & alfabeto finito y su tamaño \\
+$p(x)$, $p(x,y)$, $p(y\mid x)$ & masa de probabilidad, conjunta y condicionada \\
+$h(x)=-\log p(x)$ & contenido de información (sorpresa) de $x$ \\
+$H(X)=H(p)$ & entropía \\
+$H(X,Y)$, $H(Y\mid X)$ & entropía conjunta y condicionada \\
+$H(p,q)$ & entropía cruzada \\
+$\KL{p}{q}$ & entropía relativa o divergencia de Kullback--Leibler \\
+$I(X;Y)$ & información mutua \\
+$\ell(x)$, $L=\E[\ell(X)]$ & longitud de la palabra de código de $x$ y longitud media \\
+$F(x)$ & probabilidad acumulada de los símbolos anteriores a $x$ \\
+$\bpb$ & bits por byte \\
+$\pref$, $r$, $\beta$ & política de referencia, recompensa y coeficiente \\
+$\log=\log_2$, $\ln$ & logaritmos en base~2 (bits) y natural (nats) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Información y entropía}
+\label{tema:1}
+% =====================================================================
+
+Este tema define la medida de la información introducida por Shannon~\cite{shannon} y sus versiones para varias variables: entropía, entropía conjunta y entropía condicionada. Se sigue~\cite[§2.1, §2.2 y §2.5]{ct}; la interpretación de la entropía como número de preguntas y la discusión del contenido de información proceden de~\cite[cap.~2 y~4]{mackay} y de la primera clase de~\cite{camit}. En todo el tema, $X$ es una variable aleatoria discreta con valores en un alfabeto finito $\X$ y función de masa $p(x)=P(X=x)$.
+
+\section{El contenido de información de un suceso}
+
+Un suceso seguro no informa de nada; un suceso improbable, al ocurrir, informa mucho. Se busca una función $h$ que asigne a cada probabilidad $p\in(0,1]$ una cantidad de información y que cumpla tres requisitos naturales:
+\begin{enumerate}
+  \item $h(1)=0$: lo que es seguro no aporta información;
+  \item $h$ es decreciente: cuanto menos probable es un suceso, más informa;
+  \item $h(pq)=h(p)+h(q)$: la información de dos sucesos independientes es la suma de las informaciones.
+\end{enumerate}
+
+\begin{proposicion}[Caracterización del contenido de información]\label{prop:caracterizacion}
+Sea $h\colon(0,1]\to\R$ decreciente (en sentido amplio) y tal que $h(pq)=h(p)+h(q)$ para todo $p,q\in(0,1]$. Entonces existe una constante $c\ge 0$ tal que $h(p)=-c\log_2 p$ para todo $p$.
+\end{proposicion}
+
+\begin{proof}
+Sea $g(t)=h(2^{-t})$ para $t\ge 0$. Como $2^{-(s+t)}=2^{-s}2^{-t}$, la hipótesis da $g(s+t)=g(s)+g(t)$, y $g$ es creciente porque $t\mapsto 2^{-t}$ es decreciente y $h$ también. Sea $c=g(1)$. Tomando $s=t=0$ se obtiene $g(0)=0$, y por inducción $g(n)=n\,c$ para todo entero $n\ge 0$. Si $m,n$ son enteros positivos, $n\,g(m/n)=g(m)=m\,c$, luego $g(r)=c\,r$ para todo racional $r\ge 0$; en particular $c=g(1)\ge g(0)=0$. Para $t\ge 0$ real y racionales $r_1\le t\le r_2$, la monotonía da $c\,r_1\le g(t)\le c\,r_2$; haciendo tender $r_1$ y $r_2$ a $t$ se obtiene $g(t)=c\,t$. Finalmente, para $p\in(0,1]$ se toma $t=-\log_2 p\ge 0$ y resulta $h(p)=g(t)=-c\log_2 p$.
+\end{proof}
+
+La constante $c$ solo fija la unidad de medida. Se adopta $c=1$.
+
+\begin{definicion}[Contenido de información]\label{def:sorpresa}
+El \emph{contenido de información} o \emph{sorpresa} del resultado $x$, con $p(x)>0$, es
+\[
+h(x)=-\log_2 p(x)\quad\text{bits}.
+\]
+Con el logaritmo natural la unidad es el \emph{nat}; como $\ln p=\ln 2\cdot\log_2 p$, se tiene $1\text{ nat}=1/\ln 2\approx 1{,}443$ bits.
+\end{definicion}
+
+\begin{center}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Suceso & $p$ & $h$ (bits) \\
+\midrule
+cara en una moneda equilibrada & $1/2$ & $1$ \\
+un~3 en un dado equilibrado & $1/6$ & $2{,}585$ \\
+uno entre 8 resultados equiprobables & $1/8$ & $3$ \\
+un token al que el modelo asigna $0{,}9$ & $0{,}9$ & $0{,}152$ \\
+un token al que el modelo asigna $0{,}1$ & $0{,}1$ & $3{,}322$ \\
+uno entre $1024$ resultados equiprobables & $2^{-10}$ & $10$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Si $p(x)=2^{-k}$, el resultado $x$ puede identificarse con $k$ preguntas de respuesta sí o no que dividan por la mitad, en cada paso, el conjunto de candidatos. El contenido de información generaliza esta cuenta a probabilidades arbitrarias~\cite[cap.~4]{mackay}.
+
+\begin{observacion}[Conexión con los LLM]
+La pérdida de un modelo de lenguaje en la posición $t$ es $-\ln q(x_t\mid x_{1:t-1})$ (módulo~1, tema~5): la sorpresa, en nats, que el modelo experimenta ante el token que realmente aparece. Entrenar un LLM consiste en reducir la sorpresa media ante el texto real.
+\end{observacion}
+
+\section{Entropía}
+
+\begin{definicion}[Entropía]\label{def:entropia}
+La \emph{entropía} de $X$ es la sorpresa esperada:
+\[
+H(X)=H(p)=\E\bigl[-\log p(X)\bigr]=-\sum_{x\in\X}p(x)\log p(x),
+\]
+con el convenio $0\log 0=0$, justificado por $\lim_{t\to 0^{+}}t\log t=0$.
+\end{definicion}
+
+La entropía depende solo de las probabilidades, no de los valores que toma $X$. Mide la incertidumbre sobre $X$ antes de observarla o, de forma equivalente, la información que se obtiene, en media, al observarla.
+
+\begin{ejemplo}\label{ej:entropia-tres}
+Si $p=(1/2,1/4,1/4)$, entonces $H(p)=\tfrac12\cdot 1+\tfrac14\cdot 2+\tfrac14\cdot 2=1{,}5$ bits. Un esquema de preguntas óptimo pregunta primero si $X$ es el primer resultado; si no lo es, hace una segunda pregunta. El número medio de preguntas es $\tfrac12\cdot 1+\tfrac12\cdot 2=1{,}5$, que coincide con $H(p)$.
+\end{ejemplo}
+
+\begin{ejemplo}[Entropía binaria]\label{ej:binaria}
+Si $X\sim\mathrm{Ber}(\theta)$, su entropía es la \emph{función de entropía binaria}
+\[
+H_b(\theta)=-\theta\log\theta-(1-\theta)\log(1-\theta).
+\]
+Vale $H_b(0{,}1)=0{,}469$, $H_b(0{,}25)=0{,}811$ y $H_b(0{,}5)=1$ bit. La función es cóncava, simétrica respecto de $\theta=1/2$, se anula en $\theta\in\{0,1\}$ y alcanza su máximo, 1 bit, en $\theta=1/2$ (\cref{fig:binaria}).
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=7cm,y=3.2cm,font=\small]
+  \draw[->] (0,0) -- (1.06,0) node[right] {$\theta$};
+  \draw[->] (0,0) -- (0,1.15) node[above] {$H_b(\theta)$ (bits)};
+  \foreach \t in {0.25,0.5,0.75,1} \draw (\t,0.02) -- (\t,-0.02) node[below] {$\t$};
+  \node[below left] at (0,0) {$0$};
+  \draw (0.01,1) -- (-0.01,1) node[left] {$1$};
+  \draw[dashed,regla] (0.5,0) -- (0.5,1) (0,1) -- (0.5,1);
+  \draw[thick,domain=0.0005:0.9995,samples=160,smooth] plot (\x,{-(\x*ln(\x)+(1-\x)*ln(1-\x))/ln(2)});
+  \fill (0.1,0.469) circle (0.6pt) node[right=2pt] {$0{,}469$};
+  \fill (0.25,0.811) circle (0.6pt) node[right=2pt] {$0{,}811$};
+\end{tikzpicture}
+\caption{Función de entropía binaria del \cref{ej:binaria}. Una moneda muy sesgada es casi previsible y contiene poca información por lanzamiento.}
+\label{fig:binaria}
+\end{figure}
+
+\begin{proposicion}[Cotas elementales]\label{prop:cotas-entropia}
+Para toda distribución $p$ sobre un alfabeto de $K$ símbolos,
+\begin{enumerate}
+  \item $H(p)\ge 0$, con igualdad si y solo si $p$ es degenerada, es decir, $p(x_0)=1$ para algún $x_0$;
+  \item $H(p)\le\log K$, con igualdad si y solo si $p$ es la distribución uniforme.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Si $0<p(x)\le 1$, entonces $-\log p(x)\ge 0$, luego cada sumando $-p(x)\log p(x)$ es no negativo y $H(p)\ge 0$. La suma se anula si y solo si cada sumando se anula, es decir, si cada $p(x)$ vale~0 o~1; como las probabilidades suman~1, exactamente una de ellas vale~1. (ii) Es consecuencia de la desigualdad de Gibbs del \cref{tema:2}; la demostración se propone en el \cref{eje:2-gibbs-ln}.
+\end{proof}
+
+\begin{center}
+\begin{tabular}{@{}lc@{}}
+\toprule
+Distribución & Entropía (bits) \\
+\midrule
+uniforme sobre 27 símbolos (26 letras y el espacio) & $\log 27=4{,}755$ \\
+$(1/2,1/4,1/4)$ & $1{,}5$ \\
+moneda con $P(\text{cara})=0{,}1$ & $0{,}469$ \\
+distribución degenerada & $0$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Entropía conjunta y entropía condicionada}
+
+Sean $X$ e $Y$ variables discretas con función de masa conjunta $p(x,y)$, marginales $p(x)$ y $p(y)$ y condicionada $p(y\mid x)=p(x,y)/p(x)$ cuando $p(x)>0$.
+
+\begin{definicion}[Entropía conjunta y condicionada]\label{def:conjunta}
+La \emph{entropía conjunta} de $(X,Y)$ y la \emph{entropía de $Y$ condicionada a $X$} son
+\begin{gather*}
+H(X,Y)=-\sum_{x,y}p(x,y)\log p(x,y),\\
+H(Y\mid X)=\sum_{x}p(x)\,H(Y\mid X=x)=-\sum_{x,y}p(x,y)\log p(y\mid x),
+\end{gather*}
+donde $H(Y\mid X=x)=-\sum_y p(y\mid x)\log p(y\mid x)$ es la entropía de la distribución condicionada.
+\end{definicion}
+
+La entropía condicionada es la incertidumbre que queda sobre $Y$ cuando se conoce $X$, promediada sobre los valores de $X$.
+
+\begin{teorema}[Regla de la cadena para la entropía]\label{teo:cadena-entropia}
+$H(X,Y)=H(X)+H(Y\mid X)$.
+\end{teorema}
+
+\begin{proof}
+Para cada par con $p(x,y)>0$ se tiene $p(x,y)=p(x)\,p(y\mid x)$, luego $\log p(x,y)=\log p(x)+\log p(y\mid x)$. Multiplicando por $-p(x,y)$ y sumando,
+\[
+H(X,Y)=-\sum_{x,y}p(x,y)\log p(x)-\sum_{x,y}p(x,y)\log p(y\mid x).
+\]
+En el primer sumando, $\sum_y p(x,y)=p(x)$, de modo que vale $-\sum_x p(x)\log p(x)=H(X)$. El segundo es $H(Y\mid X)$ por definición~\cite[§2.2]{ct}.
+\end{proof}
+
+\begin{corolario}[Regla de la cadena para secuencias]\label{cor:cadena-secuencias}
+Para variables $X_1,\dots,X_n$,
+\[
+H(X_1,\dots,X_n)=\sum_{t=1}^{n}H(X_t\mid X_1,\dots,X_{t-1}).
+\]
+\end{corolario}
+
+\begin{proof}
+Por inducción sobre $n$, aplicando el \cref{teo:cadena-entropia} a $X=(X_1,\dots,X_{n-1})$ e $Y=X_n$.
+\end{proof}
+
+El \cref{cor:cadena-secuencias} es la versión informacional de la factorización autorregresiva del módulo~1, $P(x_{1:T})=\prod_t P(x_t\mid x_{1:t-1})$: tomando $-\log$ y esperanzas en esa factorización se obtiene exactamente esta suma. La incertidumbre de un texto completo es la suma de las incertidumbres de cada token dado su contexto.
+
+\begin{ejemplo}\label{ej:dos-bits}
+Sean $X$ e $Y$ dos bits que coinciden con probabilidad $0{,}8$: $p(0,0)=p(1,1)=0{,}4$ y $p(0,1)=p(1,0)=0{,}1$. Las marginales son uniformes, luego $H(X)=H(Y)=1$ bit. La entropía conjunta es
+\[
+H(X,Y)=-2\cdot 0{,}4\log 0{,}4-2\cdot 0{,}1\log 0{,}1=0{,}8\cdot 1{,}322+0{,}2\cdot 3{,}322=1{,}722\text{ bits}.
+\]
+Por el \cref{teo:cadena-entropia}, $H(Y\mid X)=1{,}722-1=0{,}722$ bits, que coincide con $H_b(0{,}2)$: conocido $X$, el valor de $Y$ es el mismo salvo con probabilidad $0{,}2$.
+\end{ejemplo}
+
+\begin{observacion}
+En general $H(Y\mid X)\ne H(X\mid Y)$, pero $H(X)-H(X\mid Y)=H(Y)-H(Y\mid X)$, porque ambas diferencias valen $H(X)+H(Y)-H(X,Y)$ por la regla de la cadena aplicada en los dos órdenes. Esta cantidad común es la información mutua del \cref{tema:2}.
+\end{observacion}
+
+\section{Tasa de entropía y redundancia del lenguaje}
+
+\begin{definicion}[Tasa de entropía]\label{def:tasa}
+La \emph{tasa de entropía} de un proceso $X_1,X_2,\dots$ es
+\[
+\mathcal{H}=\lim_{n\to\infty}\frac1n H(X_1,\dots,X_n),
+\]
+cuando el límite existe. Se mide en bits por símbolo.
+\end{definicion}
+
+Si las $X_t$ son independientes e idénticamente distribuidas, $H(X_1,\dots,X_n)=nH(X_1)$ y $\mathcal{H}=H(X_1)$. En un texto, en cambio, los símbolos dependen fuertemente del contexto y $\mathcal{H}$ es mucho menor que la entropía de un símbolo aislado~\cite[cap.~4]{ct}. Shannon~\cite{shannon51} estimó la tasa de entropía del inglés pidiendo a personas que adivinaran un texto letra a letra, y obtuvo entre $0{,}6$ y $1{,}3$ bits por letra, muy por debajo de los $\log 27=4{,}755$ bits de un alfabeto de 27 símbolos equiprobables. La diferencia mide la \emph{redundancia} del lenguaje: la parte del texto que es previsible a partir de lo anterior.
+
+\begin{observacion}[Conexión con los LLM]
+La pérdida media por token de un modelo de lenguaje, medida sobre mucho texto, es una estimación de una entropía cruzada que, por la desigualdad de Gibbs del \cref{tema:2}, no puede ser menor que la tasa de entropía del texto. Un modelo que usa un contexto más largo puede aprovechar más dependencias y acercarse más a $\mathcal{H}$; este es el sentido informacional de la mejora de los modelos de $n$-gramas a los Transformers.
+\end{observacion}
+
+\begin{lecturas}
+\item Cover y Thomas~\cite{ct}, §2.1 «Entropy», §2.2 «Joint Entropy and Conditional Entropy» y §2.5 «Chain Rules for Entropy, Relative Entropy, and Mutual Information».
+\item MacKay~\cite{mackay}, cap.~2 «Probability, Entropy, and Inference» y cap.~4 «The Source Coding Theorem».
+\item Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, temas «Information, probability, uncertainty, and surprise» y «Entropy of discrete variables».
+\item Shannon~\cite{shannon}, partes~I.6 y~I.7, y Shannon~\cite{shannon51}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-aditiva}
+Explique por qué la información de dos sucesos independientes debe ser la suma de sus informaciones y qué función transforma el producto de probabilidades en esa suma. ¿Qué papel desempeña la base del logaritmo?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-archivos}
+Un archivo de $1$~MB contiene solo ceros y otro, del mismo tamaño, contiene bits aleatorios independientes y equiprobables. ¿Cuál de los dos puede comprimirse más sin pérdidas? Razónelo con la entropía por bit de cada fuente.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-cambridge}
+Calcule, en bits, la entropía de las siguientes variables: (a) el nivel de gris de un píxel, uniforme entre los enteros $0$ y $255$; (b) la clasificación de un ser humano como mamífero o no mamífero; (c) el sexo de un insecto de una especie con tres sexos de probabilidades $1/4$, $1/4$ y $1/2$; (d) la clasificación de una persona según tenga o no más edad que la mediana de su población.
+\fuente{adaptado de Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, \emph{Examples Sheet}, \emph{Supervision}~1, ejercicio~3.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-binaria}
+(a) Calcule la entropía de una moneda con $P(\text{cara})=1/4$. (b) Derive $H_b(\theta)$ y demuestre que su único máximo en $(0,1)$ está en $\theta=1/2$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-geometrica}
+Sea $X$ uniforme en $\{1,\dots,8\}$ y sea $Y$, independiente de $X$, con $P(Y=k)=2^{-k}$ para $k=1,2,3,\dots$ (a) ¿Cuál de las dos variables tiene más incertidumbre? Calcule $H(X)$ y $H(Y)$. (b) Calcule $H(X,Y)$ y $H(Y\mid X)$.
+\fuente{adaptado de Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, \emph{Examples Sheet}, \emph{Supervision}~3, ejercicio~2 (la información mutua se trata en el \cref{tema:2}).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-funcion}
+Sea $g\colon\X\to\mathcal{Y}$ una función. Demuestre que $H(g(X))\le H(X)$, con igualdad si y solo si $g$ es inyectiva sobre el conjunto $\{x:p(x)>0\}$. Indicación: calcule $H(X,g(X))$ de dos maneras con la regla de la cadena. Interprete el resultado para un preprocesado del texto que convierte todas las letras en minúsculas.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Entropía relativa e información mutua}
+\label{tema:2}
+% =====================================================================
+
+Este tema introduce la entropía relativa o divergencia de Kullback--Leibler, que mide el coste de usar una distribución equivocada, y la información mutua, que mide cuánto informa una variable sobre otra. El resultado que lo articula todo es la desigualdad de Gibbs, que se deduce de la desigualdad de Jensen. Se sigue~\cite[§2.3--2.6 y §2.8]{ct}; la interpretación de las dos direcciones de la divergencia en aprendizaje automático procede del tema «Comparing probability distributions and machine learning» de~\cite{camit}, y la de la información mutua, de~\cite[cap.~8]{mackay}.
+
+\section{La desigualdad de Jensen}
+
+\begin{definicion}[Función convexa]\label{def:convexa}
+Sea $I\subseteq\R$ un intervalo. Una función $f\colon I\to\R$ es \emph{convexa} si
+\[
+f\bigl(\lambda a+(1-\lambda)b\bigr)\le\lambda f(a)+(1-\lambda)f(b)\qquad\text{para todo }a,b\in I,\ \lambda\in[0,1],
+\]
+y \emph{estrictamente convexa} si la desigualdad es estricta cuando $a\ne b$ y $\lambda\in(0,1)$. La función $f$ es (estrictamente) \emph{cóncava} si $-f$ es (estrictamente) convexa.
+\end{definicion}
+
+Si $f$ es dos veces derivable con $f''\ge 0$ ($f''>0$) en $I$, entonces es convexa (estrictamente convexa)~\cite[§2.6]{ct}; el módulo~4 estudia este criterio. Así, $\ln$ y $\log$ son estrictamente cóncavas en $(0,\infty)$, porque $(\ln t)''=-1/t^{2}<0$, y $t\mapsto t\log t$ es estrictamente convexa en $(0,\infty)$.
+
+\begin{teorema}[Desigualdad de Jensen]\label{teo:jensen}
+Sea $f$ convexa en un intervalo $I$ y sea $X$ una variable aleatoria con valores en $I$ que toma un número finito de valores. Entonces
+\[
+\E[f(X)]\ge f\bigl(\E[X]\bigr).
+\]
+Si $f$ es estrictamente convexa, la igualdad se da si y solo si $X$ es constante con probabilidad~1. Para $f$ cóncava la desigualdad se invierte.
+\end{teorema}
+
+\begin{proof}
+Por inducción sobre el número $m$ de valores con probabilidad positiva, $x_1,\dots,x_m$ con probabilidades $p_1,\dots,p_m$. Si $m=1$, ambos miembros valen $f(x_1)$. Si $m=2$, el enunciado es la definición de convexidad con $\lambda=p_1$. Supóngase cierto para $m-1$ valores y sea $p'_i=p_i/(1-p_m)$ para $i\le m-1$, que es una distribución. Entonces
+\begin{align*}
+\sum_{i=1}^{m}p_if(x_i)&=p_mf(x_m)+(1-p_m)\sum_{i=1}^{m-1}p'_if(x_i)\\
+&\ge p_mf(x_m)+(1-p_m)f\Bigl(\sum_{i=1}^{m-1}p'_ix_i\Bigr)
+\ge f\Bigl(p_mx_m+(1-p_m)\sum_{i=1}^{m-1}p'_ix_i\Bigr),
+\end{align*}
+por la hipótesis de inducción y por la convexidad, respectivamente; el último argumento es $\sum_i p_ix_i=\E[X]$. Si $f$ es estrictamente convexa y $m\ge 2$, la segunda desigualdad es estricta salvo que $x_m=\sum_{i<m}p'_ix_i$, y la primera es estricta salvo que los $x_i$ con $i<m$ coincidan; ambas igualdades juntas obligan a que todos los $x_i$ sean iguales, en contra de que sean $m\ge 2$ valores distintos.
+\end{proof}
+
+\section{Entropía relativa}
+
+\begin{definicion}[Entropía relativa]\label{def:kl}
+Sean $p$ y $q$ distribuciones sobre $\X$. La \emph{entropía relativa} o \emph{divergencia de Kullback--Leibler} de $p$ respecto de $q$ es
+\[
+\KL{p}{q}=\sum_{x\in\X}p(x)\log\frac{p(x)}{q(x)}=\E_{X\sim p}\Bigl[\log\frac{p(X)}{q(X)}\Bigr],
+\]
+con los convenios $0\log\frac{0}{q}=0$ y $p\log\frac{p}{0}=+\infty$ si $p>0$.
+\end{definicion}
+
+En particular, $\KL{p}{q}=+\infty$ en cuanto $q$ declara imposible un resultado que, según $p$, puede ocurrir. Es la versión informacional de la pérdida infinita del módulo~1 cuando un modelo asigna probabilidad~0 a un token del texto.
+
+\begin{teorema}[Desigualdad de Gibbs o de la información]\label{teo:gibbs}
+Para distribuciones $p$ y $q$ sobre $\X$, $\KL{p}{q}\ge 0$, con igualdad si y solo si $p=q$.
+\end{teorema}
+
+\begin{proof}
+Si $\KL{p}{q}=+\infty$ no hay nada que probar. En otro caso, sea $S=\{x:p(x)>0\}$, sobre el que $q(x)>0$. Aplicando la desigualdad de Jensen a la función cóncava $\log$ y a la variable $q(X)/p(X)$ con $X\sim p$,
+\[
+-\KL{p}{q}=\sum_{x\in S}p(x)\log\frac{q(x)}{p(x)}\le\log\sum_{x\in S}p(x)\frac{q(x)}{p(x)}=\log\sum_{x\in S}q(x)\le\log 1=0.
+\]
+Como $\log$ es estrictamente cóncava, la primera desigualdad es una igualdad si y solo si $q(x)/p(x)$ es constante en $S$; la segunda lo es si y solo si $\sum_{x\in S}q(x)=1$. Si ambas se cumplen, la constante es~1 y $q=p$. El recíproco es inmediato~\cite[teorema~2.6.3]{ct}.
+\end{proof}
+
+\begin{ejemplo}[Asimetría]\label{ej:asimetria}
+Sean $p=(0{,}5;\ 0{,}25;\ 0{,}25)$ y $q=(0{,}8;\ 0{,}1;\ 0{,}1)$. Entonces
+\[
+\KL{p}{q}=0{,}5\log\tfrac{0{,}5}{0{,}8}+2\cdot 0{,}25\log\tfrac{0{,}25}{0{,}1}=-0{,}3390+0{,}6610=0{,}322\text{ bits},
+\]
+mientras que $\KL{q}{p}=0{,}8\log 1{,}6+2\cdot 0{,}1\log 0{,}4=0{,}5425-0{,}2644=0{,}278$ bits.
+\end{ejemplo}
+
+\begin{observacion}
+La entropía relativa no es simétrica y no cumple la desigualdad triangular; por eso se llama \emph{divergencia} y no distancia. Sí cumple la propiedad que importa para comparar un modelo con los datos: es no negativa y solo se anula cuando las dos distribuciones coinciden.
+\end{observacion}
+
+\section{Entropía cruzada}
+
+\begin{definicion}[Entropía cruzada]\label{def:cruzada}
+La \emph{entropía cruzada} de $q$ respecto de $p$ es $H(p,q)=-\sum_{x}p(x)\log q(x)=\E_{X\sim p}[-\log q(X)]$.
+\end{definicion}
+
+\begin{proposicion}[Descomposición de la entropía cruzada]\label{prop:descomposicion}
+$H(p,q)=H(p)+\KL{p}{q}$. En consecuencia, $H(p,q)\ge H(p)$, con igualdad si y solo si $q=p$.
+\end{proposicion}
+
+\begin{proof}
+En cada término con $p(x)>0$, $-\log q(x)=-\log p(x)+\log\bigl(p(x)/q(x)\bigr)$. Multiplicando por $p(x)$ y sumando se obtiene la identidad. La desigualdad se sigue del \cref{teo:gibbs}.
+\end{proof}
+
+En el \cref{ej:asimetria}, $H(p)=1{,}5$ bits y $H(p,q)=1{,}822$ bits, cuya diferencia es $\KL{p}{q}=0{,}322$ bits. El \cref{tema:3} dará a esta identidad un sentido operativo: $H(p,q)$ es la longitud media de un código diseñado para $q$ cuando los datos siguen $p$, y $\KL{p}{q}$ son los bits que se desperdician por usar el modelo equivocado.
+
+\begin{observacion}[Conexión con los LLM]
+Sea $p$ la distribución del texto real y $q_\theta$ el modelo. La pérdida de preentrenamiento es una estimación de
+\[
+\underbrace{H(p,q_\theta)}_{\text{pérdida}}=\underbrace{H(p)}_{\text{irreducible}}+\underbrace{\KL{p}{q_\theta}}_{\text{mejorable}}.
+\]
+Como $H(p)$ no depende de $\theta$, minimizar la entropía cruzada equivale a minimizar $\KL{p}{q_\theta}$, y la pérdida nunca baja de $H(p)$. Las leyes de escalado de Hoffmann \emph{et al.}~\cite{chinchilla} (módulo~16) incluyen un término constante $E$ que los autores interpretan como la entropía del texto natural.
+\end{observacion}
+
+\begin{observacion}[Las dos direcciones de la divergencia]\label{obs:direcciones}
+Al ajustar una distribución $q$ a una distribución $p$ dada pueden minimizarse dos cantidades distintas. La divergencia \emph{hacia delante} $\KL{p}{q}$ penaliza con fuerza que $q(x)$ sea pequeña donde $p(x)$ no lo es: $q$ tiende a \emph{cubrir} todo el soporte de $p$. Es la que se minimiza al entrenar por máxima verosimilitud. La divergencia \emph{hacia atrás} $\KL{q}{p}$ penaliza que $q$ ponga masa donde $p$ es pequeña: $q$ tiende a \emph{concentrarse} en una de las modas de $p$. Es la que aparece en la inferencia variacional y en la penalización del ajuste por preferencias del \cref{tema:5}~\cite{camit}.
+\end{observacion}
+
+\section{Información mutua}
+
+\begin{definicion}[Información mutua]\label{def:mutua}
+La \emph{información mutua} entre $X$ e $Y$ es la entropía relativa entre la distribución conjunta y el producto de las marginales:
+\[
+I(X;Y)=\KL{p(x,y)}{p(x)\,p(y)}=\sum_{x,y}p(x,y)\log\frac{p(x,y)}{p(x)\,p(y)}.
+\]
+\end{definicion}
+
+\begin{proposicion}\label{prop:mutua-identidades}
+\[
+I(X;Y)=H(X)+H(Y)-H(X,Y)=H(Y)-H(Y\mid X)=H(X)-H(X\mid Y).
+\]
+En particular, $I(X;Y)=I(Y;X)$ e $I(X;X)=H(X)$.
+\end{proposicion}
+
+La demostración de la primera igualdad se propone en el \cref{eje:2-mutua}; las otras dos se siguen de ella y de la regla de la cadena (\cref{teo:cadena-entropia}). Para $Y=X$ se tiene $H(X\mid X)=0$.
+
+\begin{teorema}\label{teo:mutua-positiva}
+$I(X;Y)\ge 0$, con igualdad si y solo si $X$ e $Y$ son independientes. En consecuencia, $H(Y\mid X)\le H(Y)$: condicionar no aumenta, en media, la entropía.
+\end{teorema}
+
+\begin{proof}
+Por la \cref{def:mutua} y el \cref{teo:gibbs}, $I(X;Y)\ge 0$, con igualdad si y solo si $p(x,y)=p(x)p(y)$ para todo par, que es la definición de independencia. La segunda afirmación se sigue de $I(X;Y)=H(Y)-H(Y\mid X)$.
+\end{proof}
+
+\begin{observacion}
+La desigualdad $H(Y\mid X)\le H(Y)$ vale en media, no para cada valor: puede ocurrir $H(Y\mid X=x)>H(Y)$ para algún $x$ concreto. Una observación sorprendente puede aumentar la incertidumbre, aunque observar $X$ la reduce en promedio~\cite[§2.6]{ct}.
+\end{observacion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small]
+  \draw[thick] (0,0) circle (1.9cm);
+  \draw[thick] (2.2,0) circle (1.9cm);
+  \node at (-0.9,0) {$H(X\mid Y)$};
+  \node at (1.1,0) {$I(X;Y)$};
+  \node at (3.1,0) {$H(Y\mid X)$};
+  \node at (-0.3,2.15) {$H(X)$};
+  \node at (2.5,2.15) {$H(Y)$};
+  \draw[decorate,decoration={brace,mirror,amplitude=6pt}] (-1.9,-2.15) -- (4.1,-2.15) node[midway,below=7pt] {$H(X,Y)$};
+\end{tikzpicture}
+\caption{Relaciones entre entropías e información mutua. Cada círculo representa la entropía de una variable; la intersección es la información compartida y la unión, la entropía conjunta.}
+\label{fig:venn}
+\end{figure}
+
+\begin{ejemplo}\label{ej:mutua-bits}
+Para los dos bits del \cref{ej:dos-bits}, $I(X;Y)=H(X)+H(Y)-H(X,Y)=2-1{,}722=0{,}278$ bits y $H(X\mid Y)=1-0{,}278=0{,}722$ bits. Conocer uno de los bits elimina algo más de una cuarta parte de la incertidumbre sobre el otro.
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+La información mutua entre el contexto $X_{1:t-1}$ y el token siguiente $X_t$ es la reducción de la incertidumbre sobre $X_t$ que puede lograr un modelo que vea ese contexto: $H(X_t\mid X_{1:t-1})=H(X_t)-I(X_t;X_{1:t-1})$. Un modelo de bigramas aprovecha solo $I(X_t;X_{t-1})$; un Transformer con miles de tokens de contexto puede aprovechar mucha más.
+\end{observacion}
+
+\section{La desigualdad del procesamiento de datos}
+
+\begin{definicion}[Información mutua condicionada]
+Para variables $X$, $Y$ y $Z$, la \emph{información mutua entre $X$ e $Y$ condicionada a $Z$} es $I(X;Y\mid Z)=H(X\mid Z)-H(X\mid Y,Z)$, donde $H(X\mid Y,Z)$ es la entropía de $X$ condicionada al par $(Y,Z)$.
+\end{definicion}
+
+Se cumple $I(X;Y\mid Z)=\sum_z p(z)\,I(X;Y\mid Z=z)\ge 0$, porque cada sumando es la información mutua de la distribución condicionada a $Z=z$ y es no negativo por el \cref{teo:mutua-positiva}. Además, aplicando la regla de la cadena a $H(X)-H(X\mid Y,Z)=\bigl[H(X)-H(X\mid Z)\bigr]+\bigl[H(X\mid Z)-H(X\mid Y,Z)\bigr]$ se obtiene la \emph{regla de la cadena para la información mutua}~\cite[§2.5]{ct}:
+\[
+I(X;Y,Z)=I(X;Z)+I(X;Y\mid Z).
+\]
+
+\begin{definicion}[Cadena de Markov]
+Las variables $X$, $Y$ y $Z$ forman una \emph{cadena de Markov} $X\to Y\to Z$ si $p(z\mid x,y)=p(z\mid y)$ para todo $x,y,z$; es decir, si $Z$ depende de $X$ solo a través de $Y$. Esto equivale a que $X$ y $Z$ sean condicionalmente independientes dado $Y$, y en ese caso $I(X;Z\mid Y)=0$.
+\end{definicion}
+
+\begin{teorema}[Desigualdad del procesamiento de datos]\label{teo:procesamiento}
+Si $X\to Y\to Z$, entonces $I(X;Z)\le I(X;Y)$.
+\end{teorema}
+
+\begin{proof}
+Por la regla de la cadena aplicada en los dos órdenes,
+\[
+I(X;Y,Z)=I(X;Z)+I(X;Y\mid Z)=I(X;Y)+I(X;Z\mid Y).
+\]
+Por la hipótesis de Markov, $I(X;Z\mid Y)=0$, de modo que $I(X;Y)=I(X;Z)+I(X;Y\mid Z)\ge I(X;Z)$~\cite[§2.8]{ct}.
+\end{proof}
+
+\begin{corolario}\label{cor:procesamiento-funcion}
+Para toda función $g$, $I(X;g(Y))\le I(X;Y)$.
+\end{corolario}
+
+\begin{proof}
+$X\to Y\to g(Y)$ es una cadena de Markov, porque $g(Y)$ queda determinada por $Y$.
+\end{proof}
+
+\begin{observacion}
+Ningún procesamiento de un dato, por elaborado que sea, aumenta la información que contiene sobre otra variable. Las representaciones internas de una red neuronal son funciones de su entrada; por el \cref{cor:procesamiento-funcion}, no contienen más información sobre la respuesta correcta que la propia entrada. Lo que el entrenamiento consigue es hacer esa información \emph{accesible} para una capa de salida sencilla, no crearla.
+\end{observacion}
+
+\begin{lecturas}
+\item Cover y Thomas~\cite{ct}, §2.3 «Relative Entropy and Mutual Information», §2.4 «Relationship Between Entropy and Mutual Information», §2.6 «Jensen's Inequality and Its Consequences» y §2.8 «Data-Processing Inequality».
+\item MacKay~\cite{mackay}, cap.~2 (desigualdad de Gibbs y de Jensen) y cap.~8 «Correlated Random Variables».
+\item Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, temas «Entropy of discrete variables» y «Comparing probability distributions and machine learning».
+\item MIT 6.441~\cite{mit6441}, notas de clase sobre entropía, divergencia e información mutua.
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-vf}
+Justifique si son verdaderas o falsas: (a) $\KL{p}{q}=\KL{q}{p}$ para todo par de distribuciones; (b) $H(p,q)\ge H(p)$; (c) la entropía de una distribución sobre 4 símbolos puede valer 3 bits; (d) si $I(X;Y)=0$, entonces $X$ e $Y$ son independientes.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:2-direcciones}
+(a) Explique por qué la entropía relativa se llama divergencia y no distancia. (b) Sea $p$ una distribución con dos modas separadas y sea $q$ una distribución de una familia que solo admite una moda. Describa cómo será, cualitativamente, la $q$ que minimiza $\KL{p}{q}$ y la que minimiza $\KL{q}{p}$, y diga cuál de las dos se minimiza al entrenar un modelo de lenguaje por máxima verosimilitud.
+\fuente{adaptado de Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, \emph{Examples Sheet}, \emph{Supervision}~3, ejercicios~10 y~11.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-kl-moneda}
+Sean $p=(1/2,1/2)$ los datos y $q=(0{,}9;\ 0{,}1)$ el modelo. Calcule $H(p,q)$, $\KL{p}{q}$ y $\KL{q}{p}$ en bits.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-conjunta}
+La distribución conjunta de dos bits es $p(0,0)=0{,}3$, $p(0,1)=0{,}2$, $p(1,0)=0{,}1$ y $p(1,1)=0{,}4$. Calcule $H(X)$, $H(Y)$, $H(X,Y)$, $I(X;Y)$ y $H(Y\mid X)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-galletas}
+Un tarro contiene 6 galletas: 3 de cacahuete (C), 2 de chocolate (H) y 1 de avena (A). Bob se las come de una en una, eligiendo cada vez al azar entre las que quedan. Sean $X$ e $Y$ los sabores de la primera y de la segunda galleta. (a) Calcule $H(X)$, $H(Y)$, $H(X,Y)$, $H(Y\mid X)$, $H(X\mid Y)$ e $I(X;Y)$. (b) Calcule $\KL{P_{Y\mid X=\mathrm{H}}}{P_{Y\mid X=\mathrm{A}}}$ y $\KL{P_{Y\mid X=\mathrm{A}}}{P_{Y\mid X=\mathrm{H}}}$. (c) ¿Cuántos bits de información contiene el orden completo de los sabores?
+\fuente{adaptado de MIT 6.441~\cite{mit6441}, \emph{Problem Set}~1, problema~1 (se omite el apartado en que $Y$ es la última galleta).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-gibbs-ln}
+(a) Demuestre el \cref{teo:gibbs} sin usar la desigualdad de Jensen, mediante la desigualdad $\ln t\le t-1$ para $t>0$, con igualdad solo en $t=1$. (b) Aplique el resultado a $\KL{p}{u}$, con $u$ la distribución uniforme sobre $K$ símbolos, para demostrar que $H(p)\le\log K$, con igualdad si y solo si $p=u$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-mutua}
+Demuestre que $I(X;Y)=H(X)+H(Y)-H(X,Y)$ a partir de la \cref{def:mutua} y deduzca que $H(Y\mid X)\le H(Y)$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Códigos de fuente y código de Huffman}
+\label{tema:3}
+% =====================================================================
+
+Este tema da a la entropía su significado operativo: es la longitud media mínima, en bits por símbolo, de una descripción sin pérdidas de la fuente. Se estudian los códigos prefijo, la desigualdad de Kraft, las cotas para la longitud óptima y el algoritmo de Huffman~\cite{huffman}. Se sigue~\cite[cap.~5]{ct}, en particular §5.1--5.4, §5.6 y §5.8; MacKay~\cite[cap.~5]{mackay} presenta el mismo material con el nombre de \emph{códigos de símbolos}, que es también el enfoque del tema «Source coding and data compression» de~\cite{camit}.
+
+\section{Códigos de símbolos}
+
+\begin{definicion}[Código]\label{def:codigo}
+Un \emph{código binario} para una variable $X$ con alfabeto $\X$ es una aplicación $C\colon\X\to\{\bin{0},\bin{1}\}^{*}$ que asigna a cada símbolo una cadena finita de bits, su \emph{palabra de código}, de longitud $\ell(x)$. La \emph{extensión} de $C$ codifica una secuencia concatenando palabras: $C(x_1\cdots x_n)=C(x_1)\cdots C(x_n)$. La \emph{longitud media} del código es $L(C)=\sum_{x}p(x)\,\ell(x)$.
+\end{definicion}
+
+\begin{definicion}[Clases de códigos]\label{def:clases}
+Un código es
+\begin{enumerate}
+  \item \emph{no singular} si $C$ es inyectiva;
+  \item \emph{unívocamente descodificable} si su extensión es inyectiva, es decir, si toda cadena de bits procede de, a lo sumo, una secuencia de símbolos;
+  \item \emph{prefijo} o \emph{instantáneo} si ninguna palabra de código es prefijo de otra distinta.
+\end{enumerate}
+\end{definicion}
+
+Cada clase contiene a la siguiente: todo código prefijo es unívocamente descodificable, porque el receptor reconoce el final de cada palabra en cuanto la lee completa, sin mirar los bits posteriores; y todo código unívocamente descodificable es no singular.
+
+\begin{ejemplo}\label{ej:clases}
+Sea $\X=\{\mathrm{a},\mathrm{b},\mathrm{c},\mathrm{d}\}$. En la tabla siguiente, $C_1$ es singular ($\mathrm{a}$ y $\mathrm{b}$ comparten palabra); $C_2$ es no singular pero no unívocamente descodificable, porque la cadena \bin{010} puede leerse como $\mathrm{b}$, como $\mathrm{ca}$ o como $\mathrm{ad}$; $C_3$ es unívocamente descodificable, porque cada palabra empieza por \bin{0} y basta cortar delante de cada \bin{0}, pero no es prefijo; $C_4$ es prefijo.
+\begin{center}
+\begin{tabular}{@{}ccccc@{}}
+\toprule
+$x$ & $C_1$ & $C_2$ & $C_3$ & $C_4$ \\
+\midrule
+a & \bin{0} & \bin{0} & \bin{0} & \bin{0} \\
+b & \bin{0} & \bin{010} & \bin{01} & \bin{10} \\
+c & \bin{1} & \bin{01} & \bin{011} & \bin{110} \\
+d & \bin{10} & \bin{10} & \bin{0111} & \bin{111} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{ejemplo}
+
+\section{La desigualdad de Kraft}
+
+A cada cadena binaria $c=c_1\cdots c_\ell$ se le asocia el \emph{intervalo diádico} $J(c)=[0.c_1\cdots c_\ell,\ 0.c_1\cdots c_\ell+2^{-\ell})\subseteq[0,1)$, donde $0.c_1\cdots c_\ell=\sum_{i}c_i2^{-i}$. Es el conjunto de números de $[0,1)$ cuya expansión binaria empieza por $c$, y tiene longitud $2^{-\ell}$. Dos intervalos diádicos están contenidos uno en otro o son disjuntos, y $J(c')\subseteq J(c)$ si y solo si $c$ es prefijo de $c'$.
+
+\begin{teorema}[Desigualdad de Kraft]\label{teo:kraft}
+Las longitudes $\ell_1,\dots,\ell_m$ de las palabras de un código binario prefijo cumplen
+\[
+\sum_{i=1}^{m}2^{-\ell_i}\le 1.
+\]
+Recíprocamente, si unos enteros positivos $\ell_1,\dots,\ell_m$ cumplen esta desigualdad, existe un código prefijo con esas longitudes.
+\end{teorema}
+
+\begin{proof}
+Si el código es prefijo, ninguna palabra es prefijo de otra, así que los intervalos $J(c_1),\dots,J(c_m)$ son disjuntos dos a dos. Son subintervalos de $[0,1)$, luego la suma de sus longitudes, $\sum_i2^{-\ell_i}$, no supera~1.
+
+Para el recíproco, se ordenan las longitudes de forma que $\ell_1\le\dots\le\ell_m$ y se define $s_i=\sum_{j<i}2^{-\ell_j}$ (con $s_1=0$). Cada término $2^{-\ell_j}$ con $j<i$ es múltiplo de $2^{-\ell_i}$, porque $\ell_j\le\ell_i$; por tanto $s_i$ se escribe en binario con $\ell_i$ cifras tras la coma, completando con ceros si hace falta,, que se toman como palabra $c_i$, y $J(c_i)=[s_i,s_i+2^{-\ell_i})$. Estos intervalos son consecutivos y disjuntos, y el último termina en $s_m+2^{-\ell_m}=\sum_j2^{-\ell_j}\le 1$. Como son disjuntos, ninguna palabra es prefijo de otra.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,
+  level distance=11mm,
+  level 1/.style={sibling distance=34mm},
+  level 2/.style={sibling distance=20mm},
+  level 3/.style={sibling distance=18mm},
+  nodo/.style={circle,draw,inner sep=1.4pt,fill=black},
+  hoja/.style={rectangle,draw,thick,inner sep=3pt}]
+  \node[nodo] {}
+    child {node[hoja] {a: \bin{0}} edge from parent node[left] {\bin{0}}}
+    child {node[nodo] {}
+      child {node[hoja] {b: \bin{10}} edge from parent node[left] {\bin{0}}}
+      child {node[nodo] {}
+        child {node[hoja] {c: \bin{110}} edge from parent node[left] {\bin{0}}}
+        child {node[hoja] {d: \bin{111}} edge from parent node[right] {\bin{1}}}
+        edge from parent node[right] {\bin{1}}}
+      edge from parent node[right] {\bin{1}}};
+\end{tikzpicture}
+\caption{El código prefijo $C_4$ del \cref{ej:clases} como árbol binario: las palabras son las hojas y ninguna está en el camino hacia otra. La suma de Kraft es $\tfrac12+\tfrac14+\tfrac18+\tfrac18=1$.}
+\label{fig:arbol-kraft}
+\end{figure}
+
+\begin{observacion}
+McMillan demostró que la desigualdad de Kraft la cumplen también todos los códigos unívocamente descodificables~\cite[§5.5]{ct}. Por tanto, restringirse a códigos prefijo no tiene coste: cualquier conjunto de longitudes alcanzable con un código unívocamente descodificable lo es también con uno prefijo.
+\end{observacion}
+
+\section{Cotas para la longitud óptima}
+
+\begin{teorema}[Cota inferior]\label{teo:cota-inferior}
+La longitud media de todo código prefijo para $X$ cumple $L\ge H(X)$, con igualdad si y solo si $p(x)=2^{-\ell(x)}$ para todo $x$.
+\end{teorema}
+
+\begin{proof}
+Sea $c=\sum_x2^{-\ell(x)}\le 1$ (\cref{teo:kraft}) y sea $r(x)=2^{-\ell(x)}/c$, que es una distribución. Como $\ell(x)=-\log r(x)-\log c$,
+\[
+L-H(X)=\sum_x p(x)\ell(x)+\sum_xp(x)\log p(x)=\sum_xp(x)\log\frac{p(x)}{r(x)}-\log c=\KL{p}{r}+\log\frac1c\ge 0,
+\]
+porque los dos sumandos finales son no negativos (\cref{teo:gibbs} y $c\le 1$). La igualdad exige $c=1$ y $p=r$, es decir, $p(x)=2^{-\ell(x)}$.
+\end{proof}
+
+La demostración interpreta cada código prefijo como un modelo probabilístico implícito, $r(x)\propto2^{-\ell(x)}$: un código asigna palabras cortas a lo que «cree» probable. Esta lectura es la mitad de la equivalencia entre predecir y comprimir que se completa en el \cref{tema:4}.
+
+\begin{definicion}[Código de Shannon]\label{def:shannon}
+Un \emph{código de Shannon} para $p$ es un código prefijo con longitudes $\ell(x)=\lceil-\log p(x)\rceil$.
+\end{definicion}
+
+Estas longitudes cumplen la desigualdad de Kraft, porque $2^{-\lceil-\log p(x)\rceil}\le2^{\log p(x)}=p(x)$ y las $p(x)$ suman~1; por el \cref{teo:kraft}, el código existe.
+
+\begin{teorema}[Longitud óptima]\label{teo:cotas}
+Sea $L^{*}$ la mínima longitud media de un código prefijo para $X$. Entonces
+\[
+H(X)\le L^{*}<H(X)+1.
+\]
+\end{teorema}
+
+\begin{proof}
+La cota inferior es el \cref{teo:cota-inferior}. Para la superior, el código de Shannon cumple $\ell(x)<-\log p(x)+1$, luego $L^{*}\le\sum_xp(x)\ell(x)<\sum_xp(x)\bigl(-\log p(x)+1\bigr)=H(X)+1$~\cite[§5.4]{ct}.
+\end{proof}
+
+El exceso de hasta un bit se debe a que las longitudes han de ser enteras. Se reparte entre muchos símbolos codificando bloques.
+
+\begin{corolario}[Codificación por bloques]\label{cor:bloques}
+Sean $X_1,\dots,X_n$ independientes y con la misma distribución que $X$, y sea $L_n^{*}$ la longitud media mínima de un código prefijo para el bloque $(X_1,\dots,X_n)$. Entonces
+\[
+H(X)\le\frac{L_n^{*}}{n}<H(X)+\frac1n.
+\]
+En particular, $L_n^{*}/n\to H(X)$ cuando $n\to\infty$.
+\end{corolario}
+
+\begin{proof}
+Por independencia, $H(X_1,\dots,X_n)=nH(X)$ (\cref{cor:cadena-secuencias}). Basta aplicar el \cref{teo:cotas} al bloque y dividir por $n$.
+\end{proof}
+
+El \cref{cor:bloques} es una forma del \emph{teorema de codificación de fuente} de Shannon: la entropía es el número mínimo de bits por símbolo con que puede describirse la fuente sin pérdidas, y ese mínimo se alcanza asintóticamente~\cite[cap.~4]{mackay}.
+
+\section{El código de Huffman}
+
+\begin{definicion}[Algoritmo de Huffman]\label{def:huffman}
+Dada una distribución sobre $K\ge 2$ símbolos, el \emph{algoritmo de Huffman} construye un árbol binario: mientras quede más de un nodo, fusiona los dos nodos de menor probabilidad en un nodo nuevo cuya probabilidad es la suma de ambas. Al terminar, las ramas que salen de cada nodo se etiquetan con \bin{0} y \bin{1}, y la palabra de cada símbolo es la secuencia de etiquetas desde la raíz hasta su hoja.
+\end{definicion}
+
+Cada fusión añade un bit a la palabra de todos los símbolos de los dos nodos fusionados; por eso los símbolos poco probables, que se fusionan pronto, reciben palabras largas.
+
+\begin{ejemplo}\label{ej:huffman}
+Sea $p=(0{,}4;\ 0{,}2;\ 0{,}2;\ 0{,}1;\ 0{,}1)$ sobre $\{\mathrm{a},\mathrm{b},\mathrm{c},\mathrm{d},\mathrm{e}\}$. Las fusiones son: $\mathrm{d}+\mathrm{e}\to 0{,}2$; $\mathrm{b}+\mathrm{c}\to 0{,}4$; $\{\mathrm{d},\mathrm{e}\}+\mathrm{a}\to 0{,}6$; y finalmente $0{,}4+0{,}6\to 1$. Resulta el árbol de la \cref{fig:huffman}, con longitud media
+\[
+L=0{,}4\cdot 2+0{,}2\cdot 2+0{,}2\cdot 2+0{,}1\cdot 3+0{,}1\cdot 3=2{,}2\text{ bits},
+\]
+frente a $H(p)=2{,}122$ bits y a los 3 bits de un código de longitud fija.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,
+  level distance=12mm,
+  level 1/.style={sibling distance=44mm},
+  level 2/.style={sibling distance=22mm},
+  level 3/.style={sibling distance=14mm},
+  nodo/.style={circle,draw,inner sep=1.5pt},
+  hoja/.style={rectangle,draw,thick,inner sep=3pt}]
+  \node[nodo] {$1$}
+    child {node[nodo] {$0{,}4$}
+      child {node[hoja] {b: \bin{00}} edge from parent node[left] {\bin{0}}}
+      child {node[hoja] {c: \bin{01}} edge from parent node[right] {\bin{1}}}
+      edge from parent node[left] {\bin{0}}}
+    child {node[nodo] {$0{,}6$}
+      child {node[nodo] {$0{,}2$}
+        child {node[hoja] {d: \bin{100}} edge from parent node[left] {\bin{0}}}
+        child {node[hoja] {e: \bin{101}} edge from parent node[right] {\bin{1}}}
+        edge from parent node[left] {\bin{0}}}
+      child {node[hoja] {a: \bin{11}} edge from parent node[right] {\bin{1}}}
+      edge from parent node[right] {\bin{1}}};
+\end{tikzpicture}
+\caption{Árbol de Huffman del \cref{ej:huffman}. Cada nodo interno lleva la suma de las probabilidades de sus hojas.}
+\label{fig:huffman}
+\end{figure}
+
+La optimalidad del algoritmo se apoya en dos propiedades de los códigos óptimos.
+
+\begin{lema}\label{lem:optimo}
+Sea $p_1\ge p_2\ge\dots\ge p_K>0$, con $K\ge 2$. Existe un código prefijo óptimo con longitudes $\ell_1,\dots,\ell_K$ tal que
+\begin{enumerate}
+  \item $\ell_1\le\ell_2\le\dots\le\ell_K$;
+  \item las palabras de los dos símbolos menos probables, $K-1$ y $K$, tienen la longitud máxima $\ell_K$ y solo difieren en el último bit.
+\end{enumerate}
+\end{lema}
+
+\begin{proof}
+Existe un código óptimo, porque hay un número finito de asignaciones de longitudes con $L$ menor que la de un código fijo. Sea $C$ uno de ellos. (i) Si $p_j>p_k$ y $\ell_j>\ell_k$, intercambiar las palabras de $j$ y $k$ cambia la longitud media en $(p_j-p_k)(\ell_k-\ell_j)<0$, contra la optimalidad; luego $p_j>p_k$ implica $\ell_j\le\ell_k$. Entre símbolos de igual probabilidad, intercambiar palabras no cambia $L$, así que puede ordenarse para que $\ell_1\le\dots\le\ell_K$. (ii) Sea $w$ una palabra de longitud máxima $\ell_K$ y sea $w'$ la cadena que resulta de cambiar su último bit. Si $w'$ no fuese una palabra del código, podría suprimirse el último bit de $w$: ninguna otra palabra empezaría por la cadena acortada, porque tendría que empezar por $w'$ y no hay palabras más largas que $\ell_K$, y ninguna palabra sería prefijo de ella, porque lo sería también de $w$. El código seguiría siendo prefijo y tendría menor longitud media, contra la optimalidad. Luego $w'$ es una palabra de longitud $\ell_K$. Por último, se asignan $w$ y $w'$ a los símbolos $K$ y $K-1$ intercambiando palabras; si $j\le K-1$ tenía asignada una de ellas, el intercambio de las palabras de $j$ y $K-1$ cambia $L$ en $(p_{K-1}-p_j)(\ell_K-\ell_{K-1})\le 0$, de modo que el código sigue siendo óptimo.
+\end{proof}
+
+\begin{teorema}[Optimalidad del código de Huffman]\label{teo:huffman}
+El código de Huffman tiene longitud media mínima entre todos los códigos prefijo para $p$.
+\end{teorema}
+
+\begin{proof}
+Por inducción sobre $K$. Para $K=2$, Huffman asigna \bin{0} y \bin{1}, con $L=1$, que es óptimo. Sea $K\ge 3$ con $p_1\ge\dots\ge p_K$, y sea $p'$ la distribución sobre $K-1$ símbolos que resulta de fusionar $K-1$ y $K$ en uno de probabilidad $p_{K-1}+p_K$; su código de Huffman es el de $p$ con las dos hojas hermanas sustituidas por su padre.
+
+Todo código prefijo $C'$ para $p'$ da un código para $p$ al añadir \bin{0} y \bin{1} a la palabra del símbolo fusionado, con longitud media $L(C')+p_{K-1}+p_K$. Recíprocamente, el código óptimo $C$ del \cref{lem:optimo} da un código para $p'$ al sustituir las dos hojas hermanas por su padre, con longitud media $L(C)-p_{K-1}-p_K$. De ambas construcciones se deduce $L^{*}(p)=L^{*}(p')+p_{K-1}+p_K$. Por la hipótesis de inducción, el código de Huffman de $p'$ es óptimo, y el de $p$ tiene longitud $L^{*}(p')+p_{K-1}+p_K=L^{*}(p)$~\cite[§5.8]{ct}.
+\end{proof}
+
+Por los Teoremas~\ref{teo:cotas} y~\ref{teo:huffman}, $H(p)\le L_{\text{Huffman}}<H(p)+1$, con $L_{\text{Huffman}}=H(p)$ cuando todas las probabilidades son potencias de $1/2$. El código óptimo no es único: con otros desempates en el \cref{ej:huffman} se obtiene un árbol distinto (\cref{eje:3-dos-huffman}).
+
+\section{El límite de los códigos de símbolos}
+
+Un código de símbolos gasta un número entero de bits por símbolo, y al menos un bit. Si $p=(0{,}9;\ 0{,}1)$, la entropía es $H_b(0{,}1)=0{,}469$ bits, pero cualquier código de símbolos para dos resultados gasta 1 bit por símbolo: más del doble. La codificación por bloques del \cref{cor:bloques} reduce el exceso, pero un bloque de $n$ símbolos sobre un alfabeto de $K$ símbolos tiene $K^{n}$ valores posibles, y la tabla del código crece exponencialmente.
+
+\begin{observacion}[Conexión con los LLM]
+Un modelo de lenguaje asigna con frecuencia probabilidades muy altas al token siguiente: si $q(x_t\mid x_{1:t-1})=0{,}99$, la sorpresa es $-\log 0{,}99=0{,}0145$ bits, y un código de símbolos gastaría al menos un bit para ese token, unas setenta veces más. Además, la distribución cambia en cada posición, de modo que habría que construir un código de Huffman distinto para cada contexto. El \cref{tema:4} presenta un método que gasta, de hecho, fracciones de bit por símbolo y admite un modelo distinto en cada paso: la codificación aritmética.
+\end{observacion}
+
+\begin{lecturas}
+\item Cover y Thomas~\cite{ct}, §5.1 «Examples of Codes», §5.2 «Kraft Inequality», §5.4 «Bounds on the Optimal Code Length», §5.6 «Huffman Codes» y §5.8 «Optimality of Huffman Codes».
+\item MacKay~\cite{mackay}, cap.~5 «Symbol Codes».
+\item Huffman~\cite{huffman}, artículo original.
+\item Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, tema «Source coding and data compression».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-dos-huffman}
+¿Pueden dos personas que aplican correctamente el algoritmo de Huffman a la misma distribución obtener códigos con conjuntos de longitudes distintos? Respóndalo con la distribución del \cref{ej:huffman}, deshaciendo de otra forma el empate de la tercera fusión, y compare las longitudes medias.
+\fuente{adaptado de Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, \emph{Examples Sheet}, \emph{Supervision}~1, ejercicio~13.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-diadica}
+Sea $p=(1/2,1/4,1/8,1/8)$. Calcule $H(p)$, la longitud de un código de longitud fija y un código de Huffman con su longitud media. Compruebe la desigualdad de Kraft.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-huffman5}
+Construya un código de Huffman para $p=(0{,}35;\ 0{,}25;\ 0{,}2;\ 0{,}15;\ 0{,}05)$. Calcule su longitud media y compárela con $H(p)=2{,}121$ bits y con la cota del \cref{teo:cotas}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-unica}
+Considere el código binario $\{\bin{00},\bin{11},\bin{0101},\bin{111},\bin{1010},\bin{100100},\bin{0110}\}$. ¿Es un código prefijo? ¿Cumplen sus longitudes la desigualdad de Kraft? ¿Es unívocamente descodificable? Si no lo es, dé una cadena ambigua.
+\fuente{adaptado de MacKay~\cite{mackay}, ejercicio~5.19, tal como lo propone Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, \emph{Examples Sheet}, \emph{Supervision}~1, ejercicio~10.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-shannon}
+Para la distribución del \cref{ej:huffman}, calcule las longitudes del código de Shannon, su suma de Kraft y su longitud media. Compruebe que cumple el \cref{teo:cotas} y compárelo con el código de Huffman.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-bloques}
+Una fuente binaria sin memoria emite \bin{a} con probabilidad $0{,}9$ y \bin{b} con probabilidad $0{,}1$. (a) ¿Cuántos bits por símbolo gasta el código de Huffman símbolo a símbolo? (b) Construya el código de Huffman para pares de símbolos y calcule su longitud media por símbolo. (c) Compare con $H_b(0{,}1)$ y con la cota del \cref{cor:bloques} para $n=2$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-no-comprime}
+Sea $C\colon\{\bin{0},\bin{1}\}^{+}\to\{\bin{0},\bin{1}\}^{+}$ una aplicación inyectiva entre cadenas binarias no vacías (un compresor sin pérdidas). Demuestre que, si $C$ acorta alguna cadena, entonces alarga alguna otra. Indicación: cuente las cadenas de longitud a lo sumo $n$.
+\fuente{adaptado de Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, \emph{Examples Sheet}, \emph{Supervision}~2, ejercicio~7.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Codificación aritmética: predecir es comprimir}
+\label{tema:4}
+% =====================================================================
+
+Este tema presenta la codificación aritmética, que representa un mensaje completo mediante un subintervalo de $[0,1)$ de anchura igual a su probabilidad, y demuestra que con ella cualquier modelo probabilístico se convierte en un compresor cuya longitud es, salvo dos bits, la log-verosimilitud negativa del mensaje en bits. La construcción sigue la codificación de Shannon--Fano--Elias de~\cite[§5.9]{ct} y su extensión a secuencias de~\cite[§13.3]{ct}; la presentación como \emph{stream code} con un modelo adaptativo es la de MacKay~\cite[cap.~6]{mackay}, y la implementación práctica, la de Witten, Neal y Cleary~\cite{wnc}. La conexión con los modelos de lenguaje sigue a Delétang \emph{et al.}~\cite{deletang} y a Gao \emph{et al.}~\cite{pile}.
+
+\section{Intervalos y probabilidades}
+
+Sea $\X=\{x^{(1)},\dots,x^{(K)}\}$ un alfabeto con un orden fijado y sea $q$ un modelo autorregresivo, que asigna a cada contexto $x_{1:t-1}$ una distribución $q(\cdot\mid x_{1:t-1})$ sobre $\X$. La \emph{probabilidad acumulada} de $x$ en la posición $t$ es la masa de los símbolos anteriores en el orden fijado:
+\[
+F_t(x)=\sum_{x'<x}q(x'\mid x_{1:t-1}).
+\]
+
+\begin{definicion}[Intervalo de una secuencia]\label{def:intervalo}
+El \emph{intervalo} de la secuencia $x_{1:n}$ es $I(x_{1:n})=[a_n,a_n+w_n)$, donde $a_0=0$, $w_0=1$ y, para $t=1,\dots,n$,
+\[
+a_t=a_{t-1}+w_{t-1}\,F_t(x_t),\qquad w_t=w_{t-1}\,q(x_t\mid x_{1:t-1}).
+\]
+\end{definicion}
+
+Cada paso divide el intervalo actual en $K$ subintervalos consecutivos, de anchuras proporcionales a las probabilidades del símbolo siguiente, y se queda con el del símbolo observado.
+
+\begin{proposicion}\label{prop:intervalos}
+Para todo $n\ge 0$:
+\begin{enumerate}
+  \item la anchura de $I(x_{1:n})$ es $w_n=q(x_{1:n})=\prod_{t=1}^{n}q(x_t\mid x_{1:t-1})$;
+  \item los intervalos de todas las secuencias de longitud $n$ forman una partición de $[0,1)$;
+  \item $I(x_{1:n})\subseteq I(x_{1:n-1})$ si $n\ge 1$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Por inducción, $w_n=w_{n-1}\,q(x_n\mid x_{1:n-1})$ y la regla de la cadena del módulo~1 da el producto. (ii) y (iii) Por inducción sobre $n$: para $n=0$ hay un único intervalo, $[0,1)$. Si los intervalos de longitud $n-1$ forman una partición, cada uno, $[a,a+w)$, se divide en los subintervalos $[a+wF_n(x),\,a+wF_n(x)+w\,q(x\mid x_{1:n-1}))$, que son consecutivos porque $F_n(x)+q(x\mid x_{1:n-1})$ es la acumulada del símbolo siguiente a $x$, y que cubren $[a,a+w)$ porque las probabilidades suman~1.
+\end{proof}
+
+\begin{ejemplo}\label{ej:aab}
+Sea $\X=\{\mathrm{a},\mathrm{b},\mathrm{c}\}$, en ese orden, con el modelo sin memoria $q=(0{,}6;\ 0{,}3;\ 0{,}1)$ y acumuladas $F=(0;\ 0{,}6;\ 0{,}9)$. Para el mensaje «aab»:
+\begin{center}
+\begin{tabular}{@{}cccc@{}}
+\toprule
+Paso & Símbolo & Intervalo & Anchura \\
+\midrule
+0 & --- & $[0;\ 1)$ & $1$ \\
+1 & a & $[0;\ 0{,}6)$ & $0{,}6$ \\
+2 & a & $[0;\ 0{,}36)$ & $0{,}36$ \\
+3 & b & $[0{,}216;\ 0{,}324)$ & $0{,}108$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+La anchura final es $0{,}6\cdot 0{,}6\cdot 0{,}3=0{,}108=q(\text{aab})$, y $-\log 0{,}108=3{,}211$ bits.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=11cm,y=1cm,font=\small]
+  % nivel 1
+  \draw[thick] (0,2) -- (1,2);
+  \foreach \p/\l in {0/0,0.6/{0{,}6},0.9/{0{,}9},1/1} \draw (\p,1.9) -- (\p,2.1) node[above] {$\l$};
+  \node at (0.3,1.7) {a}; \node at (0.75,1.7) {b}; \node at (0.95,1.7) {c};
+  % nivel 2
+  \draw[thick] (0,1) -- (0.6,1);
+  \foreach \p in {0,0.36,0.54,0.6} \draw (\p,0.9) -- (\p,1.1);
+  \node at (0.18,0.7) {aa}; \node at (0.45,0.7) {ab}; \node at (0.57,0.7) {ac};
+  % nivel 3
+  \draw[thick] (0,0) -- (0.36,0);
+  \foreach \p in {0,0.216,0.324,0.36} \draw (\p,-0.1) -- (\p,0.1);
+  \node at (0.108,-0.3) {aaa}; \node at (0.27,-0.3) {aab}; \node at (0.342,-0.3) {aac};
+  \draw[line width=3pt,regla] (0.216,0) -- (0.324,0);
+  \draw[dashed,regla] (0,1.9) -- (0,0.1) (0.6,1.9) -- (0.6,1.1) (0.36,0.9) -- (0.36,0.1);
+  \node[below] at (0.216,-0.45) {$0{,}216$}; \node[below] at (0.324,-0.45) {$0{,}324$};
+\end{tikzpicture}
+\caption{Codificación aritmética del mensaje «aab» (\cref{ej:aab}). Cada nivel subdivide el intervalo del nivel anterior en proporción a las probabilidades del símbolo siguiente.}
+\label{fig:aritmetica}
+\end{figure}
+
+\section{Palabras de código y longitud}
+
+Para transmitir el intervalo basta enviar una cadena binaria $c$ cuyo intervalo diádico $J(c)$ (\cref{tema:3}) esté contenido en $I(x_{1:n})$: el receptor sabrá entonces que el número enviado, cualesquiera que sean los bits que lo sigan, está dentro del intervalo del mensaje.
+
+\begin{teorema}\label{teo:palabra}
+Sea $I=[a,a+w)\subseteq[0,1)$ con $w>0$, y sea $\ell=\lceil-\log w\rceil+1$. Existe una cadena binaria $c$ de longitud $\ell$ con $J(c)\subseteq I$.
+\end{teorema}
+
+\begin{proof}
+Por la elección de $\ell$, $2^{-\ell}\le w/2$. Sea $m=\lceil a\,2^{\ell}\rceil$, de modo que $m2^{-\ell}$ es el menor múltiplo de $2^{-\ell}$ que no es menor que $a$; entonces $a\le m2^{-\ell}<a+2^{-\ell}$, y
+\[
+(m+1)\,2^{-\ell}<a+2\cdot2^{-\ell}\le a+w.
+\]
+Así, $[m2^{-\ell},(m+1)2^{-\ell})\subseteq I$. Como $(m+1)2^{-\ell}\le 1$, se tiene $0\le m<2^{\ell}$, y $c$ es la escritura binaria de $m$ con $\ell$ cifras.
+\end{proof}
+
+\begin{corolario}[Longitud de la codificación aritmética]\label{cor:longitud}
+Para cada $n$, asignar a cada secuencia $x_{1:n}$ con $q(x_{1:n})>0$ la cadena del \cref{teo:palabra} para $I(x_{1:n})$ define un código prefijo sobre las secuencias de longitud $n$, con
+\[
+\ell(x_{1:n})=\lceil-\log q(x_{1:n})\rceil+1<-\log q(x_{1:n})+2.
+\]
+\end{corolario}
+
+\begin{proof}
+Los intervalos de secuencias distintas de longitud $n$ son disjuntos (\cref{prop:intervalos}), luego también lo son los intervalos diádicos contenidos en ellos, y ninguna palabra es prefijo de otra. La cota de la longitud se sigue de $\lceil y\rceil<y+1$ y de $w_n=q(x_{1:n})$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:aab-palabra}
+Para «aab», $\ell=\lceil 3{,}211\rceil+1=5$ y $m=\lceil 0{,}216\cdot 32\rceil=\lceil 6{,}912\rceil=7$, que da la palabra \bin{00111}, con $J(\bin{00111})=[0{,}21875;\ 0{,}25)\subseteq[0{,}216;\ 0{,}324)$. La cota es una garantía, no siempre el óptimo: la cadena \bin{0100}, con $J(\bin{0100})=[0{,}25;\ 0{,}3125)$, también cabe en el intervalo y solo tiene 4 bits; ninguna de 3 bits cabe, porque los intervalos diádicos de anchura $0{,}125$ son $[0{,}125;\ 0{,}25)$ y $[0{,}25;\ 0{,}375)$, y ninguno está contenido en $[0{,}216;\ 0{,}324)$.
+\end{ejemplo}
+
+\paragraph{Descodificación.} El receptor conoce el modelo $q$ y la longitud $n$ (o bien el alfabeto incluye un símbolo de fin, como el símbolo \fin\ del módulo~1). Recibida $c$, para $t=1,\dots,n$ subdivide el intervalo actual según $q(\cdot\mid x_{1:t-1})$, determina el único símbolo $x_t$ cuyo subintervalo contiene a $J(c)$ y lo añade al contexto. Por la \cref{prop:intervalos}, ese símbolo existe, es único y coincide con el enviado. En la práctica, la aritmética de precisión infinita se sustituye por aritmética entera con renormalización, que emite los bits a medida que se fijan, con un sobrecoste despreciable~\cite{wnc}.
+
+\section{Predecir es comprimir}
+
+\begin{teorema}[Compresión con un modelo]\label{teo:compresion}
+Sea $q$ un modelo autorregresivo cualquiera. La codificación aritmética con $q$ codifica cada secuencia $x_{1:n}$ con
+\[
+\ell(x_{1:n})<-\log q(x_{1:n})+2=\sum_{t=1}^{n}-\log q(x_t\mid x_{1:t-1})+2\quad\text{bits}.
+\]
+Si $X_{1:n}$ sigue una distribución $p$, la longitud media cumple
+\[
+H(X_{1:n})\le\E[\ell(X_{1:n})]<H(p,q)+2=H(X_{1:n})+\KL{p}{q}+2,
+\]
+donde $p$ y $q$ denotan aquí las distribuciones de la secuencia completa.
+\end{teorema}
+
+\begin{proof}
+La primera desigualdad es el \cref{cor:longitud} junto con la regla de la cadena. Tomando esperanzas con $X_{1:n}\sim p$, $\E[-\log q(X_{1:n})]=H(p,q)$, que es igual a $H(X_{1:n})+\KL{p}{q}$ por la \cref{prop:descomposicion}. La cota inferior es el \cref{teo:cota-inferior}, aplicado al código prefijo sobre secuencias de longitud $n$.
+\end{proof}
+
+\begin{corolario}\label{cor:por-simbolo}
+Si las $X_t$ son independientes con distribución $p$ y el modelo es sin memoria con distribución $q$, la longitud media por símbolo cumple
+\[
+H(p)\le\frac{\E[\ell(X_{1:n})]}{n}<H(p)+\KL{p}{q}+\frac{2}{n}.
+\]
+Con $q=p$, la codificación aritmética alcanza la entropía con un sobrecoste de $2/n$ bits por símbolo, sin tablas que crezcan con $n$.
+\end{corolario}
+
+\begin{proof}
+Por independencia, $H(X_{1:n})=nH(p)$ y $\KL{p^{\otimes n}}{q^{\otimes n}}=n\KL{p}{q}$, porque el logaritmo del cociente de productos es la suma de los logaritmos. Basta dividir el \cref{teo:compresion} por $n$.
+\end{proof}
+
+El \cref{teo:compresion} es la mitad de la equivalencia anunciada: \emph{todo predictor da un compresor}, y el tamaño del archivo comprimido es la suma de las sorpresas del modelo. La otra mitad se vio en el \cref{teo:cota-inferior}: \emph{todo compresor da un predictor}, porque las longitudes de un código prefijo definen la distribución $r(x)\propto2^{-\ell(x)}$. Mejorar uno equivale a mejorar el otro.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,node distance=5mm and 9mm,
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=8mm,align=center,inner sep=4pt},
+  >={Stealth[length=2mm]}]
+  \node[caja] (txt) {texto\\$x_{1:n}$};
+  \node[caja,right=of txt] (cod) {codificador\\aritmético};
+  \node[caja,above=of cod] (m1) {modelo $q$};
+  \node[caja,right=of cod] (bits) {bits\\$\approx-\log q(x_{1:n})$};
+  \node[caja,right=of bits] (dec) {descodificador\\aritmético};
+  \node[caja,above=of dec] (m2) {mismo\\modelo $q$};
+  \node[caja,right=of dec] (txt2) {texto\\$x_{1:n}$};
+  \draw[->] (txt) -- (cod); \draw[->] (m1) -- (cod); \draw[->] (cod) -- (bits);
+  \draw[->] (bits) -- (dec); \draw[->] (m2) -- (dec); \draw[->] (dec) -- (txt2);
+  \draw[->,dashed] (dec.south) |- ++(0,-0.6) -| node[pos=0.25,below] {token recuperado como contexto} ([xshift=6mm]m2.east) -- (m2.east);
+\end{tikzpicture}
+\caption{Compresión con un modelo de lenguaje. Emisor y receptor usan el mismo modelo; el receptor recupera cada token y lo añade al contexto para obtener la distribución del siguiente.}
+\label{fig:compresor}
+\end{figure}
+
+\begin{observacion}[Conexión con los LLM]
+La pérdida de entrenamiento de un LLM, expresada en bits y multiplicada por el número de tokens, es la longitud del texto comprimido con ese modelo por codificación aritmética, salvo dos bits. Minimizar la pérdida es, literalmente, minimizar el tamaño de un archivo. Delétang \emph{et al.}~\cite{deletang} usaron modelos de lenguaje como compresores y mostraron que Chinchilla~70B, entrenado sobre todo con texto, comprime fragmentos de imágenes de ImageNet al $43{,}4\,\%$ de su tamaño y muestras de audio de LibriSpeech al $16{,}4\,\%$, mejor que los compresores específicos PNG ($58{,}5\,\%$) y FLAC ($30{,}3\,\%$). Los mismos autores señalan que, si se cuenta en el tamaño comprimido también el del propio modelo, el tamaño del conjunto de datos limita el tamaño de modelo que compensa usar.
+\end{observacion}
+
+\section{Bits por byte}
+
+La pérdida por token y la perplejidad dependen del tokenizador: un vocabulario mayor produce menos tokens, cada uno más difícil de predecir, y la cifra por token cambia aunque el modelo comprima igual de bien. Para comparar modelos con tokenizadores distintos se normaliza por la longitud del texto, que no depende del tokenizador.
+
+\begin{definicion}[Bits por byte]\label{def:bpb}
+Sea un texto de $B$ bytes en la codificación UTF-8, dividido por el tokenizador en $N$ tokens. Los \emph{bits por byte} del modelo $q$ sobre el texto son
+\[
+\bpb=\frac{1}{B}\sum_{t=1}^{N}-\log_2 q(x_t\mid x_{1:t-1}).
+\]
+\end{definicion}
+
+\begin{proposicion}\label{prop:bpb}
+Si $\mathcal{J}$ es la pérdida media en nats por token y $\bar b=B/N$ el número medio de bytes por token, entonces $\bpb=\mathcal{J}/(\bar b\ln 2)$.
+\end{proposicion}
+
+\begin{proof}
+$\sum_t-\log_2q(x_t\mid x_{1:t-1})=\frac{1}{\ln 2}\sum_t-\ln q(x_t\mid x_{1:t-1})=\frac{N\mathcal{J}}{\ln 2}$. Dividiendo por $B=N\bar b$ se obtiene el resultado.
+\end{proof}
+
+Por el \cref{teo:compresion}, el bpb es, salvo un término despreciable, el tamaño del texto comprimido con el modelo dividido por su tamaño original en bytes; un bpb de $b$ significa que el texto se comprime a una fracción $b/8$ de su tamaño.
+
+\begin{ejemplo}\label{ej:bpb}
+Un modelo con pérdida $\mathcal{J}=2{,}0$ nats por token y un tokenizador de $4$ bytes por token tiene $\bpb=2{,}0/(4\cdot 0{,}6931)=0{,}721$ bits por byte: comprime el texto a $0{,}721/8\approx 9{,}0\,\%$ de su tamaño.
+\end{ejemplo}
+
+\begin{center}
+\begin{tabular}{@{}llcl@{}}
+\toprule
+Métrica & Unidad & Tokenizador & Uso habitual \\
+\midrule
+pérdida & nats por token & depende & entrenamiento \\
+perplejidad & $e^{\text{pérdida}}$ & depende & número efectivo de opciones \\
+bits por carácter & bits por carácter & no depende & modelos de caracteres \\
+bits por byte & bits por byte & no depende & comparar modelos distintos \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Los bits por carácter tampoco dependen del tokenizador, pero sí de cómo se cuentan los caracteres; los bytes UTF-8 están definidos sin ambigüedad. En español, las vocales con tilde, la \emph{ñ} y las comillas angulares ocupan 2 bytes cada una, de modo que un mismo texto tiene más bytes que caracteres y su bpb es algo menor que sus bits por carácter. El artículo del conjunto de datos The Pile~\cite{pile} popularizó el bpb para comparar modelos con tokenizadores distintos. Anthropic, Google y xAI no publican el bpb de sus modelos actuales.
+
+\begin{lecturas}
+\item Cover y Thomas~\cite{ct}, §5.9 «Shannon--Fano--Elias Coding» y §13.3 «Arithmetic Coding».
+\item MacKay~\cite{mackay}, cap.~6 «Stream Codes».
+\item Witten, Neal y Cleary~\cite{wnc}, implementación clásica con aritmética entera.
+\item Delétang \emph{et al.}~\cite{deletang}, \emph{Language Modeling Is Compression}.
+\item Gao \emph{et al.}~\cite{pile}, uso de los bits por byte como métrica de evaluación.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-bpb-concepto}
+Explique por qué se comparan modelos de lenguaje con tokenizadores distintos en bits por byte y no en perplejidad por token. Ilústrelo con dos modelos: A gasta 2 bits por token con 2 bytes por token y B gasta 4 bits por token con 4 bytes por token.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-bac}
+Con el modelo sin memoria $q(\mathrm{a})=1/2$, $q(\mathrm{b})=1/4$, $q(\mathrm{c})=1/4$, en ese orden, codifique aritméticamente el mensaje «bac». Dé el intervalo final, la longitud ideal $-\log q(\text{bac})$, la palabra de código más corta cuyo intervalo diádico esté contenido en el intervalo final y la longitud que garantiza el \cref{cor:longitud}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-descodificar}
+Con el mismo modelo del \cref{eje:4-bac}, un receptor sabe que el mensaje tiene 3 símbolos y recibe la palabra \bin{01110}. Descodifique el mensaje paso a paso y compruebe que la longitud recibida coincide con $-\log q$ del mensaje.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-abbb}
+Una fuente binaria emite A con probabilidad $1/4$ y B con probabilidad $3/4$. Codifique el mensaje «ABBB» con el código de Huffman símbolo a símbolo y con codificación aritmética (orden A, B), dando en este caso la palabra más corta cuyo intervalo diádico cabe en el intervalo final. Compare ambas longitudes con la longitud ideal y comente qué ocurre con mensajes largos.
+\fuente{adaptado de Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, \emph{Examples Sheet}, \emph{Supervision}~2, ejercicio~5 (el original usa un mensaje de nueve símbolos e incluye Lempel--Ziv).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-bpb}
+Un modelo alcanza una pérdida de $0{,}7$ nats por token con un tokenizador de $3{,}5$ bytes por token. Calcule sus bits por byte y su factor de compresión respecto de 8 bits por byte.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-equivocado}
+Los datos siguen $p=(1/4,1/4,1/2)$ sobre $\{\mathrm{a},\mathrm{b},\mathrm{c}\}$, pero el código se ha diseñado para $q=(1/2,1/4,1/4)$ con longitudes $\ell(x)=-\log q(x)$. Calcule la longitud media del código bajo $p$, $H(p)$ y $\KL{p}{q}$, y compruebe que la longitud media es $H(p)+\KL{p}{q}$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-equivocado-teo}
+Sea un código de Shannon diseñado para $q$, con $\ell(x)=\lceil-\log q(x)\rceil$, usado con datos que siguen $p$ (con $q(x)>0$ siempre que $p(x)>0$). Demuestre que
+\[
+H(p)+\KL{p}{q}\le\E_{p}[\ell(X)]<H(p)+\KL{p}{q}+1.
+\]
+\fuente{adaptado de Cover y Thomas~\cite{ct}, §5.4, teorema sobre la codificación con una distribución equivocada.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Entropía, física y ajuste por preferencias}
+\label{tema:5}
+% =====================================================================
+
+Este tema relaciona la entropía de Shannon con la entropía de la física estadística y muestra que la misma herramienta, la desigualdad de Gibbs, resuelve tres problemas en apariencia distintos: la distribución de máxima entropía con una restricción de energía media, que es la distribución de Boltzmann y, en particular, la función softmax; el principio variacional de la energía libre; y el problema de maximizar una recompensa con una penalización de Kullback--Leibler, que está en la base del ajuste de los LLM por preferencias humanas. Se sigue~\cite[cap.~12]{ct} y el artículo de Jaynes~\cite{jaynes} para la máxima entropía, el artículo de Landauer~\cite{landauer} para el coste físico del borrado y los artículos de Ouyang \emph{et al.}~\cite{instructgpt} y Rafailov \emph{et al.}~\cite{dpo} para el ajuste por preferencias. El tema «Applications of information theory in other sciences» de~\cite{camit} trata el mismo puente con la física.
+
+En este tema los logaritmos son naturales y las entropías y divergencias se miden en nats, salvo indicación expresa.
+
+\section{La entropía en la física estadística}
+
+Un sistema físico macroscópico, descrito por unas pocas magnitudes (energía, volumen, número de partículas), es compatible con un número enorme de configuraciones microscópicas o \emph{microestados}.
+
+\begin{definicion}[Entropías de Boltzmann y de Gibbs]\label{def:boltzmann}
+Si un macroestado es compatible con $W$ microestados equiprobables, su \emph{entropía de Boltzmann} es $S=k_B\ln W$. Si los microestados tienen probabilidades $p_i$, la \emph{entropía de Gibbs} es
+\[
+S=-k_B\sum_ip_i\ln p_i,
+\]
+donde $k_B=1{,}380649\cdot10^{-23}\,\mathrm{J/K}$ es la constante de Boltzmann.
+\end{definicion}
+
+La entropía de Gibbs es $k_B$ veces la entropía de Shannon en nats, y la de Boltzmann es el caso uniforme, en el que $H=\ln W$. La entropía termodinámica de un macroestado es, salvo la constante $k_B$, la cantidad de información que falta para identificar el microestado~\cite{jaynes}.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Física estadística & Teoría de la información \\
+\midrule
+microestado & mensaje o secuencia concreta \\
+$S=k_B\ln W$ & $H=\log W$ bits (caso uniforme) \\
+$S=-k_B\sum_ip_i\ln p_i$ & $H=-\sum_ip_i\log p_i$ \\
+distribución de Boltzmann $e^{-E/k_BT}/Z$ & softmax de los logits con temperatura \\
+energía libre $F=\langle E\rangle-TS$ & objetivo con penalización de Kullback--Leibler \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{proposicion}\label{prop:binomial}
+Para $0\le k\le n$, $\binom{n}{k}\le 2^{nH_b(k/n)}$, donde $H_b$ es la entropía binaria en bits.
+\end{proposicion}
+
+\begin{proof}
+Si $k\in\{0,n\}$, ambos miembros valen~1. En otro caso, sea $\theta=k/n\in(0,1)$. Por el binomio de Newton,
+\[
+1=\sum_{j=0}^{n}\binom{n}{j}\theta^{j}(1-\theta)^{n-j}\ge\binom{n}{k}\theta^{k}(1-\theta)^{n-k}.
+\]
+Además, $\log_2\bigl(\theta^{k}(1-\theta)^{n-k}\bigr)=n\bigl(\theta\log_2\theta+(1-\theta)\log_2(1-\theta)\bigr)=-nH_b(\theta)$, luego $\theta^{k}(1-\theta)^{n-k}=2^{-nH_b(\theta)}$ y se obtiene la desigualdad.
+\end{proof}
+
+\begin{ejemplo}\label{ej:monedas}
+Las secuencias de 100 lanzamientos con exactamente 50 caras son $\binom{100}{50}$, y la entropía del macroestado «50 caras» es $\log_2\binom{100}{50}=96{,}35$ bits: identificar la secuencia exacta dentro de él requiere casi tanta información como los 100 bits de una secuencia arbitraria. La \cref{prop:binomial} da la cota $100\,H_b(0{,}5)=100$ bits. El exponente es ajustado: las secuencias «típicas», con una proporción de caras próxima a $\theta$, son del orden de $2^{nH_b(\theta)}$, salvo un factor polinómico en $n$.
+\end{ejemplo}
+
+\section{Máxima entropía y distribución de Boltzmann}
+
+Cuando de una distribución solo se conoce el valor medio de una magnitud, el principio de máxima entropía de Jaynes~\cite{jaynes} propone elegir, entre todas las distribuciones compatibles, la de mayor entropía: la que no añade ninguna información que no se tenga.
+
+\begin{teorema}[Distribución de máxima entropía]\label{teo:maxent}
+Sea $E\colon\X\to\R$ una función de energía sobre un alfabeto finito, sea $\lambda\in\R$ y sea
+\[
+p_\lambda(x)=\frac{e^{-\lambda E(x)}}{Z(\lambda)},\qquad Z(\lambda)=\sum_{x\in\X}e^{-\lambda E(x)}.
+\]
+Para toda distribución $p$ sobre $\X$ con la misma energía media, $\E_p[E]=\E_{p_\lambda}[E]$, se cumple $H(p)\le H(p_\lambda)$, con igualdad si y solo si $p=p_\lambda$.
+\end{teorema}
+
+\begin{proof}
+Como $-\ln p_\lambda(x)=\lambda E(x)+\ln Z(\lambda)$, para cualquier $p$
+\[
+H(p)=-\sum_xp(x)\ln p_\lambda(x)-\KL{p}{p_\lambda}=\lambda\,\E_p[E]+\ln Z(\lambda)-\KL{p}{p_\lambda}.
+\]
+Aplicada a $p=p_\lambda$, la misma identidad da $H(p_\lambda)=\lambda\,\E_{p_\lambda}[E]+\ln Z(\lambda)$. Si las energías medias coinciden, restando se obtiene $H(p)=H(p_\lambda)-\KL{p}{p_\lambda}\le H(p_\lambda)$, con igualdad si y solo si $p=p_\lambda$ (\cref{teo:gibbs})~\cite[§12.1]{ct}.
+\end{proof}
+
+En física, $\lambda=1/(k_BT)$ y $p_\lambda$ es la \emph{distribución de Boltzmann} a temperatura $T$: los estados de energía baja son más probables, y tanto más cuanto menor es la temperatura.
+
+\begin{observacion}[Conexión con los LLM]
+La función softmax con temperatura del módulo~1, $\softmax(z/T)_i=e^{z_i/T}/\sum_je^{z_j/T}$, es una distribución de Boltzmann con energías $E_i=-z_i$ y $\lambda=1/T$. Por el \cref{teo:maxent}, es la distribución de máxima entropía entre todas las que tienen el mismo logit medio. Subir la temperatura acerca la distribución a la uniforme, de entropía máxima $\ln K$; bajarla la concentra en el logit mayor.
+\end{observacion}
+
+\section{Energía libre y principio variacional}
+
+El problema siguiente aparece en física, con la energía libre, y en el ajuste de modelos de lenguaje, con una recompensa. Sean $\pref$ una distribución de referencia sobre un conjunto finito de respuestas $\mathcal{Y}$, con $\pref(y)>0$ para todo $y$, una recompensa $r\colon\mathcal{Y}\to\R$ y un coeficiente $\beta>0$. Se busca la distribución $\pi$ que maximiza
+\[
+\mathcal{F}(\pi)=\E_{y\sim\pi}[r(y)]-\beta\,\KL{\pi}{\pref}.
+\]
+
+\begin{teorema}[Principio variacional de Gibbs]\label{teo:variacional}
+Sean $Z=\sum_y\pref(y)\,e^{r(y)/\beta}$ y $\pi^{*}(y)=\pref(y)\,e^{r(y)/\beta}/Z$. Para toda distribución $\pi$ sobre $\mathcal{Y}$,
+\[
+\mathcal{F}(\pi)=\beta\ln Z-\beta\,\KL{\pi}{\pi^{*}}.
+\]
+En consecuencia, $\pi^{*}$ es el único maximizador de $\mathcal{F}$ y el valor máximo es $\beta\ln Z$.
+\end{teorema}
+
+\begin{proof}
+Tomando logaritmos en la definición de $\pi^{*}$, $r(y)=\beta\ln\frac{\pi^{*}(y)}{\pref(y)}+\beta\ln Z$ para todo $y$. Entonces
+\[
+\mathcal{F}(\pi)=\sum_y\pi(y)\Bigl[\beta\ln\frac{\pi^{*}(y)}{\pref(y)}+\beta\ln Z\Bigr]-\beta\sum_y\pi(y)\ln\frac{\pi(y)}{\pref(y)}
+=\beta\ln Z+\beta\sum_y\pi(y)\ln\frac{\pi^{*}(y)}{\pi(y)},
+\]
+y el último sumatorio es $-\KL{\pi}{\pi^{*}}$. La unicidad y el valor máximo se siguen del \cref{teo:gibbs}.
+\end{proof}
+
+\begin{corolario}\label{cor:energia-libre}
+Si $\pref$ es uniforme sobre $K$ respuestas, $\mathcal{F}(\pi)=\E_\pi[r]+\beta H(\pi)-\beta\ln K$. Con energía $E=-r$ y temperatura $\beta$, maximizar $\mathcal{F}$ equivale a minimizar la \emph{energía libre} $\E_\pi[E]-\beta H(\pi)$, cuyo minimizador es la distribución de Boltzmann.
+\end{corolario}
+
+\begin{proof}
+Si $\pref(y)=1/K$, $\KL{\pi}{\pref}=\sum_y\pi(y)\ln\bigl(K\pi(y)\bigr)=\ln K-H(\pi)$; se sustituye en $\mathcal{F}$.
+\end{proof}
+
+\section{El ajuste por preferencias con penalización de Kullback--Leibler}
+
+Tras el preentrenamiento y el ajuste supervisado, un modelo de lenguaje se ajusta a las preferencias humanas con aprendizaje por refuerzo (RLHF, módulo~21). Un \emph{modelo de recompensa} $r(x,y)$, entrenado con comparaciones humanas, puntúa la respuesta $y$ al mensaje $x$. Maximizar solo $r$ llevaría el modelo hacia respuestas extrañas que explotan los defectos del modelo de recompensa (\emph{reward hacking}). Por ello, Ouyang \emph{et al.}~\cite{instructgpt} añaden a la recompensa una penalización por alejarse del modelo supervisado $\pref$, que en esperanza es $\beta\,\KL{\pi}{\pref}$; para cada mensaje $x$ se maximiza la cantidad $\mathcal{F}$ del apartado anterior.
+
+Por el \cref{teo:variacional}, la política óptima es $\pi^{*}(y\mid x)\propto\pref(y\mid x)\,e^{r(x,y)/\beta}$: la referencia «recalentada» por la recompensa, con $\beta$ en el papel de temperatura. En la práctica el conjunto de respuestas es inmenso y $\pi^{*}$ no se calcula de forma explícita, sino que se aproxima con métodos de gradiente; el teorema describe a qué apunta esa optimización.
+
+\begin{ejemplo}\label{ej:rlhf}
+Sean tres respuestas con $\pref=(0{,}5;\ 0{,}3;\ 0{,}2)$ y recompensas $r=(0,1,2)$. La tabla da la política óptima, la recompensa media y la divergencia respecto de la referencia (en nats) para tres valores de $\beta$:
+\begin{center}
+\begin{tabular}{@{}cccc@{}}
+\toprule
+$\beta$ & $\pi^{*}$ & $\E_{\pi^{*}}[r]$ & $\KL{\pi^{*}}{\pref}$ \\
+\midrule
+$0{,}5$ & $(0{,}037;\ 0{,}163;\ 0{,}801)$ & $1{,}764$ & $0{,}915$ \\
+$1$ & $(0{,}179;\ 0{,}292;\ 0{,}529)$ & $1{,}350$ & $0{,}323$ \\
+$2$ & $(0{,}325;\ 0{,}322;\ 0{,}353)$ & $1{,}028$ & $0{,}084$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Con $\beta$ pequeño la política persigue la recompensa y se aleja de la referencia; con $\beta$ grande apenas se mueve. Para $\beta=1$, $\mathcal{F}(\pi^{*})=1{,}350-0{,}323=1{,}027$, que coincide con $\ln Z=\ln\bigl(0{,}5+0{,}3e+0{,}2e^{2}\bigr)=1{,}027$, como predice el \cref{teo:variacional}.
+\end{ejemplo}
+
+\begin{observacion}[Optimización directa de preferencias]
+Despejando la recompensa en la solución óptima, $r(x,y)=\beta\ln\bigl(\pi^{*}(y\mid x)/\pref(y\mid x)\bigr)+\beta\ln Z(x)$: cada política define implícitamente una recompensa. Rafailov \emph{et al.}~\cite{dpo} observan que, en el modelo de Bradley--Terry de comparaciones por pares, el término $\beta\ln Z(x)$ se cancela, y obtienen un método, DPO, que ajusta la política directamente con las comparaciones humanas, sin entrenar un modelo de recompensa separado (\cref{eje:5-dpo}).
+\end{observacion}
+
+\section{El coste físico de la información}
+
+\begin{proposicion}[Principio de Landauer]\label{prop:landauer}
+Borrar un bit de información en un sistema en contacto con un entorno a temperatura $T$ disipa en el entorno un calor de al menos $k_BT\ln 2$.
+\end{proposicion}
+
+La idea, debida a Landauer~\cite{landauer}, es la siguiente. Un bit de memoria cuyo valor se desconoce está en uno de dos estados equiprobables, con entropía $k_B\ln 2$; tras el borrado, que lo pone siempre a~0, su entropía es nula. Como la entropía total no puede disminuir, al menos $k_B\ln 2$ de entropía pasa al entorno, lo que exige un calor $Q\ge T\,\Delta S=k_BT\ln 2$. A $T=300$~K, este mínimo vale $1{,}380649\cdot10^{-23}\cdot300\cdot0{,}6931=2{,}87\cdot10^{-21}$~J por bit. Los circuitos actuales disipan muchos órdenes de magnitud más por operación; el módulo~17 retoma la cuestión del coste energético del cómputo.
+
+\begin{lecturas}
+\item Cover y Thomas~\cite{ct}, §12.1 «Maximum Entropy Distributions» y §12.2 «Examples».
+\item Jaynes~\cite{jaynes}, principio de máxima entropía y su relación con la mecánica estadística.
+\item Landauer~\cite{landauer}, artículo original sobre la irreversibilidad y el calor del cómputo.
+\item Ouyang \emph{et al.}~\cite{instructgpt}, objetivo con penalización de Kullback--Leibler.
+\item Rafailov \emph{et al.}~\cite{dpo}, deducción de la solución óptima y del método DPO.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-beta}
+En el \cref{teo:variacional}, describa $\pi^{*}$ en los límites $\beta\to\infty$ y $\beta\to 0^{+}$, suponiendo que hay una única respuesta de recompensa máxima. Explique qué papel cumple $\beta$ en el ajuste por preferencias de un LLM.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-monedas}
+Se lanzan 10 monedas. Calcule, en bits, la entropía de Boltzmann de los macroestados «exactamente 5 caras» y «exactamente 2 caras» (todas las secuencias compatibles equiprobables) y compárelas con la cota $nH_b(k/n)$ de la \cref{prop:binomial}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-landauer}
+Calcule el calor mínimo que, según el principio de Landauer, disipa el borrado de 1~GB ($8\cdot10^{9}$ bits) a $300$~K. Exprese también el mínimo por bit en electronvoltios ($1\,\mathrm{eV}=1{,}602\cdot10^{-19}$~J).
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-rlhf}
+Sean $\pref=(1/2,1/2)$, $r=(0,1)$ y $\beta=1$. Calcule $\pi^{*}$, $\E_{\pi^{*}}[r]$, $\KL{\pi^{*}}{\pref}$ en nats y el valor del objetivo $\mathcal{F}(\pi^{*})$, y compruebe que coincide con $\ln Z$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-lagrange}
+Sea $f\colon\X\to\R$ una función sobre un alfabeto finito y $\alpha$ un número real. Mediante multiplicadores de Lagrange, demuestre que una distribución con todas sus probabilidades positivas que maximice $H(p)$ con la restricción $\sum_xp(x)f(x)=\alpha$ tiene la forma $p(x)=e^{-\lambda f(x)}/Z$ para algún $\lambda\in\R$. Compare el método con la demostración del \cref{teo:maxent}.
+\fuente{adaptado de Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, \emph{Examples Sheet}, \emph{Supervision}~1, ejercicio~5.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-dpo}
+En el modelo de Bradley--Terry, la probabilidad de que una persona prefiera la respuesta $y_1$ a la $y_2$ ante el mensaje $x$ es $\sigma\bigl(r(x,y_1)-r(x,y_2)\bigr)$, con $\sigma(u)=1/(1+e^{-u})$. (a) Usando la expresión de $r$ en función de $\pi^{*}$, demuestre que esa probabilidad solo depende de los cocientes $\pi^{*}(y_i\mid x)/\pref(y_i\mid x)$ y no de $Z(x)$. (b) Con los datos del \cref{eje:5-rlhf}, calcule la diferencia de recompensas implícita y la probabilidad de preferir la segunda respuesta.
+\fuente{adaptado de Rafailov \emph{et al.}~\cite{dpo}, deducción del objetivo DPO.}
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los resultados exactos se dan como fracción cuando existe. Con calculadora, $\log_2 t=\ln t/\ln 2=\ln t/0{,}6931$.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-aditiva}
+\datos sucesos independientes $A$ y $B$ con $P(A)=p$ y $P(B)=q$, de modo que $P(A\cap B)=pq$.
+\planteamiento la información de sucesos independientes debe ser aditiva mientras la probabilidad es multiplicativa; se busca la función que transforma productos en sumas (\cref{prop:caracterizacion}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Si $A$ y $B$ son independientes, saber que ha ocurrido $B$ no cambia la sorpresa de $A$; la sorpresa conjunta debe ser la suma: $h(pq)=h(p)+h(q)$.
+  \item El logaritmo cumple $\log(pq)=\log p+\log q$.
+  \item Además, $h$ debe ser decreciente y valer~0 en $p=1$; $\log p$ es creciente y vale~0 en~1, de modo que hay que cambiarle el signo: $h(p)=-\log p$.
+  \item Por la \cref{prop:caracterizacion}, toda solución decreciente es de la forma $-c\log_2p$ con $c\ge 0$; la base del logaritmo solo fija $c$, es decir, la unidad: base~2 da bits y base~$e$, nats.
+\end{enumerate}
+\resultado \textbf{$h(p)=-\log p$; la base solo elige la unidad de medida (bits o nats).}
+\comprobacion dos monedas equilibradas: $h(1/4)=2$ bits $=h(1/2)+h(1/2)=1+1$.
+\end{solucion}
+
+\begin{solucion}{eje:1-archivos}
+\datos dos archivos de $1$~MB $=8\cdot10^{6}$ bits: uno de ceros y otro de bits independientes y equiprobables.
+\planteamiento el \cref{teo:cotas} (y el \cref{cor:bloques}) fija en $H$ bits por símbolo el mínimo de la longitud media de un código sin pérdidas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Archivo de ceros: la fuente es degenerada, $H=0$ (\cref{prop:cotas-entropia}). Basta una descripción del tipo «$8\cdot10^{6}$ ceros», de unas decenas de bits.
+  \item Archivo aleatorio: cada bit tiene distribución $(1/2,1/2)$ y $H=1$ bit por bit, el máximo posible para dos resultados.
+  \item Ningún código sin pérdidas baja, en media, de $8\cdot10^{6}$ bits para el segundo archivo.
+\end{enumerate}
+\resultado \textbf{el archivo de ceros se comprime casi por completo ($H=0$); el aleatorio no admite compresión ($H=1$ bit por bit).}
+\comprobacion en la práctica, un compresor de uso general aplicado a bits aleatorios produce un archivo algo mayor que el original, por sus cabeceras; es coherente con el \cref{eje:3-no-comprime}.
+\end{solucion}
+
+\begin{solucion}{eje:1-cambridge}
+\datos (a) 256 valores equiprobables; (b) todos los seres humanos son mamíferos; (c) $p=(1/4,1/4,1/2)$; (d) la mediana divide la población en dos mitades, $p=(1/2,1/2)$.
+\planteamiento $H=-\sum_xp(x)\log p(x)$; para la uniforme sobre $K$ valores, $H=\log K$.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item $H=\log 256=\log 2^{8}=8$ bits.
+  \item La distribución es degenerada: $P(\text{mamífero})=1$, luego $H=-1\cdot\log 1=0$ bits.
+  \item $H=\tfrac14\cdot 2+\tfrac14\cdot 2+\tfrac12\cdot 1=0{,}5+0{,}5+0{,}5=1{,}5$ bits.
+  \item $H=\tfrac12\cdot 1+\tfrac12\cdot 1=1$ bit.
+\end{enumerate}
+\resultado \textbf{(a) 8 bits; (b) 0 bits; (c) 1,5 bits; (d) 1 bit.}
+\comprobacion (a) coincide con los 8 bits de un byte: un píxel uniforme no se puede comprimir. (c) es la distribución del \cref{ej:entropia-tres}.
+\end{solucion}
+
+\begin{solucion}{eje:1-binaria}
+\datos $P(\text{cara})=1/4$; $H_b(\theta)=-\theta\log\theta-(1-\theta)\log(1-\theta)$ en $(0,1)$.
+\planteamiento (a) sustituir; (b) derivar, usando $\frac{d}{d\theta}\log\theta=\frac{1}{\theta\ln 2}$, igualar a cero y estudiar la segunda derivada.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $-\log(1/4)=2$ y $-\log(3/4)=\log(4/3)=0{,}2877/0{,}6931=0{,}4150$.
+  \item $H_b(1/4)=\tfrac14\cdot 2+\tfrac34\cdot 0{,}4150=0{,}5+0{,}3113=0{,}8113$ bits.
+  \item Derivada: $\frac{d}{d\theta}\bigl(-\theta\log\theta\bigr)=-\log\theta-\frac{1}{\ln 2}$ y $\frac{d}{d\theta}\bigl(-(1-\theta)\log(1-\theta)\bigr)=\log(1-\theta)+\frac{1}{\ln 2}$.
+  \item Sumando, $H_b'(\theta)=\log\frac{1-\theta}{\theta}$, que se anula si y solo si $\frac{1-\theta}{\theta}=1$, es decir, $\theta=1/2$.
+  \item $H_b''(\theta)=\frac{1}{\ln 2}\Bigl(-\frac{1}{1-\theta}-\frac{1}{\theta}\Bigr)=-\frac{1}{\theta(1-\theta)\ln 2}<0$ en $(0,1)$: $H_b$ es estrictamente cóncava y el punto crítico es el único máximo, con $H_b(1/2)=1$ bit.
+\end{enumerate}
+\resultado \textbf{(a) $H_b(1/4)\approx 0{,}811$ bits; (b) $H_b'(\theta)=\log\frac{1-\theta}{\theta}$, con único máximo en $\theta=1/2$.}
+\comprobacion $0<0{,}811<1$ y el valor coincide con el del \cref{ej:binaria}; además $H_b'>0$ para $\theta<1/2$ y $H_b'<0$ para $\theta>1/2$.
+\end{solucion}
+
+\begin{solucion}{eje:1-geometrica}
+\datos $X$ uniforme en $\{1,\dots,8\}$; $P(Y=k)=2^{-k}$ para $k\ge 1$; $X$ e $Y$ independientes.
+\planteamiento $H(X)=\log 8$; $H(Y)=\sum_k2^{-k}\cdot k$ porque $-\log2^{-k}=k$; por independencia, $p(x,y)=p(x)p(y)$ y $p(y\mid x)=p(y)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $H(X)=\log 8=3$ bits.
+  \item $H(Y)=\sum_{k\ge 1}k\,2^{-k}$. Con la serie $\sum_{k\ge1}k\,t^{k}=t/(1-t)^{2}$ para $\abs{t}<1$ y $t=1/2$: $H(Y)=(1/2)/(1/4)=2$ bits.
+  \item Por independencia, $H(Y\mid X=x)=H(Y)$ para cada $x$, luego $H(Y\mid X)=2$ bits.
+  \item Regla de la cadena: $H(X,Y)=H(X)+H(Y\mid X)=3+2=5$ bits.
+\end{enumerate}
+\resultado \textbf{$H(X)=3$ bits $>H(Y)=2$ bits, aunque $Y$ tome infinitos valores; $H(X,Y)=5$ bits y $H(Y\mid X)=2$ bits.}
+\comprobacion sumas parciales de $H(Y)$: $0{,}5$; $1$; $1{,}375$; $1{,}625$; $1{,}781$\ldots, que tienden a~2. El código prefijo \bin{0}, \bin{10}, \bin{110}, \ldots{} para $Y$ tiene longitud media exactamente~2 (\cref{teo:cota-inferior}, caso diádico).
+\end{solucion}
+
+\begin{solucion}{eje:1-funcion}
+\datos $X$ con distribución $p$ y una función $g$; se escribe $S=\{x:p(x)>0\}$.
+\planteamiento calcular $H(X,g(X))$ con la regla de la cadena (\cref{teo:cadena-entropia}) en los dos órdenes.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Primer orden: $H(X,g(X))=H(X)+H(g(X)\mid X)$. Conocido $X=x$, $g(X)$ vale $g(x)$ con probabilidad~1, luego $H(g(X)\mid X=x)=0$ para cada $x$ y $H(g(X)\mid X)=0$. Así, $H(X,g(X))=H(X)$.
+  \item Segundo orden: $H(X,g(X))=H(g(X))+H(X\mid g(X))$.
+  \item Igualando, $H(X)=H(g(X))+H(X\mid g(X))\ge H(g(X))$, porque $H(X\mid g(X))$ es una media de entropías, que son no negativas (\cref{prop:cotas-entropia}).
+  \item Igualdad si y solo si $H(X\mid g(X))=0$, es decir, si para cada valor $y$ con probabilidad positiva la distribución de $X$ dado $g(X)=y$ es degenerada: hay un único $x\in S$ con $g(x)=y$. Esto es la inyectividad de $g$ sobre $S$.
+  \item Interpretación: convertir el texto a minúsculas es una función no inyectiva («Casa» y «casa» van al mismo texto), de modo que la entropía del texto transformado es menor o igual que la del original; la información perdida es $H(X\mid g(X))$, la incertidumbre sobre las mayúsculas originales.
+\end{enumerate}
+\resultado \textbf{$H(g(X))\le H(X)$, con igualdad si y solo si $g$ es inyectiva sobre el soporte de $X$.}
+\comprobacion si $X$ es uniforme en $\{1,2,3,4\}$ y $g(x)=x\bmod 2$, entonces $H(g(X))=1\le H(X)=2$, y $H(X\mid g(X))=1$ bit, que es la diferencia.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-vf}
+\datos cuatro afirmaciones sobre la divergencia, la entropía cruzada, la entropía máxima y la información mutua.
+\planteamiento contraejemplo numérico para (a); el \cref{teo:gibbs} y sus consecuencias para el resto.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item En el \cref{ej:asimetria}, $\KL{p}{q}=0{,}322$ y $\KL{q}{p}=0{,}278$ bits. \textbf{Falsa.}
+  \item $H(p,q)=H(p)+\KL{p}{q}$ y $\KL{p}{q}\ge0$ (\cref{prop:descomposicion}). \textbf{Verdadera.}
+  \item Con $K=4$ símbolos, $H\le\log 4=2$ bits (\cref{prop:cotas-entropia}), y $3>2$. \textbf{Falsa.}
+  \item $I(X;Y)=\KL{p(x,y)}{p(x)p(y)}$ se anula si y solo si $p(x,y)=p(x)p(y)$ para todo par (\cref{teo:mutua-positiva}). \textbf{Verdadera.}
+\end{enumerate}
+\resultado \textbf{(a) falsa; (b) verdadera; (c) falsa; (d) verdadera.}
+\comprobacion para (c), 3 bits exigirían $2^{3}=8$ resultados equiprobables, el doble de los disponibles.
+\end{solucion}
+
+\begin{solucion}{eje:2-direcciones}
+\datos la \cref{def:kl} y la \cref{obs:direcciones}.
+\planteamiento (a) comparar con los axiomas de una distancia; (b) analizar qué términos de cada divergencia se hacen grandes.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Una distancia es simétrica y cumple la desigualdad triangular. La entropía relativa no es simétrica (\cref{ej:asimetria}) ni cumple en general la desigualdad triangular; solo conserva la no negatividad y la anulación exacta en $p=q$ (\cref{teo:gibbs}). Por eso se llama divergencia.
+  \item (b) Hacia delante, $\KL{p}{q}=\sum_xp(x)\log\frac{p(x)}{q(x)}$: los términos grandes aparecen donde $p(x)$ es apreciable y $q(x)$ es pequeña. Para evitarlos, $q$ debe repartir masa sobre las dos modas; con una sola moda, se sitúa entre ambas y es ancha: \emph{cubre} el soporte de $p$, aunque ponga masa en la zona intermedia, donde $p$ es pequeña.
+  \item Hacia atrás, $\KL{q}{p}=\sum_xq(x)\log\frac{q(x)}{p(x)}$: los términos grandes aparecen donde $q(x)$ es apreciable y $p(x)$ es pequeña. A $q$ le conviene no poner masa en la zona intermedia y \emph{concentrarse} en una de las dos modas, ignorando la otra.
+  \item El entrenamiento por máxima verosimilitud minimiza la entropía cruzada $H(p,q_\theta)$, que difiere de $\KL{p}{q_\theta}$ en la constante $H(p)$ (\cref{prop:descomposicion}): se minimiza la divergencia hacia delante.
+\end{enumerate}
+\resultado \textbf{(a) no es simétrica ni cumple la desigualdad triangular; (b) $\KL{p}{q}$ produce una $q$ que cubre ambas modas y $\KL{q}{p}$ una $q$ concentrada en una moda; la máxima verosimilitud minimiza $\KL{p}{q}$.}
+\comprobacion la divergencia hacia atrás es la que aparece en la penalización del ajuste por preferencias, $\KL{\pi}{\pref}$, con la política que se optimiza en primer lugar (\cref{tema:5}).
+\end{solucion}
+
+\begin{solucion}{eje:2-kl-moneda}
+\datos $p=(1/2,1/2)$, $q=(0{,}9;\ 0{,}1)$.
+\planteamiento $H(p,q)=-\sum p\log q$; $\KL{p}{q}=H(p,q)-H(p)$; $\KL{q}{p}=H(q,p)-H(q)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\log 0{,}9=-0{,}1520$ y $\log 0{,}1=-3{,}322$.
+  \item $H(p,q)=\tfrac12\cdot 0{,}1520+\tfrac12\cdot 3{,}322=0{,}0760+1{,}661=1{,}737$ bits.
+  \item $H(p)=1$ bit, luego $\KL{p}{q}=1{,}737-1=0{,}737$ bits.
+  \item $H(q,p)=-0{,}9\log0{,}5-0{,}1\log 0{,}5=0{,}9+0{,}1=1$ bit.
+  \item $H(q)=0{,}9\cdot 0{,}1520+0{,}1\cdot 3{,}322=0{,}1368+0{,}3322=0{,}4690$ bits.
+  \item $\KL{q}{p}=1-0{,}4690=0{,}531$ bits.
+\end{enumerate}
+\resultado \textbf{$H(p,q)\approx 1{,}737$ bits; $\KL{p}{q}\approx 0{,}737$ bits; $\KL{q}{p}\approx 0{,}531$ bits.}
+\comprobacion cálculo directo: $\KL{q}{p}=0{,}9\log 1{,}8+0{,}1\log 0{,}2=0{,}9\cdot 0{,}8480-0{,}1\cdot 2{,}322=0{,}7632-0{,}2322=0{,}531$.
+\end{solucion}
+
+\begin{solucion}{eje:2-conjunta}
+\datos $p(0,0)=0{,}3$; $p(0,1)=0{,}2$; $p(1,0)=0{,}1$; $p(1,1)=0{,}4$.
+\planteamiento marginales sumando filas y columnas; $I=H(X)+H(Y)-H(X,Y)$ (\cref{prop:mutua-identidades}); $H(Y\mid X)=H(X,Y)-H(X)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $p_X(0)=0{,}3+0{,}2=0{,}5$ y $p_X(1)=0{,}1+0{,}4=0{,}5$: $H(X)=1$ bit.
+  \item $p_Y(0)=0{,}3+0{,}1=0{,}4$ y $p_Y(1)=0{,}2+0{,}4=0{,}6$.
+  \item $H(Y)=0{,}4\cdot 1{,}322+0{,}6\cdot 0{,}7370=0{,}5288+0{,}4422=0{,}9710$ bits.
+  \item $H(X,Y)=0{,}3\cdot 1{,}737+0{,}2\cdot 2{,}322+0{,}1\cdot 3{,}322+0{,}4\cdot 1{,}322=0{,}5211+0{,}4644+0{,}3322+0{,}5288=1{,}846$ bits.
+  \item $I(X;Y)=1+0{,}9710-1{,}846=0{,}125$ bits.
+  \item $H(Y\mid X)=1{,}846-1=0{,}846$ bits.
+\end{enumerate}
+\resultado \textbf{$H(X)=1$; $H(Y)\approx 0{,}971$; $H(X,Y)\approx 1{,}846$; $I(X;Y)\approx 0{,}125$; $H(Y\mid X)\approx 0{,}846$ bits.}
+\comprobacion $H(Y)-H(Y\mid X)=0{,}971-0{,}846=0{,}125=I(X;Y)$, por la otra identidad de la \cref{prop:mutua-identidades}.
+\end{solucion}
+
+\begin{solucion}{eje:2-galletas}
+\datos 6 galletas (3~C, 2~H, 1~A), extracción sin reemplazamiento; $\log 3=1{,}585$, $\log 5=2{,}322$.
+\planteamiento construir la tabla conjunta $P(X=i,Y=j)=P(X=i)\,P(Y=j\mid X=i)$ y aplicar las definiciones de los temas~1 y~2.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $P(X)=(3/6,2/6,1/6)=(1/2,1/3,1/6)$.
+  \item Condicionadas (quedan 5 galletas): $X=\mathrm{C}\Rightarrow Y\sim(2,2,1)/5$; $X=\mathrm{H}\Rightarrow(3,1,1)/5$; $X=\mathrm{A}\Rightarrow(3,2,0)/5$.
+  \item Tabla conjunta en treintavos (filas $X=\mathrm{C},\mathrm{H},\mathrm{A}$; columnas $Y$ en el mismo orden):
+  \[30P=\begin{pmatrix}6&6&3\\6&2&2\\3&2&0\end{pmatrix}.\]
+  Las columnas suman $(15,10,5)$, luego $P(Y)=(1/2,1/3,1/6)$.
+  \item $H(X)=H(Y)=\tfrac12\cdot 1+\tfrac13\log 3+\tfrac16\log 6=0{,}5+0{,}5283+0{,}4308=1{,}459$ bits.
+  \item $H(X,Y)$: valores $1/5$ (tres veces), $1/10$ (dos veces) y $1/15$ (tres veces), con $-\log$ iguales a $2{,}322$, $3{,}322$ y $3{,}907$:
+  $H(X,Y)=0{,}6\cdot 2{,}322+0{,}2\cdot 3{,}322+0{,}2\cdot 3{,}907=1{,}393+0{,}6644+0{,}7814=2{,}839$ bits.
+  \item $H(Y\mid X)=H(X,Y)-H(X)=2{,}839-1{,}459=1{,}380$ bits, y por simetría de las marginales, $H(X\mid Y)=H(X,Y)-H(Y)=1{,}380$ bits.
+  \item $I(X;Y)=H(Y)-H(Y\mid X)=1{,}459-1{,}380=0{,}079$ bits.
+  \item (b) $P_{Y\mid X=\mathrm{H}}=(0{,}6;\ 0{,}2;\ 0{,}2)$ y $P_{Y\mid X=\mathrm{A}}=(0{,}6;\ 0{,}4;\ 0)$. El término de A en $\KL{P_{Y\mid X=\mathrm{H}}}{P_{Y\mid X=\mathrm{A}}}$ es $0{,}2\log(0{,}2/0)=+\infty$: la divergencia es infinita.
+  \item $\KL{P_{Y\mid X=\mathrm{A}}}{P_{Y\mid X=\mathrm{H}}}=0{,}6\log 1+0{,}4\log 2+0=0{,}4$ bits.
+  \item (c) Las ordenaciones distinguibles de los sabores son $6!/(3!\,2!\,1!)=720/12=60$, todas equiprobables: $H=\log 60=5{,}907$ bits.
+\end{enumerate}
+\resultado \textbf{$H(X)=H(Y)\approx 1{,}459$; $H(X,Y)\approx 2{,}839$; $H(Y\mid X)=H(X\mid Y)\approx 1{,}380$; $I(X;Y)\approx 0{,}079$ bits; $\KL{P_{Y\mid\mathrm{H}}}{P_{Y\mid\mathrm{A}}}=\infty$ y $\KL{P_{Y\mid\mathrm{A}}}{P_{Y\mid\mathrm{H}}}=0{,}4$ bits; el orden completo contiene $\log 60\approx 5{,}907$ bits.}
+\comprobacion la tabla suma $30/30$. La divergencia infinita es la pérdida infinita del módulo~1: un modelo que da probabilidad~0 a algo que ocurre.
+\end{solucion}
+
+\begin{solucion}{eje:2-gibbs-ln}
+\datos distribuciones $p$ y $q$; $S=\{x:p(x)>0\}$; $\ln t\le t-1$ para $t>0$, con igualdad solo en $t=1$; $u(x)=1/K$.
+\planteamiento (a) aplicar la desigualdad a $t=q(x)/p(x)$ en $S$ y sumar con pesos $p(x)$; (b) desarrollar $\KL{p}{u}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Si algún $x\in S$ tiene $q(x)=0$, la divergencia es $+\infty\ge 0$. En otro caso, los $x\notin S$ no contribuyen, y en nats $-\KL{p}{q}=\sum_{x\in S}p(x)\ln\frac{q(x)}{p(x)}$.
+  \item Con $t=q(x)/p(x)$: $p(x)\ln\frac{q(x)}{p(x)}\le p(x)\Bigl(\frac{q(x)}{p(x)}-1\Bigr)=q(x)-p(x)$.
+  \item Sumando sobre $S$: $-\KL{p}{q}\le\sum_{x\in S}q(x)-\sum_{x\in S}p(x)=\sum_{x\in S}q(x)-1\le 0$.
+  \item Igualdad: el paso~2 exige $q(x)=p(x)$ en todo $S$ y el paso~3 exige $\sum_{x\in S}q(x)=1$, es decir, $q=0$ fuera de $S$. Juntas dan $q=p$. En bits basta dividir por $\ln 2>0$.
+  \item (b) $\KL{p}{u}=\sum_xp(x)\log\frac{p(x)}{1/K}=\sum_xp(x)\log K+\sum_xp(x)\log p(x)=\log K-H(p)$.
+  \item Por (a), $\log K-H(p)\ge 0$, con igualdad si y solo si $p=u$.
+\end{enumerate}
+\resultado \textbf{$\KL{p}{q}\ge 0$ con igualdad si y solo si $p=q$; en consecuencia, $H(p)\le\log K$ con igualdad solo para la uniforme.}
+\comprobacion para $p=(1/2,1/4,1/4)$: $\KL{p}{u}=\log 3-1{,}5=1{,}585-1{,}5=0{,}085\ge 0$.
+\end{solucion}
+
+\begin{solucion}{eje:2-mutua}
+\datos conjunta $p(x,y)$ con marginales $p(x)=\sum_yp(x,y)$ y $p(y)=\sum_xp(x,y)$.
+\planteamiento desarrollar el logaritmo del cociente, agrupar por marginales y aplicar el \cref{teo:gibbs}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Como $\log\frac{a}{bc}=\log a-\log b-\log c$,
+  \[I(X;Y)=\sum_{x,y}p(x,y)\log p(x,y)-\sum_{x,y}p(x,y)\log p(x)-\sum_{x,y}p(x,y)\log p(y).\]
+  \item El primer término es $-H(X,Y)$.
+  \item En el segundo, se agrupa por $x$: $\sum_x\log p(x)\sum_yp(x,y)=\sum_xp(x)\log p(x)=-H(X)$; con el signo menos queda $+H(X)$.
+  \item Análogamente, el tercer término es $+H(Y)$. Por tanto, $I(X;Y)=H(X)+H(Y)-H(X,Y)$.
+  \item Por la regla de la cadena, $H(X,Y)=H(X)+H(Y\mid X)$; sustituyendo, $I(X;Y)=H(Y)-H(Y\mid X)$.
+  \item $I(X;Y)$ es una entropía relativa, luego $I(X;Y)\ge 0$ y $H(Y\mid X)\le H(Y)$.
+\end{enumerate}
+\resultado \textbf{$I(X;Y)=H(X)+H(Y)-H(X,Y)=H(Y)-H(Y\mid X)\ge 0$, y condicionar no aumenta la entropía en media.}
+\comprobacion con el \cref{eje:2-conjunta}: $H(Y\mid X)=0{,}846\le H(Y)=0{,}971$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-dos-huffman}
+\datos $p=(0{,}4;\ 0{,}2;\ 0{,}2;\ 0{,}1;\ 0{,}1)$ sobre $\{\mathrm{a},\mathrm{b},\mathrm{c},\mathrm{d},\mathrm{e}\}$ (\cref{ej:huffman}).
+\planteamiento repetir el algoritmo cambiando el desempate de la tercera fusión y calcular las profundidades de las hojas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Primeras fusiones, como en el texto: $\mathrm{d}+\mathrm{e}\to 0{,}2$; $\mathrm{b}+\mathrm{c}\to 0{,}4$. Quedan $\mathrm{a}$ ($0{,}4$), $\{\mathrm{b},\mathrm{c}\}$ ($0{,}4$) y $\{\mathrm{d},\mathrm{e}\}$ ($0{,}2$).
+  \item El nodo menor es $\{\mathrm{d},\mathrm{e}\}$ y hay empate a $0{,}4$ para el segundo. En el texto se eligió $\mathrm{a}$; ahora se elige $\{\mathrm{b},\mathrm{c}\}$: $\{\mathrm{b},\mathrm{c}\}+\{\mathrm{d},\mathrm{e}\}\to 0{,}6$.
+  \item Última fusión: $\mathrm{a}+0{,}6\to 1$. Profundidades: $\mathrm{a}$ a profundidad~1 y $\mathrm{b},\mathrm{c},\mathrm{d},\mathrm{e}$ a profundidad~3. Un código posible: $\mathrm{a}=\bin{0}$, $\mathrm{b}=\bin{100}$, $\mathrm{c}=\bin{101}$, $\mathrm{d}=\bin{110}$, $\mathrm{e}=\bin{111}$.
+  \item Longitud media: $0{,}4\cdot 1+(0{,}2+0{,}2+0{,}1+0{,}1)\cdot 3=0{,}4+1{,}8=2{,}2$ bits.
+\end{enumerate}
+\resultado \textbf{sí: se obtienen las longitudes $\{2,2,2,3,3\}$ o $\{1,3,3,3,3\}$, ambas con longitud media $2{,}2$ bits; los dos códigos son óptimos (\cref{teo:huffman}).}
+\comprobacion Kraft: $3\cdot2^{-2}+2\cdot2^{-3}=1$ y $2^{-1}+4\cdot2^{-3}=1$. Los códigos difieren en la varianza de la longitud: $0{,}16$ frente a $0{,}96$ bits$^{2}$.
+\end{solucion}
+
+\begin{solucion}{eje:3-diadica}
+\datos $p=(1/2,1/4,1/8,1/8)$.
+\planteamiento $H=\sum_ip_i(-\log p_i)$; código fijo de $\lceil\log 4\rceil$ bits; Huffman fusionando los dos nodos menores.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sorpresas: $1$, $2$, $3$ y $3$ bits.
+  \item $H=\tfrac12\cdot 1+\tfrac14\cdot 2+\tfrac18\cdot 3+\tfrac18\cdot 3=0{,}5+0{,}5+0{,}375+0{,}375=1{,}75$ bits.
+  \item Código fijo: $\log 4=2$ bits por símbolo.
+  \item Huffman: $\tfrac18+\tfrac18=\tfrac14$; quedan $(\tfrac12,\tfrac14,\tfrac14)$; $\tfrac14+\tfrac14=\tfrac12$; quedan $(\tfrac12,\tfrac12)$; fusión final.
+  \item Palabras: \bin{0}, \bin{10}, \bin{110}, \bin{111}, de longitudes $1,2,3,3$; $L=1{,}75$ bits.
+\end{enumerate}
+\resultado \textbf{$H=1{,}75$ bits; código fijo de 2 bits; Huffman $\{\bin{0},\bin{10},\bin{110},\bin{111}\}$ con $L=1{,}75$ bits $=H$.}
+\comprobacion Kraft: $2^{-1}+2^{-2}+2^{-3}+2^{-3}=1$. $L=H$ porque todas las probabilidades son potencias de $1/2$ (\cref{teo:cota-inferior}); es el código $C_4$ de la \cref{fig:arbol-kraft}.
+\end{solucion}
+
+\begin{solucion}{eje:3-huffman5}
+\datos $p=(0{,}35;\ 0{,}25;\ 0{,}2;\ 0{,}15;\ 0{,}05)$; $H(p)=2{,}121$ bits.
+\planteamiento fusionar los dos nodos menos probables; cada fusión suma un bit a las palabras de sus símbolos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $0{,}05+0{,}15=0{,}2$. Quedan $0{,}35$; $0{,}25$; $0{,}2$; $0{,}2$.
+  \item $0{,}2$ (símbolo) $+\,0{,}2$ (nodo) $=0{,}4$. Quedan $0{,}35$; $0{,}25$; $0{,}4$.
+  \item $0{,}25+0{,}35=0{,}6$. Quedan $0{,}4$; $0{,}6$.
+  \item $0{,}4+0{,}6=1$.
+  \item Profundidades: $0{,}35\to 2$; $0{,}25\to 2$; $0{,}2\to 2$; $0{,}15\to 3$; $0{,}05\to 3$. Un código posible: \bin{00}, \bin{01}, \bin{10}, \bin{110}, \bin{111}.
+  \item $L=0{,}7+0{,}5+0{,}4+0{,}45+0{,}15=2{,}2$ bits.
+\end{enumerate}
+\resultado \textbf{$L=2{,}2$ bits, $0{,}079$ por encima de $H$ y $0{,}8$ por debajo del código fijo de 3 bits.}
+\comprobacion Kraft: $3\cdot 2^{-2}+2\cdot 2^{-3}=1$; y $2{,}121\le 2{,}2<3{,}121$, como exige el \cref{teo:cotas}.
+\end{solucion}
+
+\begin{solucion}{eje:3-unica}
+\datos $C=\{\bin{00},\bin{11},\bin{0101},\bin{111},\bin{1010},\bin{100100},\bin{0110}\}$.
+\planteamiento buscar prefijos, sumar $2^{-\ell}$ y buscar dos troceados distintos de una misma cadena.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item \bin{11} es prefijo de \bin{111}: no es un código prefijo.
+  \item Longitudes $2,2,4,3,4,6,4$: $\sum2^{-\ell}=\frac{16+16+4+8+4+1+4}{64}=\frac{53}{64}\approx 0{,}8281\le 1$. Cumple Kraft.
+  \item La cadena \bin{11111} admite dos lecturas: $\bin{11}\,|\,\bin{111}$ y $\bin{111}\,|\,\bin{11}$.
+\end{enumerate}
+\resultado \textbf{no es prefijo; cumple Kraft ($53/64$); no es unívocamente descodificable: \bin{11111} es ambigua.}
+\comprobacion Kraft garantiza que \emph{existe} un código prefijo con esas longitudes (\cref{teo:kraft}), no que este código concreto lo sea.
+\end{solucion}
+
+\begin{solucion}{eje:3-shannon}
+\datos $p=(0{,}4;\ 0{,}2;\ 0{,}2;\ 0{,}1;\ 0{,}1)$; $H(p)=2{,}122$ bits; Huffman $L=2{,}2$ bits (\cref{ej:huffman}).
+\planteamiento $\ell(x)=\lceil-\log p(x)\rceil$ (\cref{def:shannon}); las palabras se construyen como en la demostración del \cref{teo:kraft}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $-\log 0{,}4=1{,}322\Rightarrow\ell=2$; $-\log 0{,}2=2{,}322\Rightarrow\ell=3$; $-\log 0{,}1=3{,}322\Rightarrow\ell=4$. Longitudes $(2,3,3,4,4)$.
+  \item Kraft: $\frac14+\frac18+\frac18+\frac1{16}+\frac1{16}=0{,}625\le 1$.
+  \item Palabras con $s_i=\sum_{j<i}2^{-\ell_j}$: $s=0,\ \tfrac14,\ \tfrac38,\ \tfrac12,\ \tfrac9{16}$, que dan \bin{00}, \bin{010}, \bin{011}, \bin{1000}, \bin{1001}.
+  \item $L=0{,}4\cdot 2+0{,}2\cdot 3+0{,}2\cdot 3+0{,}1\cdot 4+0{,}1\cdot 4=0{,}8+1{,}2+0{,}8=2{,}8$ bits.
+\end{enumerate}
+\resultado \textbf{longitudes $(2,3,3,4,4)$, suma de Kraft $0{,}625$ y $L=2{,}8$ bits: cumple $2{,}122\le 2{,}8<3{,}122$, pero es $0{,}6$ bits peor que Huffman.}
+\comprobacion la suma de Kraft $0{,}625<1$ indica que el código de Shannon desperdicia espacio: podrían acortarse palabras sin perder la propiedad de prefijo, que es lo que hace Huffman.
+\end{solucion}
+
+\begin{solucion}{eje:3-bloques}
+\datos $p(\bin{a})=0{,}9$, $p(\bin{b})=0{,}1$; fuente sin memoria; $H_b(0{,}1)=0{,}469$ bits.
+\planteamiento (a) dos símbolos; (b) las probabilidades de los pares son productos; Huffman sobre 4 símbolos; (c) \cref{cor:bloques} con $n=2$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con dos símbolos, Huffman asigna \bin{0} y \bin{1}: 1 bit por símbolo.
+  \item (b) Pares: $\bin{aa}=0{,}81$; $\bin{ab}=0{,}09$; $\bin{ba}=0{,}09$; $\bin{bb}=0{,}01$.
+  \item Fusiones: $0{,}01+0{,}09=0{,}10$; $0{,}09+0{,}10=0{,}19$; $0{,}19+0{,}81=1$. Longitudes: $\bin{aa}\to 1$, un par de probabilidad $0{,}09\to 2$, el otro $\to 3$, $\bin{bb}\to 3$.
+  \item $L_2=0{,}81\cdot 1+0{,}09\cdot 2+0{,}09\cdot 3+0{,}01\cdot 3=0{,}81+0{,}18+0{,}27+0{,}03=1{,}29$ bits por par, es decir, $0{,}645$ bits por símbolo.
+  \item (c) La cota es $0{,}469\le L_2/2<0{,}469+0{,}5=0{,}969$, y $0{,}645$ la cumple.
+\end{enumerate}
+\resultado \textbf{(a) 1 bit por símbolo; (b) $0{,}645$ bits por símbolo; (c) se acerca a $H_b(0{,}1)=0{,}469$, dentro de la cota $[0{,}469;\ 0{,}969)$.}
+\comprobacion Kraft para los pares: $2^{-1}+2^{-2}+2^{-3}+2^{-3}=1$. Para seguir acercándose a $0{,}469$ harían falta bloques mayores, con $2^{n}$ palabras: es la limitación que resuelve la codificación aritmética.
+\end{solucion}
+
+\begin{solucion}{eje:3-no-comprime}
+\datos $C$ inyectiva de $\{\bin{0},\bin{1}\}^{+}$ en sí mismo; existe $s_0$ con $\abs{C(s_0)}<\abs{s_0}$.
+\planteamiento por reducción al absurdo: suponer que ninguna cadena se alarga y contar cadenas de longitud acotada.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Supóngase que $\abs{C(s)}\le\abs{s}$ para toda $s$. Sea $n=\abs{s_0}$ y sea $A_m$ el conjunto de cadenas no vacías de longitud a lo sumo $m$; $\abs{A_m}=2+4+\dots+2^{m}=2^{m+1}-2$.
+  \item Por la hipótesis, $C$ lleva $A_{n-1}$ en $A_{n-1}$. Como $C$ es inyectiva y $A_{n-1}$ es finito, $C$ restringida a $A_{n-1}$ es una biyección de $A_{n-1}$ en sí mismo.
+  \item En particular, toda cadena de $A_{n-1}$ es imagen de alguna cadena de $A_{n-1}$.
+  \item Pero $C(s_0)\in A_{n-1}$, porque $\abs{C(s_0)}<n$; por el paso~3, $C(s_0)=C(s)$ para alguna $s\in A_{n-1}$, y $s\ne s_0$ porque $\abs{s}<n=\abs{s_0}$.
+  \item Esto contradice la inyectividad de $C$. Luego existe alguna cadena $s$ con $\abs{C(s)}>\abs{s}$.
+\end{enumerate}
+\resultado \textbf{todo compresor sin pérdidas que acorta alguna cadena alarga alguna otra.}
+\comprobacion para $n=1$ el argumento dice que $C(s_0)$ tendría longitud~0, lo que no está permitido, y para $n=2$: las dos cadenas de longitud~1 deben ser imágenes de las dos cadenas de longitud~1, y no queda sitio para una tercera. Es la versión combinatoria del \cref{eje:1-archivos}.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-bpb-concepto}
+\datos A: 2 bits por token y 2 bytes por token; B: 4 bits por token y 4 bytes por token.
+\planteamiento separar lo que depende del tokenizador (el denominador «tokens») de lo que no depende (los bytes del texto y el tamaño del archivo comprimido).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La perplejidad por token es $2^{\text{bits por token}}$; depende de cuánto texto abarca cada token.
+  \item Los bits totales $\sum_t-\log q(x_t\mid x_{1:t-1})$ son el tamaño del texto comprimido (\cref{teo:compresion}), una propiedad del texto completo.
+  \item El número de bytes UTF-8 no depende del tokenizador; dividir el paso~2 por él da una tasa comparable, el bpb.
+  \item A: perplejidad $2^{2}=4$ y $\bpb=2/2=1$. B: perplejidad $2^{4}=16$ y $\bpb=4/4=1$.
+\end{enumerate}
+\resultado \textbf{el bpb normaliza por los bytes del texto, que no dependen del tokenizador; A y B tienen perplejidades 4 y 16, pero los dos comprimen el texto a 1 bit por byte.}
+\comprobacion para 1000 bytes, A usa 500 tokens $\times$ 2 bits y B usa 250 tokens $\times$ 4 bits: 1000 bits en ambos casos.
+\end{solucion}
+
+\begin{solucion}{eje:4-bac}
+\datos $q=(1/2,1/4,1/4)$ para $(\mathrm{a},\mathrm{b},\mathrm{c})$; $F(\mathrm{a})=0$, $F(\mathrm{b})=1/2$, $F(\mathrm{c})=3/4$; mensaje «bac».
+\planteamiento $a_t=a_{t-1}+w_{t-1}F(x_t)$, $w_t=w_{t-1}q(x_t)$ (\cref{def:intervalo}) con fracciones exactas; después buscar el intervalo diádico más largo contenido en el final.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Inicio: $a=0$, $w=1$.
+  \item «b»: $a=0+1\cdot\tfrac12=\tfrac12$; $w=\tfrac14$. Intervalo $[1/2,3/4)$.
+  \item «a»: $a=\tfrac12+\tfrac14\cdot 0=\tfrac12$; $w=\tfrac14\cdot\tfrac12=\tfrac18$. Intervalo $[1/2,5/8)$.
+  \item «c»: $a=\tfrac12+\tfrac18\cdot\tfrac34=\tfrac{16}{32}+\tfrac{3}{32}=\tfrac{19}{32}$; $w=\tfrac18\cdot\tfrac14=\tfrac1{32}$. Intervalo $[19/32,20/32)=[0{,}59375;\ 0{,}625)$.
+  \item Longitud ideal: $-\log(1/32)=5$ bits.
+  \item Un intervalo diádico de 4 bits mide $1/16=2/32$ y no cabe en uno de anchura $1/32$. El intervalo final es él mismo diádico: $19/32=0{,}10011_2$, y $J(\bin{10011})=[19/32,20/32)$.
+  \item El \cref{cor:longitud} garantiza $\lceil 5\rceil+1=6$ bits: $m=\lceil\tfrac{19}{32}\cdot 64\rceil=38$, palabra \bin{100110}.
+\end{enumerate}
+\resultado \textbf{intervalo $[19/32,\,5/8)$; longitud ideal 5 bits; palabra más corta \bin{10011} (5 bits); la construcción general garantiza 6 bits.}
+\comprobacion $q(\text{bac})=\tfrac14\cdot\tfrac12\cdot\tfrac14=\tfrac1{32}$, que es la anchura final (\cref{prop:intervalos}).
+\end{solucion}
+
+\begin{solucion}{eje:4-descodificar}
+\datos $q=(1/2,1/4,1/4)$ para $(\mathrm{a},\mathrm{b},\mathrm{c})$; $n=3$; palabra \bin{01110}.
+\planteamiento $J(\bin{01110})=[14/32,15/32)=[0{,}4375;\ 0{,}46875)$; en cada paso se subdivide el intervalo actual y se elige el subintervalo que contiene a $J$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Paso~1, sobre $[0,1)$: $\mathrm{a}=[0;\ 0{,}5)$, $\mathrm{b}=[0{,}5;\ 0{,}75)$, $\mathrm{c}=[0{,}75;\ 1)$. $J\subseteq[0;\ 0{,}5)$: primer símbolo \textbf{a}.
+  \item Paso~2, sobre $[0;\ 0{,}5)$ con anchura $0{,}5$: $\mathrm{a}=[0;\ 0{,}25)$, $\mathrm{b}=[0{,}25;\ 0{,}375)$, $\mathrm{c}=[0{,}375;\ 0{,}5)$. $J\subseteq[0{,}375;\ 0{,}5)$: segundo símbolo \textbf{c}.
+  \item Paso~3, sobre $[0{,}375;\ 0{,}5)$ con anchura $0{,}125$: $\mathrm{a}=[0{,}375;\ 0{,}4375)$, $\mathrm{b}=[0{,}4375;\ 0{,}46875)$, $\mathrm{c}=[0{,}46875;\ 0{,}5)$. $J=[0{,}4375;\ 0{,}46875)$: tercer símbolo \textbf{b}.
+  \item $q(\text{acb})=\tfrac12\cdot\tfrac14\cdot\tfrac14=\tfrac1{32}$ y $-\log\tfrac1{32}=5$ bits.
+\end{enumerate}
+\resultado \textbf{el mensaje es «acb»; la palabra recibida tiene 5 bits, exactamente $-\log q(\text{acb})$.}
+\comprobacion codificando «acb»: $a=0$, $w=1\to$ «a»: $[0,\tfrac12)$ $\to$ «c»: $a=\tfrac12\cdot\tfrac34=\tfrac38$, $w=\tfrac18$ $\to$ «b»: $a=\tfrac38+\tfrac18\cdot\tfrac12=\tfrac7{16}=\tfrac{14}{32}$, $w=\tfrac1{32}$. El intervalo es $[14/32,15/32)=J(\bin{01110})$.
+\end{solucion}
+
+\begin{solucion}{eje:4-abbb}
+\datos $p(\mathrm{A})=1/4$, $p(\mathrm{B})=3/4$; $F(\mathrm{A})=0$, $F(\mathrm{B})=1/4$; mensaje «ABBB».
+\planteamiento Huffman con dos símbolos gasta 1 bit por símbolo; aritmética con la \cref{def:intervalo}; longitud ideal $-\log p(\text{ABBB})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Huffman: $\mathrm{A}=\bin{0}$, $\mathrm{B}=\bin{1}$; «ABBB» $=\bin{0111}$, 4 bits.
+  \item «A»: $[0,1/4)$, $w=1/4$.
+  \item «B»: $a=0+\tfrac14\cdot\tfrac14=\tfrac1{16}$; $w=\tfrac14\cdot\tfrac34=\tfrac3{16}$. Intervalo $[1/16,1/4)$.
+  \item «B»: $a=\tfrac1{16}+\tfrac3{16}\cdot\tfrac14=\tfrac{7}{64}$; $w=\tfrac{9}{64}$. Intervalo $[7/64,1/4)$.
+  \item «B»: $a=\tfrac7{64}+\tfrac9{64}\cdot\tfrac14=\tfrac{37}{256}$; $w=\tfrac{27}{256}$. Intervalo $[37/256,64/256)=[0{,}1445;\ 0{,}25)$.
+  \item Longitud ideal: $-\log\tfrac{27}{256}=8-\log 27=8-4{,}755=3{,}245$ bits.
+  \item Intervalos diádicos: con 3 bits, $[0{,}125;\ 0{,}25)$ empieza antes de $0{,}1445$ y no cabe. Con 4 bits, $J(\bin{0011})=[0{,}1875;\ 0{,}25)$ cabe. Palabra \bin{0011}, 4 bits.
+\end{enumerate}
+\resultado \textbf{Huffman: 4 bits; aritmética: 4 bits (\bin{0011}); ideal: $3{,}245$ bits. Con mensajes largos, la aritmética se acerca a $H_b(1/4)=0{,}811$ bits por símbolo (\cref{cor:por-simbolo}) y Huffman se queda en 1.}
+\comprobacion $3{,}245/4=0{,}811=H_b(1/4)$ (\cref{eje:1-binaria}): «ABBB» tiene exactamente las frecuencias de la fuente. La construcción del \cref{cor:longitud} daría $\lceil 3{,}245\rceil+1=5$ bits.
+\end{solucion}
+
+\begin{solucion}{eje:4-bpb}
+\datos $\mathcal{J}=0{,}7$ nats por token; $\bar b=3{,}5$ bytes por token.
+\planteamiento $\bpb=\mathcal{J}/(\bar b\ln 2)$ (\cref{prop:bpb}); factor de compresión $=8/\bpb$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Denominador: $3{,}5\cdot 0{,}6931=2{,}426$.
+  \item $\bpb=0{,}7/2{,}426=0{,}2885$ bits por byte.
+  \item Factor: $8/0{,}2885=27{,}73$.
+\end{enumerate}
+\resultado \textbf{$0{,}289$ bits por byte; compresión de unas $27{,}7$ veces.}
+\comprobacion por pasos: $0{,}7$ nats $=0{,}7\cdot 1{,}443=1{,}010$ bits por token; dividido entre $3{,}5$ bytes da $0{,}2886$.
+\end{solucion}
+
+\begin{solucion}{eje:4-equivocado}
+\datos $p=(1/4,1/4,1/2)$; $q=(1/2,1/4,1/4)$; $\ell(x)=-\log q(x)$.
+\planteamiento calcular $\E_p[\ell]$, $H(p)$ y $\KL{p}{q}$ por separado y comparar.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Longitudes: $\ell(\mathrm{a})=1$, $\ell(\mathrm{b})=2$, $\ell(\mathrm{c})=2$.
+  \item $\E_p[\ell]=\tfrac14\cdot 1+\tfrac14\cdot 2+\tfrac12\cdot 2=0{,}25+0{,}5+1=1{,}75$ bits.
+  \item $H(p)=\tfrac14\cdot 2+\tfrac14\cdot 2+\tfrac12\cdot 1=1{,}5$ bits.
+  \item $\KL{p}{q}=\tfrac14\log\tfrac{1/4}{1/2}+\tfrac14\log 1+\tfrac12\log\tfrac{1/2}{1/4}=-0{,}25+0+0{,}5=0{,}25$ bits.
+\end{enumerate}
+\resultado \textbf{$\E_p[\ell]=1{,}75$ bits $=H(p)+\KL{p}{q}=1{,}5+0{,}25$: el modelo equivocado desperdicia $0{,}25$ bits por símbolo.}
+\comprobacion el código óptimo para $p$ tendría longitudes $(2,2,1)$ y longitud media $1{,}5$ bits; el exceso es la divergencia, como en la \cref{prop:descomposicion}.
+\end{solucion}
+
+\begin{solucion}{eje:4-equivocado-teo}
+\datos $\ell(x)=\lceil-\log q(x)\rceil$; $X\sim p$; $q(x)>0$ si $p(x)>0$.
+\planteamiento acotar $\ell(x)$ entre $-\log q(x)$ y $-\log q(x)+1$, tomar esperanzas con $p$ y usar $H(p,q)=H(p)+\KL{p}{q}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Para todo $y$, $y\le\lceil y\rceil<y+1$; con $y=-\log q(x)$: $-\log q(x)\le\ell(x)<-\log q(x)+1$.
+  \item Multiplicando por $p(x)\ge 0$ y sumando sobre $x$ (la desigualdad estricta se conserva porque $\sum_xp(x)=1>0$): $H(p,q)\le\E_p[\ell(X)]<H(p,q)+1$.
+  \item Por la \cref{prop:descomposicion}, $H(p,q)=H(p)+\KL{p}{q}$.
+  \item Las longitudes cumplen Kraft (véase tras la \cref{def:shannon}, con $q$ en lugar de $p$), luego el código existe.
+\end{enumerate}
+\resultado \textbf{$H(p)+\KL{p}{q}\le\E_p[\ell(X)]<H(p)+\KL{p}{q}+1$: usar el modelo $q$ cuesta $\KL{p}{q}$ bits por símbolo adicionales.}
+\comprobacion con los datos del \cref{eje:4-equivocado}, las longitudes de Shannon son exactas y $\E_p[\ell]=1{,}75$ coincide con la cota inferior $1{,}5+0{,}25$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-beta}
+\datos $\pi^{*}(y)=\pref(y)e^{r(y)/\beta}/Z$; $y^{\star}$ es la única respuesta con recompensa máxima $r_{\max}$.
+\planteamiento dividir numerador y denominador por $e^{r_{\max}/\beta}$ y estudiar los exponentes.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\pi^{*}(y)=\dfrac{\pref(y)\,e^{(r(y)-r_{\max})/\beta}}{\sum_{y'}\pref(y')\,e^{(r(y')-r_{\max})/\beta}}$.
+  \item $\beta\to\infty$: todos los exponentes tienden a~0 y cada exponencial a~1, de modo que $\pi^{*}(y)\to\pref(y)/\sum_{y'}\pref(y')=\pref(y)$.
+  \item $\beta\to 0^{+}$: para $y\ne y^{\star}$, $r(y)-r_{\max}<0$ y $e^{(r(y)-r_{\max})/\beta}\to 0$; para $y^{\star}$ el exponente es~0. Luego $\pi^{*}(y^{\star})\to\pref(y^{\star})/\pref(y^{\star})=1$.
+  \item En el ajuste de un LLM, $\beta$ regula el compromiso: grande, el modelo apenas se aparta del modelo supervisado; pequeño, persigue la recompensa y queda expuesto a explotar los defectos del modelo de recompensa.
+\end{enumerate}
+\resultado \textbf{$\beta\to\infty$: $\pi^{*}\to\pref$; $\beta\to 0^{+}$: $\pi^{*}$ se concentra en la respuesta de recompensa máxima. $\beta$ actúa como una temperatura.}
+\comprobacion es la tendencia de la tabla del \cref{ej:rlhf}: la divergencia pasa de $0{,}915$ a $0{,}084$ nats al subir $\beta$ de $0{,}5$ a~2.
+\end{solucion}
+
+\begin{solucion}{eje:5-monedas}
+\datos $n=10$; macroestados $k=5$ y $k=2$ caras.
+\planteamiento $W=\binom{n}{k}$ microestados equiprobables; $S/k_B$ en bits es $\log W$; la cota es $nH_b(k/n)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\binom{10}{5}=252$ y $\log 252=\ln 252/\ln 2=5{,}529/0{,}6931=7{,}977$ bits.
+  \item Cota: $10\,H_b(0{,}5)=10$ bits.
+  \item $\binom{10}{2}=45$ y $\log 45=3{,}807/0{,}6931=5{,}492$ bits.
+  \item Cota: $10\,H_b(0{,}2)=10\cdot 0{,}7219=7{,}219$ bits.
+\end{enumerate}
+\resultado \textbf{«5 caras»: $7{,}977$ bits frente a la cota de 10; «2 caras»: $5{,}492$ bits frente a $7{,}219$.}
+\comprobacion ambas cumplen la \cref{prop:binomial}. Con $n=10$ la cota aún dista de 2 bits; con $n=100$ y $k=50$ la diferencia es $100-96{,}35=3{,}65$ bits, mucho menor en proporción: el exponente $nH_b$ es el término dominante.
+\end{solucion}
+
+\begin{solucion}{eje:5-landauer}
+\datos $8\cdot 10^{9}$ bits; $T=300$~K; $k_B=1{,}380649\cdot10^{-23}$~J/K; $1$~eV $=1{,}602\cdot10^{-19}$~J.
+\planteamiento calor mínimo por bit $k_BT\ln 2$ (\cref{prop:landauer}), multiplicado por el número de bits.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Por bit: $1{,}380649\cdot10^{-23}\cdot 300\cdot 0{,}6931=2{,}871\cdot10^{-21}$~J.
+  \item Total: $8\cdot10^{9}\cdot 2{,}871\cdot10^{-21}=2{,}297\cdot10^{-11}$~J.
+  \item En electronvoltios: $2{,}871\cdot10^{-21}/1{,}602\cdot10^{-19}=0{,}01792$~eV por bit.
+\end{enumerate}
+\resultado \textbf{unos $2{,}30\cdot10^{-11}$~J para todo el gigabyte; unos $0{,}0179$~eV por bit.}
+\comprobacion $k_BT$ a 300~K es aproximadamente $0{,}0259$~eV, y $0{,}0259\cdot 0{,}6931=0{,}0179$~eV.
+\end{solucion}
+
+\begin{solucion}{eje:5-rlhf}
+\datos $\pref=(1/2,1/2)$; $r=(0,1)$; $\beta=1$.
+\planteamiento $\pi^{*}(y)=\pref(y)e^{r(y)}/Z$ con $Z=\sum_y\pref(y)e^{r(y)}$; el valor óptimo es $\ln Z$ (\cref{teo:variacional}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $Z=\tfrac12e^{0}+\tfrac12e^{1}=(1+2{,}718)/2=1{,}859$.
+  \item $\pi^{*}_1=0{,}5/1{,}859=0{,}2689$; $\pi^{*}_2=0{,}5\cdot 2{,}718/1{,}859=0{,}7311$.
+  \item $\E_{\pi^{*}}[r]=0\cdot 0{,}2689+1\cdot 0{,}7311=0{,}7311$.
+  \item $\KL{\pi^{*}}{\pref}=0{,}2689\ln\tfrac{0{,}2689}{0{,}5}+0{,}7311\ln\tfrac{0{,}7311}{0{,}5}=0{,}2689\cdot(-0{,}6203)+0{,}7311\cdot 0{,}3799=-0{,}1668+0{,}2777=0{,}1109$ nats.
+  \item $\mathcal{F}(\pi^{*})=0{,}7311-0{,}1109=0{,}6202$.
+  \item $\ln Z=\ln 1{,}859=0{,}6201$.
+\end{enumerate}
+\resultado \textbf{$\pi^{*}\approx(0{,}269;\ 0{,}731)$; $\E[r]\approx 0{,}731$; divergencia $\approx 0{,}111$ nats; $\mathcal{F}(\pi^{*})\approx 0{,}620=\ln Z$.}
+\comprobacion $\pi^{*}$ suma~1, y $\pi^{*}_2=e/(1+e)=\sigma(1)$, la sigmoide de la diferencia de recompensas. La discrepancia en la cuarta cifra se debe al redondeo intermedio.
+\end{solucion}
+
+\begin{solucion}{eje:5-lagrange}
+\datos $\X$ finito; $f\colon\X\to\R$; restricciones $\sum_xp(x)=1$ y $\sum_xp(x)f(x)=\alpha$; $p(x)>0$ para todo $x$.
+\planteamiento maximizar $H(p)=-\sum_xp(x)\ln p(x)$ con dos restricciones de igualdad mediante la lagrangiana (módulo~4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Lagrangiana: $\mathcal{L}(p,\mu,\lambda)=-\sum_xp(x)\ln p(x)+\mu\Bigl(\sum_xp(x)-1\Bigr)-\lambda\Bigl(\sum_xp(x)f(x)-\alpha\Bigr)$.
+  \item Condición de estacionariedad para cada $x$: $\dfrac{\partial\mathcal{L}}{\partial p(x)}=-\ln p(x)-1+\mu-\lambda f(x)=0$.
+  \item Despejando, $p(x)=e^{\mu-1}e^{-\lambda f(x)}$.
+  \item La normalización da $e^{\mu-1}\sum_xe^{-\lambda f(x)}=1$, es decir, $e^{\mu-1}=1/Z$ con $Z=\sum_xe^{-\lambda f(x)}$. Así, $p(x)=e^{-\lambda f(x)}/Z$; el valor de $\lambda$ queda fijado por la restricción $\sum_xp(x)f(x)=\alpha$.
+  \item Comparación: el método de Lagrange solo da una condición necesaria (punto crítico, y con la hipótesis $p>0$ para poder derivar). Para concluir que es un máximo global hay que añadir que $H$ es estrictamente cóncava y las restricciones lineales. La demostración del \cref{teo:maxent} con la desigualdad de Gibbs da directamente la optimalidad global y la unicidad, y muestra cuánto pierde cualquier otra $p$: exactamente $\KL{p}{p_\lambda}$.
+\end{enumerate}
+\resultado \textbf{la distribución de máxima entropía con media de $f$ fijada es $p(x)=e^{-\lambda f(x)}/Z$, una distribución de Boltzmann.}
+\comprobacion con $f$ constante la restricción no informa y debe salir la uniforme: en efecto, $e^{-\lambda f}$ es constante y $p(x)=1/\abs{\X}$, de entropía máxima $\ln\abs{\X}$.
+\end{solucion}
+
+\begin{solucion}{eje:5-dpo}
+\datos $r(x,y)=\beta\ln\frac{\pi^{*}(y\mid x)}{\pref(y\mid x)}+\beta\ln Z(x)$; $P(y_1\succ y_2\mid x)=\sigma\bigl(r(x,y_1)-r(x,y_2)\bigr)$; en (b), $\pref=(1/2,1/2)$, $\pi^{*}=(0{,}2689;\ 0{,}7311)$ y $\beta=1$.
+\planteamiento restar las recompensas de las dos respuestas para el mismo mensaje $x$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $r(x,y_1)-r(x,y_2)=\beta\ln\frac{\pi^{*}(y_1\mid x)}{\pref(y_1\mid x)}+\beta\ln Z(x)-\beta\ln\frac{\pi^{*}(y_2\mid x)}{\pref(y_2\mid x)}-\beta\ln Z(x)$.
+  \item Los términos $\beta\ln Z(x)$ se cancelan, porque ambas respuestas responden al mismo mensaje:
+  $P(y_1\succ y_2\mid x)=\sigma\Bigl(\beta\ln\frac{\pi^{*}(y_1\mid x)}{\pref(y_1\mid x)}-\beta\ln\frac{\pi^{*}(y_2\mid x)}{\pref(y_2\mid x)}\Bigr)$.
+  \item Por tanto, la verosimilitud de las comparaciones humanas puede escribirse en función de la política, sin calcular $Z(x)$ ni entrenar un modelo de recompensa: es la base de DPO.
+  \item (b) $r_2-r_1=\ln\frac{0{,}7311}{0{,}5}-\ln\frac{0{,}2689}{0{,}5}=0{,}3799-(-0{,}6203)=1{,}000$.
+  \item $P(y_2\succ y_1)=\sigma(1)=1/(1+e^{-1})=0{,}7311$.
+\end{enumerate}
+\resultado \textbf{(a) la probabilidad de preferencia solo depende de $\beta\ln(\pi^{*}/\pref)$ de cada respuesta; (b) diferencia implícita de recompensas igual a~1 y $P(y_2\succ y_1)\approx 0{,}731$.}
+\comprobacion la diferencia recuperada, $1$, es la diferencia de recompensas $r=(0,1)$ del \cref{eje:5-rlhf}: la política óptima codifica la recompensa salvo una constante por mensaje.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{ct}
+T.~M. Cover y J.~A. Thomas.
+\newblock \emph{Elements of Information Theory}, 2.ª ed.
+\newblock Wiley, 2006.
+
+\bibitem{deletang}
+G.~Delétang, A.~Ruoss, P.-A. Duquenne, E.~Catt, T.~Genewein, C.~Mattern, J.~Grau-Moya, L.~K. Wenliang, M.~Aitchison, L.~Orseau, M.~Hutter y J.~Veness.
+\newblock Language modeling is compression.
+\newblock \emph{arXiv:2309.10668}, 2023.
+\newblock \url{https://arxiv.org/abs/2309.10668}
+
+\bibitem{pile}
+L.~Gao, S.~Biderman, S.~Black \emph{et al.}
+\newblock The Pile: An 800GB dataset of diverse text for language modeling.
+\newblock \emph{arXiv:2101.00027}, 2020.
+\newblock \url{https://arxiv.org/abs/2101.00027}
+
+\bibitem{camit}
+R.~Harle.
+\newblock Information Theory.
+\newblock University of Cambridge, Department of Computer Science and Technology, Part~II, curso 2025--26.
+\newblock \emph{Examples Sheet}: \url{https://www.cl.cam.ac.uk/teaching/2526/InfoTheory/InfoTheoryExamplesSheet.pdf}
+
+\bibitem{chinchilla}
+J.~Hoffmann, S.~Borgeaud, A.~Mensch \emph{et al.}
+\newblock Training compute-optimal large language models.
+\newblock \emph{arXiv:2203.15556}, 2022.
+\newblock \url{https://arxiv.org/abs/2203.15556}
+
+\bibitem{huffman}
+D.~A. Huffman.
+\newblock A method for the construction of minimum-redundancy codes.
+\newblock \emph{Proceedings of the IRE}, 40(9):1098--1101, 1952.
+
+\bibitem{jaynes}
+E.~T. Jaynes.
+\newblock Information theory and statistical mechanics.
+\newblock \emph{Physical Review}, 106(4):620--630, 1957.
+
+\bibitem{landauer}
+R.~Landauer.
+\newblock Irreversibility and heat generation in the computing process.
+\newblock \emph{IBM Journal of Research and Development}, 5(3):183--191, 1961.
+
+\bibitem{mackay}
+D.~J.~C. MacKay.
+\newblock \emph{Information Theory, Inference, and Learning Algorithms}.
+\newblock Cambridge University Press, 2003.
+\newblock \url{http://www.inference.org.uk/itila/book.html}
+
+\bibitem{instructgpt}
+L.~Ouyang, J.~Wu, X.~Jiang \emph{et al.}
+\newblock Training language models to follow instructions with human feedback.
+\newblock \emph{arXiv:2203.02155}, 2022.
+\newblock \url{https://arxiv.org/abs/2203.02155}
+
+\bibitem{mit6441}
+Y.~Polyanskiy.
+\newblock 6.441: Information Theory.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, primavera de 2016.
+\newblock \url{https://ocw.mit.edu/courses/6-441-information-theory-spring-2016/}
+
+\bibitem{dpo}
+R.~Rafailov, A.~Sharma, E.~Mitchell, S.~Ermon, C.~D. Manning y C.~Finn.
+\newblock Direct preference optimization: Your language model is secretly a reward model.
+\newblock \emph{arXiv:2305.18290}, 2023.
+\newblock \url{https://arxiv.org/abs/2305.18290}
+
+\bibitem{shannon}
+C.~E. Shannon.
+\newblock A mathematical theory of communication.
+\newblock \emph{Bell System Technical Journal}, 27:379--423 y 623--656, 1948.
+
+\bibitem{shannon51}
+C.~E. Shannon.
+\newblock Prediction and entropy of printed English.
+\newblock \emph{Bell System Technical Journal}, 30(1):50--64, 1951.
+
+\bibitem{wnc}
+I.~H. Witten, R.~M. Neal y J.~G. Cleary.
+\newblock Arithmetic coding for data compression.
+\newblock \emph{Communications of the ACM}, 30(6):520--540, 1987.
+
+\end{thebibliography}
+
+
+\end{document}

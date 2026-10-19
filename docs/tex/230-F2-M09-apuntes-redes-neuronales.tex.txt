@@ -1,0 +1,1920 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase II — Módulo 9
+%  Redes neuronales
+%  Compilar: latexmk -r ../latexmkrc M09-redes-neuronales.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 9}
+
+% Notación propia del módulo
+\newcommand{\ReLU}{\operatorname{ReLU}}
+\newcommand{\GELU}{\operatorname{GELU}}
+\newcommand{\SiLU}{\operatorname{SiLU}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\ind}{\mathbb{1}}
+\newcommand{\FFN}{\operatorname{FFN}}
+\newcommand{\nin}{n_{\mathrm{in}}}
+\newcommand{\nout}{n_{\mathrm{out}}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 9. Redes neuronales},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase II \textperiodcentered\ Aprendizaje automático y redes neuronales}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 9\par}\vspace{0.3cm}
+{\LARGE Redes neuronales\par}
+\vspace{0.2cm}
+{\large Del perceptrón al modelo de lenguaje neuronal\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Dentro de cada bloque de un Transformer hay, además de la atención, una red neuronal prealimentada que se aplica a cada token por separado. Con dimensión $d$ y la anchura habitual $4d$, esa red tiene $8d^{2}$ pesos, frente a los $4d^{2}$ de la atención: dos tercios de los parámetros del bloque. Este módulo estudia esa pieza desde sus orígenes. Parte del perceptrón y de su limitación más conocida, construye el perceptrón multicapa, analiza las funciones de activación que usan los modelos actuales, demuestra que una capa oculta basta en principio para aproximar cualquier función continua, deduce las reglas de inicialización que conservan la varianza y obtiene a mano las ecuaciones de la retropropagación. El último tema reúne todo en el modelo de lenguaje neuronal de Bengio \emph{et al.}~\cite{bengio}, que sustituye la tabla de $n$-gramas del módulo~1 por una red con parámetros compartidos.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item definir el perceptrón, demostrar el teorema de convergencia de su regla de aprendizaje y probar que ningún perceptrón calcula la función XOR;
+  \item escribir un perceptrón multicapa en notación matricial, contar sus parámetros y demostrar que sin no linealidades colapsa en una sola capa afín;
+  \item comparar las activaciones sigmoide, tanh, ReLU, GELU y SiLU, y describir la unidad con puerta SwiGLU y la elección de su anchura en LLaMA;
+  \item enunciar el teorema de aproximación universal, demostrarlo en una dimensión para redes ReLU y explicar qué aporta la profundidad;
+  \item deducir las inicializaciones de LeCun, Xavier y He a partir de la propagación de la varianza;
+  \item obtener las ecuaciones de la retropropagación en un perceptrón multicapa con softmax y entropía cruzada, y aplicarlas a mano;
+  \item describir el modelo de lenguaje neuronal de Bengio \emph{et al.}, contar sus parámetros y explicar por qué generaliza mejor que una tabla de $n$-gramas.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1 se usan los modelos de bigramas, la softmax y la perplejidad; del módulo~2, el producto de matrices y la capa de embeddings como producto por un vector \emph{one-hot}; del módulo~3, el rango de una matriz; del módulo~4, la regla de la cadena multivariable, el jacobiano y las diferencias centradas; del módulo~5, la esperanza, la varianza y la independencia de variables aleatorias, y la distribución normal; del módulo~7, el descenso de gradiente y el decaimiento de pesos, y del módulo~8, la regresión logística y softmax con la entropía cruzada como pérdida. La desigualdad de Cauchy--Schwarz (módulo~2) se usa en el tema~1.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Del perceptrón al perceptrón multicapa & \cite{gbc}, \cite{jm3}, \cite{cs4780}, \cite{cs231n} \\
+2 & Funciones de activación & \cite{gbc}, \cite{d2l}, \cite{hendrycks}, \cite{shazeer} \\
+3 & Aproximación universal y profundidad & \cite{gbc}, \cite{cybenko}, \cite{leshno}, \cite{telgarsky} \\
+4 & Inicialización y propagación de la varianza & \cite{gbc}, \cite{glorot}, \cite{he}, \cite{cs231n} \\
+5 & Retropropagación en un perceptrón multicapa & \cite{gbc}, \cite{bishopdl}, \cite{cs231n}, \cite{cs224n} \\
+6 & El modelo de lenguaje neuronal & \cite{bengio}, \cite{jm3}, \cite{d2l} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La estructura general sigue el capítulo~6 de Goodfellow, Bengio y Courville~\cite{gbc}, «Deep Feedforward Networks», y la §8.4 del mismo libro para la inicialización; el capítulo~6 de Jurafsky y Martin~\cite{jm3}, «Neural Networks», y los capítulos~6 a~8 de Bishop y Bishop~\cite{bishopdl} se usan como textos paralelos. El punto de vista práctico (tamaño de las redes, inicialización, gradientes vectorizados) procede de las notas del curso CS231n de Stanford~\cite{cs231n}, y la presentación de la retropropagación, de la clase~3 de CS224N~\cite{cs224n} y de la §5.3 de Zhang \emph{et al.}~\cite{d2l}. El curso 11-785 de Carnegie Mellon~\cite{cmu11785} cubre el mismo temario con más detalle sobre el perceptrón y la aproximación universal. El teorema de convergencia del perceptrón se demuestra como en la lección~3 del curso CS4780 de Cornell~\cite{cs4780}. Los resultados sobre activaciones, inicialización y modelos de lenguaje se toman de los artículos originales: Hendrycks y Gimpel~\cite{hendrycks}, Shazeer~\cite{shazeer}, Glorot y Bengio~\cite{glorot}, He \emph{et al.}~\cite{he} y Bengio \emph{et al.}~\cite{bengio}. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública; su arquitectura interna no lo es.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$x\in\R^{1\times n}$ & vector de entrada, escrito como fila \\
+$W\in\R^{n\times m}$, $b\in\R^{1\times m}$ & matriz de pesos y vector de sesgos de una capa $n\to m$ \\
+$z=xW+b$, $h=\phi(z)$ & preactivación y activación de una capa \\
+$\phi$, $\phi'$ & función de activación, aplicada componente a componente, y su derivada \\
+$\sigma$, $\Phi$ & sigmoide logística y función de distribución de la normal estándar \\
+$\odot$ & producto componente a componente (de Hadamard) \\
+$p=\softmax(z)$, $e_y$ & distribución de salida y vector \emph{one-hot} de la clase $y$ \\
+$L=-\ln p_y$ & pérdida de entropía cruzada de un ejemplo \\
+$\nabla_{\!W}L$, $\delta$ & gradiente respecto a $W$ (misma forma que $W$) y gradiente respecto a una preactivación \\
+$\nin$, $\nout$ & número de entradas y de salidas de una capa \\
+$\V$, $K=\abs{\V}$, $C\in\R^{K\times d}$ & vocabulario, su tamaño y matriz de embeddings \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+A diferencia de los módulos~2 y~3, en este módulo los vectores se escriben como \emph{filas} y las capas actúan por la derecha, $x\mapsto xW+b$. Es la convención de NumPy y PyTorch, la de la práctica del módulo y la de los artículos de Shazeer~\cite{shazeer} y Touvron \emph{et al.}~\cite{touvron}; con un lote de $B$ ejemplos, $x$ pasa a ser una matriz $B\times n$ y las fórmulas no cambian. Las clases y los tokens se numeran desde~0.
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Del perceptrón al perceptrón multicapa}
+\label{tema:1}
+% =====================================================================
+
+Este tema presenta la unidad básica de una red neuronal, el perceptrón, su regla de aprendizaje y el teorema que garantiza su convergencia, y muestra por qué una sola unidad no basta: la función XOR no es linealmente separable. La solución, añadir una capa oculta, conduce al perceptrón multicapa. La exposición sigue la §6.1 de~\cite{gbc} y las §6.1--6.3 de~\cite{jm3}; la demostración del teorema de convergencia sigue la lección~3 de~\cite{cs4780}, basada en Novikoff~\cite{novikoff}, y el recuento de parámetros, las notas «Neural Networks Part~1» de~\cite{cs231n}.
+
+\section{La unidad y el perceptrón}
+
+\begin{definicion}[Unidad]\label{def:unidad}
+Una \emph{unidad} (o \emph{neurona artificial}) con $n$ entradas está determinada por un vector de \emph{pesos} $w\in\R^{n}$, un \emph{sesgo} $b\in\R$ y una función $\phi\colon\R\to\R$, llamada \emph{función de activación}. Para una entrada $x\in\R^{n}$ calcula la \emph{preactivación} $z=w\cdot x+b$ y la \emph{activación} $a=\phi(z)$.
+\end{definicion}
+
+\begin{definicion}[Perceptrón]\label{def:perceptron}
+El \emph{perceptrón} de Rosenblatt~\cite{rosenblatt} es la unidad con activación escalón:
+\[
+\hat y=\ind[\,w\cdot x+b>0\,]\in\{0,1\}.
+\]
+Su \emph{frontera de decisión} es el hiperplano $\{x\in\R^{n}:w\cdot x+b=0\}$.
+\end{definicion}
+
+El perceptrón es, por tanto, un clasificador lineal: asigna la clase~1 al semiespacio abierto $\{w\cdot x+b>0\}$ y la clase~0 a su complementario.
+
+\begin{ejemplo}[La puerta AND]\label{ej:and}
+Con $w=(1,1)$ y $b=-1{,}5$, la entrada $(1,1)$ da $1+1-1{,}5=0{,}5>0$ y produce~1; las entradas $(0,0)$, $(0,1)$ y $(1,0)$ dan $-1{,}5$, $-0{,}5$ y $-0{,}5$, y producen~0. El perceptrón calcula la conjunción lógica.
+\end{ejemplo}
+
+\begin{definicion}[Separabilidad lineal]
+Un conjunto finito de pares $(x_i,y_i)$ con $x_i\in\R^{n}$ e $y_i\in\{0,1\}$ es \emph{linealmente separable} si existen $w\in\R^{n}$ y $b\in\R$ tales que $w\cdot x_i+b>0$ cuando $y_i=1$ y $w\cdot x_i+b<0$ cuando $y_i=0$.
+\end{definicion}
+
+\section{La regla de aprendizaje de Rosenblatt}
+
+\begin{definicion}[Regla del perceptrón]\label{def:regla}
+Sea $\eta>0$ una \emph{tasa de aprendizaje}. Se parte de $w=0$, $b=0$ y se recorren los ejemplos de forma cíclica. Para cada ejemplo $(x_i,y_i)$ se calcula $\hat y_i$ y se actualiza
+\[
+w\leftarrow w+\eta\,(y_i-\hat y_i)\,x_i,\qquad b\leftarrow b+\eta\,(y_i-\hat y_i).
+\]
+El algoritmo termina cuando una pasada completa no produce ningún error.
+\end{definicion}
+
+Como $y_i-\hat y_i\in\{-1,0,1\}$, los pesos solo cambian cuando el ejemplo está mal clasificado, y el cambio desplaza la preactivación en la dirección correcta: si $y_i=1$ y $\hat y_i=0$, la nueva preactivación de $x_i$ aumenta en $\eta(\norm{x_i}^{2}+1)>0$.
+
+\begin{ejemplo}[Aprendizaje de AND]\label{ej:rosenblatt}
+Con $\eta=1$, recorriendo las entradas en el orden $(0,0)$, $(0,1)$, $(1,0)$, $(1,1)$, la regla realiza~10 correcciones y la sexta pasada ya no contiene errores. El resultado final es $w=(2,1)$, $b=-2$, que clasifica bien las cuatro entradas: la preactivación vale $-2$, $-1$, $0$ y $1$, y solo la última es positiva.
+\end{ejemplo}
+
+Para enunciar el teorema de convergencia conviene absorber el sesgo y usar etiquetas simétricas. Sea $\tilde x_i=(x_i,1)\in\R^{n+1}$, $\theta=(w,b)$ y $s_i=2y_i-1\in\{-1,+1\}$. El ejemplo $i$ está bien clasificado si $s_i\,\theta\cdot\tilde x_i>0$, y la regla de la \cref{def:regla} se escribe $\theta\leftarrow\theta+\eta\,s_i\,\tilde x_i$ cada vez que se comete un error. En particular, toda actualización se produce en un ejemplo con $s_i\,\theta\cdot\tilde x_i\le 0$.
+
+\begin{teorema}[Convergencia del perceptrón; Novikoff]\label{teo:novikoff}
+Supóngase que existen $u\in\R^{n+1}$ con $\norm{u}=1$ y $\gamma>0$ tales que $s_i\,u\cdot\tilde x_i\ge\gamma$ para todo $i$, y sea $R=\max_i\norm{\tilde x_i}$. Entonces, cualquiera que sea el orden en que se presentan los ejemplos, el número total $M$ de actualizaciones de la regla del perceptrón cumple
+\[
+M\le\frac{R^{2}}{\gamma^{2}}.
+\]
+\end{teorema}
+
+\begin{proof}
+Sea $\theta_k$ el vector de parámetros tras $k$ actualizaciones, con $\theta_0=0$, y supóngase que la actualización $k+1$ se produce en el ejemplo $i$, de modo que $\theta_{k+1}=\theta_k+\eta s_i\tilde x_i$ y $s_i\,\theta_k\cdot\tilde x_i\le 0$.
+
+\emph{Crecimiento de la proyección sobre $u$.} Se tiene $\theta_{k+1}\cdot u=\theta_k\cdot u+\eta\,s_i\,\tilde x_i\cdot u\ge\theta_k\cdot u+\eta\gamma$. Por inducción, $\theta_M\cdot u\ge M\eta\gamma$.
+
+\emph{Crecimiento de la norma.} Se tiene
+\[
+\norm{\theta_{k+1}}^{2}=\norm{\theta_k}^{2}+2\eta\,s_i\,\theta_k\cdot\tilde x_i+\eta^{2}s_i^{2}\norm{\tilde x_i}^{2}\le\norm{\theta_k}^{2}+\eta^{2}R^{2},
+\]
+porque el término central es $\le 0$ y $s_i^{2}=1$. Por inducción, $\norm{\theta_M}^{2}\le M\eta^{2}R^{2}$.
+
+\emph{Conclusión.} Por la desigualdad de Cauchy--Schwarz y $\norm{u}=1$, $M\eta\gamma\le\theta_M\cdot u\le\norm{\theta_M}\le\sqrt{M}\,\eta R$. Dividiendo por $\sqrt{M}\,\eta\gamma>0$ (si $M=0$ no hay nada que probar) se obtiene $\sqrt{M}\le R/\gamma$.
+\end{proof}
+
+\begin{observacion}
+La cota no depende de $\eta$ ni del número de ejemplos, sino solo de la geometría de los datos: el cociente $R/\gamma$ mide lo «estrecho» que es el pasillo que separa las dos clases. Si los datos no son linealmente separables, no existe tal $u$ y la regla no termina nunca.
+\end{observacion}
+
+\section{El problema XOR}
+
+La función XOR vale~1 en $(0,1)$ y $(1,0)$ y vale~0 en $(0,0)$ y $(1,1)$.
+
+\begin{proposicion}\label{prop:xor}
+El conjunto $\{((0,0),0),((0,1),1),((1,0),1),((1,1),0)\}$ no es linealmente separable. En consecuencia, ningún perceptrón calcula XOR.
+\end{proposicion}
+
+\begin{proof}
+Supóngase que existen $w=(w_1,w_2)$ y $b$ que lo separan. De las entradas con salida~0 se obtiene $b<0$ y $w_1+w_2+b<0$; sumando, $w_1+w_2+2b<0$. De las entradas con salida~1 se obtiene $w_2+b>0$ y $w_1+b>0$; sumando, $w_1+w_2+2b>0$. Las dos desigualdades son incompatibles.
+\end{proof}
+
+Minsky y Papert~\cite{minsky} analizaron en 1969 esta y otras limitaciones de los perceptrones de una capa, y su libro contribuyó a frenar la investigación en redes neuronales durante más de una década~\cite[cap.~1]{gbc}.
+
+\section{Una capa oculta resuelve XOR}
+
+La salida consiste en componer dos capas. Sea $\ReLU(t)=\max(0,t)$ y considérese la red de la \cref{fig:xor}, tomada de~\cite[§6.1]{gbc}:
+\begin{equation}\label{eq:xor}
+h_1=\ReLU(x_1+x_2),\qquad h_2=\ReLU(x_1+x_2-1),\qquad \hat y=h_1-2h_2.
+\end{equation}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth,
+  nodo/.style={circle,draw,minimum size=8mm,inner sep=0pt},
+  every label/.style={font=\small}]
+  \node[nodo] (x1) at (0,1) {$x_1$};
+  \node[nodo] (x2) at (0,-1) {$x_2$};
+  \node[nodo] (h1) at (3,1) {$h_1$};
+  \node[nodo] (h2) at (3,-1) {$h_2$};
+  \node[nodo] (y) at (6,0) {$\hat y$};
+  \draw[->] (x1) -- node[above,pos=0.3,font=\small]{$1$} (h1);
+  \draw[->] (x1) -- node[above,pos=0.25,font=\small]{$1$} (h2);
+  \draw[->] (x2) -- node[below,pos=0.25,font=\small]{$1$} (h1);
+  \draw[->] (x2) -- node[below,pos=0.3,font=\small]{$1$} (h2);
+  \draw[->] (h1) -- node[above,font=\small]{$1$} (y);
+  \draw[->] (h2) -- node[below,font=\small]{$-2$} (y);
+  \node[font=\small,above=1pt of h1] {sesgo $0$};
+  \node[font=\small,below=1pt of h2] {sesgo $-1$};
+  \node[font=\small,anchor=west] at (7.2,0.9) {\begin{tabular}{@{}cccc@{}}\toprule $x$ & $h_1$ & $h_2$ & $\hat y$\\\midrule $(0,0)$ & 0 & 0 & 0\\ $(0,1)$ & 1 & 0 & 1\\ $(1,0)$ & 1 & 0 & 1\\ $(1,1)$ & 2 & 1 & 0\\\bottomrule\end{tabular}};
+\end{tikzpicture}
+\caption{Red con una capa oculta de dos unidades ReLU que calcula XOR.}\label{fig:xor}
+\end{figure}
+
+En el espacio de la capa oculta, las cuatro entradas se transforman en $(0,0)$, $(1,0)$, $(1,0)$ y $(2,1)$: las dos entradas con salida~1 caen en el mismo punto, y la función lineal $h_1-2h_2$ separa las clases. La capa oculta no clasifica: cambia la \emph{representación} para que una función lineal pueda hacerlo. Aprender la representación a la vez que el clasificador es la idea que distingue el aprendizaje profundo de los modelos lineales del módulo~8.
+
+\section{El perceptrón multicapa}
+
+\begin{definicion}[Perceptrón multicapa]\label{def:mlp}
+Sean $n_0,n_1,\dots,n_L$ enteros positivos. Un \emph{perceptrón multicapa} (MLP) de $L$ capas con anchuras $n_0\to n_1\to\dots\to n_L$ está formado por matrices $W_\ell\in\R^{n_{\ell-1}\times n_\ell}$, sesgos $b_\ell\in\R^{1\times n_\ell}$ y activaciones $\phi_\ell$, $\ell=1,\dots,L$. Para $x\in\R^{1\times n_0}$ se define $h^{(0)}=x$ y
+\[
+z^{(\ell)}=h^{(\ell-1)}W_\ell+b_\ell,\qquad h^{(\ell)}=\phi_\ell\bigl(z^{(\ell)}\bigr),\qquad \ell=1,\dots,L,
+\]
+con $\phi_\ell$ aplicada componente a componente. Las capas $1,\dots,L-1$ se llaman \emph{ocultas}. En un clasificador de $K$ clases, $n_L=K$, $\phi_L$ es la identidad y la salida $z^{(L)}$ es el vector de logits, que se convierte en $p=\softmax(z^{(L)})$.
+\end{definicion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth,
+  caja/.style={draw,rounded corners=2pt,minimum height=8mm,inner sep=4pt,font=\small}]
+  \node[caja] (x) {$x\in\R^{1\times n}$};
+  \node[caja,right=6mm of x] (l1) {$xW_1+b_1$};
+  \node[caja,right=6mm of l1] (a) {$\phi(\cdot)$};
+  \node[caja,right=6mm of a] (l2) {$hW_2+b_2$};
+  \node[caja,right=6mm of l2] (s) {$\softmax$};
+  \node[caja,right=6mm of s] (p) {$p\in\R^{1\times K}$};
+  \draw[->] (x)--(l1); \draw[->] (l1)--node[above,font=\scriptsize]{$z^{(1)}$}(a);
+  \draw[->] (a)--node[above,font=\scriptsize]{$h$}(l2); \draw[->] (l2)--node[above,font=\scriptsize]{$z^{(2)}$}(s); \draw[->] (s)--(p);
+\end{tikzpicture}
+\caption{Perceptrón multicapa con una capa oculta de anchura $H$ y salida softmax.}\label{fig:mlp}
+\end{figure}
+
+Con un lote de $B$ ejemplos apilados como filas de una matriz $X\in\R^{B\times n_0}$, la misma fórmula $XW_\ell+b_\ell$ (con $b_\ell$ sumado a cada fila) calcula todas las preactivaciones de la capa con un único producto de matrices. Esa es la razón práctica de la convención de vectores fila.
+
+\begin{proposicion}[Número de parámetros]\label{prop:parametros-mlp}
+Un MLP de anchuras $n_0\to n_1\to\dots\to n_L$ tiene $\sum_{\ell=1}^{L}(n_{\ell-1}+1)\,n_\ell$ parámetros.
+\end{proposicion}
+
+\begin{proof}
+La capa $\ell$ tiene $n_{\ell-1}n_\ell$ pesos en $W_\ell$ y $n_\ell$ sesgos en $b_\ell$, es decir, $(n_{\ell-1}+1)n_\ell$ parámetros; se suman las $L$ capas.
+\end{proof}
+
+\begin{ejemplo}\label{ej:mnist}
+Un MLP $784\to 128\to 10$ para clasificar dígitos de $28\times 28$ píxeles (módulo~8) tiene $785\cdot 128+129\cdot 10=100\,480+1\,290=101\,770$ parámetros.
+\end{ejemplo}
+
+\begin{proposicion}[Colapso de las capas lineales]\label{prop:colapso}
+Si todas las activaciones de un MLP son la identidad, existen $W\in\R^{n_0\times n_L}$ y $b\in\R^{1\times n_L}$ tales que $z^{(L)}=xW+b$ para toda entrada $x$. Además, $\operatorname{rg}W\le\min_{\ell}n_\ell$.
+\end{proposicion}
+
+\begin{proof}
+Por inducción sobre $L$. Para $L=1$ es la definición. Si $h^{(L-1)}=xW'+b'$, entonces $z^{(L)}=(xW'+b')W_L+b_L=x(W'W_L)+(b'W_L+b_L)$ por la distributividad y la asociatividad del producto de matrices; basta tomar $W=W'W_L$ y $b=b'W_L+b_L$. Resulta $W=W_1W_2\cdots W_L$, y el rango de un producto no supera el de ninguno de sus factores, que es a lo sumo $\min(n_{\ell-1},n_\ell)$ para $W_\ell$ (módulo~3).
+\end{proof}
+
+La \cref{prop:colapso} explica por qué la no linealidad es imprescindible: sin ella, añadir capas no aumenta lo que la red puede representar, y una capa intermedia estrecha incluso lo reduce.
+
+\begin{observacion}[Conexión con los LLM]
+Cada bloque de un Transformer contiene un MLP de dos capas que se aplica a la representación de cada token por separado, con anchuras $d\to 4d\to d$ en el Transformer original~\cite{vaswani} y en GPT-2. Sin contar sesgos, tiene $d\cdot 4d+4d\cdot d=8d^{2}$ pesos, frente a los $4d^{2}$ de las cuatro proyecciones de la atención (módulo~13). Los modelos abiertos recientes, como LLaMA, sustituyen la primera capa por una unidad con puerta (\cref{tema:2}).
+\end{observacion}
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §6.1 «Example: Learning XOR» y §6.6 «Historical Notes».
+\item Jurafsky y Martin~\cite{jm3}, §6.1--6.3: unidades, el problema XOR y redes prealimentadas.
+\item Cornell CS4780~\cite{cs4780}, lección~3 «The Perceptron»: algoritmo y demostración de la convergencia.
+\item Stanford CS231n~\cite{cs231n}, «Neural Networks Part~1: Setting up the Architecture», apartados sobre la organización en capas y el tamaño de las redes.
+\item Bishop y Bishop~\cite{bishopdl}, cap.~6 «Deep Neural Networks».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-lineal}
+(a) ¿Cuántas capas «efectivas» tiene un MLP de diez capas sin funciones de activación? (b) Dé un ejemplo de red lineal de dos capas $2\to 1\to 2$ cuya función no pueda obtenerse con ninguna matriz $2\times 2$ de rango~2, y explique por qué añadir capas lineales puede reducir la capacidad expresiva pero nunca aumentarla.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.1, ejercicio~1.}
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-xor}
+Explique por qué ningún perceptrón calcula XOR y qué hace la capa oculta de la red~\eqref{eq:xor} para que una función lineal pueda separar las clases. Indique las coordenadas de las cuatro entradas en el espacio $(h_1,h_2)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-param}
+Calcule el número de parámetros de un MLP $784\to 256\to 128\to 10$ e indique qué fracción corresponde a la primera capa.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-cs231n}
+Una red tiene 3 entradas, una capa oculta de 4 unidades y 2 salidas; otra tiene 3 entradas, dos capas ocultas de 4 unidades y una salida. Calcule para cada una el número de pesos, de sesgos y de parámetros totales.
+\fuente{adaptado de Stanford CS231n~\cite{cs231n}, «Neural Networks Part~1», apartado «Sizing neural networks».}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-or}
+Aplique la regla del perceptrón (\cref{def:regla}) con $\eta=1$, partiendo de $w=(0,0)$ y $b=0$, a la función OR, recorriendo las entradas en el orden $(0,0)$, $(0,1)$, $(1,0)$, $(1,1)$. Indique cada corrección, el número total de correcciones y los parámetros finales.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-novikoff}
+(a) Demuestre que, partiendo de $\theta=0$, la sucesión de predicciones de la regla del perceptrón no depende de $\eta>0$. (b) Para la función AND, con la notación del \cref{teo:novikoff}, tome $u$ proporcional a $(1,1,-1{,}5)$ y calcule $\gamma$, $R$ y la cota $R^{2}/\gamma^{2}$. Compárela con las 10 correcciones del \cref{ej:rosenblatt}.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Funciones de activación}
+\label{tema:2}
+% =====================================================================
+
+La activación determina qué funciones puede representar una red y cómo fluye el gradiente a través de ella. Este tema estudia las activaciones clásicas (sigmoide y tangente hiperbólica), la ReLU, que se impuso en la década de 2010, y las activaciones suaves y con puerta que usan los modelos de lenguaje actuales. Se sigue la §6.3 de~\cite{gbc}, la §5.1.2 de~\cite{d2l} y las notas «Neural Networks Part~1» de~\cite{cs231n}; las definiciones de GELU y SwiGLU proceden de los artículos originales de Hendrycks y Gimpel~\cite{hendrycks} y de Shazeer~\cite{shazeer}.
+
+\section{Sigmoide y tangente hiperbólica}
+
+\begin{definicion}
+La \emph{sigmoide logística} y la \emph{tangente hiperbólica} son
+\[
+\sigma(t)=\frac{1}{1+e^{-t}},\qquad \tanh(t)=\frac{e^{t}-e^{-t}}{e^{t}+e^{-t}}.
+\]
+\end{definicion}
+
+\begin{proposicion}\label{prop:sigmoide}
+Para todo $t\in\R$:
+\begin{enumerate}
+  \item $\sigma'(t)=\sigma(t)\bigl(1-\sigma(t)\bigr)$ y $0<\sigma'(t)\le 1/4$, con igualdad solo en $t=0$;
+  \item $\tanh(t)=2\sigma(2t)-1$;
+  \item $\tanh'(t)=1-\tanh^{2}(t)\in(0,1]$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Por la regla de la cadena, $\sigma'(t)=e^{-t}/(1+e^{-t})^{2}=\sigma(t)\cdot e^{-t}/(1+e^{-t})$, y el segundo factor es $1-\sigma(t)$. Como $\sigma(t)\in(0,1)$, el producto $s(1-s)$ con $s=\sigma(t)$ es positivo y alcanza su máximo $1/4$ solo en $s=1/2$, es decir, en $t=0$. (ii) Dividiendo numerador y denominador por $e^{t}$, $\tanh(t)=(1-e^{-2t})/(1+e^{-2t})=2/(1+e^{-2t})-1=2\sigma(2t)-1$. (iii) Derivando (ii) y usando (i), $\tanh'(t)=4\sigma(2t)(1-\sigma(2t))$; como $\sigma(2t)=(1+\tanh t)/2$, resulta $4\cdot\frac{1+\tanh t}{2}\cdot\frac{1-\tanh t}{2}=1-\tanh^{2}t$.
+\end{proof}
+
+Por (ii), una red con activaciones tanh y otra con sigmoides representan la misma familia de funciones: el factor~2 y el desplazamiento $-1$ se absorben en los pesos y sesgos de las capas adyacentes (\cref{eje:2-tanh}). La diferencia práctica es que tanh está centrada en~0.
+
+\begin{observacion}[Saturación y desvanecimiento del gradiente]\label{obs:desvanecimiento}
+Cuando $\abs{t}$ es grande, $\sigma'(t)$ y $\tanh'(t)$ son casi nulas: la unidad está \emph{saturada}. En la retropropagación (\cref{tema:5}) el gradiente que atraviesa una capa se multiplica por $\phi'(z)$; con sigmoides, tras $k$ capas el factor es a lo sumo $4^{-k}$, que para $k=10$ vale menos de $10^{-6}$. Este \emph{desvanecimiento del gradiente} dificultó durante años el entrenamiento de redes profundas~\cite[§6.3.2]{gbc}.
+\end{observacion}
+
+\section{La unidad lineal rectificada}
+
+\begin{definicion}[ReLU]
+La \emph{unidad lineal rectificada} es $\ReLU(t)=\max(0,t)$. Su derivada es $\ReLU'(t)=\ind[t>0]$ para $t\neq 0$; en $t=0$ se toma por convenio el valor~0.
+\end{definicion}
+
+La ReLU tiene tres ventajas~\cite[§6.3.1]{gbc}: su cálculo es una comparación; en la región activa su derivada vale exactamente~1, de modo que el gradiente no se encoge al atravesar muchas capas; y es \emph{positivamente homogénea}, $\ReLU(ct)=c\ReLU(t)$ para $c\ge 0$, lo que simplifica el análisis de la varianza (\cref{tema:4}). Su inconveniente es que una unidad cuya preactivación es negativa para todos los datos tiene gradiente nulo y deja de aprender: se dice que está \emph{muerta}~\cite{cs231n}. Las variantes \emph{leaky} ReLU, $\max(\alpha t,t)$ con $0<\alpha<1$ fijo, y PReLU, con $\alpha$ aprendido~\cite{he}, evitan ese problema.
+
+\section{Activaciones suaves: GELU y SiLU}
+
+\begin{definicion}[GELU y SiLU]\label{def:gelu}
+Sea $\Phi$ la función de distribución de la normal estándar. Se definen
+\[
+\GELU(t)=t\,\Phi(t),\qquad \SiLU(t)=t\,\sigma(t).
+\]
+Más en general, $\mathrm{Swish}_\beta(t)=t\,\sigma(\beta t)$ con $\beta>0$, de modo que $\SiLU=\mathrm{Swish}_1$.
+\end{definicion}
+
+Hendrycks y Gimpel~\cite{hendrycks} motivan GELU como el valor esperado de una puerta aleatoria: si $m\sim\mathrm{Bernoulli}(\Phi(t))$, entonces $\E[m\,t]=t\,\Phi(t)$. La entrada se deja pasar con una probabilidad que crece con su valor, en lugar de cortarse según su signo como en la ReLU. En la práctica se usa la aproximación
+\[
+\GELU(t)\approx\tfrac12\,t\Bigl(1+\tanh\Bigl[\sqrt{2/\pi}\,\bigl(t+0{,}044715\,t^{3}\bigr)\Bigr]\Bigr),
+\]
+cuyo error absoluto es menor que $5\cdot 10^{-4}$ en todo $\R$. GELU es la activación de BERT y de GPT-2.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=0.95cm,y=0.95cm,>=Stealth]
+  \draw[->,regla] (-3.3,0)--(3.4,0) node[right,tinta]{$t$};
+  \draw[->,regla] (0,-0.4)--(0,3.2);
+  \foreach \v in {-3,-2,-1,1,2,3} {\draw[regla] (\v,0.05)--(\v,-0.05); \node[font=\scriptsize,tinta] at (\v,-0.55) {$\v$};}
+  \foreach \v in {1,2,3} \draw[regla] (0.05,\v)--(-0.05,\v) node[left,font=\scriptsize,tinta]{$\v$};
+  \draw[thick,densely dotted] plot[domain=-3:3,samples=60] (\x,{max(0,\x)});
+  \draw[thick] plot[domain=-3:3,samples=120] (\x,{0.5*\x*(1+tanh(0.7978845608*(\x+0.044715*\x*\x*\x)))});
+  \draw[thick,dashed] plot[domain=-3:3,samples=120] (\x,{\x/(1+exp(-\x))});
+  \begin{scope}[shift={(4.2,2.4)},font=\small]
+    \draw[thick,densely dotted] (0,0.5)--(0.6,0.5) node[right]{$\ReLU$};
+    \draw[thick] (0,0)--(0.6,0) node[right]{$\GELU$};
+    \draw[thick,dashed] (0,-0.5)--(0.6,-0.5) node[right]{$\SiLU$};
+  \end{scope}
+\end{tikzpicture}
+\caption{ReLU, GELU y SiLU en $[-3,3]$. Las dos activaciones suaves dejan pasar una pequeña señal negativa.}\label{fig:activaciones}
+\end{figure}
+
+\begin{table}[h]
+\centering\small
+\caption{Valores de ReLU, GELU y SiLU.}\label{tab:activaciones}
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+$t$ & $-2$ & $-1$ & $-0{,}5$ & $0$ & $0{,}5$ & $1$ & $2$ \\
+\midrule
+$\ReLU(t)$ & $0$ & $0$ & $0$ & $0$ & $0{,}5$ & $1$ & $2$ \\
+$\GELU(t)$ & $-0{,}0455$ & $-0{,}1587$ & $-0{,}1543$ & $0$ & $0{,}3457$ & $0{,}8413$ & $1{,}9545$ \\
+$\SiLU(t)$ & $-0{,}2384$ & $-0{,}2689$ & $-0{,}1888$ & $0$ & $0{,}3112$ & $0{,}7311$ & $1{,}7616$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proposicion}\label{prop:silu}
+\begin{enumerate}
+  \item $\SiLU'(t)=\sigma(t)\bigl(1+t\,(1-\sigma(t))\bigr)$; en particular $\SiLU'(0)=1/2$.
+  \item $\GELU'(t)=\Phi(t)+t\,\varphi(t)$, donde $\varphi$ es la densidad normal estándar; en particular $\GELU'(0)=1/2$.
+  \item Ni GELU ni SiLU son monótonas: ambas tienen un único mínimo global negativo, que vale aproximadamente $-0{,}170$ en $t\approx-0{,}752$ para GELU y $-0{,}278$ en $t\approx-1{,}278$ para SiLU.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Regla del producto y \cref{prop:sigmoide}(i): $\SiLU'(t)=\sigma(t)+t\,\sigma(t)(1-\sigma(t))$. (ii) Regla del producto y $\Phi'=\varphi$. En $t=0$, $\sigma(0)=\Phi(0)=1/2$. (iii) Para $t>0$ ambas funciones son positivas, y para $t\le 0$ son $\le 0$ y tienden a~0 cuando $t\to-\infty$; como valen~0 en $t=0$ y son negativas en $t=-1$, alcanzan un mínimo negativo en $(-\infty,0)$. Los valores numéricos se obtienen resolviendo $\GELU'(t)=0$ y $\SiLU'(t)=0$ por métodos numéricos; la unicidad se comprueba estudiando el signo de la derivada, y se omite.
+\end{proof}
+
+Cuando $\beta\to\infty$, $\sigma(\beta t)\to\ind[t>0]$ para $t\neq 0$ y $\mathrm{Swish}_\beta$ tiende a la ReLU; el \cref{eje:2-swish-relu} prueba que la convergencia es uniforme.
+
+\section{Unidades con puerta: GLU y SwiGLU}
+
+En una unidad con puerta, una proyección de la entrada decide, componente a componente, cuánto se deja pasar de otra proyección.
+
+\begin{definicion}[Capas prealimentadas con puerta; Shazeer]\label{def:swiglu}
+Sean $d,H\ge 1$, $W_g,W_u\in\R^{d\times H}$ y $W_d\in\R^{H\times d}$. Para $x\in\R^{1\times d}$ se definen, sin sesgos,
+\[
+\FFN_{\mathrm{GLU}}(x)=\bigl(\sigma(xW_g)\odot xW_u\bigr)W_d,\qquad
+\FFN_{\mathrm{SwiGLU}}(x)=\bigl(\SiLU(xW_g)\odot xW_u\bigr)W_d.
+\]
+La rama $xW_g$ es la \emph{puerta}, la rama $xW_u$ es el \emph{contenido} y $W_d$ proyecta de vuelta a dimensión $d$. El MLP clásico de un Transformer es $\FFN(x)=\phi(xW_1)W_2$, con $W_1\in\R^{d\times 4d}$ y $W_2\in\R^{4d\times d}$.
+\end{definicion}
+
+La unidad GLU fue propuesta por Dauphin \emph{et al.} para modelos de lenguaje convolucionales; Shazeer~\cite[§2]{shazeer} estudió variantes que sustituyen la sigmoide por otras funciones y observó que SwiGLU y GEGLU mejoran la calidad del Transformer frente a ReLU y GELU con el mismo número de parámetros.
+
+\begin{ejemplo}\label{ej:swiglu}
+Sean $x=(1,2)$, $W_g=\begin{psmallmatrix}1&-1\\0&1\end{psmallmatrix}$, $W_u=\begin{psmallmatrix}1&0\\1&1\end{psmallmatrix}$ y $W_d=\begin{psmallmatrix}1\\-1\end{psmallmatrix}$ (salida de dimensión~1 para simplificar). Entonces $xW_g=(1,1)$ y $\SiLU(1)=\sigma(1)=0{,}7311$; $xW_u=(3,2)$; el producto componente a componente es $(2{,}1932;\,1{,}4621)$ y la salida, $2{,}1932-1{,}4621=0{,}7311$.
+\end{ejemplo}
+
+\begin{proposicion}[Anchura de SwiGLU con igual número de parámetros]\label{prop:anchura}
+Una capa $\FFN_{\mathrm{SwiGLU}}$ de anchura $H$ tiene $3dH$ pesos y un MLP clásico $d\to 4d\to d$ tiene $8d^{2}$. Ambos coinciden si y solo si $H=\tfrac{2}{3}\cdot 4d=8d/3$.
+\end{proposicion}
+
+\begin{proof}
+$W_g$ y $W_u$ tienen $dH$ pesos cada una y $W_d$ otros $Hd$; el MLP clásico tiene $d\cdot 4d+4d\cdot d$. La igualdad $3dH=8d^{2}$ equivale a $H=8d/3$.
+\end{proof}
+
+Shazeer reduce la anchura en un factor $2/3$ por este motivo~\cite[§2]{shazeer}, y LLaMA adopta la misma regla: usa SwiGLU con dimensión oculta $\tfrac23\,4d$ en lugar de $4d$~\cite[§2.2]{touvron}. Para LLaMA-7B, con $d=4096$, se obtiene $8\cdot 4096/3\approx 10\,923$; el código publicado redondea al múltiplo de~256 siguiente, $H=11\,008$, con $3\cdot 4096\cdot 11\,008=135\,266\,304$ pesos por capa frente a $2\cdot 4096\cdot 16\,384=134\,217\,728$ del MLP clásico. Qué activación usan internamente Claude, Gemini o Grok no es información pública.
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §6.3 «Hidden Units», en especial §6.3.1 y §6.3.2.
+\item Zhang \emph{et al.}~\cite{d2l}, §5.1.2 «Activation Functions».
+\item Stanford CS231n~\cite{cs231n}, «Neural Networks Part~1», apartado «Commonly used activation functions».
+\item Hendrycks y Gimpel~\cite{hendrycks}, definición y motivación de GELU.
+\item Shazeer~\cite{shazeer}, §2 «Gated Linear Units (GLU) and Variants», y Touvron \emph{et al.}~\cite{touvron}, §2.2.
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-sigmoide}
+Derive $\sigma(t)=1/(1+e^{-t})$ y exprese el resultado solo en función de $\sigma(t)$. Evalúe $\sigma'(0)$ y $\sigma'(\ln 3)$.
+\fuente{adaptado de Stanford CS224N, invierno de 2018~\cite{cs224n2018}, tarea~1, problema~2(a).}
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:2-anchura}
+¿Qué tres matrices tiene una capa SwiGLU y qué papel cumple cada una? ¿Por qué LLaMA usa una anchura oculta de unos $\tfrac23\cdot 4d$ y no $4d$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-tanh}
+Demuestre que $\tanh(t)+1=2\sigma(2t)$ y compruébelo en $t=0{,}5$. Deduzca que toda red con capas tanh puede reescribirse como una red con sigmoides que calcula la misma función, cambiando solo pesos y sesgos.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.1, ejercicio~5.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-swish}
+Calcule la derivada de $\mathrm{Swish}_\beta(t)=t\,\sigma(\beta t)$. Evalúela con $\beta=1$ en $t=1$, $0$ y $-1$, y con $\beta=2$ en $t=1$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.1, ejercicio~3.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-desvanece}
+En una red de diez capas sigmoides, todas las preactivaciones de un camino valen $z=2$. (a) Calcule el factor $\prod\sigma'(z)$ por el que se multiplica el gradiente a lo largo de ese camino y compárelo con la cota $4^{-10}$. (b) ¿Qué factor se obtendría con ReLU?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.1, ejercicio~7.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-swiglu}
+Evalúe la capa SwiGLU del \cref{ej:swiglu} con $x=(1,0)$. Compruebe que la primera componente de la puerta sigue valiendo $\SiLU(1)$ y explique por qué la segunda no influye en la salida.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-swish-relu}
+Demuestre que $\sup_{t\in\R}\abs{\mathrm{Swish}_\beta(t)-\ReLU(t)}=c/\beta$, donde $c=\max_{s\ge 0}s\,\sigma(-s)$, y que $c\le 1/e$. Deduzca que $\mathrm{Swish}_\beta\to\ReLU$ uniformemente en $\R$ cuando $\beta\to\infty$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Aproximación universal y profundidad}
+\label{tema:3}
+% =====================================================================
+
+¿Qué funciones puede representar un perceptrón multicapa? Este tema demuestra que una sola capa oculta basta, en principio, para aproximar cualquier función continua en un compacto, y explica por qué ese resultado no justifica por sí solo el uso de redes anchas y poco profundas. La demostración en una dimensión es constructiva y usa solo la continuidad uniforme; el caso general se enuncia según Cybenko~\cite{cybenko}, Hornik~\cite{hornik} y Leshno \emph{et al.}~\cite{leshno}. La discusión sobre la profundidad sigue la §6.4.1 de~\cite{gbc} y el artículo de Telgarsky~\cite{telgarsky}; la §5.1.1.4 de~\cite{d2l} y el apartado «Representational power» de~\cite{cs231n} ofrecen el mismo punto de vista.
+
+\section{Redes ReLU y funciones lineales a trozos}
+
+\begin{definicion}[Función lineal a trozos]
+Una función continua $f\colon\R\to\R$ es \emph{lineal a trozos} con \emph{codos} $t_1<\dots<t_m$ si es afín en cada uno de los intervalos $(-\infty,t_1]$, $[t_1,t_2]$, \dots, $[t_m,\infty)$. Cada uno de esos $m+1$ intervalos es una \emph{pieza}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:piezas}
+Sea $f(t)=c+\sum_{j=1}^{H}a_j\ReLU(w_jt+b_j)$ una red de una capa oculta con $H$ unidades ReLU, entrada y salida escalares. Entonces $f$ es continua y lineal a trozos con a lo sumo $H$ codos, es decir, con a lo sumo $H+1$ piezas.
+\end{proposicion}
+
+\begin{proof}
+Si $w_j=0$, la unidad $j$ es constante. Si $w_j\neq 0$, la función $t\mapsto\ReLU(w_jt+b_j)$ es continua y afín a cada lado de $\tau_j=-b_j/w_j$. La suma de funciones continuas y afines a trozos es continua, y es afín en todo intervalo que no contenga en su interior ninguno de los puntos $\tau_j$. Hay a lo sumo $H$ puntos distintos.
+\end{proof}
+
+\begin{lema}[Sombrero]\label{lem:sombrero}
+La función $\Lambda(t)=\ReLU(t)-2\ReLU(t-1)+\ReLU(t-2)$ vale $0$ para $t\le 0$ y para $t\ge 2$, vale $t$ en $[0,1]$ y $2-t$ en $[1,2]$.
+\end{lema}
+
+\begin{proof}
+Para $t\le 0$ los tres términos se anulan. En $[0,1]$ solo el primero es no nulo y vale $t$. En $[1,2]$ se tiene $t-2(t-1)=2-t$. Para $t\ge 2$, $t-2(t-1)+(t-2)=0$.
+\end{proof}
+
+Sumando sombreros desplazados y escalados se obtiene cualquier poligonal con nodos equiespaciados; el teorema siguiente usa una construcción equivalente y más económica.
+
+\section{El teorema en una dimensión}
+
+\begin{teorema}[Aproximación universal en $\R$ con ReLU]\label{teo:au1d}
+Sea $f\colon[a,b]\to\R$ continua y sea $\varepsilon>0$. Existe una red $g(t)=c+\sum_{j=1}^{H}a_j\ReLU(t-\tau_j)$ con una capa oculta tal que $\abs{f(t)-g(t)}<\varepsilon$ para todo $t\in[a,b]$.
+\end{teorema}
+
+\begin{proof}
+\emph{Paso 1: poligonal.} Por el teorema de Heine, $f$ es uniformemente continua en $[a,b]$: existe $\eta>0$ tal que $\abs{f(s)-f(t)}<\varepsilon$ si $\abs{s-t}\le\eta$. Sea $n$ un entero con $(b-a)/n\le\eta$, sean $t_k=a+k(b-a)/n$ para $k=0,\dots,n$ y sea $I$ la poligonal que interpola $f$ en los nodos $t_k$. Si $t\in[t_k,t_{k+1}]$, entonces $I(t)=(1-\lambda)f(t_k)+\lambda f(t_{k+1})$ para algún $\lambda\in[0,1]$, y
+\[
+\abs{f(t)-I(t)}\le(1-\lambda)\abs{f(t)-f(t_k)}+\lambda\abs{f(t)-f(t_{k+1})}<\varepsilon,
+\]
+porque $t$ dista a lo sumo $\eta$ de ambos nodos.
+
+\emph{Paso 2: la poligonal es una red.} Sea $m_k=(f(t_{k+1})-f(t_k))/(t_{k+1}-t_k)$ la pendiente de $I$ en $[t_k,t_{k+1}]$, y defínase
+\[
+g(t)=f(a)+m_0\ReLU(t-t_0)+\sum_{k=1}^{n-1}(m_k-m_{k-1})\ReLU(t-t_k).
+\]
+En $t=a=t_0$ todos los términos ReLU se anulan y $g(a)=f(a)=I(a)$. En el intervalo $(t_k,t_{k+1})$ están activas exactamente las unidades $0,\dots,k$, y la pendiente de $g$ es $m_0+\sum_{j=1}^{k}(m_j-m_{j-1})=m_k$, la misma que la de $I$. Dos funciones continuas en $[a,b]$ que coinciden en $a$ y tienen la misma pendiente en cada tramo son iguales; luego $g=I$ en $[a,b]$ y $\abs{f-g}<\varepsilon$. La red tiene $H=n$ unidades ocultas, con pesos de entrada~1, sesgos $-t_k$ y pesos de salida $m_0$ y $m_k-m_{k-1}$.
+\end{proof}
+
+\begin{ejemplo}[Aproximación de $t^{2}$]\label{ej:cuadrado}
+En $[0,1]$ con $n=2$ tramos, los nodos son $0$, $1/2$ y $1$, con valores $0$, $1/4$ y $1$, y las pendientes son $m_0=1/2$ y $m_1=3/2$. La red es
+\[
+g(t)=\tfrac12\ReLU(t)+\ReLU\bigl(t-\tfrac12\bigr).
+\]
+En el primer tramo el error es $t/2-t^{2}$, máximo en $t=1/4$, donde vale $1/16$; en el segundo es $1/4+\tfrac32(t-\tfrac12)-t^{2}$, máximo en $t=3/4$, donde vale también $1/16$. Con $n$ tramos de longitud $h=1/n$ el error máximo es $h^{2}/4$ (\cref{eje:3-cuadrado}).
+\end{ejemplo}
+
+\section{El teorema general}
+
+\begin{teorema}[Aproximación universal; Cybenko, Hornik, Leshno \emph{et al.}]\label{teo:au}
+Sea $\phi\colon\R\to\R$ continua. Las funciones de la forma
+\[
+g(x)=\sum_{j=1}^{H}a_j\,\phi\bigl(x\cdot w_j+b_j\bigr),\qquad H\in\mathbb{N},\ a_j,b_j\in\R,\ w_j\in\R^{n},
+\]
+son densas en el espacio de funciones continuas sobre cualquier compacto $K\subset\R^{n}$ con la norma del supremo si y solo si $\phi$ no es un polinomio.
+\end{teorema}
+
+Cybenko~\cite{cybenko} lo demostró en 1989 para activaciones sigmoidales usando el teorema de Hahn--Banach y el de representación de Riesz; Hornik~\cite{hornik} lo extendió a activaciones acotadas y no constantes, y Leshno, Lin, Pinkus y Schocken~\cite{leshno} obtuvieron la caracterización anterior. La demostración del caso general excede el nivel de este curso. La necesidad de la condición sí es elemental:
+
+\begin{proposicion}\label{prop:polinomio}
+Si $\phi$ es un polinomio de grado $k$, toda red de la forma del \cref{teo:au} es un polinomio de grado a lo sumo $k$, y las redes no son densas en $C([0,1])$.
+\end{proposicion}
+
+\begin{proof}
+Cada $\phi(x\cdot w_j+b_j)$ es un polinomio de grado $\le k$ en las componentes de $x$, y una combinación lineal de tales polinomios también lo es. El conjunto $\mathcal{P}_k$ de polinomios de grado $\le k$ en $[0,1]$ es un subespacio de dimensión finita de $C([0,1])$ y, por tanto, cerrado. Si las redes fueran densas, $C([0,1])\subseteq\overline{\mathcal{P}_k}=\mathcal{P}_k$, lo que es falso: $t^{k+1}\notin\mathcal{P}_k$.
+\end{proof}
+
+\section{Qué no dice el teorema: el papel de la profundidad}
+
+El \cref{teo:au} es un resultado de existencia. No acota el número $H$ de unidades necesarias, que para algunas funciones crece exponencialmente con la dimensión $n$ de la entrada~\cite[§6.4.1]{gbc}; no garantiza que el descenso de gradiente encuentre los pesos, y no dice nada sobre la generalización a datos no vistos. La profundidad aporta una ventaja que el teorema no recoge: componer capas permite reutilizar piezas, y algunas funciones que una red profunda representa con pocas unidades requieren exponencialmente muchas en una red poco profunda. El ejemplo siguiente lo muestra de forma exacta.
+
+\begin{proposicion}[Diente de sierra]\label{prop:sierra}
+Sea $g(t)=2\ReLU(t)-4\ReLU(t-\tfrac12)$, que en $[0,1]$ vale $2t$ en $[0,\tfrac12]$ y $2-2t$ en $[\tfrac12,1]$, y sea $g^{(k)}=g\circ\cdots\circ g$ ($k$ veces). Entonces:
+\begin{enumerate}
+  \item en $[0,1]$, $g^{(k)}$ es lineal a trozos con exactamente $2^{k}$ piezas de longitud $2^{-k}$, y en cada una recorre todo $[0,1]$;
+  \item $g^{(k)}$ se calcula con una red de $k$ capas ocultas de 2 unidades ReLU cada una;
+  \item toda red de una capa oculta que coincida con $g^{(k)}$ en $[0,1]$ necesita al menos $2^{k}-1$ unidades.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Por inducción sobre $k$. Para $k=1$ es la descripción de $g$. Supóngase cierto para $k$ y escríbase $g^{(k+1)}=g^{(k)}\circ g$. En $[0,\tfrac12]$, $g(t)=2t$ recorre $[0,1]$ de forma creciente y lineal, de modo que $g^{(k)}(2t)$ es una copia de $g^{(k)}$ comprimida en un factor~2: tiene $2^{k}$ piezas de longitud $2^{-k-1}$. En $[\tfrac12,1]$, $g(t)=2-2t$ recorre $[0,1]$ de forma decreciente y se obtiene otra copia, reflejada. En total hay $2^{k+1}$ piezas de longitud $2^{-(k+1)}$, y en cada una la función recorre $[0,1]$. (ii) Cada capa calcula $u\mapsto(\ReLU(u),\ReLU(u-\tfrac12))$; la combinación $2\ReLU(u)-4\ReLU(u-\tfrac12)$ que produce $g(u)$ se incorpora a los pesos de la capa siguiente, y la última se usa como salida. Como $g$ lleva $[0,1]$ en $[0,1]$, cada capa recibe valores en $[0,1]$. (iii) Por la \cref{prop:piezas}, una red con $H$ unidades tiene a lo sumo $H+1$ piezas; se necesita $H+1\ge 2^{k}$.
+\end{proof}
+
+Con $k=20$, la red profunda usa 40 unidades y la poco profunda más de un millón. Telgarsky~\cite{telgarsky} demostró que la separación persiste aunque solo se pida \emph{aproximar}: hay funciones calculables por redes de profundidad del orden de $k^{3}$ y anchura constante que una red de profundidad $O(k)$ solo aproxima con del orden de $2^{k}$ unidades. Los LLM son profundos por esta razón: LLaMA-7B apila 32 bloques~\cite[§2]{touvron}, cada uno con un MLP de anchura moderada.
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §6.4.1 «Universal Approximation Properties and Depth».
+\item Zhang \emph{et al.}~\cite{d2l}, §5.1.1.4 «Universal Approximators».
+\item Stanford CS231n~\cite{cs231n}, «Neural Networks Part~1», apartado «Representational power».
+\item Cybenko~\cite{cybenko} y Leshno \emph{et al.}~\cite{leshno}, enunciados y demostraciones del caso general.
+\item Telgarsky~\cite{telgarsky}, ventajas de la profundidad.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-existencia}
+El \cref{teo:au} garantiza que existe una red de una capa oculta que aproxima cualquier función continua. Dé dos razones por las que no se entrenan LLM de una sola capa oculta enorme.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-codos}
+Evalúe $g(t)=\ReLU(t)+2\ReLU(t-1)$ en $t=0$; $0{,}5$; $1$; $1{,}5$; $2$. ¿Qué pendientes tiene $g$ y dónde cambian?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-cuadrado}
+(a) Construya, con el método del \cref{teo:au1d}, la red que interpola $f(t)=t^{2}$ en $[0,1]$ con $n=4$ tramos y calcule el error máximo. (b) Demuestre que con $n$ tramos de longitud $h$ el error máximo es $h^{2}/4$ y deduzca cuántas unidades bastan para un error menor que $10^{-4}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-sierra}
+Con la función $g$ de la \cref{prop:sierra}, calcule $g^{(2)}(t)$ para $t=0,\tfrac18,\tfrac14,\dots,1$ y dibuje su gráfica. ¿Cuántas piezas tiene $g^{(3)}$ y cuántas unidades necesitaría una red de una capa oculta para representarla?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-abs-max}
+Construya una red ReLU de una capa oculta que valga exactamente $\abs{t}$ en todo $\R$ y otra que valga $\max(t_1,t_2)$ en todo $\R^{2}$, sin término lineal directo de la entrada a la salida.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-cpwl}
+Demuestre que toda función $\R^{n}\to\R$ calculada por un MLP con activaciones ReLU (en cualquier número de capas) es continua y lineal a trozos, en el sentido de que $\R^{n}$ se divide en un número finito de poliedros en cada uno de los cuales la función es afín.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.1, ejercicio~4.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Inicialización y propagación de la varianza}
+\label{tema:4}
+% =====================================================================
+
+El descenso de gradiente necesita un punto de partida. Si los pesos iniciales son demasiado grandes, las activaciones crecen capa a capa o saturan; si son demasiado pequeños, la señal se apaga y los gradientes con ella. Este tema muestra primero por qué los pesos no pueden inicializarse todos iguales y deduce después, a partir de la varianza de una suma de variables independientes (módulo~5), las reglas de inicialización de LeCun, Xavier y He. Se sigue la §8.4 de~\cite{gbc}, la §5.4 de~\cite{d2l} y el apartado «Weight Initialization» de las notas «Neural Networks Part~2» de~\cite{cs231n}; los resultados proceden de Glorot y Bengio~\cite{glorot} y de He \emph{et al.}~\cite{he}.
+
+\section{La ruptura de la simetría}
+
+\begin{proposicion}[Simetría de las unidades ocultas]\label{prop:simetria}
+Sea un MLP con una capa oculta, $z=xW_1+b_1$, $h=\phi(z)$, $o=hW_2+b_2$, y sea $L$ cualquier pérdida que dependa de $o$. Si en la inicialización las columnas $i$ y $j$ de $W_1$ son iguales, $(b_1)_i=(b_1)_j$, y las filas $i$ y $j$ de $W_2$ son iguales, entonces tras cualquier número de pasos de descenso de gradiente (por lotes o estocástico) esas igualdades se mantienen.
+\end{proposicion}
+
+\begin{proof}
+Basta ver que se conservan en un paso. Si se cumplen, $z_i=z_j$ y $h_i=h_j$ para toda entrada. Con las ecuaciones de la \cref{tema:5}, $\partial L/\partial h_i=\sum_k(\partial L/\partial o_k)(W_2)_{ik}$ coincide con $\partial L/\partial h_j$, porque las filas $i$ y $j$ de $W_2$ son iguales; multiplicando por $\phi'(z_i)=\phi'(z_j)$ se obtiene $\delta_i=\delta_j$. Los gradientes de las columnas $i$ y $j$ de $W_1$ son $x^{\top}\delta_i$ y $x^{\top}\delta_j$, iguales; los de los sesgos, $\delta_i=\delta_j$; los de las filas $i$ y $j$ de $W_2$ son $h_i\,\partial L/\partial o$ y $h_j\,\partial L/\partial o$, iguales. Un paso de descenso resta cantidades iguales a parámetros iguales.
+\end{proof}
+
+En particular, si todos los pesos se inicializan a~0 (o a una misma constante), todas las unidades ocultas calculan siempre lo mismo y la capa equivale a una sola unidad~\cite{cs231n}, \cite[§5.4.1.3]{d2l}. Por eso los pesos se inicializan con valores \emph{aleatorios}. Los sesgos, en cambio, pueden empezar en~0. En un modelo lineal, como la regresión logística, el problema no se plantea (\cref{eje:4-simetria}).
+
+\section{La varianza de una preactivación}
+
+\begin{lema}\label{lem:var-producto}
+Sean $w$ y $h$ variables aleatorias independientes con $\E[w]=0$. Entonces $\E[wh]=0$ y $\Var(wh)=\Var(w)\,\E[h^{2}]$.
+\end{lema}
+
+\begin{proof}
+Por independencia, $\E[wh]=\E[w]\E[h]=0$ y $\E[w^{2}h^{2}]=\E[w^{2}]\E[h^{2}]$. Luego $\Var(wh)=\E[w^{2}h^{2}]-0=\Var(w)\E[h^{2}]$, porque $\E[w^{2}]=\Var(w)$ cuando la media es nula.
+\end{proof}
+
+\begin{proposicion}[Propagación hacia delante]\label{prop:var-adelante}
+Sea $z=\sum_{i=1}^{\nin}w_ih_i$ la preactivación de una unidad. Supóngase que los $w_i$ son independientes entre sí y de los $h_i$, con media~0 y varianza $s^{2}$, y que los $h_i$ tienen el mismo segundo momento $\E[h^{2}]$. Entonces $\E[z]=0$ y
+\[
+\Var(z)=\nin\,s^{2}\,\E[h^{2}].
+\]
+\end{proposicion}
+
+\begin{proof}
+Por el \cref{lem:var-producto}, cada término tiene media~0 y varianza $s^{2}\E[h^{2}]$. Los términos están incorrelados: para $i\neq k$, $\E[w_ih_iw_kh_k]=\E[w_i]\E[w_kh_ih_k]=0$, por la independencia de $w_i$ respecto de las demás variables. La varianza de una suma de variables incorreladas es la suma de las varianzas.
+\end{proof}
+
+El objetivo es elegir $s^{2}$ para que $\Var(z)$ sea la misma en todas las capas. Lo que relaciona $\E[h^{2}]$ con la varianza de la capa anterior es la activación.
+
+\section{Activaciones lineales o tanh: LeCun y Xavier}
+
+Si la activación es la identidad, o es tanh y opera cerca de~0, donde $\tanh t\approx t$, entonces $\E[h^{2}]\approx\Var(z_{\text{anterior}})$ y la \cref{prop:var-adelante} da $\Var(z)=\nin s^{2}\Var(z_{\text{anterior}})$. Conservar la varianza exige
+\[
+s^{2}=\frac{1}{\nin},
+\]
+que es la inicialización de \emph{LeCun}, la misma calibración $1/\sqrt{n}$ que recomiendan las notas de~\cite{cs231n}.
+
+\begin{proposicion}[Propagación hacia atrás]\label{prop:var-atras}
+En la retropropagación (\cref{tema:5}), el gradiente respecto a la activación $h_i$ de una capa es $g_i=\sum_{j=1}^{\nout}W_{ij}\delta_j$. Con las mismas hipótesis de independencia y media nula, $\Var(g_i)=\nout\,s^{2}\,\E[\delta^{2}]$.
+\end{proposicion}
+
+\begin{proof}
+Es la \cref{prop:var-adelante} aplicada a la suma sobre las $\nout$ salidas, con $\delta_j$ en el papel de $h_i$.
+\end{proof}
+
+Para que la varianza de los gradientes tampoco cambie de capa en capa hace falta $\nout s^{2}=1$. Las dos condiciones solo son compatibles si $\nin=\nout$; Glorot y Bengio~\cite{glorot} proponen el compromiso de tomar $1/s^{2}$ igual a la media aritmética de $\nin$ y $\nout$.
+
+\begin{definicion}[Inicialización de Xavier o Glorot]\label{def:xavier}
+Los pesos de una capa $\nin\to\nout$ se toman independientes con media~0 y varianza
+\[
+s^{2}=\frac{2}{\nin+\nout},
+\]
+bien con distribución normal $\mathcal{N}(0,s^{2})$, bien uniforme en $[-a,a]$ con $a=\sqrt{6/(\nin+\nout)}$.
+\end{definicion}
+
+\begin{lema}\label{lem:uniforme}
+Si $w\sim U(-a,a)$, entonces $\Var(w)=a^{2}/3$.
+\end{lema}
+
+\begin{proof}
+$\E[w]=0$ por simetría y $\E[w^{2}]=\frac{1}{2a}\int_{-a}^{a}t^{2}\,dt=\frac{1}{2a}\cdot\frac{2a^{3}}{3}=\frac{a^{2}}{3}$.
+\end{proof}
+
+Con $a^{2}=6/(\nin+\nout)$, el \cref{lem:uniforme} da $a^{2}/3=2/(\nin+\nout)$, de modo que las dos versiones de la \cref{def:xavier} tienen la misma varianza.
+
+\begin{ejemplo}\label{ej:xavier}
+Para una capa $300\to 100$, $s^{2}=2/400=0{,}005$ y $s=0{,}0707$; en la versión uniforme, $a=\sqrt{6/400}=0{,}1225$.
+\end{ejemplo}
+
+\section{Activaciones ReLU: la inicialización de He}
+
+\begin{lema}\label{lem:relu2}
+Si $z$ es una variable aleatoria con densidad simétrica respecto a~0 y varianza $\sigma^{2}$, entonces $\E[\ReLU(z)^{2}]=\sigma^{2}/2$.
+\end{lema}
+
+\begin{proof}
+Sea $f$ la densidad, con $f(-t)=f(t)$. Como $\ReLU(z)^{2}=z^{2}\ind[z>0]$, se tiene $\E[\ReLU(z)^{2}]=\int_0^{\infty}t^{2}f(t)\,dt$. La función $t^{2}f(t)$ es par, luego esa integral es la mitad de $\int_{-\infty}^{\infty}t^{2}f(t)\,dt=\E[z^{2}]$. Por simetría $\E[z]=0$ y $\E[z^{2}]=\sigma^{2}$.
+\end{proof}
+
+\begin{teorema}[Inicialización de He]\label{teo:he}
+En un MLP con activaciones ReLU, supóngase que las preactivaciones de cada capa tienen densidad simétrica y que se cumplen las hipótesis de la \cref{prop:var-adelante}. Entonces $\Var(z^{(\ell+1)})=\tfrac12\,\nin s^{2}\,\Var(z^{(\ell)})$, y la varianza se conserva capa a capa si y solo si
+\[
+s^{2}=\frac{2}{\nin}.
+\]
+\end{teorema}
+
+\begin{proof}
+Por la \cref{prop:var-adelante}, $\Var(z^{(\ell+1)})=\nin s^{2}\E[(h^{(\ell)})^{2}]$, y por el \cref{lem:relu2} con $h^{(\ell)}=\ReLU(z^{(\ell)})$, $\E[(h^{(\ell)})^{2}]=\tfrac12\Var(z^{(\ell)})$. La igualdad $\Var(z^{(\ell+1)})=\Var(z^{(\ell)})$ equivale a $\tfrac12\nin s^{2}=1$.
+\end{proof}
+
+He \emph{et al.}~\cite{he} obtienen esta regla y la generalizan a PReLU; las notas de~\cite{cs231n} la presentan como la recomendación práctica para redes ReLU. El factor~2 compensa exactamente que la ReLU anula la mitad del segundo momento. Con la inicialización de LeCun o de Xavier ($s^{2}=1/n$ cuando $\nin=\nout=n$), en cambio, la varianza se divide por~2 en cada capa ReLU y la desviación típica por $\sqrt2$.
+
+\begin{ejemplo}\label{ej:he}
+Para $\nin=512$, la inicialización de He da $s=\sqrt{2/512}=1/16=0{,}0625$.
+\end{ejemplo}
+
+\section{Un experimento}
+
+El \cref{tab:experimento} muestra la desviación típica de las activaciones de una red de diez capas de anchura~256, con entradas normales estándar, para cinco inicializaciones (media de 20 repeticiones con 1000 entradas cada una).
+
+\begin{table}[h]
+\centering\small
+\caption{Desviación típica de las activaciones en una red de diez capas de anchura~256.}\label{tab:experimento}
+\begin{tabular}{@{}llcccl@{}}
+\toprule
+Pesos & Activación & Capa 1 & Capa 4 & Capa 10 & Diagnóstico \\
+\midrule
+$\mathcal{N}(0,1)$ & tanh & $0{,}975$ & $0{,}974$ & $0{,}974$ & saturada: $86{,}5\,\%$ con $\abs{h}>0{,}99$ \\
+$\mathcal{N}(0;\,0{,}01^{2})$ & tanh & $0{,}156$ & $6{,}4\cdot 10^{-4}$ & $1{,}1\cdot 10^{-8}$ & señal apagada \\
+Xavier & tanh & $0{,}628$ & $0{,}357$ & $0{,}228$ & decae despacio \\
+Xavier & ReLU & $0{,}584$ & $0{,}205$ & $0{,}0254$ & se divide por $\sqrt2$ en cada capa \\
+He & ReLU & $0{,}826$ & $0{,}819$ & $0{,}812$ & estable \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Los números concuerdan con la teoría. Con He, la preactivación de la capa~1 es $\mathcal{N}(0,2)$ y la desviación típica de $\ReLU(z)$ es $\sqrt{1-1/\pi}=0{,}826$. Con Xavier y ReLU, el factor $2^{-1/2}$ por capa predice $0{,}584\cdot 2^{-9/2}=0{,}0258$ en la capa~10. Con $\mathcal{N}(0,1)$ y tanh la señal no desaparece, pero las unidades están saturadas: la derivada media $1-h^{2}$ vale $0{,}051$, y los gradientes se multiplican por números pequeños en cada capa (\cref{obs:desvanecimiento}).
+
+\begin{observacion}[Conexión con los LLM]
+GPT-1 inicializa los pesos con $\mathcal{N}(0;\,0{,}02^{2})$~\cite[§4.1]{radford2018}. GPT-2 añade un factor $1/\sqrt{N}$, donde $N$ es el número de capas residuales, en los pesos de las capas que escriben en el flujo residual~\cite[§2.3]{radford2019}. La justificación es la de este tema: el flujo residual es una suma de $N$ contribuciones, y si estas son incorreladas su varianza crece linealmente con $N$; dividir cada una por $\sqrt N$ mantiene la varianza total acotada con la profundidad (\cref{eje:4-residual}). Las conexiones residuales y la normalización se estudian en el módulo~11.
+\end{observacion}
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.4 «Parameter Initialization Strategies».
+\item Zhang \emph{et al.}~\cite{d2l}, §5.4 «Numerical Stability and Initialization».
+\item Stanford CS231n~\cite{cs231n}, «Neural Networks Part~2», apartado «Weight Initialization».
+\item Glorot y Bengio~\cite{glorot} y He \emph{et al.}~\cite{he}, derivaciones originales.
+\item Jurafsky y Martin~\cite{jm3}, §6.6.5 «More details on learning».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-simetria}
+(a) ¿Por qué no deben inicializarse a cero todos los pesos de un MLP? (b) En la regresión softmax del módulo~8, $p=\softmax(xW+b)$ sin capa oculta, ¿pueden inicializarse todos los pesos con el mismo valor? Justifique la respuesta calculando el gradiente respecto a dos columnas distintas de $W$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.4, ejercicio~2.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-xavier}
+Para una capa $512\to 2048$, calcule la desviación típica de Xavier en su versión normal y el límite $a$ de la versión uniforme. Calcule después la desviación típica de He para $\nin=512$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-uniforme}
+(a) ¿Qué límite $a$ debe tener una distribución uniforme $U(-a,a)$ para reproducir la varianza de He con $\nin=512$? (b) Para $\nin=200$, ¿qué desviación típica da He?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-decaimiento}
+Una red de diez capas ReLU de anchura $n$ se inicializa con $s^{2}=1/n$. (a) ¿Por qué factor se multiplica la varianza de la preactivación en cada capa? (b) Si la desviación típica de las activaciones de la capa~1 es $0{,}584$, ¿qué valor predice la teoría para la capa~10? Compárelo con el \cref{tab:experimento}. (c) ¿Qué varianza de los pesos corrige el problema?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-he}
+Demuestre que si $z\sim\mathcal{N}(0,\sigma^{2})$, entonces $\E[\ReLU(z)^{2}]=\sigma^{2}/2$, y calcule además $\E[\ReLU(z)]$ y $\Var(\ReLU(z))$. Deduzca la inicialización de He y compruebe el valor $0{,}826$ de la capa~1 del \cref{tab:experimento}.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-residual}
+Sea $r_N=r_0+\sum_{k=1}^{N}c\,f_k$, donde $r_0,f_1,\dots,f_N$ son variables aleatorias incorreladas de media~0, $\Var(r_0)=v_0$ y $\Var(f_k)=v$ para todo $k$, y $c>0$. (a) Calcule $\Var(r_N)$. (b) Demuestre que con $c=1$ la varianza crece sin límite con $N$ y que con $c=1/\sqrt N$ es $v_0+v$ para todo $N$. (c) Relacione el resultado con la inicialización de GPT-2.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Retropropagación en un perceptrón multicapa}
+\label{tema:5}
+% =====================================================================
+
+Entrenar una red por descenso de gradiente (módulo~7) exige calcular el gradiente de la pérdida respecto a todos los parámetros. La \emph{retropropagación} lo hace aplicando la regla de la cadena del módulo~4 desde la salida hacia la entrada y reutilizando cada derivada intermedia. Este tema la deduce para un MLP con salida softmax y entropía cruzada y la aplica a mano a una red pequeña. Se sigue la §6.5 de~\cite{gbc}, en particular la §6.5.4, las §6.6.2--6.6.4 de~\cite{jm3}, el capítulo~8 de~\cite{bishopdl}, la §5.3 de~\cite{d2l}, las notas «Backpropagation, Intuitions» de~\cite{cs231n} y la clase~3 de CS224N~\cite{cs224n}. El método se popularizó con el artículo de Rumelhart, Hinton y Williams~\cite{rumelhart}; su generalización a grafos arbitrarios, la diferenciación automática, es el objeto del módulo~10.
+
+\section{Grafos computacionales}
+
+\begin{definicion}[Grafo computacional]
+Un \emph{grafo computacional} es un grafo dirigido acíclico cuyos nodos son variables (escalares, vectores o matrices) y en el que cada nodo no inicial se obtiene aplicando una operación conocida a sus predecesores. La \emph{pasada hacia delante} evalúa los nodos en un orden topológico; la \emph{pasada hacia atrás} recorre el grafo en sentido inverso.
+\end{definicion}
+
+\begin{proposicion}[Regla de la cadena en un grafo]\label{prop:cadena-grafo}
+Sea $L$ un nodo escalar final y $v$ un nodo con sucesores $u_1,\dots,u_r$. Entonces
+\[
+\frac{\partial L}{\partial v}=\sum_{k=1}^{r}\frac{\partial L}{\partial u_k}\,\frac{\partial u_k}{\partial v}.
+\]
+\end{proposicion}
+
+\begin{proof}
+$L$ depende de $v$ solo a través de $u_1,\dots,u_r$; es la regla de la cadena multivariable (módulo~4) aplicada a $L=\ell(u_1(v),\dots,u_r(v))$.
+\end{proof}
+
+La consecuencia algorítmica es que, si se conocen $\partial L/\partial u_k$ para todos los sucesores de $v$, el gradiente respecto a $v$ se obtiene con operaciones locales. Recorriendo el grafo en orden topológico inverso, cada derivada se calcula una sola vez~\cite[§6.5.3]{gbc}. Cuando un nodo alimenta a varios sucesores, sus contribuciones se \emph{suman}.
+
+\section{El gradiente de la softmax con entropía cruzada}
+
+\begin{proposicion}\label{prop:delta-salida}
+Sea $z\in\R^{1\times K}$, $p=\softmax(z)$ e $y\in\{0,\dots,K-1\}$, y sea $L=-\ln p_y$. Entonces
+\[
+\frac{\partial L}{\partial z_k}=p_k-\ind[k=y],\qquad\text{es decir,}\qquad \nabla_{\!z}L=p-e_y.
+\]
+\end{proposicion}
+
+\begin{proof}
+Como $\ln p_y=z_y-\ln\sum_j e^{z_j}$, se tiene $L=-z_y+\LSE(z)$. La derivada del primer término respecto a $z_k$ es $-\ind[k=y]$, y la del segundo es $e^{z_k}/\sum_je^{z_j}=p_k$ (módulo~1, tema~4).
+\end{proof}
+
+\begin{corolario}\label{cor:suma-cero}
+Las componentes de $\nabla_{\!z}L$ suman~0.
+\end{corolario}
+
+\begin{proof}
+$\sum_k(p_k-\ind[k=y])=1-1=0$.
+\end{proof}
+
+El gradiente tiene una lectura directa: el descenso sube el logit de la clase correcta, que es la única componente negativa, y baja los demás en proporción a la probabilidad que el modelo les asignaba por error. La misma expresión $p-e_y$ es la que se retropropaga en cada posición durante el preentrenamiento de un LLM.
+
+\section{Capas lineales y de activación}
+
+\begin{proposicion}[Gradientes de una capa afín]\label{prop:capa-lineal}
+Sea $z=xW+b$ con $x\in\R^{1\times n}$, $W\in\R^{n\times m}$ y $b\in\R^{1\times m}$, y sea $g=\nabla_{\!z}L\in\R^{1\times m}$. Entonces
+\[
+\nabla_{\!W}L=x^{\top}g\in\R^{n\times m},\qquad \nabla_{\!b}L=g,\qquad \nabla_{\!x}L=g\,W^{\top}\in\R^{1\times n}.
+\]
+Para un lote $X\in\R^{B\times n}$ con gradientes $G\in\R^{B\times m}$ por filas y pérdida igual a la suma de las pérdidas, $\nabla_{\!W}L=X^{\top}G$, $\nabla_{\!b}L=\mathbf{1}^{\top}G$ y $\nabla_{\!X}L=GW^{\top}$.
+\end{proposicion}
+
+\begin{proof}
+Se tiene $z_j=\sum_ix_iW_{ij}+b_j$, luego $\partial z_j/\partial W_{ik}=x_i\,\ind[j=k]$, $\partial z_j/\partial b_k=\ind[j=k]$ y $\partial z_j/\partial x_i=W_{ij}$. Por la \cref{prop:cadena-grafo}, $\partial L/\partial W_{ik}=\sum_jg_j\,x_i\ind[j=k]=x_ig_k$, que es la entrada $(i,k)$ de $x^{\top}g$; $\partial L/\partial b_k=g_k$; y $\partial L/\partial x_i=\sum_jg_jW_{ij}$, que es la componente $i$ de $gW^{\top}$. Para el lote se suman las contribuciones de cada fila: $\sum_r x_r^{\top}g_r=X^{\top}G$.
+\end{proof}
+
+\begin{observacion}[Análisis dimensional]
+El gradiente respecto a una matriz tiene siempre la forma de la matriz. En la \cref{prop:capa-lineal}, $x^{\top}$ es $n\times 1$ y $g$ es $1\times m$, de modo que $x^{\top}g$ es $n\times m$, como $W$. Comprobar las formas basta a menudo para recordar el orden y las trasposiciones: «entrada traspuesta por gradiente de la salida»~\cite{cs231n}. Con vectores columna, como en las notas de~\cite{cs231n}, las mismas fórmulas aparecen traspuestas.
+\end{observacion}
+
+\begin{proposicion}[Gradiente a través de una activación]\label{prop:activacion}
+Sea $h=\phi(z)$ aplicada componente a componente. Entonces $\nabla_{\!z}L=\nabla_{\!h}L\odot\phi'(z)$.
+\end{proposicion}
+
+\begin{proof}
+Como $h_j$ depende solo de $z_j$, el jacobiano $\partial h/\partial z$ es diagonal con entradas $\phi'(z_j)$, y $\partial L/\partial z_j=(\partial L/\partial h_j)\,\phi'(z_j)$.
+\end{proof}
+
+\section{Las ecuaciones de la retropropagación}
+
+\begin{teorema}[Retropropagación en un MLP de dos capas]\label{teo:backprop}
+Sea el MLP $z^{(1)}=xW_1+b_1$, $h=\phi(z^{(1)})$, $z^{(2)}=hW_2+b_2$, $p=\softmax(z^{(2)})$, $L=-\ln p_y$. Definiendo $\delta^{(2)}=\nabla_{z^{(2)}}L$ y $\delta^{(1)}=\nabla_{z^{(1)}}L$, se cumple
+\[
+\begin{aligned}
+\delta^{(2)}&=p-e_y, & \nabla_{\!W_2}L&=h^{\top}\delta^{(2)}, & \nabla_{\!b_2}L&=\delta^{(2)},\\
+\nabla_{\!h}L&=\delta^{(2)}W_2^{\top}, & \delta^{(1)}&=\nabla_{\!h}L\odot\phi'(z^{(1)}), & & \\
+\nabla_{\!W_1}L&=x^{\top}\delta^{(1)}, & \nabla_{\!b_1}L&=\delta^{(1)}, & \nabla_{\!x}L&=\delta^{(1)}W_1^{\top}.
+\end{aligned}
+\]
+\end{teorema}
+
+\begin{proof}
+La primera ecuación es la \cref{prop:delta-salida}. Las de la capa~2 y $\nabla_hL$ son la \cref{prop:capa-lineal} con entrada $h$ y $g=\delta^{(2)}$. La de $\delta^{(1)}$ es la \cref{prop:activacion}. Las de la capa~1 son de nuevo la \cref{prop:capa-lineal}, con entrada $x$ y $g=\delta^{(1)}$.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth,
+  n/.style={draw,rounded corners=2pt,minimum height=7mm,minimum width=9mm,inner sep=3pt,font=\small}]
+  \foreach \nm/\lab/\xx in {x/{$x$}/0, z1/{$z^{(1)}$}/2.4, h/{$h$}/4.8, z2/{$z^{(2)}$}/7.2, p/{$p$}/9.6, L/{$L$}/12}
+    \node[n] (\nm) at (\xx,0) {\lab};
+  \node[n,above=6mm of z1] (W1) {$W_1,b_1$};
+  \node[n,above=6mm of z2] (W2) {$W_2,b_2$};
+  \draw[->] (x)--(z1); \draw[->] (W1)--(z1); \draw[->] (z1)--node[above,font=\scriptsize]{$\phi$}(h);
+  \draw[->] (h)--(z2); \draw[->] (W2)--(z2); \draw[->] (z2)--(p); \draw[->] (p)--node[above,font=\scriptsize]{$y$}(L);
+  \draw[->,dashed] (L.south) |- ++(0,-0.6) -| node[pos=0.25,below,font=\scriptsize]{$p-e_y$} (z2.south);
+  \draw[->,dashed] ($(z2.south)+(-0.15,0)$) |- ++(0,-1.3) -| node[pos=0.25,below,font=\scriptsize]{$\delta^{(2)}W_2^{\top}$} (h.south);
+  \draw[->,dashed] ($(h.south)+(-0.15,0)$) |- ++(0,-0.6) -| node[pos=0.25,below,font=\scriptsize]{$\odot\,\phi'(z^{(1)})$} (z1.south);
+  \draw[->,dashed] ($(z1.south)+(-0.15,0)$) |- ++(0,-1.3) -| node[pos=0.25,below,font=\scriptsize]{$\delta^{(1)}W_1^{\top}$} (x.south);
+\end{tikzpicture}
+\caption{Grafo computacional del MLP del \cref{teo:backprop}. Las flechas continuas son la pasada hacia delante; las discontinuas, la pasada hacia atrás.}\label{fig:grafo}
+\end{figure}
+
+\begin{observacion}[Coste]
+La pasada hacia delante realiza dos productos de matrices; la hacia atrás, tres para los gradientes de los parámetros y $\nabla_hL$, más uno opcional para $\nabla_xL$, todos de las mismas dimensiones. El coste de calcular el gradiente completo es, por tanto, del mismo orden que el de evaluar la red: aproximadamente el doble. Calcular cada derivada parcial por separado, con diferencias finitas, costaría una evaluación por parámetro.
+\end{observacion}
+
+\section{Un ejemplo completo}
+
+\begin{ejemplo}[Red $2\to 3\to 3$ con ReLU]\label{ej:backprop}
+Sean $x=(1,2)$, clase correcta $y=1$ (clases $0,1,2$),
+\[
+W_1=\begin{pmatrix}1&-1&0{,}5\\0{,}5&0{,}5&-1\end{pmatrix},\quad b_1=(0;\,0{,}5;\,0),\quad
+W_2=\begin{pmatrix}1&0&-1\\0&2&0\\1&1&0\end{pmatrix},\quad b_2=(0,0,0).
+\]
+\emph{Hacia delante.}
+\begin{enumerate}[label=\arabic*.]
+  \item $z^{(1)}=xW_1+b_1=(1+1;\,-1+1+0{,}5;\,0{,}5-2)=(2;\,0{,}5;\,-1{,}5)$.
+  \item $h=\ReLU(z^{(1)})=(2;\,0{,}5;\,0)$.
+  \item $z^{(2)}=hW_2=(2;\,1;\,-2)$.
+  \item $e^{z^{(2)}}=(7{,}3891;\,2{,}7183;\,0{,}1353)$, con suma $10{,}2427$; $p=(0{,}7214;\,0{,}2654;\,0{,}0132)$.
+  \item $L=-\ln 0{,}2654=1{,}3266$.
+\end{enumerate}
+\emph{Hacia atrás.}
+\begin{enumerate}[label=\arabic*.]
+  \item $\delta^{(2)}=p-e_1=(0{,}7214;\,-0{,}7346;\,0{,}0132)=\nabla_{\!b_2}L$.
+  \item $\nabla_{\!W_2}L=h^{\top}\delta^{(2)}$: la fila~1 es $2\,\delta^{(2)}$, la fila~2 es $0{,}5\,\delta^{(2)}$ y la fila~3 es nula:
+  \[
+  \nabla_{\!W_2}L=\begin{pmatrix}1{,}4428&-1{,}4692&0{,}0264\\0{,}3607&-0{,}3673&0{,}0066\\0&0&0\end{pmatrix}.
+  \]
+  \item $\nabla_{\!h}L=\delta^{(2)}W_2^{\top}$; cada componente es el producto escalar de $\delta^{(2)}$ con una fila de $W_2$: $(0{,}7214-0{,}0132;\,2\cdot(-0{,}7346);\,0{,}7214-0{,}7346)=(0{,}7082;\,-1{,}4692;\,-0{,}0132)$.
+  \item $\delta^{(1)}=\nabla_{\!h}L\odot\ind[z^{(1)}>0]=(0{,}7082;\,-1{,}4692;\,0)$. La tercera unidad estaba inactiva y no recibe gradiente.
+  \item $\nabla_{\!W_1}L=x^{\top}\delta^{(1)}$ y $\nabla_{\!b_1}L=\delta^{(1)}$:
+  \[
+  \nabla_{\!W_1}L=\begin{pmatrix}0{,}7082&-1{,}4692&0\\1{,}4164&-2{,}9384&0\end{pmatrix}.
+  \]
+\end{enumerate}
+Las filas de $\nabla_{\!W_2}L$ suman~0, como predice el \cref{cor:suma-cero}. Un paso de descenso con $\eta=0{,}1$ sobre todos los parámetros sube $p_y$ de $0{,}265$ a $0{,}862$ y baja la pérdida de $1{,}3266$ a $0{,}1482$.
+\end{ejemplo}
+
+\section{Comprobación numérica del gradiente}
+
+Un error en una sola ecuación de la retropropagación produce gradientes incorrectos sin ningún mensaje de error. La comprobación estándar compara con diferencias finitas~\cite{cs231n}.
+
+\begin{proposicion}[Diferencias centradas]\label{prop:centradas}
+Sea $f\colon\R\to\R$ de clase $C^{3}$ en un entorno de $\theta$. Entonces
+\[
+\frac{f(\theta+\varepsilon)-f(\theta-\varepsilon)}{2\varepsilon}=f'(\theta)+O(\varepsilon^{2}).
+\]
+\end{proposicion}
+
+\begin{proof}
+Por el teorema de Taylor, $f(\theta\pm\varepsilon)=f(\theta)\pm\varepsilon f'(\theta)+\tfrac12\varepsilon^{2}f''(\theta)\pm\tfrac16\varepsilon^{3}f'''(\xi_\pm)$. Al restar, los términos de orden par se cancelan y queda $2\varepsilon f'(\theta)+O(\varepsilon^{3})$.
+\end{proof}
+
+Aplicada a cada entrada de $W_1$ en el \cref{ej:backprop} con $\varepsilon=10^{-6}$, la fórmula reproduce $\nabla_{\!W_1}L$ con un error menor que $10^{-9}$. La función ReLU no es derivable en~0; la comprobación es fiable mientras ninguna preactivación esté a distancia menor que $\varepsilon$ de ese punto.
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §6.5.1--6.5.4, y en especial §6.5.4 «Back-Propagation Computation in Fully Connected MLP».
+\item Jurafsky y Martin~\cite{jm3}, §6.6.2--6.6.4: gradiente, grafos computacionales y diferenciación hacia atrás.
+\item Stanford CS231n~\cite{cs231n}, «Backpropagation, Intuitions», apartado «Gradients for vectorized operations».
+\item Stanford CS224N~\cite{cs224n}, clase~3 «Backpropagation and Neural Network Basics».
+\item Zhang \emph{et al.}~\cite{d2l}, §5.3 «Forward Propagation, Backward Propagation, and Computational Graphs».
+\item Bishop y Bishop~\cite{bishopdl}, cap.~8 «Backpropagation».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{2}{eje:5-softmax}
+Calcule $\softmax(\ln 4,0,0)$ y la pérdida de entropía cruzada si la clase correcta es la tercera. Compárela con la pérdida de un modelo uniforme.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-delta}
+Para $p=(0{,}5;\,0{,}3;\,0{,}2)$ y clase correcta $y=1$, dé $\nabla_{\!z}L$. ¿Qué componente aumenta un paso de descenso?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-y0}
+Repita la pasada hacia atrás del \cref{ej:backprop} con clase correcta $y=0$. Dé $L$, $\delta^{(2)}$, $\nabla_{\!h}L$ y $\nabla_{\!W_1}L$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-cs224n}
+Una red calcula $h=\sigma(xW_1+b_1)$, $\hat y=\softmax(hW_2+b_2)$ y $J=-\ln\hat y_y$. (a) Escriba $\nabla_{\!x}J$. (b) Evalúelo con $x=(1,2)$, $W_1=\begin{psmallmatrix}1&-1\\0&1\end{psmallmatrix}$, $b_1=(-1,-1)$, $W_2=\begin{psmallmatrix}2&0\\0&-2\end{psmallmatrix}$, $b_2=0$ e $y=0$. (c) ¿Cuántos parámetros tiene la red si la entrada tiene dimensión $D_x=10$, la capa oculta $H=5$ y la salida $D_y=3$?
+\fuente{adaptado de Stanford CS224N, invierno de 2018~\cite{cs224n2018}, tarea~1, problemas~2(c) y~2(d).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-grafo}
+Dibuje el grafo computacional de $f(x,y)=x^{3}(x-y)$, evalúelo en $(2,3)$ y retropropague para obtener $\partial f/\partial x$ y $\partial f/\partial y$.
+\fuente{adaptado de MIT 18.065~\cite{mit18065}, lección~27 «Backpropagation», problema~5.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-suma}
+Demuestre que las componentes de $\nabla_{\!b_2}L$ y las de cada fila de $\nabla_{\!W_2}L$ suman~0, y relacione el resultado con la invariancia de la softmax por traslación. ¿Sigue siendo cierto para un lote de ejemplos?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-swiglu}
+Sea $a=xW_g$, $u=xW_u$, $m=\SiLU(a)\odot u$ y $o=mW_d$, y sea $\nabla_{\!o}L$ el gradiente que llega a la salida. Exprese $\nabla_{\!m}L$, $\nabla_{\!u}L$, $\nabla_{\!a}L$, los gradientes de las tres matrices y $\nabla_{\!x}L$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{El modelo de lenguaje neuronal}
+\label{tema:6}
+% =====================================================================
+
+Este tema reúne los anteriores en un modelo de lenguaje. Bengio, Ducharme, Vincent y Jauvin~\cite{bengio} propusieron en 2003 sustituir la tabla de un modelo de $n$-gramas por una red: cada token del contexto se convierte en un vector, los vectores se concatenan y un MLP produce la distribución del token siguiente. La presentación sigue la §2 del artículo original y la §6.5 de~\cite{jm3}; la motivación por el tamaño de las tablas, la §9.3 de~\cite{d2l}. Los resultados numéricos son los de la práctica del módulo, con el corpus de nombres del módulo~1.
+
+\section{La maldición de la dimensionalidad}
+
+Un modelo de $n$-gramas sobre un vocabulario de $K$ tokens tiene $K^{n}$ entradas (módulo~1, tema~2). Con $K=28$ y un contexto de tres caracteres ($n=4$), la tabla tiene $28^{4}=614\,656$ casillas, frente a los $1885$ ejemplos de entrenamiento del corpus de nombres: casi todos los contextos no se han visto nunca y su estimación depende por completo del suavizado. El problema de fondo es que la tabla trata cada contexto como un símbolo aislado. Los contextos «.an» y «.en» no comparten nada, aunque las vocales \texttt{a} y \texttt{e} aparezcan en entornos parecidos.
+
+\section{Embeddings como capa lineal}
+
+\begin{definicion}[Matriz de embeddings]
+Sea $\V$ un vocabulario de $K$ tokens y $d\ge 1$. Una \emph{matriz de embeddings} es $C\in\R^{K\times d}$; el \emph{embedding} del token de índice $i$ es su fila $C[i]=e_i^{\top}C\in\R^{1\times d}$, donde $e_i$ es el vector \emph{one-hot} de $i$ (módulo~2, tema~5).
+\end{definicion}
+
+\begin{proposicion}[Gradiente de los embeddings]\label{prop:grad-embedding}
+Sea un contexto de tokens $(x_1,\dots,x_c)$ y sea $e=(C[x_1],\dots,C[x_c])\in\R^{1\times cd}$ la concatenación de sus embeddings. Si $\nabla_{\!e}L=(g_1,\dots,g_c)$ con $g_j\in\R^{1\times d}$, entonces
+\[
+\nabla_{\!C[i]}L=\sum_{j\,:\,x_j=i}g_j\qquad\text{para cada token } i,
+\]
+y las filas de los tokens que no aparecen en el contexto tienen gradiente nulo.
+\end{proposicion}
+
+\begin{proof}
+La fila $C[i]$ interviene en $e$ una vez por cada posición $j$ con $x_j=i$, como copia exacta. Por la \cref{prop:cadena-grafo}, las contribuciones de los distintos sucesores se suman, y cada copia aporta $g_j$ porque la derivada de la identidad es la identidad.
+\end{proof}
+
+En la práctica, las bibliotecas no multiplican por vectores \emph{one-hot}: leen la fila correspondiente y, en la pasada hacia atrás, acumulan los gradientes en las filas usadas (en NumPy, con \texttt{np.add.at}).
+
+\section{El modelo de Bengio \emph{et al.}}
+
+\begin{definicion}[Modelo de lenguaje neuronal prealimentado]\label{def:bengio}
+Sea $n\ge 2$ el orden del modelo y $c=n-1$ la longitud del contexto. Dado el contexto $(x_{t-c},\dots,x_{t-1})$, se calcula
+\[
+e=\bigl(C[x_{t-1}],\dots,C[x_{t-c}]\bigr)\in\R^{1\times cd},\qquad
+y=b+eW+\tanh(\tilde b+eH)\,U\in\R^{1\times K},
+\]
+con $H\in\R^{cd\times h}$, $\tilde b\in\R^{1\times h}$, $U\in\R^{h\times K}$, $b\in\R^{1\times K}$ y una matriz opcional de \emph{conexiones directas} $W\in\R^{cd\times K}$, y se toma $P(x_t=k\mid\text{contexto})=\softmax(y)_k$~\cite[§2]{bengio}.
+\end{definicion}
+
+\begin{proposicion}[Número de parámetros]\label{prop:param-bengio}
+Con conexiones directas, el modelo de la \cref{def:bengio} tiene
+\[
+K(1+nd+h)+h\bigl(1+(n-1)d\bigr)
+\]
+parámetros; sin ellas, $K(1+nd+h)+h(1+(n-1)d)-K(n-1)d$.
+\end{proposicion}
+
+\begin{proof}
+Se suman $Kd$ de $C$, $K$ de $b$, $K(n-1)d$ de $W$, $Kh$ de $U$, $h$ de $\tilde b$ y $h(n-1)d$ de $H$. Agrupando los términos con factor $K$, $K(d+1+(n-1)d+h)=K(1+nd+h)$, y los demás dan $h(1+(n-1)d)$.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth,scale=0.95,
+  n/.style={draw,rounded corners=2pt,minimum height=7mm,inner sep=3pt,font=\small}]
+  \node[n] (c3) at (0,1.2) {$x_{t-3}$};
+  \node[n] (c2) at (0,0) {$x_{t-2}$};
+  \node[n] (c1) at (0,-1.2) {$x_{t-1}$};
+  \node[n] (e3) at (2.2,1.2) {$C[x_{t-3}]$};
+  \node[n] (e2) at (2.2,0) {$C[x_{t-2}]$};
+  \node[n] (e1) at (2.2,-1.2) {$C[x_{t-1}]$};
+  \node[n,minimum height=3.1cm] (cat) at (4.1,0) {$e\in\R^{3d}$};
+  \node[n] (hid) at (6.7,0) {$\ReLU(eW_1+b_1)$};
+  \node[n] (out) at (10.0,0) {$\softmax(hW_2+b_2)$};
+  \foreach \i in {1,2,3} {\draw[->] (c\i)--(e\i); \draw[->] (e\i)--(e\i-|cat.west);}
+  \draw[->] (cat)--(hid); \draw[->] (hid)--(out);
+  \node[font=\scriptsize,below=1mm of hid] {$h\in\R^{H}$};
+  \node[font=\scriptsize,below=1mm of out] {$P(\cdot\mid\text{contexto})\in\R^{K}$};
+  \draw[decorate,decoration={brace,amplitude=4pt,mirror}] ($(e1.south west)+(0,-0.15)$)--($(e1.south east)+(0,-0.15)$) node[midway,below=4pt,font=\scriptsize]{misma matriz $C$};
+\end{tikzpicture}
+\caption{Modelo de lenguaje neuronal de la práctica, con contexto de tres tokens.}\label{fig:bengio}
+\end{figure}
+
+\begin{ejemplo}[El modelo de la práctica]\label{ej:practica}
+La práctica del módulo usa la variante de la \cref{fig:bengio}: activación ReLU en lugar de tanh, sin conexiones directas, con $K=28$, $d=10$, contexto de $c=3$ caracteres y $H=64$ unidades ocultas. Sus parámetros son $C$: $28\cdot 10=280$; $W_1$: $30\cdot 64=1920$; $b_1$: $64$; $W_2$: $64\cdot 28=1792$; $b_2$: $28$; en total, $4084$. Con conexiones directas se añadirían $28\cdot 30=840$, para un total de $4924$, que es lo que da la fórmula de la \cref{prop:param-bengio} con $n=4$, $d=10$ y $h=64$.
+\end{ejemplo}
+
+\section{Entrenamiento y regularización}
+
+Los parámetros $\theta$ se ajustan minimizando la entropía cruzada media sobre los $N$ pares (contexto, token siguiente) de entrenamiento, con decaimiento de pesos (módulo~7):
+\[
+J(\theta)=-\frac1N\sum_{r=1}^{N}\ln P_\theta\bigl(x^{(r)}_t\mid\text{contexto}^{(r)}\bigr)+\frac{\lambda}{2}\norm{\theta}^{2},
+\qquad \theta\leftarrow\theta-\eta\bigl(\nabla\mathcal{L}(\theta)+\lambda\theta\bigr),
+\]
+donde $\mathcal{L}$ es el primer término de $J$. El gradiente de $\mathcal{L}$ se obtiene con el \cref{teo:backprop}, aplicado al lote completo, y con la \cref{prop:grad-embedding} para $C$. La perplejidad es $\PPL=e^{\mathcal{L}}$ (módulo~1, tema~5).
+
+\begin{table}[h]
+\centering\small
+\caption{Perplejidades en el corpus de nombres del módulo~1 (1000 pasos de descenso por lotes completos, $\eta=0{,}5$).}\label{tab:resultados}
+\begin{tabular}{@{}lcrcc@{}}
+\toprule
+Modelo & Contexto & Parámetros & \multicolumn{2}{c@{}}{PPL} \\
+\cmidrule(l){4-5}
+ & & & entren. & valid. \\
+\midrule
+Uniforme & 0 & 0 & 28 & 28 \\
+Bigramas, suavizado $\alpha=0{,}2$ & 1 & 784 & --- & $12{,}42$ \\
+MLP, $d=10$, $H=64$, $\lambda=0{,}005$ & 3 & 4084 & $6{,}62$ & $10{,}45$ \\
+MLP sin decaimiento ($\lambda=0$) & 3 & 4084 & $3{,}76$ & $30{,}73$ \\
+Tabla de 4-gramas & 3 & 614\,656 & --- & (casi vacía) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El MLP regularizado reduce la perplejidad de validación del modelo de bigramas en un $16\,\%$, de $12{,}42$ a $10{,}45$, con menos de una centésima parte de los parámetros de una tabla de 4-gramas. Sin decaimiento de pesos, la red memoriza los nombres de entrenamiento: la perplejidad de entrenamiento baja a $3{,}76$ y la de validación sube a $30{,}73$, peor que el modelo uniforme. Es el sobreajuste del módulo~8.
+
+\section{Por qué generaliza}
+
+La red no ve tokens, sino vectores. Si dos tokens tienen embeddings próximos, los contextos que difieren solo en ellos producen distribuciones próximas. El resultado siguiente lo cuantifica. Se usa la norma espectral $\norm{A}_2=\max_{\norm{v}=1}\norm{vA}$ (módulo~3).
+
+\begin{proposicion}\label{prop:lipschitz}
+Sea $f(e)=\ReLU(eW_1+b_1)W_2+b_2$ la función que lleva la concatenación de embeddings a los logits, y sea $p(e)=\softmax(f(e))$. Para todo par $e,e'$ y todo token $k$,
+\[
+\norm{f(e)-f(e')}\le\norm{W_1}_2\norm{W_2}_2\,\norm{e-e'},\qquad
+\abs{\ln p_k(e)-\ln p_k(e')}\le 2\,\norm{W_1}_2\norm{W_2}_2\,\norm{e-e'}.
+\]
+\end{proposicion}
+
+\begin{proof}
+La ReLU cumple $\abs{\ReLU(s)-\ReLU(t)}\le\abs{s-t}$ componente a componente, luego $\norm{\ReLU(u)-\ReLU(u')}\le\norm{u-u'}$. Por tanto $\norm{f(e)-f(e')}\le\norm{(eW_1-e'W_1)}\,\norm{W_2}_2\le\norm{e-e'}\,\norm{W_1}_2\norm{W_2}_2$. Para la segunda desigualdad, sea $z=f(e)$, $z'=f(e')$ y $\Delta=\max_j\abs{z_j-z'_j}$. Como $z'_j\le z_j+\Delta$ para todo $j$ y la función $\LSE$ es creciente en cada componente y cumple $\LSE(z+\Delta\mathbf{1})=\LSE(z)+\Delta$, se tiene $\LSE(z')\le\LSE(z)+\Delta$, y por simetría $\abs{\LSE(z)-\LSE(z')}\le\Delta$. Entonces $\abs{\ln p_k(e)-\ln p_k(e')}=\abs{(z_k-z'_k)-(\LSE(z)-\LSE(z'))}\le 2\Delta\le 2\norm{z-z'}$.
+\end{proof}
+
+Los embeddings se aprenden junto con el resto de la red, y tokens que aparecen en contextos parecidos reciben gradientes parecidos (\cref{prop:grad-embedding}); en la práctica del módulo, las vocales acaban agrupadas sin que nadie haya indicado a la red qué es una vocal. Lo aprendido para un contexto se transfiere así, por la \cref{prop:lipschitz}, a todos los contextos cercanos.
+
+\begin{observacion}[Conexión con los LLM]
+El esquema «tokens $\to$ vectores $\to$ red compartida $\to$ softmax» es el de todo modelo de lenguaje neuronal actual. El Transformer (módulos~13 y~14) conserva la capa de embeddings, el MLP por token y la salida softmax, y sustituye la concatenación de un contexto de longitud fija por la atención, que combina un número variable de tokens con pesos que dependen de su contenido.
+\end{observacion}
+
+\begin{lecturas}
+\item Bengio \emph{et al.}~\cite{bengio}, §1 y §2: motivación y modelo.
+\item Jurafsky y Martin~\cite{jm3}, §6.5 «Embeddings as the input to neural net classifiers», en particular el modelo de lenguaje con embeddings concatenados.
+\item Zhang \emph{et al.}~\cite{d2l}, §9.3 «Language Models».
+\item Stanford CS224N~\cite{cs224n}, clase~4 «Language Models and RNNs», primera parte.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-sobreajuste}
+Sin decaimiento de pesos, el MLP del \cref{tab:resultados} tiene perplejidad $3{,}76$ en entrenamiento y $30{,}73$ en validación. (a) ¿Qué fenómeno indica? (b) Exprese ambas cifras como entropía cruzada en nats. (c) ¿Qué dos cambios reducirían el problema?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-tabla}
+Un corpus de entrenamiento tiene $N=10^{5}$ tokens y un vocabulario de $K=10^{4}$ palabras. (a) ¿Cuántas entradas tiene la tabla de un modelo de 4-gramas? (b) ¿Cuántos 4-gramas distintos pueden aparecer, como máximo, en el corpus? (c) ¿Qué fracción máxima de la tabla se estima a partir de datos observados?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §9.3, ejercicio~1.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-param}
+Para el modelo del \cref{ej:practica}: (a) ¿cuántos parámetros tiene $W_1$? (b) ¿Cómo cambia el total si se duplica $d$? (c) ¿Y si se amplía el contexto a 8 caracteres?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-embgrad}
+Con $d=2$, el contexto es $(\texttt{a},\texttt{n},\texttt{a})$ y el gradiente respecto a la concatenación de embeddings es $\nabla_{\!e}L=(0{,}1;\,-0{,}2;\,0{,}3;\,0;\,-0{,}4;\,0{,}5)$. Calcule los gradientes de las filas $C[\texttt{a}]$, $C[\texttt{n}]$ y $C[\texttt{e}]$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-bigrama}
+Considérese el modelo de la \cref{def:bengio} con contexto de un token ($n=2$), sin capa oculta ($h=0$) y con conexiones directas, de modo que los logits son $y=C[x_{t-1}]W+b$. (a) Demuestre que si $d\ge K$ el modelo puede representar exactamente cualquier modelo de bigramas con todas sus probabilidades positivas. (b) Demuestre que la matriz $K\times K$ de logits, cuya fila $u$ es el vector de logits del contexto $u$, tiene rango a lo sumo $d+1$, y que la matriz de log-probabilidades $\ln P(v\mid u)$ tiene rango a lo sumo $d+2$. Deduzca que con $d+2<K$ hay modelos de bigramas que no pueden representarse.
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los resultados exactos se dan como fracción cuando existe. Todos los valores numéricos se han comprobado con Python.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-lineal}
+\datos un MLP de capas afines $z\mapsto zW_\ell+b_\ell$ sin activación.
+\planteamiento aplicar la \cref{prop:colapso} y buscar un producto $W_1W_2$ de rango menor que~2.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Por la \cref{prop:colapso}, diez capas afines equivalen a una sola: $x\mapsto x(W_1\cdots W_{10})+b'$. La profundidad efectiva es~1.
+  \item En una red $2\to 1\to 2$, $W_1\in\R^{2\times 1}$ y $W_2\in\R^{1\times 2}$, luego $W=W_1W_2$ es $2\times 2$ con rango a lo sumo~1.
+  \item Ejemplo: $W_1=\begin{psmallmatrix}1\\0\end{psmallmatrix}$, $W_2=(1\ \ 1)$, $b_1=0$, $b_2=0$. La red calcula $x\mapsto(x_1,x_1)$. Ninguna red de esta forma calcula la identidad $x\mapsto x$, que tiene rango~2.
+  \item Añadir una capa lineal sustituye $W$ por $WW_{\ell}$: el conjunto de funciones sigue siendo de la forma $x\mapsto xW+b$ (no aumenta) y el rango no puede crecer (puede disminuir).
+\end{enumerate}
+\resultado \textbf{profundidad efectiva~1; una capa intermedia de anchura~1 limita el rango a~1 y reduce la capacidad.}
+\comprobacion con matrices $1\times 1$, $x\cdot 2\cdot 3=6x$, una sola capa; en el ejemplo, la entrada $(0,1)$ produce $(0,0)$, de modo que la información de $x_2$ se pierde.
+\end{solucion}
+
+\begin{solucion}{eje:1-xor}
+\datos XOR: $(0,0)\mapsto 0$, $(0,1)\mapsto 1$, $(1,0)\mapsto 1$, $(1,1)\mapsto 0$; la red~\eqref{eq:xor}.
+\planteamiento reproducir la demostración de la \cref{prop:xor} y evaluar la capa oculta en las cuatro entradas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Un perceptrón necesitaría $b<0$, $w_1+w_2+b<0$ (ceros) y $w_2+b>0$, $w_1+b>0$ (unos).
+  \item Sumando las dos primeras, $w_1+w_2+2b<0$; sumando las dos últimas, $w_1+w_2+2b>0$. Contradicción.
+  \item Capa oculta: $(0,0)\mapsto(\ReLU 0,\ReLU(-1))=(0,0)$; $(0,1)\mapsto(1,0)$; $(1,0)\mapsto(1,0)$; $(1,1)\mapsto(2,1)$.
+  \item En el plano $(h_1,h_2)$ los dos unos coinciden en $(1,0)$, y la recta $h_1-2h_2=\tfrac12$ separa ese punto de $(0,0)$ y $(2,1)$.
+\end{enumerate}
+\resultado \textbf{XOR no es linealmente separable; la capa oculta lleva las entradas a $(0,0)$, $(1,0)$, $(1,0)$, $(2,1)$, que sí lo son.}
+\comprobacion $\hat y=h_1-2h_2$ da $0$, $1$, $1$ y $2-2=0$, la tabla de la \cref{fig:xor}.
+\end{solucion}
+
+\begin{solucion}{eje:1-param}
+\datos MLP $784\to 256\to 128\to 10$.
+\planteamiento \cref{prop:parametros-mlp}: la capa $n\to m$ tiene $(n+1)m$ parámetros.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Capa 1: $784\cdot 256+256=200\,704+256=200\,960$.
+  \item Capa 2: $256\cdot 128+128=32\,768+128=32\,896$.
+  \item Capa 3: $128\cdot 10+10=1\,290$.
+  \item Total: $200\,960+32\,896+1\,290=235\,146$.
+  \item Fracción de la primera capa: $200\,960/235\,146=0{,}8546$.
+\end{enumerate}
+\resultado \textbf{$235\,146$ parámetros, el $85{,}5\,\%$ en la primera capa.}
+\comprobacion $785\cdot 256=200\,960$; estimación gruesa: $800\cdot 250=200\,000$.
+\end{solucion}
+
+\begin{solucion}{eje:1-cs231n}
+\datos redes $3\to 4\to 2$ y $3\to 4\to 4\to 1$.
+\planteamiento contar pesos $n_{\ell-1}n_\ell$ y sesgos $n_\ell$ por capa.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Primera red: pesos $3\cdot 4+4\cdot 2=12+8=20$; sesgos $4+2=6$; total $26$.
+  \item Segunda red: pesos $3\cdot 4+4\cdot 4+4\cdot 1=12+16+4=32$; sesgos $4+4+1=9$; total $41$.
+\end{enumerate}
+\resultado \textbf{26 parámetros (20 pesos y 6 sesgos) y 41 parámetros (32 pesos y 9 sesgos).}
+\comprobacion con la \cref{prop:parametros-mlp}: $(3+1)4+(4+1)2=16+10=26$ y $(3+1)4+(4+1)4+(4+1)1=16+20+5=41$.
+\end{solucion}
+
+\begin{solucion}{eje:1-or}
+\datos OR: $(0,0)\mapsto 0$ y las demás $\mapsto 1$; $\eta=1$, $w=(0,0)$, $b=0$.
+\planteamiento aplicar la \cref{def:regla} entrada a entrada; recuérdese que $\hat y=1$ solo si la preactivación es estrictamente positiva.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Pasada 1. $(0,0)$: $0\Rightarrow\hat y=0$, correcto. $(0,1)$: $0\Rightarrow\hat y=0$, error; $w=(0,1)$, $b=1$. $(1,0)$: $0+1=1>0$, correcto. $(1,1)$: $1+1=2$, correcto.
+  \item Pasada 2. $(0,0)$: $b=1>0\Rightarrow\hat y=1$, error; $w=(0,1)$, $b=0$. $(0,1)$: $1$, correcto. $(1,0)$: $0\Rightarrow\hat y=0$, error; $w=(1,1)$, $b=1$. $(1,1)$: $3$, correcto.
+  \item Pasada 3. $(0,0)$: $1>0$, error; $w=(1,1)$, $b=0$. $(0,1)$: $1$; $(1,0)$: $1$; $(1,1)$: $2$; correctos.
+  \item Pasada 4. Preactivaciones $0$, $1$, $1$, $2$: sin errores.
+\end{enumerate}
+\resultado \textbf{4 correcciones; $w=(1,1)$, $b=0$.}
+\comprobacion $\ind[x_1+x_2>0]$ vale $0$ en $(0,0)$ y $1$ en las otras tres entradas: es OR.
+\end{solucion}
+
+\begin{solucion}{eje:1-novikoff}
+\datos $\theta_0=0$; actualización $\theta\leftarrow\theta+\eta s_i\tilde x_i$; AND con $\tilde x_i=(x_i,1)$ y $s=(-1,-1,-1,+1)$ para $(0,0),(0,1),(1,0),(1,1)$.
+\planteamiento (a) inducción sobre el número de pasos; (b) aplicar las definiciones del \cref{teo:novikoff}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Sea $\bar\theta_k$ la sucesión obtenida con $\eta=1$. Se afirma que $\theta_k=\eta\bar\theta_k$ y que ambas ejecuciones hacen las mismas predicciones. Para $k=0$, $0=\eta\cdot 0$. Si $\theta_k=\eta\bar\theta_k$, entonces $\theta_k\cdot\tilde x=\eta\,\bar\theta_k\cdot\tilde x$ tiene el mismo signo que $\bar\theta_k\cdot\tilde x$ (y es nula a la vez), luego la predicción, el error y la actualización coinciden, y $\theta_{k+1}=\eta\bar\theta_k+\eta s_i\tilde x_i=\eta\bar\theta_{k+1}$.
+  \item (b) $\norm{(1,1,-1{,}5)}=\sqrt{1+1+2{,}25}=\sqrt{4{,}25}=2{,}0616$; $u=(1,1,-1{,}5)/2{,}0616$.
+  \item Márgenes sin normalizar $s_i(1,1,-1{,}5)\cdot\tilde x_i$: $(-1)(-1{,}5)=1{,}5$; $(-1)(-0{,}5)=0{,}5$; $0{,}5$; $(+1)(0{,}5)=0{,}5$. El mínimo es $0{,}5$, luego $\gamma=0{,}5/2{,}0616=0{,}2425$.
+  \item $R=\max\norm{\tilde x_i}=\norm{(1,1,1)}=\sqrt3=1{,}732$.
+  \item Cota: $R^{2}/\gamma^{2}=3\cdot 4{,}25/0{,}25=51$.
+\end{enumerate}
+\resultado \textbf{(a) las predicciones no dependen de $\eta$; (b) $\gamma\approx 0{,}2425$, $R=\sqrt3$ y $M\le 51$, compatible con las 10 correcciones observadas.}
+\comprobacion la cota es una garantía en el peor caso sobre todos los órdenes de presentación; además, otro $u$ con mayor margen daría una cota menor.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-sigmoide}
+\datos $\sigma(t)=(1+e^{-t})^{-1}$.
+\planteamiento regla de la cadena sobre la potencia $-1$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\sigma'(t)=-(1+e^{-t})^{-2}\cdot(-e^{-t})=e^{-t}/(1+e^{-t})^{2}$.
+  \item $e^{-t}/(1+e^{-t})^{2}=\frac{1}{1+e^{-t}}\cdot\frac{e^{-t}}{1+e^{-t}}$, y el segundo factor es $1-\sigma(t)$.
+  \item $\sigma'(0)=\tfrac12\cdot\tfrac12=\tfrac14$.
+  \item $\sigma(\ln 3)=1/(1+1/3)=3/4$, luego $\sigma'(\ln 3)=\tfrac34\cdot\tfrac14=\tfrac{3}{16}=0{,}1875$.
+\end{enumerate}
+\resultado \textbf{$\sigma'=\sigma(1-\sigma)$; $\sigma'(0)=1/4$; $\sigma'(\ln 3)=3/16$.}
+\comprobacion la diferencia centrada con $\varepsilon=10^{-6}$ en $\ln 3$ da $0{,}1875$; el máximo de $\sigma'$ es $1/4$ (\cref{prop:sigmoide}).
+\end{solucion}
+
+\begin{solucion}{eje:2-anchura}
+\datos $\FFN_{\mathrm{SwiGLU}}(x)=(\SiLU(xW_g)\odot xW_u)W_d$; MLP clásico $d\to 4d\to d$.
+\planteamiento describir cada matriz e igualar el número de pesos (\cref{prop:anchura}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $W_g\in\R^{d\times H}$: calcula la puerta, que tras SiLU decide cuánto pasa de cada componente.
+  \item $W_u\in\R^{d\times H}$: calcula el contenido, que la puerta multiplica componente a componente.
+  \item $W_d\in\R^{H\times d}$: proyecta el resultado de vuelta a dimensión $d$.
+  \item Pesos: $3dH$ frente a $8d^{2}$; igualando, $H=8d/3=\tfrac23\cdot 4d$.
+  \item Con $d=4096$: $H=10\,922{,}7$, redondeado a $11\,008=43\cdot 256$ en el código publicado de LLaMA.
+\end{enumerate}
+\resultado \textbf{puerta, contenido y proyección de salida; $H\approx\tfrac23\cdot 4d$ para no aumentar el número de parámetros respecto al MLP clásico.}
+\comprobacion $3\cdot 4096\cdot 11\,008=135\,266\,304$ y $2\cdot 4096\cdot 16\,384=134\,217\,728$: difieren en un $0{,}8\,\%$.
+\end{solucion}
+
+\begin{solucion}{eje:2-tanh}
+\datos $\tanh t=(e^{t}-e^{-t})/(e^{t}+e^{-t})$, $\sigma(t)=1/(1+e^{-t})$.
+\planteamiento dividir numerador y denominador de tanh por $e^{t}$ y absorber las constantes en las capas vecinas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\tanh t=(1-e^{-2t})/(1+e^{-2t})$.
+  \item $\tanh t+1=\bigl[(1-e^{-2t})+(1+e^{-2t})\bigr]/(1+e^{-2t})=2/(1+e^{-2t})=2\sigma(2t)$.
+  \item En $t=0{,}5$: $\tanh 0{,}5+1=0{,}4621+1=1{,}4621$ y $2\sigma(1)=2\cdot 0{,}7311=1{,}4621$.
+  \item Una capa tanh calcula $h=\tanh(xW+b)=2\sigma(2xW+2b)-\mathbf 1$. La capa siguiente recibe $hW'+b'=\sigma(x(2W)+2b)\,(2W')+(b'-\mathbf 1W')$.
+  \item Luego la red con sigmoides de pesos $2W$, sesgos $2b$ y capa siguiente con pesos $2W'$ y sesgos $b'-\mathbf 1W'$ calcula la misma función. El recíproco se obtiene invirtiendo las sustituciones.
+\end{enumerate}
+\resultado \textbf{$\tanh t+1=2\sigma(2t)$; ambas activaciones generan la misma familia de funciones.}
+\comprobacion en $t=0$: $\tanh 0+1=1=2\sigma(0)$.
+\end{solucion}
+
+\begin{solucion}{eje:2-swish}
+\datos $s(t)=t\,\sigma(\beta t)$.
+\planteamiento regla del producto y $\frac{d}{dt}\sigma(\beta t)=\beta\sigma(\beta t)(1-\sigma(\beta t))$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $s'(t)=\sigma(\beta t)+\beta t\,\sigma(\beta t)(1-\sigma(\beta t))=\sigma(\beta t)\bigl[1+\beta t(1-\sigma(\beta t))\bigr]$.
+  \item $\beta=1$, $t=1$: $0{,}7311\cdot(1+0{,}2689)=0{,}7311\cdot 1{,}2689=0{,}9277$.
+  \item $\beta=1$, $t=0$: $0{,}5\cdot 1=0{,}5$.
+  \item $\beta=1$, $t=-1$: $0{,}2689\cdot(1-0{,}7311)=0{,}2689^{2}=0{,}07233$.
+  \item $\beta=2$, $t=1$: $\sigma(2)=0{,}8808$; $0{,}8808\cdot(1+2\cdot 0{,}1192)=0{,}8808\cdot 1{,}2384=1{,}091$.
+\end{enumerate}
+\resultado \textbf{$s'(t)=\sigma(\beta t)[1+\beta t(1-\sigma(\beta t))]$; con $\beta=1$: $0{,}9277$, $0{,}5$ y $0{,}07233$; con $\beta=2$ en $t=1$: $1{,}091$.}
+\comprobacion con $\beta=1$ coincide con la \cref{prop:silu}(i); la pendiente $1{,}091>1$ en el último caso es imposible para la ReLU.
+\end{solucion}
+
+\begin{solucion}{eje:2-desvanece}
+\datos diez capas sigmoides con $z=2$.
+\planteamiento por la \cref{prop:activacion}, cada capa multiplica el gradiente por $\phi'(z)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\sigma(2)=0{,}8808$; $\sigma'(2)=0{,}8808\cdot 0{,}1192=0{,}1050$.
+  \item Factor: $0{,}1050^{10}=1{,}628\cdot 10^{-10}$.
+  \item Cota: $4^{-10}=9{,}537\cdot 10^{-7}$; el factor real es unas $5\,900$ veces menor.
+  \item Con ReLU y $z=2>0$: $\ReLU'(2)=1$ y el factor es $1^{10}=1$.
+\end{enumerate}
+\resultado \textbf{factor $1{,}6\cdot 10^{-10}$ con sigmoides, frente a~1 con ReLU.}
+\comprobacion $\ln(0{,}1050)\cdot 10=-22{,}54$ y $e^{-22{,}54}=1{,}6\cdot 10^{-10}$.
+\end{solucion}
+
+\begin{solucion}{eje:2-swiglu}
+\datos $x=(1,0)$ y las matrices del \cref{ej:swiglu}.
+\planteamiento repetir los pasos del ejemplo.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $xW_g=(1\cdot 1+0\cdot 0,\ 1\cdot(-1)+0\cdot 1)=(1,-1)$.
+  \item $\SiLU(1)=0{,}7311$; $\SiLU(-1)=-1\cdot\sigma(-1)=-0{,}2689$. Puerta: $(0{,}7311;\,-0{,}2689)$.
+  \item $xW_u=(1\cdot 1+0\cdot 1,\ 1\cdot 0+0\cdot 1)=(1,0)$.
+  \item Producto: $(0{,}7311\cdot 1;\ -0{,}2689\cdot 0)=(0{,}7311;\,0)$.
+  \item Salida: $0{,}7311\cdot 1+0\cdot(-1)=0{,}7311$.
+\end{enumerate}
+\resultado \textbf{salida $0{,}7311$; la primera componente de la puerta vale $\SiLU(1)$ y la segunda no influye porque multiplica un contenido nulo.}
+\comprobacion $\SiLU(-1)=-(1-\sigma(1))=-0{,}2689$; la coincidencia con la salida del \cref{ej:swiglu} se debe a las matrices elegidas.
+\end{solucion}
+
+\begin{solucion}{eje:2-swish-relu}
+\datos $\mathrm{Swish}_\beta(t)=t\sigma(\beta t)$, $\beta>0$.
+\planteamiento calcular la diferencia en $t\ge 0$ y $t<0$ y cambiar de variable $s=\beta\abs{t}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Si $t\ge 0$: $t\sigma(\beta t)-t=-t(1-\sigma(\beta t))=-t\,\sigma(-\beta t)$, porque $1-\sigma(u)=\sigma(-u)$.
+  \item Si $t<0$: $t\sigma(\beta t)-0=-\abs{t}\,\sigma(-\beta\abs{t})$.
+  \item En ambos casos $\abs{\mathrm{Swish}_\beta(t)-\ReLU(t)}=\abs{t}\,\sigma(-\beta\abs{t})=\frac1\beta\,s\,\sigma(-s)$ con $s=\beta\abs t$.
+  \item Cuando $t$ recorre $\R$, $s$ recorre $[0,\infty)$; luego el supremo es $c/\beta$ con $c=\sup_{s\ge0}s\sigma(-s)$. La función $s\sigma(-s)$ es continua, vale~0 en $s=0$ y tiende a~0 en el infinito, así que el supremo se alcanza.
+  \item $s\sigma(-s)=s/(1+e^{s})\le s\,e^{-s}$, y $s e^{-s}$ alcanza su máximo $1/e$ en $s=1$. Luego $c\le 1/e$.
+  \item Como $c/\beta\to 0$, la convergencia es uniforme.
+\end{enumerate}
+\resultado \textbf{$\sup_t\abs{\mathrm{Swish}_\beta-\ReLU}=c/\beta$ con $c\approx 0{,}2785\le 1/e\approx 0{,}3679$; convergencia uniforme.}
+\comprobacion numéricamente, el máximo de $s\sigma(-s)$ se alcanza en $s=1{,}2785$ y vale $0{,}2785$, que es, cambiado de signo, el mínimo de SiLU de la \cref{prop:silu}(iii), como debe ser, pues $\SiLU(-s)=-s\sigma(-s)$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-existencia}
+\datos el \cref{teo:au} y la \cref{prop:sierra}.
+\planteamiento separar lo que garantiza el teorema (existencia) de lo que se necesita (tamaño, entrenamiento, estructura).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Tamaño.} El teorema no acota $H$; para algunas funciones la anchura necesaria crece exponencialmente, mientras que la profundidad permite reutilizar piezas (\cref{prop:sierra}).
+  \item \emph{Aprendizaje y generalización.} El teorema solo asegura que la red existe; no garantiza que el descenso de gradiente la encuentre ni que generalice.
+  \item \emph{Estructura.} Un modelo de lenguaje debe combinar información de muchos tokens; un MLP por token no lo hace y hace falta la atención (módulo~13).
+\end{enumerate}
+\resultado \textbf{existencia no es eficiencia: la profundidad gana en número de parámetros, en entrenabilidad y en estructura.}
+\comprobacion LLaMA-7B apila 32 bloques con MLP de anchura $11\,008$ en lugar de una capa gigantesca.
+\end{solucion}
+
+\begin{solucion}{eje:3-codos}
+\datos $g(t)=\ReLU(t)+2\ReLU(t-1)$.
+\planteamiento evaluar cada término; la pendiente cambia en cada codo en el peso de la unidad correspondiente.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $g(0)=0+0=0$; $g(0{,}5)=0{,}5+0=0{,}5$; $g(1)=1+0=1$.
+  \item $g(1{,}5)=1{,}5+2\cdot 0{,}5=2{,}5$; $g(2)=2+2\cdot 1=4$.
+  \item Pendientes: $0$ para $t<0$; $1$ en $(0,1)$; $1+2=3$ para $t>1$.
+\end{enumerate}
+\resultado \textbf{$g=0$; $0{,}5$; $1$; $2{,}5$; $4$; pendientes $0$, $1$ y $3$, con codos en $t=0$ y $t=1$.}
+\comprobacion $(4-1)/(2-1)=3$ y $(1-0)/(1-0)=1$.
+\end{solucion}
+
+\begin{solucion}{eje:3-cuadrado}
+\datos $f(t)=t^{2}$ en $[0,1]$.
+\planteamiento aplicar el paso~2 de la demostración del \cref{teo:au1d} y estudiar la diferencia entre cuerda y parábola.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Nodos $0;\,0{,}25;\,0{,}5;\,0{,}75;\,1$; valores $0;\,0{,}0625;\,0{,}25;\,0{,}5625;\,1$.
+  \item Pendientes $m_k=(t_{k+1}^{2}-t_k^{2})/h=t_k+t_{k+1}$: $0{,}25$; $0{,}75$; $1{,}25$; $1{,}75$.
+  \item Red: $g(t)=0{,}25\ReLU(t)+0{,}5\ReLU(t-0{,}25)+0{,}5\ReLU(t-0{,}5)+0{,}5\ReLU(t-0{,}75)$.
+  \item (b) En $[t_k,t_k+h]$, la cuerda es $I(t)=t_k^{2}+(2t_k+h)(t-t_k)$ y $I(t)-t^{2}=(t-t_k)(t_k+h-t)$.
+  \item Ese producto de dos factores no negativos de suma $h$ es máximo en el punto medio, donde vale $(h/2)^{2}=h^{2}/4$.
+  \item Con $h=1/4$: error máximo $1/64=0{,}015625$.
+  \item Error menor que $10^{-4}$: $h^{2}/4<10^{-4}\iff h<0{,}02\iff n>50$. Bastan $n=51$ unidades.
+\end{enumerate}
+\resultado \textbf{$g$ como en el paso~3, con error máximo $1/64$; con $n$ tramos el error es $1/(4n^{2})$, y $51$ unidades dan error menor que $10^{-4}$.}
+\comprobacion en $t=1/8$: $g=0{,}25\cdot 0{,}125=0{,}03125$ y $t^{2}=0{,}015625$, diferencia $0{,}015625=1/64$; con $n=2$ se recupera el $1/16$ del \cref{ej:cuadrado}.
+\end{solucion}
+
+\begin{solucion}{eje:3-sierra}
+\datos $g(t)=2t$ en $[0,\tfrac12]$ y $2-2t$ en $[\tfrac12,1]$.
+\planteamiento aplicar $g$ dos veces y usar la \cref{prop:sierra}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $g$ en $0,\tfrac18,\dots,1$: $0,\tfrac14,\tfrac12,\tfrac34,1,\tfrac34,\tfrac12,\tfrac14,0$.
+  \item $g^{(2)}=g\circ g$: $g(0)=0$, $g(\tfrac14)=\tfrac12$, $g(\tfrac12)=1$, $g(\tfrac34)=\tfrac12$, $g(1)=0$; resulta $0,\tfrac12,1,\tfrac12,0,\tfrac12,1,\tfrac12,0$.
+  \item La gráfica de $g^{(2)}$ son dos «dientes» con picos en $t=\tfrac14$ y $t=\tfrac34$: cuatro piezas de pendiente $\pm 4$.
+  \item $g^{(3)}$ tiene $2^{3}=8$ piezas; una red de una capa oculta necesita al menos $8-1=7$ unidades, frente a las $2\cdot 3=6$ de la red profunda.
+\end{enumerate}
+\resultado \textbf{$g^{(2)}$ vale $0,\tfrac12,1,\tfrac12,0,\tfrac12,1,\tfrac12,0$; $g^{(3)}$ tiene 8 piezas y exige al menos 7 unidades en una sola capa.}
+\comprobacion la pendiente de $g^{(2)}$ en $(0,\tfrac14)$ es $(\tfrac12-0)/\tfrac18=4=2^{2}$.
+\end{solucion}
+
+\begin{solucion}{eje:3-abs-max}
+\datos se buscan redes $c+\sum_ja_j\ReLU(x\cdot w_j+b_j)$.
+\planteamiento usar $\abs t=\ReLU(t)+\ReLU(-t)$, $t=\ReLU(t)-\ReLU(-t)$ y $\max(t_1,t_2)=t_2+\max(t_1-t_2,0)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Si $t\ge 0$, $\ReLU(t)+\ReLU(-t)=t+0=\abs t$; si $t<0$, $0+(-t)=\abs t$. Red: dos unidades con pesos de entrada $+1$ y $-1$, sesgos~0 y pesos de salida $1$ y $1$.
+  \item $\max(t_1,t_2)=t_2+\ReLU(t_1-t_2)$, porque si $t_1\ge t_2$ se obtiene $t_1$ y si no, $t_2$.
+  \item El término lineal $t_2$ se escribe $\ReLU(t_2)-\ReLU(-t_2)$.
+  \item Red: tres unidades con pesos de entrada $(1,-1)$, $(0,1)$ y $(0,-1)$, sesgos~0 y pesos de salida $1$, $1$ y $-1$.
+\end{enumerate}
+\resultado \textbf{$\abs t=\ReLU(t)+\ReLU(-t)$; $\max(t_1,t_2)=\ReLU(t_1-t_2)+\ReLU(t_2)-\ReLU(-t_2)$.}
+\comprobacion $(3,5)$: $0+5-0=5$; $(5,3)$: $2+3-0=5$; $(-1,-4)$: $3+0-4=-1$.
+\end{solucion}
+
+\begin{solucion}{eje:3-cpwl}
+\datos MLP con activaciones ReLU en las capas ocultas y salida afín.
+\planteamiento inducción sobre las capas: cada unidad es afín en cada pieza, y la ReLU solo puede partir cada pieza en dos por un hiperplano.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Se llama \emph{partición poliédrica} a una división de $\R^{n}$ en un número finito de poliedros convexos (intersecciones finitas de semiespacios cerrados) que lo recubren.
+  \item Hipótesis de inducción: existe una partición poliédrica $\mathcal{P}_\ell$ tal que en cada poliedro todas las componentes de $h^{(\ell)}$ son funciones afines de $x$. Para $\ell=0$, $h^{(0)}=x$ y basta $\mathcal{P}_0=\{\R^{n}\}$.
+  \item En cada $Q\in\mathcal{P}_\ell$, cada preactivación $z^{(\ell+1)}_j=h^{(\ell)}W_{:,j}+b_j$ es afín, $z_j=a_j\cdot x+c_j$.
+  \item Se parte $Q$ por los hiperplanos $\{a_j\cdot x+c_j=0\}$, $j=1,\dots,n_{\ell+1}$: se obtienen a lo sumo $2^{n_{\ell+1}}$ poliedros, en cada uno de los cuales cada $z_j$ tiene signo constante, y $\ReLU(z_j)$ es $z_j$ o $0$, afín en ambos casos. Así se obtiene $\mathcal{P}_{\ell+1}$, finita.
+  \item La salida, afín en $h^{(L-1)}$, es afín en cada poliedro de $\mathcal{P}_{L-1}$.
+  \item La continuidad se sigue de que las capas afines y la ReLU son continuas y la composición de continuas es continua.
+\end{enumerate}
+\resultado \textbf{toda red ReLU calcula una función continua y afín a trozos sobre una partición poliédrica finita de $\R^{n}$.}
+\comprobacion en $n=1$ con una capa oculta se recupera la \cref{prop:piezas}; la red de $\max(t_1,t_2)$ del \cref{eje:3-abs-max} es afín en cada uno de los semiplanos $t_1\ge t_2$ y $t_1\le t_2$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-simetria}
+\datos (a) MLP con una capa oculta; (b) $p=\softmax(xW+b)$ y $\nabla_{\!W}L=x^{\top}(p-e_y)$ (\cref{prop:capa-lineal,prop:delta-salida}).
+\planteamiento (a) \cref{prop:simetria}; (b) comparar los gradientes de dos columnas cuando todas son iguales.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con pesos nulos, todas las columnas de $W_1$ y todas las filas de $W_2$ son iguales; por la \cref{prop:simetria}, las unidades ocultas siguen siendo idénticas durante todo el entrenamiento y la capa equivale a una sola unidad. Con ReLU y $W_1=0$, además, $h=\ReLU(b_1)$ no depende de la entrada.
+  \item (b) Si todas las columnas de $W$ son iguales y $b$ es constante, los logits son iguales y $p=(1/K,\dots,1/K)$.
+  \item La columna $k$ de $\nabla_{\!W}L$ es $x^{\top}(p_k-\ind[k=y])$: vale $x^{\top}(1/K-1)$ para $k=y$ y $x^{\top}/K$ para $k\neq y$.
+  \item Las columnas reciben gradientes distintos y se diferencian tras el primer paso. La etiqueta rompe la simetría porque cada salida tiene su propio objetivo.
+\end{enumerate}
+\resultado \textbf{(a) los pesos nulos dejan las unidades ocultas indistinguibles para siempre; (b) en la regresión softmax sí pueden inicializarse iguales, incluso a cero.}
+\comprobacion la función de pérdida de la regresión softmax es convexa (módulo~8), de modo que el punto de partida no afecta al mínimo alcanzado; en un MLP, en cambio, la configuración simétrica se conserva paso a paso (\cref{prop:simetria}).
+\end{solucion}
+
+\begin{solucion}{eje:4-xavier}
+\datos $\nin=512$, $\nout=2048$.
+\planteamiento \cref{def:xavier} y \cref{teo:he}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\nin+\nout=2560$.
+  \item Xavier normal: $s^{2}=2/2560=7{,}813\cdot 10^{-4}$; $s=0{,}02795$.
+  \item Xavier uniforme: $a^{2}=6/2560=2{,}344\cdot 10^{-3}$; $a=0{,}04841$.
+  \item He: $s^{2}=2/512=3{,}906\cdot 10^{-3}$; $s=0{,}0625$.
+\end{enumerate}
+\resultado \textbf{Xavier: $s\approx 0{,}0280$ y $a\approx 0{,}0484$; He: $s=0{,}0625$.}
+\comprobacion por el \cref{lem:uniforme}, $a^{2}/3=2{,}344\cdot 10^{-3}/3=7{,}813\cdot 10^{-4}=s^{2}$.
+\end{solucion}
+
+\begin{solucion}{eje:4-uniforme}
+\datos He: $s^{2}=2/\nin$; $\Var(U(-a,a))=a^{2}/3$.
+\planteamiento igualar $a^{2}/3=2/\nin$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $a=\sqrt{6/\nin}$; con $\nin=512$, $a=\sqrt{6/512}=\sqrt{0{,}01172}=0{,}1083$.
+  \item Con $\nin=200$: $s=\sqrt{2/200}=\sqrt{0{,}01}=0{,}1$.
+\end{enumerate}
+\resultado \textbf{$a\approx 0{,}1083$; $s=0{,}1$.}
+\comprobacion $0{,}1083^{2}/3=0{,}003906=2/512$.
+\end{solucion}
+
+\begin{solucion}{eje:4-decaimiento}
+\datos ReLU, $s^{2}=1/n$, $\nin=n$; desviación típica $0{,}584$ en la capa~1.
+\planteamiento \cref{teo:he}: $\Var(z^{(\ell+1)})=\tfrac12\nin s^{2}\Var(z^{(\ell)})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\tfrac12\cdot n\cdot\tfrac1n=\tfrac12$: la varianza se divide por~2 en cada capa.
+  \item La desviación típica de $\ReLU(z)$ es proporcional a la de $z$, luego se divide por $\sqrt2$ en cada capa.
+  \item (b) De la capa~1 a la~10 hay 9 pasos: $0{,}584\cdot 2^{-9/2}=0{,}584\cdot 0{,}04419=0{,}0258$.
+  \item El \cref{tab:experimento} da $0{,}0254$.
+  \item (c) Hace falta $\tfrac12 ns^{2}=1$, es decir, $s^{2}=2/n$ (He).
+\end{enumerate}
+\resultado \textbf{(a) factor $\tfrac12$; (b) predicción $0{,}0258$ frente a $0{,}0254$ medido; (c) $s^{2}=2/n$.}
+\comprobacion la predicción teórica de la capa~1 es $\sqrt{\tfrac12-\tfrac1{2\pi}}=0{,}584$ (\cref{eje:4-he} con $\sigma^{2}=1$).
+\end{solucion}
+
+\begin{solucion}{eje:4-he}
+\datos $z\sim\mathcal{N}(0,\sigma^{2})$ con densidad $f(t)=\frac{1}{\sigma\sqrt{2\pi}}e^{-t^{2}/(2\sigma^{2})}$.
+\planteamiento \cref{lem:relu2} para el segundo momento; integral directa para el primero.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $f$ es par, luego $\E[\ReLU(z)^{2}]=\int_0^{\infty}t^{2}f(t)\,dt=\tfrac12\E[z^{2}]=\sigma^{2}/2$.
+  \item $\E[\ReLU(z)]=\int_0^{\infty}t f(t)\,dt=\frac{1}{\sigma\sqrt{2\pi}}\bigl[-\sigma^{2}e^{-t^{2}/(2\sigma^{2})}\bigr]_0^{\infty}=\frac{\sigma^{2}}{\sigma\sqrt{2\pi}}=\frac{\sigma}{\sqrt{2\pi}}$.
+  \item $\Var(\ReLU(z))=\frac{\sigma^{2}}{2}-\frac{\sigma^{2}}{2\pi}=\sigma^{2}\,\frac{\pi-1}{2\pi}$.
+  \item Inicialización: por la \cref{prop:var-adelante}, $\Var(z^{(\ell+1)})=\nin s^{2}\cdot\sigma^{2}/2$; igualar a $\sigma^{2}$ da $s^{2}=2/\nin$.
+  \item Capa~1 del experimento: entrada normal estándar, $\nin=256$, $s^{2}=2/256$; $\Var(z)=256\cdot\tfrac{2}{256}\cdot 1=2$.
+  \item Desviación típica de $\ReLU(z)$: $\sqrt{2\cdot(\pi-1)/(2\pi)}=\sqrt{1-1/\pi}=\sqrt{0{,}6817}=0{,}8256$.
+\end{enumerate}
+\resultado \textbf{$\E[\ReLU(z)^{2}]=\sigma^{2}/2$, $\E[\ReLU(z)]=\sigma/\sqrt{2\pi}$, $\Var(\ReLU(z))=\sigma^{2}(\pi-1)/(2\pi)$; $s^{2}=2/\nin$; desviación típica $0{,}826$ en la capa~1.}
+\comprobacion con $2\cdot 10^{6}$ muestras de $\mathcal{N}(0,4)$, la media de $\ReLU(z)^{2}$ es $2{,}00$, frente al valor exacto $4/2=2$; el valor $0{,}826$ coincide con el del \cref{tab:experimento}.
+\end{solucion}
+
+\begin{solucion}{eje:4-residual}
+\datos $r_N=r_0+c\sum_{k=1}^{N}f_k$ con variables incorreladas de media~0.
+\planteamiento la varianza de una suma de variables incorreladas es la suma de las varianzas, y $\Var(cX)=c^{2}\Var(X)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\Var(r_N)=\Var(r_0)+\sum_{k=1}^{N}c^{2}\Var(f_k)=v_0+Nc^{2}v$.
+  \item (b) Con $c=1$: $v_0+Nv\to\infty$ cuando $N\to\infty$, si $v>0$.
+  \item Con $c=1/\sqrt N$: $v_0+N\cdot\tfrac1N\cdot v=v_0+v$, independiente de $N$.
+  \item (c) En un Transformer, el flujo residual acumula la salida de cada subcapa. GPT-2 multiplica por $1/\sqrt{N}$ los pesos de las capas que escriben en ese flujo~\cite[§2.3]{radford2019}, lo que divide la varianza de cada contribución por $N$ y mantiene acotada la del flujo al aumentar la profundidad.
+\end{enumerate}
+\resultado \textbf{$\Var(r_N)=v_0+Nc^{2}v$; con $c=1/\sqrt N$ vale $v_0+v$ para todo $N$.}
+\comprobacion con $N=48$ capas residuales y $v_0=v=1$: sin escalar, $\Var=49$; escalando, $\Var=2$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-softmax}
+\datos $z=(\ln 4,0,0)$; clase correcta, la tercera.
+\planteamiento $e^{\ln 4}=4$; $L=-\ln p_3$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $e^{z}=(4,1,1)$, con suma~6.
+  \item $p=(4/6,1/6,1/6)=(2/3,1/6,1/6)$.
+  \item $L=-\ln(1/6)=\ln 6=1{,}792$ nats.
+  \item Modelo uniforme: $L=\ln 3=1{,}099$ nats.
+\end{enumerate}
+\resultado \textbf{$p=(2/3,1/6,1/6)$; $L=\ln 6\approx 1{,}792$ nats, mayor que la pérdida uniforme $\ln 3\approx 1{,}099$.}
+\comprobacion $p$ suma~1; la pérdida supera la uniforme porque el modelo concentra la probabilidad en una clase equivocada.
+\end{solucion}
+
+\begin{solucion}{eje:5-delta}
+\datos $p=(0{,}5;\,0{,}3;\,0{,}2)$, $y=1$.
+\planteamiento \cref{prop:delta-salida}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $e_y=(0,1,0)$.
+  \item $p-e_y=(0{,}5;\,0{,}3-1;\,0{,}2)=(0{,}5;\,-0{,}7;\,0{,}2)$.
+  \item El paso de descenso resta $\eta(p-e_y)$: solo aumenta la componente con gradiente negativo, $z_1$.
+\end{enumerate}
+\resultado \textbf{$\nabla_{\!z}L=(0{,}5;\,-0{,}7;\,0{,}2)$; aumenta el logit de la clase correcta, $z_1$.}
+\comprobacion $0{,}5-0{,}7+0{,}2=0$ (\cref{cor:suma-cero}).
+\end{solucion}
+
+\begin{solucion}{eje:5-y0}
+\datos la red del \cref{ej:backprop}, ahora con $y=0$.
+\planteamiento la pasada hacia delante no depende de $y$: $z^{(1)}=(2;\,0{,}5;\,-1{,}5)$, $h=(2;\,0{,}5;\,0)$, $p=(0{,}7214;\,0{,}2654;\,0{,}0132)$. Solo cambia $e_y$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $L=-\ln 0{,}7214=0{,}3266$.
+  \item $\delta^{(2)}=p-e_0=(-0{,}2786;\,0{,}2654;\,0{,}0132)$.
+  \item $\nabla_{\!h}L=\delta^{(2)}W_2^{\top}$. Fila $(1,0,-1)$: $-0{,}2786-0{,}0132=-0{,}2918$. Fila $(0,2,0)$: $2\cdot 0{,}2654=0{,}5308$. Fila $(1,1,0)$: $-0{,}2786+0{,}2654=-0{,}0132$.
+  \item $\delta^{(1)}=(-0{,}2918;\,0{,}5308;\,-0{,}0132)\odot(1,1,0)=(-0{,}2918;\,0{,}5308;\,0)$.
+  \item $\nabla_{\!W_1}L=x^{\top}\delta^{(1)}$: fila~1 $=1\cdot\delta^{(1)}$, fila~2 $=2\cdot\delta^{(1)}$.
+\end{enumerate}
+\[
+\nabla_{\!W_1}L=\begin{pmatrix}-0{,}2918&0{,}5308&0\\-0{,}5836&1{,}0616&0\end{pmatrix}.
+\]
+\resultado \textbf{$L\approx 0{,}3266$; $\delta^{(2)}=(-0{,}2786;\,0{,}2654;\,0{,}0132)$; $\nabla_{\!h}L=(-0{,}2918;\,0{,}5308;\,-0{,}0132)$; $\nabla_{\!W_1}L$ como arriba.}
+\comprobacion $\delta^{(2)}$ suma~0; la pérdida es exactamente 1~nat menor que con $y=1$, porque $L_{y=1}-L_{y=0}=z_0-z_1=1$; las diferencias centradas reproducen $\nabla_{\!W_1}L$ con error menor que $10^{-9}$.
+\end{solucion}
+
+\begin{solucion}{eje:5-cs224n}
+\datos $x=(1,2)$, $W_1=\begin{psmallmatrix}1&-1\\0&1\end{psmallmatrix}$, $b_1=(-1,-1)$, $W_2=\begin{psmallmatrix}2&0\\0&-2\end{psmallmatrix}$, $b_2=0$, $y=0$.
+\planteamiento \cref{teo:backprop} con $\phi=\sigma$, $\phi'=\sigma(1-\sigma)=h\odot(1-h)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\delta^{(2)}=\hat y-e_y$; $\nabla_{\!h}J=\delta^{(2)}W_2^{\top}$; $\delta^{(1)}=\nabla_{\!h}J\odot h\odot(1-h)$; $\nabla_{\!x}J=\delta^{(1)}W_1^{\top}$.
+  \item (b) $xW_1=(1,\,-1+2)=(1,1)$; $z^{(1)}=(0,0)$; $h=(0{,}5;\,0{,}5)$.
+  \item $z^{(2)}=hW_2=(1,-1)$; $\hat y=(e/(e+e^{-1}),\,e^{-1}/(e+e^{-1}))=(0{,}8808;\,0{,}1192)$; $J=-\ln 0{,}8808=0{,}1269$.
+  \item $\delta^{(2)}=(-0{,}1192;\,0{,}1192)$.
+  \item $\nabla_{\!h}J=\delta^{(2)}W_2^{\top}=(-0{,}1192\cdot 2;\ 0{,}1192\cdot(-2))=(-0{,}2384;\,-0{,}2384)$.
+  \item $h(1-h)=(0{,}25;\,0{,}25)$; $\delta^{(1)}=(-0{,}0596;\,-0{,}0596)$.
+  \item $\nabla_{\!x}J=\delta^{(1)}W_1^{\top}$: con la fila $(1,-1)$ de $W_1$, $-0{,}0596+0{,}0596=0$; con la fila $(0,1)$, $-0{,}0596$.
+  \item (c) $(D_x+1)H+(H+1)D_y=11\cdot 5+6\cdot 3=55+18=73$.
+\end{enumerate}
+\resultado \textbf{$\nabla_{\!x}J=(0;\,-0{,}0596)$; 73 parámetros.}
+\comprobacion las diferencias centradas dan $(0{,}0000;\,-0{,}0596)$; además $\hat y_0=\sigma(z_0-z_1)=\sigma(2)=0{,}8808$.
+\end{solucion}
+
+\begin{solucion}{eje:5-grafo}
+\datos $f(x,y)=x^{3}(x-y)$ en $(2,3)$.
+\planteamiento nodos $a=x^{3}$, $b=x-y$, $f=ab$; retropropagar sumando las dos rutas de $x$ (\cref{prop:cadena-grafo}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Grafo: $x\to a$, $x\to b$, $y\to b$, $a\to f$, $b\to f$.
+  \item Hacia delante: $a=8$, $b=-1$, $f=-8$.
+  \item Nodo producto: $\partial f/\partial a=b=-1$, $\partial f/\partial b=a=8$.
+  \item Ruta por $a$: $\partial a/\partial x=3x^{2}=12$; contribución $-1\cdot 12=-12$.
+  \item Ruta por $b$: $\partial b/\partial x=1$ y $\partial b/\partial y=-1$; contribuciones $8$ a $x$ y $-8$ a $y$.
+  \item $\partial f/\partial x=-12+8=-4$; $\partial f/\partial y=-8$.
+\end{enumerate}
+\resultado \textbf{$f(2,3)=-8$; $\partial f/\partial x=-4$; $\partial f/\partial y=-8$.}
+\comprobacion derivando directamente, $\partial f/\partial x=3x^{2}(x-y)+x^{3}=-12+8=-4$ y $\partial f/\partial y=-x^{3}=-8$.
+\end{solucion}
+
+\begin{solucion}{eje:5-suma}
+\datos $\delta^{(2)}=p-e_y$, $\nabla_{\!b_2}L=\delta^{(2)}$, $\nabla_{\!W_2}L=h^{\top}\delta^{(2)}$.
+\planteamiento usar el \cref{cor:suma-cero} y la linealidad del gradiente respecto a los ejemplos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\sum_k(\nabla_{\!b_2}L)_k=\sum_k\delta^{(2)}_k=0$.
+  \item La fila $i$ de $\nabla_{\!W_2}L$ es $h_i\,\delta^{(2)}$, cuya suma es $h_i\cdot 0=0$.
+  \item Interpretación: $\softmax(z+c\mathbf 1)=\softmax(z)$, luego $L(z+c\mathbf 1)=L(z)$ y la derivada direccional en la dirección $\mathbf 1$ es nula: $\nabla_{\!z}L\cdot\mathbf 1=0$.
+  \item Para un lote, el gradiente es la suma (o la media) de los gradientes por ejemplo, cada uno con filas de suma nula; la suma conserva la propiedad.
+\end{enumerate}
+\resultado \textbf{las sumas son nulas para un ejemplo y para un lote; es consecuencia de la invariancia de la softmax por traslación.}
+\comprobacion en el \cref{ej:backprop}, la fila~1 de $\nabla_{\!W_2}L$ suma $1{,}4428-1{,}4692+0{,}0264=0$.
+\end{solucion}
+
+\begin{solucion}{eje:5-swiglu}
+\datos $a=xW_g$, $u=xW_u$, $m=\SiLU(a)\odot u$, $o=mW_d$; gradiente $\nabla_{\!o}L$.
+\planteamiento \cref{prop:capa-lineal} para las capas lineales, regla del producto componente a componente y suma de las dos ramas que salen de $x$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\nabla_{\!m}L=\nabla_{\!o}L\,W_d^{\top}$ y $\nabla_{\!W_d}L=m^{\top}\nabla_{\!o}L$.
+  \item $m_j=\SiLU(a_j)u_j$ depende de $a$ y $u$ solo a través de la componente $j$.
+  \item $\partial m_j/\partial u_j=\SiLU(a_j)$, luego $\nabla_{\!u}L=\nabla_{\!m}L\odot\SiLU(a)$.
+  \item $\partial m_j/\partial a_j=u_j\SiLU'(a_j)$, luego $\nabla_{\!a}L=\nabla_{\!m}L\odot u\odot\SiLU'(a)$, con $\SiLU'(t)=\sigma(t)(1+t(1-\sigma(t)))$ (\cref{prop:silu}).
+  \item $\nabla_{\!W_g}L=x^{\top}\nabla_{\!a}L$ y $\nabla_{\!W_u}L=x^{\top}\nabla_{\!u}L$.
+  \item $x$ alimenta dos ramas: $\nabla_{\!x}L=\nabla_{\!a}L\,W_g^{\top}+\nabla_{\!u}L\,W_u^{\top}$.
+\end{enumerate}
+\resultado \textbf{$\nabla_{\!u}L=\nabla_{\!m}L\odot\SiLU(a)$, $\nabla_{\!a}L=\nabla_{\!m}L\odot u\odot\SiLU'(a)$, $\nabla_{\!x}L=\nabla_{\!a}L\,W_g^{\top}+\nabla_{\!u}L\,W_u^{\top}$.}
+\comprobacion con matrices aleatorias, las diferencias centradas con $\varepsilon=10^{-6}$ reproducen $\nabla_{\!x}L$ con error menor que $10^{-6}$; en $a=0$, $\SiLU'(0)=\tfrac12$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-sobreajuste}
+\datos $\PPL_{\text{ent}}=3{,}76$, $\PPL_{\text{val}}=30{,}73$.
+\planteamiento $\PPL=e^{\mathcal{L}}$, luego $\mathcal{L}=\ln\PPL$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) La perplejidad de validación es ocho veces la de entrenamiento y supera la del modelo uniforme ($28$): el modelo memoriza los nombres de entrenamiento y no generaliza. Es sobreajuste.
+  \item (b) $\ln 3{,}76=1{,}324$ nats y $\ln 30{,}73=3{,}425$ nats.
+  \item (c) Restaurar el decaimiento de pesos ($\lambda=0{,}005$ da $10{,}45$ en validación), usar más datos, reducir $d$ o $H$, o detener el entrenamiento antes (parada temprana).
+\end{enumerate}
+\resultado \textbf{sobreajuste; $1{,}324$ y $3{,}425$ nats; regularizar o aumentar los datos.}
+\comprobacion $e^{1{,}324}=3{,}76$ y $e^{3{,}425}=30{,}7$; la referencia uniforme es $\ln 28=3{,}332$ nats, menor que $3{,}425$.
+\end{solucion}
+
+\begin{solucion}{eje:6-tabla}
+\datos $N=10^{5}$ tokens, $K=10^{4}$.
+\planteamiento la tabla tiene $K^{4}$ entradas; cada posición del corpus inicia a lo sumo un 4-grama.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $K^{4}=(10^{4})^{4}=10^{16}$ entradas.
+  \item (b) Hay $N-3=99\,997$ posiciones de inicio, luego a lo sumo $99\,997$ 4-gramas distintos.
+  \item (c) Fracción: $99\,997/10^{16}\approx 10^{-11}$.
+\end{enumerate}
+\resultado \textbf{$10^{16}$ entradas, a lo sumo $99\,997$ observadas: una fracción del orden de $10^{-11}$.}
+\comprobacion aunque todos los 4-gramas del corpus fueran distintos, quedarían sin datos $10^{16}-10^{5}\approx 10^{16}$ entradas; en el corpus de nombres la situación es análoga, con $614\,656$ casillas y $1885$ ejemplos.
+\end{solucion}
+
+\begin{solucion}{eje:6-param}
+\datos $K=28$, $d=10$, $c=3$, $H=64$; total $4084$ (\cref{ej:practica}).
+\planteamiento total $=Kd+(cd)H+H+HK+K$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $W_1$: $cd\cdot H=30\cdot 64=1920$.
+  \item (b) Con $d=20$: $560+60\cdot 64+64+1792+28=560+3840+64+1792+28=6284$.
+  \item (c) Con $c=8$: $280+80\cdot 64+64+1792+28=280+5120+64+1792+28=7284$.
+\end{enumerate}
+\resultado \textbf{(a) $1920$; (b) $6284$; (c) $7284$.}
+\comprobacion ampliar el contexto de 3 a 8 solo añade $5\cdot 10\cdot 64=3200$ parámetros, crecimiento lineal; una tabla pasaría de $28^{4}$ a $28^{9}\approx 1{,}06\cdot 10^{13}$ entradas.
+\end{solucion}
+
+\begin{solucion}{eje:6-embgrad}
+\datos contexto $(\texttt{a},\texttt{n},\texttt{a})$, $d=2$, $\nabla_{\!e}L=(0{,}1;\,-0{,}2;\,0{,}3;\,0;\,-0{,}4;\,0{,}5)$.
+\planteamiento \cref{prop:grad-embedding}: partir $\nabla_{\!e}L$ en bloques de $d=2$ y sumar los de cada token.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Bloques: $g_1=(0{,}1;\,-0{,}2)$ (\texttt{a}), $g_2=(0{,}3;\,0)$ (\texttt{n}), $g_3=(-0{,}4;\,0{,}5)$ (\texttt{a}).
+  \item $\nabla_{\!C[\texttt{a}]}L=g_1+g_3=(0{,}1-0{,}4;\,-0{,}2+0{,}5)=(-0{,}3;\,0{,}3)$.
+  \item $\nabla_{\!C[\texttt{n}]}L=g_2=(0{,}3;\,0)$.
+  \item $\nabla_{\!C[\texttt{e}]}L=(0,0)$: \texttt{e} no aparece en el contexto.
+\end{enumerate}
+\resultado \textbf{$(-0{,}3;\,0{,}3)$, $(0{,}3;\,0)$ y $(0,0)$.}
+\comprobacion la suma de todas las filas de $\nabla_{\!C}L$, $(0,0{,}3)$, coincide con la suma de los tres bloques, $(0{,}1+0{,}3-0{,}4;\,-0{,}2+0+0{,}5)=(0;\,0{,}3)$.
+\end{solucion}
+
+\begin{solucion}{eje:6-bigrama}
+\datos logits $y(u)=C[u]W+b$ con $C\in\R^{K\times d}$, $W\in\R^{d\times K}$, $b\in\R^{1\times K}$; modelo de bigramas $P(v\mid u)>0$.
+\planteamiento (a) construir $C$, $W$, $b$ explícitos; (b) escribir la matriz de logits como producto más una matriz de rango~1 y usar la invariancia de la softmax por traslación.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Si $d\ge K$, tómese $C=(I_K\ \ 0)\in\R^{K\times d}$, $W$ con sus $K$ primeras filas iguales a la matriz $A_{uv}=\ln P(v\mid u)$ y el resto nulas, y $b=0$. Entonces $y(u)=A_{u,:}$ y $\softmax(y(u))_v=P(v\mid u)/\sum_{v'}P(v'\mid u)=P(v\mid u)$.
+  \item (b) La matriz de logits es $Z=CW+\mathbf 1b$. Como $\operatorname{rg}(CW)\le d$ y $\operatorname{rg}(\mathbf 1b)\le 1$, $\operatorname{rg}Z\le d+1$ (módulo~3).
+  \item Las log-probabilidades son $\ln P(v\mid u)=Z_{uv}-\LSE(Z_{u,:})$, es decir, $A=Z-s\mathbf 1^{\top}$ con $s_u=\LSE(Z_{u,:})$; luego $\operatorname{rg}A\le d+2$.
+  \item Para ver que hay modelos no representables, sea $P(v\mid u)\propto e^{\kappa\ind[u=v]}$ con $\kappa>0$. Entonces $A=\kappa I-s_0J$, con $s_0=\ln(e^{\kappa}+K-1)$ y $J$ la matriz de unos.
+  \item Los valores propios de $\kappa I-s_0J$ son $\kappa$ (multiplicidad $K-1$) y $\kappa-Ks_0$, que es negativo porque $s_0>\kappa$. Ninguno es nulo y $\operatorname{rg}A=K$.
+  \item Si $d+2<K$, el paso~3 impide representar este modelo.
+\end{enumerate}
+\resultado \textbf{con $d\ge K$ se representa cualquier modelo de bigramas positivo; con $d+2<K$ el rango de las log-probabilidades está acotado por $d+2<K$ y hay modelos que no se pueden representar.}
+\comprobacion con $K=3$ y $\kappa=\ln 2$: $s_0=\ln 4$ y los valores propios son $\ln 2$ y $\ln 2-3\ln 4=-5\ln 2\neq 0$. La limitación se conoce como \emph{cuello de botella de la softmax}~\cite{yang}.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{bengio}
+Y.~Bengio, R.~Ducharme, P.~Vincent y C.~Jauvin.
+\newblock A neural probabilistic language model.
+\newblock \emph{Journal of Machine Learning Research}, 3:1137--1155, 2003.
+\newblock \url{https://www.jmlr.org/papers/v3/bengio03a.html}
+
+\bibitem{bishopdl}
+C.~M. Bishop y H.~Bishop.
+\newblock \emph{Deep Learning: Foundations and Concepts}.
+\newblock Springer, 2024.
+\newblock Cap.~6, «Deep Neural Networks»; cap.~7, «Gradient Descent»; cap.~8, «Backpropagation».
+\newblock \url{https://www.bishopbook.com/}
+
+\bibitem{cmu11785}
+B.~Raj \emph{et al.}
+\newblock 11-785: Introduction to Deep Learning.
+\newblock Carnegie Mellon University, otoño de 2025.
+\newblock \url{https://deeplearning.cs.cmu.edu/}
+
+\bibitem{cybenko}
+G.~Cybenko.
+\newblock Approximation by superpositions of a sigmoidal function.
+\newblock \emph{Mathematics of Control, Signals and Systems}, 2(4):303--314, 1989.
+
+\bibitem{glorot}
+X.~Glorot e Y.~Bengio.
+\newblock Understanding the difficulty of training deep feedforward neural networks.
+\newblock En \emph{Proceedings of the Thirteenth International Conference on Artificial Intelligence and Statistics (AISTATS)}, PMLR~9:249--256, 2010.
+\newblock \url{https://proceedings.mlr.press/v9/glorot10a.html}
+
+\bibitem{gbc}
+I.~Goodfellow, Y.~Bengio y A.~Courville.
+\newblock \emph{Deep Learning}.
+\newblock MIT Press, 2016.
+\newblock Cap.~6, «Deep Feedforward Networks», y §8.4, «Parameter Initialization Strategies».
+\newblock \url{https://www.deeplearningbook.org/}
+
+\bibitem{he}
+K.~He, X.~Zhang, S.~Ren y J.~Sun.
+\newblock Delving deep into rectifiers: Surpassing human-level performance on ImageNet classification.
+\newblock En \emph{Proceedings of the IEEE International Conference on Computer Vision (ICCV)}, 2015.
+\newblock \url{https://arxiv.org/abs/1502.01852}
+
+\bibitem{hendrycks}
+D.~Hendrycks y K.~Gimpel.
+\newblock Gaussian error linear units (GELUs).
+\newblock Prepublicación arXiv:1606.08415, 2016.
+\newblock \url{https://arxiv.org/abs/1606.08415}
+
+\bibitem{hornik}
+K.~Hornik.
+\newblock Approximation capabilities of multilayer feedforward networks.
+\newblock \emph{Neural Networks}, 4(2):251--257, 1991.
+
+\bibitem{jm3}
+D.~Jurafsky y J.~H. Martin.
+\newblock \emph{Speech and Language Processing}, 3.ª ed., borrador del 19 de agosto de 2026.
+\newblock Cap.~6, «Neural Networks».
+\newblock \url{https://web.stanford.edu/~jurafsky/slp3/}
+
+\bibitem{leshno}
+M.~Leshno, V.~Y. Lin, A.~Pinkus y S.~Schocken.
+\newblock Multilayer feedforward networks with a nonpolynomial activation function can approximate any function.
+\newblock \emph{Neural Networks}, 6(6):861--867, 1993.
+
+\bibitem{minsky}
+M.~Minsky y S.~Papert.
+\newblock \emph{Perceptrons: An Introduction to Computational Geometry}.
+\newblock MIT Press, 1969.
+
+\bibitem{novikoff}
+A.~B.~J. Novikoff.
+\newblock On convergence proofs on perceptrons.
+\newblock En \emph{Proceedings of the Symposium on the Mathematical Theory of Automata}, vol.~12, págs.~615--622. Polytechnic Institute of Brooklyn, 1962.
+
+\bibitem{radford2018}
+A.~Radford, K.~Narasimhan, T.~Salimans e I.~Sutskever.
+\newblock Improving language understanding by generative pre-training.
+\newblock Informe técnico, OpenAI, 2018.
+\newblock \url{https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf}
+
+\bibitem{radford2019}
+A.~Radford, J.~Wu, R.~Child, D.~Luan, D.~Amodei e I.~Sutskever.
+\newblock Language models are unsupervised multitask learners.
+\newblock Informe técnico, OpenAI, 2019.
+\newblock \url{https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf}
+
+\bibitem{rosenblatt}
+F.~Rosenblatt.
+\newblock The perceptron: A probabilistic model for information storage and organization in the brain.
+\newblock \emph{Psychological Review}, 65(6):386--408, 1958.
+
+\bibitem{rumelhart}
+D.~E. Rumelhart, G.~E. Hinton y R.~J. Williams.
+\newblock Learning representations by back-propagating errors.
+\newblock \emph{Nature}, 323:533--536, 1986.
+
+\bibitem{shazeer}
+N.~Shazeer.
+\newblock GLU variants improve Transformer.
+\newblock Prepublicación arXiv:2002.05202, 2020.
+\newblock \url{https://arxiv.org/abs/2002.05202}
+
+\bibitem{mit18065}
+G.~Strang.
+\newblock 18.065: Matrix Methods in Data Analysis, Signal Processing, and Machine Learning.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, primavera de 2018.
+\newblock Lección~27, «Backpropagation»; problemas de la sección VII.2 del libro \emph{Linear Algebra and Learning from Data}.
+\newblock \url{https://ocw.mit.edu/courses/18-065-matrix-methods-in-data-analysis-signal-processing-and-machine-learning-spring-2018/}
+
+\bibitem{telgarsky}
+M.~Telgarsky.
+\newblock Benefits of depth in neural networks.
+\newblock En \emph{Conference on Learning Theory (COLT)}, 2016.
+\newblock \url{https://arxiv.org/abs/1602.04485}
+
+\bibitem{touvron}
+H.~Touvron, T.~Lavril, G.~Izacard, X.~Martinet \emph{et al.}
+\newblock LLaMA: Open and efficient foundation language models.
+\newblock Prepublicación arXiv:2302.13971, 2023.
+\newblock \url{https://arxiv.org/abs/2302.13971}
+
+\bibitem{vaswani}
+A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N. Gomez, Ł.~Kaiser e I.~Polosukhin.
+\newblock Attention is all you need.
+\newblock En \emph{Advances in Neural Information Processing Systems 30}, 2017.
+\newblock \url{https://arxiv.org/abs/1706.03762}
+
+\bibitem{cs4780}
+K.~Q. Weinberger.
+\newblock CS4780/5780: Machine Learning for Intelligent Systems.
+\newblock Cornell University, otoño de 2018. Lección~3, «The Perceptron».
+\newblock \url{https://www.cs.cornell.edu/courses/cs4780/2018fa/lectures/lecturenote03.html}
+
+\bibitem{cs224n}
+D.~Yang e Y.~Choi.
+\newblock CS224N: Natural Language Processing with Deep Learning.
+\newblock Stanford University, invierno de 2026. Clase~3, «Backpropagation and Neural Network Basics», y clase~4, «Language Models and RNNs».
+\newblock \url{https://web.stanford.edu/class/cs224n/}
+
+\bibitem{cs224n2018}
+C.~Manning y R.~Socher.
+\newblock CS224N: Natural Language Processing with Deep Learning.
+\newblock Stanford University, invierno de 2018. Tarea~1.
+\newblock \url{https://web.stanford.edu/class/archive/cs/cs224n/cs224n.1184/assignment1/assignment1.pdf}
+
+\bibitem{yang}
+Z.~Yang, Z.~Dai, R.~Salakhutdinov y W.~W. Cohen.
+\newblock Breaking the softmax bottleneck: A high-rank RNN language model.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2018.
+\newblock \url{https://arxiv.org/abs/1711.03953}
+
+\bibitem{cs231n}
+F.-F. Li \emph{et al.}
+\newblock CS231n: Deep Learning for Computer Vision. Notas del curso.
+\newblock Stanford University, 2026. «Backpropagation, Intuitions» y «Neural Networks», partes~1 y~2.
+\newblock \url{https://cs231n.github.io/}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock Cap.~5, «Multilayer Perceptrons», y §9.3, «Language Models».
+\newblock \url{https://d2l.ai/}
+
+\end{thebibliography}
+
+
+\end{document}

@@ -1,0 +1,189 @@
+% =====================================================================
+\chapter{Aritmética de coma flotante y precisión mixta}
+\label{tema:5}
+% =====================================================================
+
+Los modelos de lenguaje se entrenan con números de 16 e incluso de 8 bits. Un formato de coma flotante reparte sus bits entre el exponente, que fija el rango, y la mantisa, que fija la precisión relativa; esa elección determina qué valores desbordan, cuáles se anulan y qué sumandos se pierden al acumular. Este tema define los formatos con la norma IEEE~754~\cite{ieee754}, demuestra las cotas de rango y de error de redondeo, estudia la absorción de sumandos pequeños y justifica con ella los tres ingredientes de la precisión mixta de Micikevicius \emph{et al.}~\cite{micikevicius}. Se sigue además el tutorial de Goldberg~\cite{goldberg} y el libro de Higham~\cite{higham}.
+
+\section{Formatos de coma flotante}
+
+\begin{definicion}[Formato binario de coma flotante]\label{def:formato}
+Sean $e\ge 2$ y $m\ge 1$ enteros. Un \emph{formato binario} con $e$ bits de exponente y $m$ bits de mantisa representa cada número con $1+e+m$ bits: un signo $s\in\{0,1\}$, un exponente almacenado $E\in\{0,\dots,2^{e}-1\}$ y una fracción $f=(f_1\dots f_m)_2$. Con el \emph{sesgo} $b=2^{e-1}-1$:
+\begin{enumerate}
+  \item si $1\le E\le 2^{e}-2$, el número es \emph{normal} y vale $x=(-1)^{s}\,(1.f_1\dots f_m)_2\cdot 2^{E-b}$;
+  \item si $E=0$, vale $(-1)^{s}\,(0.f_1\dots f_m)_2\cdot 2^{1-b}$: el cero si $f=0$ y un número \emph{subnormal} si $f\ne 0$;
+  \item si $E=2^{e}-1$, representa $\pm\infty$ si $f=0$ y \NaN\ (\emph{not a number}) si $f\ne 0$.
+\end{enumerate}
+\end{definicion}
+
+Los formatos binary32 (fp32, $e=8$, $m=23$) y binary16 (fp16, $e=5$, $m=10$) son los de la norma~\cite{ieee754}. El formato bfloat16 (bf16, $e=8$, $m=7$) no forma parte de ella; se obtiene conservando los 16 bits más significativos de un fp32.
+
+\begin{proposicion}[Rango y precisión]\label{prop:rango}
+En el formato de la \cref{def:formato}:
+\begin{enumerate}
+  \item el mayor número finito es $x_{\max}=(2-2^{-m})\,2^{b}$;
+  \item el menor normal positivo es $x_{\min}=2^{1-b}$, y el menor subnormal positivo, $2^{1-b-m}$;
+  \item en cada intervalo $[2^{k},2^{k+1})$ con $1-b\le k\le b$, los números representables están equiespaciados con separación $2^{k-m}$;
+  \item el \emph{épsilon de máquina}, distancia de~1 al siguiente número representable, es $\varepsilon=2^{-m}$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) El mayor exponente normal es $E=2^{e}-2$, es decir, $E-b=2^{e}-2-(2^{e-1}-1)=2^{e-1}-1=b$; la mayor mantisa es $(1.1\dots1)_2=2-2^{-m}$. (ii) El menor exponente normal es $E=1$, con $E-b=1-b$ y mantisa~1. El menor subnormal tiene $f=(0\dots01)_2=2^{-m}$. (iii) Fijado el exponente $k=E-b$, los $2^{m}$ valores de $f$ dan los números $(1+j2^{-m})2^{k}$, $j=0,\dots,2^{m}-1$, separados por $2^{k-m}$. (iv) Es (iii) con $k=0$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+Formato & $e$ & $m$ & $x_{\max}$ & $x_{\min}$ (normal) & $\varepsilon=2^{-m}$ & Cifras decimales \\
+\midrule
+fp32 & 8 & 23 & $3{,}40\cdot 10^{38}$ & $1{,}18\cdot 10^{-38}$ & $1{,}19\cdot 10^{-7}$ & $\approx 7$ \\
+fp16 & 5 & 10 & $65\,504$ & $6{,}10\cdot 10^{-5}$ & $9{,}77\cdot 10^{-4}$ & $\approx 3$ \\
+bf16 & 8 & 7 & $3{,}39\cdot 10^{38}$ & $1{,}18\cdot 10^{-38}$ & $7{,}81\cdot 10^{-3}$ & $\approx 2$ \\
+fp8 E4M3 & 4 & 3 & $448$ & $1{,}56\cdot 10^{-2}$ & $0{,}125$ & $\approx 1$ \\
+fp8 E5M2 & 5 & 2 & $57\,344$ & $6{,}10\cdot 10^{-5}$ & $0{,}25$ & $<1$ \\
+\bottomrule
+\end{tabular}
+\caption{Formatos usados en el entrenamiento de redes. El formato E4M3 no sigue la \cref{def:formato}(iii); véase la \cref{obs:e4m3}.}
+\label{tab:formatos}
+\end{table}
+
+\begin{ejemplo}[fp16]\label{ej:fp16}
+Con $e=5$, $m=10$: $b=2^{4}-1=15$; $x_{\max}=(2-2^{-10})2^{15}=2^{16}-2^{5}=65\,504$; $x_{\min}=2^{-14}=6{,}10\cdot 10^{-5}$; menor subnormal $2^{-24}=5{,}96\cdot 10^{-8}$; $\varepsilon=2^{-10}=9{,}77\cdot 10^{-4}$.
+\end{ejemplo}
+
+\begin{observacion}[El formato E4M3]\label{obs:e4m3}
+Los dos formatos de 8 bits proceden de Micikevicius \emph{et al.}~\cite{fp8}. E5M2 sigue las reglas IEEE. E4M3 renuncia a los infinitos y reserva para \NaN\ un único patrón de bits (exponente y fracción con todos los bits a~1). Así, el exponente $E=15$ queda disponible para números normales y el máximo es $(1{,}110)_2\cdot 2^{15-7}=1{,}75\cdot 2^{8}=448$, en lugar del valor $1{,}875\cdot 2^{7}=240$ que darían las reglas IEEE.
+\end{observacion}
+
+El formato bf16 tiene el exponente de fp32 y, por tanto, prácticamente su mismo rango, con una precisión mucho menor. Pasar de fp32 a bf16 equivale a redondear la mantisa a 7 bits. Por su rango, bf16 es el formato habitual para entrenar modelos de lenguaje: casi nunca desborda.
+
+\section{Redondeo y unidad de redondeo}
+
+\begin{definicion}[Redondeo al más próximo]\label{def:fl}
+Para $x\in\R$ con $\abs{x}\le x_{\max}$, $\fl(x)$ es el número representable más cercano a $x$; en caso de empate, el de último bit de mantisa par. La \emph{unidad de redondeo} es $u=\varepsilon/2=2^{-m-1}$.
+\end{definicion}
+
+\begin{teorema}[Error relativo de redondeo]\label{teo:redondeo}
+Si $x_{\min}\le\abs{x}\le x_{\max}$, entonces $\fl(x)=x(1+\delta)$ con $\abs{\delta}\le u$.
+\end{teorema}
+
+\begin{proof}
+Sea $x>0$ (el caso negativo es simétrico) y sea $k$ tal que $2^{k}\le x<2^{k+1}$. Por la \cref{prop:rango}(iii), $x$ está entre dos números representables consecutivos separados por $2^{k-m}$ (si $x$ supera el mayor número del intervalo, el siguiente es $2^{k+1}$, a la misma distancia). El más cercano dista a lo sumo la mitad, $\abs{\fl(x)-x}\le 2^{k-m-1}$. Dividiendo por $x\ge 2^{k}$, $\abs{\delta}=\abs{\fl(x)-x}/x\le 2^{-m-1}=u$.
+\end{proof}
+
+La norma IEEE~754 exige que la suma, la resta, el producto, el cociente y la raíz cuadrada se redondeen correctamente: el resultado calculado es $\fl(x\circ y)$, el redondeo del resultado exacto. Junto con el \cref{teo:redondeo}, esto da el \emph{modelo estándar} del análisis de errores~\cite{higham,goldberg}: $\fl(x\circ y)=(x\circ y)(1+\delta)$ con $\abs\delta\le u$, mientras no haya desbordamiento ni subdesbordamiento.
+
+\begin{lema}[Absorción]\label{lem:absorcion}
+Sea $x>0$ representable con $2^{k}\le x<2^{k+1}$ y sea $0\le y<2^{k-m-1}$, la mitad de la separación del intervalo. Entonces $\fl(x+y)=x$.
+\end{lema}
+
+\begin{proof}
+El siguiente representable mayor que $x$ es $x+2^{k-m}$. Como $x\le x+y<x+2^{k-m-1}$, el resultado exacto está más cerca de $x$ que de $x+2^{k-m}$, y $x$ es el representable más cercano.
+\end{proof}
+
+\begin{corolario}[Estancamiento de una suma]\label{cor:estancamiento}
+Sea $a>0$ representable y sea la suma recursiva $s_0=0$, $s_{j+1}=\fl(s_j+a)$. Si para algún $j$ se cumple $2^{k}\le s_j<2^{k+1}$ con $a<2^{k-m-1}$, entonces $s_i=s_j$ para todo $i\ge j$. En particular, la suma no supera la menor potencia $2^{k}$ que cumple $2^{k}>a\,2^{m+1}$, más una separación.
+\end{corolario}
+
+\begin{proof}
+La primera afirmación es el \cref{lem:absorcion} aplicado repetidamente. Para la segunda, la suma es creciente; cuando alcanza el intervalo que empieza en esa potencia $2^{k}$ se cumple $a<2^{k-m-1}$ y queda detenida, y la suma exacta $s_j+a$ que la hizo entrar en él es menor que $2^{k}+a<2^{k}+2^{k-m}$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Operación & fp32 & fp16 & bf16 \\
+\midrule
+$300\cdot 300$ & $90\,000$ & \Inf & $90\,112$ \\
+$e^{12}$ & $162\,754{,}8$ & \Inf & $162\,816$ \\
+$1+2^{-8}$ & $1{,}0039$ & $1{,}0039$ & $1$ \\
+$1000+1$ & $1001$ & $1001$ & $1000$ \\
+$0{,}001$ sumado $10^{4}$ veces & $10{,}0004$ & $4$ & $0{,}5$ \\
+\bottomrule
+\end{tabular}
+\caption{Resultados de operaciones sencillas en tres formatos, comprobados con PyTorch.}
+\label{tab:errores}
+\end{table}
+
+\begin{ejemplo}[Estancamiento en fp16 y bf16]\label{ej:estancamiento}
+En la última fila de la \cref{tab:errores}, el sumando $0{,}001$ se almacena en fp16 como $a=0{,}0010004$. Con $m=10$, $a\,2^{11}=2{,}049$, y la menor potencia de~2 mayor es $4$: en el intervalo $[4,8)$ la semiseparación es $2^{2-11}=0{,}00195>a$ y la suma se detiene en~4. En bf16, $a=0{,}00099945$ y $a\,2^{8}=0{,}256$, de modo que la suma se detiene en $0{,}5$.
+\end{ejemplo}
+
+\begin{teorema}[Error de la suma recursiva]\label{teo:suma}
+Sea $\hat s_n$ el resultado de sumar $x_1,\dots,x_n$ en orden, $\hat s_1=x_1$, $\hat s_k=\fl(\hat s_{k-1}+x_k)$, sin desbordamiento ni subdesbordamiento, y sea $(n-1)u<1$. Entonces
+\[
+\abs{\hat s_n-\sum_{i=1}^{n}x_i}\le\gamma_{n-1}\sum_{i=1}^{n}\abs{x_i},\qquad\gamma_k=\frac{ku}{1-ku}.
+\]
+\end{teorema}
+
+\begin{proof}
+Por el modelo estándar, $\hat s_k=(\hat s_{k-1}+x_k)(1+\delta_k)$ con $\abs{\delta_k}\le u$. Desarrollando la recurrencia, $\hat s_n=\sum_{i=1}^{n}x_i\prod_{j=\max(i,2)}^{n}(1+\delta_j)$, donde cada producto tiene a lo sumo $n-1$ factores. Para un producto de $k$ factores, $\abs{\prod_j(1+\delta_j)-1}\le(1+u)^{k}-1\le e^{ku}-1\le\frac{1}{1-ku}-1=\gamma_k$, usando $e^{t}\le 1/(1-t)$ para $0\le t<1$ (la primera desigualdad se obtiene desarrollando el producto y acotando cada término por su valor absoluto). Como $\gamma_k$ crece con $k$, restando $\sum_ix_i$ y aplicando la desigualdad triangular se obtiene la cota~\cite{higham}.
+\end{proof}
+
+El teorema explica la diferencia entre formatos. En fp32, $u=2^{-24}=5{,}96\cdot 10^{-8}$ y, para $n=10^{4}$ sumandos de $0{,}001$, la cota es $\gamma_{9999}\cdot 10=0{,}006$; el error observado en la \cref{tab:errores} es $4\cdot 10^{-4}$. En fp16, $u=2^{-11}$ y $(n-1)u\approx 4{,}9>1$: la cota no garantiza nada, y la suma se estanca.
+
+\section{Precisión mixta}
+
+Micikevicius \emph{et al.}~\cite[§3]{micikevicius} entrenan en fp16 sin perder precisión con tres técnicas.
+
+\paragraph{Copia maestra de los pesos en fp32 (§3.1).} El optimizador actualiza una copia fp32 de los pesos; la copia fp16 solo se usa en las pasadas hacia delante y hacia atrás. Por el \cref{lem:absorcion}, si un peso $w\in[2^{k},2^{k+1})$ recibe una actualización $\abs{\Delta w}<2^{k-m-1}$, la suma $w+\Delta w$ redondeada devuelve $w$. Como $w<2^{k+1}$, esto ocurre seguro si $\abs{w}/\abs{\Delta w}>2^{m+2}$ y puede ocurrir desde $2^{m+1}$; en fp16 este último cociente es $2^{11}=2048$, el que señala el artículo.
+
+\paragraph{Escalado de la pérdida (§3.2).} Muchos gradientes de activaciones son menores que el menor subnormal de fp16, $2^{-24}$, y se anulan. Se multiplica la pérdida por un factor $S$, se retropropaga y se dividen los gradientes de los pesos por $S$ antes de la actualización, que se omite si aparece un \Inf\ o un \NaN. La elección $S=2^{j}$ es conveniente por la proposición siguiente.
+
+\begin{proposicion}\label{prop:escala}
+Si $x$ y $2^{j}x$ están en el rango normal, $\fl(2^{j}x)=2^{j}\fl(x)$. En particular, multiplicar o dividir un número representable por $2^{j}$ es exacto en ausencia de desbordamiento.
+\end{proposicion}
+
+\begin{proof}
+Multiplicar por $2^{j}$ suma $j$ al exponente y conserva la mantisa, de modo que biyecta los representables de $[2^{k},2^{k+1})$ con los de $[2^{k+j},2^{k+j+1})$ y multiplica todas las distancias por $2^{j}$. El más cercano a $2^{j}x$ es, por tanto, $2^{j}$ veces el más cercano a $x$.
+\end{proof}
+
+\paragraph{Acumulación en fp32 (§3.3).} Los productos escalares de las multiplicaciones de matrices acumulan las sumas parciales en fp32 y solo convierten el resultado a fp16; las reducciones grandes (sumas de la normalización y de la softmax) también se hacen en fp32. El \cref{teo:suma} justifica esta práctica.
+
+\begin{observacion}[bf16 y fp8]
+Con bf16 no hace falta escalar la pérdida, porque su rango es el de fp32, pero la copia maestra y la acumulación en fp32 siguen siendo necesarias, porque su precisión es aún menor que la de fp16. Los formatos fp8 se usan en las GPU recientes para las multiplicaciones de matrices, E4M3 en la pasada hacia delante y E5M2 para los gradientes, siempre con factores de escala por tensor~\cite{fp8}; el módulo~17 los estudia con el hardware y el módulo~19 trata la cuantización para inferencia. Anthropic, Google y xAI no han hecho pública la precisión con que entrenan Claude, Gemini y Grok.
+\end{observacion}
+
+\begin{lecturas}
+\item IEEE~754-2019~\cite{ieee754}, cláusulas sobre formatos binarios y redondeo.
+\item Goldberg~\cite{goldberg}, partes dedicadas al error de redondeo y a la norma IEEE.
+\item Higham~\cite{higham}, capítulos sobre aritmética de coma flotante y sobre sumación.
+\item Micikevicius \emph{et al.}~\cite{micikevicius}, §3 «Implementation»; y~\cite{fp8} para los formatos de 8 bits.
+\item Stanford CS336~\cite{cs336b}, práctica~2 (\emph{systems}), §2.1 sobre precisión mixta.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-riesgo}
+¿En qué formato es más arriesgado almacenar una activación de valor $70\,000$: fp16, bf16 o fp32? ¿En cuál se pierde más precisión al almacenar $1{,}003$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-deducir}
+Deduzca el máximo, el menor normal y el épsilon de fp16 ($e=5$, $m=10$) y de bf16 ($e=8$, $m=7$) a partir de la \cref{prop:rango}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-fp8}
+(a) Calcule el sesgo, el máximo, el menor normal y el épsilon de E5M2 con las reglas de la \cref{def:formato}. (b) Calcule los mismos valores para E4M3 si se siguieran esas reglas, y explique por qué su máximo real es~448. (c) ¿Cuál de los dos formatos es más adecuado para gradientes y cuál para activaciones?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-mil}
+En bf16 los números de $[512,1024)$ están separados por $2^{9}\cdot 2^{-7}=4$. (a) Calcule $1000+1$ y $1000+4$ en bf16. (b) Calcule $1000+1$ en fp16, con separación $2^{9}\cdot 2^{-10}=0{,}5$. (c) ¿A partir de qué tamaño se pierde un sumando al añadirlo a 1000 en bf16?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-rmsnorm}
+Se recomienda convertir la entrada de RMSNorm a fp32 antes de elevarla al cuadrado. Compruébelo con $x=(300,400)$ en fp16, $g=\uno$ y $\epsilon=10^{-5}$: (a) calcule $\RMSNorm(x)$ con todas las operaciones en fp16; (b) calcúlelo en fp32 y convierta el resultado a fp16.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, primavera de 2026, práctica~1 (\emph{basics}), versión~26.0.3, §3.4.1, problema \texttt{rmsnorm}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-absorcion}
+(a) Demuestre el \cref{teo:redondeo}. (b) Demuestre el \cref{lem:absorcion}. (c) Deduzca que, en fp16, una actualización $\Delta w$ de un peso $w>0$ se pierde con seguridad si $w/\abs{\Delta w}>4096$, y dé un ejemplo con $w=1$ en el que se pierda con $w/\abs{\Delta w}$ ligeramente superior a $2048$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-acumular}
+Se suma $0{,}01$ mil veces partiendo de $s=0$ en cuatro variantes: (i) todo en fp32; (ii) todo en fp16; (iii) acumulador fp32 y sumando fp16; (iv) como (iii), convirtiendo antes el sumando a fp32. (a) Explique por qué $0{,}01$ vale en fp16 exactamente $1311\cdot 2^{-17}=0{,}0100021\ldots$ (b) Calcule cuánto aumenta $s$ en cada suma en fp16 cuando $s\in[4,8)$ y cuando $s\in[8,16)$. (c) Explique los resultados medidos: (i) $10{,}0001$; (ii) $9{,}953$; (iii) y (iv) $10{,}0021$.
+\fuente{adaptado de Stanford CS336~\cite{cs336b}, primavera de 2026, práctica~2 (\emph{systems}), versión~26.1.3, §2.1.5, problema \texttt{mixed\_precision\_accumulation}.}
+\end{ejercicio}

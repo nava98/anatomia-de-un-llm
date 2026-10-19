@@ -1,0 +1,1438 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase III — Módulo 13
+%  Atención
+%  Compilar: latexmk -r ../latexmkrc M13-atencion.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 13}
+
+\hypersetup{pdftitle={Módulo 13. Atención},pdfauthor={Anatomía de un LLM}}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\uno}{\mathbf{1}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\rg}{\operatorname{rg}}
+\newcommand{\Att}{\operatorname{Attn}}
+\newcommand{\MHA}{\operatorname{MHA}}
+\newcommand{\Concat}{\operatorname{Concat}}
+\newcommand{\lse}{\operatorname{lse}}
+\newcommand{\conv}{\operatorname{conv}}
+\newcommand{\FLOP}{\mathrm{FLOP}}
+\newcommand{\WQ}{W_{Q}}
+\newcommand{\WK}{W_{K}}
+\newcommand{\WV}{W_{V}}
+\newcommand{\WO}{W_{O}}
+\newcommand{\tk}[1]{\text{«#1»}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase III \textperiodcentered\ Secuencias y Transformer}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 13\par}\vspace{0.3cm}
+{\LARGE Atención\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Una red recurrente resume todo el pasado de una secuencia en un vector de dimensión fija y lo actualiza token a token. El mecanismo de atención sustituye ese resumen por una consulta directa: cada posición calcula su parecido con todas las demás, lo convierte en una distribución de probabilidad mediante una softmax y devuelve la media de unos vectores de valor ponderada por esa distribución. La operación es diferenciable, se expresa con dos productos de matrices y se evalúa en paralelo sobre toda la secuencia. Introducida en traducción automática por Bahdanau, Cho y Bengio y convertida en la pieza central del Transformer por Vaswani \emph{et al.}, es el componente que distingue a los grandes modelos de lenguaje actuales (Claude, Gemini, Grok y los modelos abiertos) de sus predecesores. Este módulo la estudia con detalle: su definición como agrupación ponderada, la forma matricial con producto escalar escalado y la justificación probabilística del factor $1/\sqrt{d_k}$, la máscara causal que permite entrenar un modelo autorregresivo en paralelo, la atención multi-cabeza con su recuento de parámetros y de operaciones, y dos lecturas estructurales de la operación: los circuitos de cabezas de inducción y las memorias asociativas de Hopfield.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item definir la agrupación por atención con consultas, claves y valores, relacionarla con la regresión por núcleos de Nadaraya y Watson y con la atención aditiva de Bahdanau, y demostrar que su salida pertenece a la envolvente convexa de los valores;
+  \item calcular a mano $\softmax(QK\T/\sqrt{d_k})V$, demostrar que la varianza del producto escalar de vectores aleatorios independientes es $d_k$ y explicar, mediante la jacobiana de la softmax, por qué la saturación anula el gradiente;
+  \item demostrar que la autoatención es equivariante por permutaciones y que la máscara causal con $-\infty$ antes de la softmax garantiza la causalidad y permite obtener $n$ predicciones en una sola pasada;
+  \item construir la atención multi-cabeza, contar sus parámetros y sus operaciones de coma flotante y determinar a partir de qué longitud domina el coste cuadrático;
+  \item describir los circuitos QK y OV de una cabeza, construir a mano una cabeza de inducción de dos capas y deducir la equivalencia entre la regla de actualización de una red de Hopfield moderna y la atención.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1, la softmax con temperatura (tema~4). Del módulo~2, el producto escalar, el producto de matrices y su recuento de operaciones; del módulo~3, el rango de una matriz. Del módulo~4, la matriz jacobiana y la regla de la cadena. Del módulo~5, la esperanza, la varianza, la independencia y el teorema central del límite, que se usan en el tema~2. Del módulo~11, la aritmética de 16 bits y la evaluación estable de la softmax. Del módulo~12, los embeddings de tokens y las redes recurrentes, cuyo cuello de botella motiva el tema~1.
+
+\section*{Organización}
+\begin{center}
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Atención como agrupación ponderada & \cite{d2l}, \cite{bahdanau}, \cite{jm3}, \cite{cs224n} \\
+2 & Atención por producto escalar escalado & \cite{vaswani}, \cite{jm3}, \cite{d2l}, \cite{bishopdl} \\
+3 & La máscara causal & \cite{vaswani}, \cite{jm3}, \cite{cs336} \\
+4 & Atención multi-cabeza y coste computacional & \cite{vaswani}, \cite{cs336}, \cite{d2l}, \cite{jm3} \\
+5 & Circuitos de atención y memorias asociativas & \cite{elhage}, \cite{olsson}, \cite{ramsauer}, \cite{d2l} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La presentación de la atención como agrupación ponderada sigue las secciones~11.1 a~11.4 de Zhang \emph{et al.}~\cite{d2l} y el artículo de Bahdanau, Cho y Bengio~\cite{bahdanau}. La forma matricial, el escalado, la máscara y la atención multi-cabeza siguen las secciones~3.2.1 a~3.2.3 y~4 del artículo de Vaswani \emph{et al.}~\cite{vaswani}, el capítulo~7 de Jurafsky y Martin~\cite{jm3} (§7.1 y §7.3), la sección~12.1 de Bishop y Bishop~\cite{bishopdl}, las secciones~11.3, 11.5 y~11.6 de~\cite{d2l} y la clase~5 y la tarea~3 del curso CS224N de Stanford~\cite{cs224n}. El recuento de operaciones sigue la tarea~1 del curso CS336 de Stanford~\cite{cs336} (§3.4.4, §3.4.5 y §3.5). El tema~5 sigue los artículos de Elhage \emph{et al.}~\cite{elhage} y Olsson \emph{et al.}~\cite{olsson}, de Anthropic, la §10.6 de~\cite{jm3} y el artículo de Ramsauer \emph{et al.}~\cite{ramsauer}. Sobre Claude, Gemini y Grok solo se usa información pública: los informes técnicos documentan longitudes de contexto, pero no la variante de atención ni la forma en que se reduce su coste.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$n$, $d$ & longitud de la secuencia y dimensión del modelo \\
+$x_i\in\R^{1\times d}$, $X\in\R^{n\times d}$ & vector (fila) del token $i$ y matriz que los apila \\
+$q_i,k_j\in\R^{1\times d_k}$, $v_j\in\R^{1\times d_v}$ & consulta (\emph{query}), clave (\emph{key}) y valor (\emph{value}) \\
+$Q,K,V$ & matrices que apilan consultas, claves y valores \\
+$\WQ,\WK\in\R^{d\times d_k}$, $\WV\in\R^{d\times d_v}$ & matrices de proyección aprendidas \\
+$S=QK\T$, $s_{ij}=q_i\cdot k_j$ & matriz de puntuaciones (parecidos) \\
+$A$, $\alpha_{ij}$ & matriz de atención y peso que la posición $i$ asigna a la $j$ \\
+$O=AV$, $o_i$ & salida de la atención \\
+$M$ & máscara aditiva, con entradas $0$ o $-\infty$ \\
+$h$, $\WO$ & número de cabezas y proyección de salida \\
+$\beta$, $\tau=1/\beta$ & inverso de la temperatura y temperatura \\
+$P$ & matriz de permutación \\
+$\conv\{v_1,\dots,v_n\}$ & envolvente convexa de los valores \\
+$e_t$, $p_i$ & vectores \emph{one-hot} de token y de posición (tema~5) \\
+\bottomrule
+\end{tabular}
+\end{center}
+Los vectores de token, consulta, clave y valor son vectores fila, como en~\cite{vaswani} y~\cite{jm3}; así, $Q=X\WQ$. La softmax de una matriz se aplica por filas.
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Atención como agrupación ponderada}
+\label{tema:1}
+% =====================================================================
+
+Este tema define la atención en su forma más general: una consulta se compara con un conjunto de claves, los parecidos se convierten en pesos mediante una softmax y la salida es la media de los valores asociados ponderada por esos pesos. Se demuestran las dos propiedades estructurales básicas de la operación, la pertenencia de la salida a la envolvente convexa de los valores y su comportamiento en los límites de temperatura, y se presentan sus dos antecedentes: la regresión por núcleos de Nadaraya y Watson y la atención aditiva de Bahdanau, Cho y Bengio. Se siguen las §11.1, §11.2 y §11.4 de~\cite{d2l}, la §3.1 de~\cite{bahdanau}, la §7.1 de~\cite{jm3} y la clase~5 de~\cite{cs224n}.
+
+\section{Del diccionario a la búsqueda suave}
+
+Un diccionario almacena pares $(k_j,v_j)$ y, ante una consulta $q$, devuelve el valor $v_j$ cuya clave coincide con $q$, o un error si ninguna coincide. La búsqueda es \emph{dura}: el resultado depende de $q$ de forma discontinua y no admite gradientes. La atención sustituye la coincidencia exacta por un grado de parecido y la elección de un valor por una media ponderada~\cite[§11.1]{d2l}.
+
+\begin{definicion}[Agrupación por atención]\label{def:agrupacion}
+Sean $q\in\R^{1\times d_k}$ una \emph{consulta}, $k_1,\dots,k_n\in\R^{1\times d_k}$ unas \emph{claves} y $v_1,\dots,v_n\in\R^{1\times d_v}$ los \emph{valores} asociados. Sea $a\colon\R^{1\times d_k}\times\R^{1\times d_k}\to\R$ una \emph{función de puntuación}. La \emph{agrupación por atención} de los valores respecto de $q$ es
+\[
+\Att\bigl(q;(k_j,v_j)_{j=1}^{n}\bigr)=\sum_{j=1}^{n}\alpha_j\,v_j,\qquad
+\alpha_j=\frac{\exp a(q,k_j)}{\sum_{l=1}^{n}\exp a(q,k_l)},
+\]
+es decir, $(\alpha_1,\dots,\alpha_n)=\softmax\bigl(a(q,k_1),\dots,a(q,k_n)\bigr)$. Los números $\alpha_j$ se llaman \emph{pesos de atención}.
+\end{definicion}
+
+La función de puntuación más usada es el producto escalar, $a(q,k)=q\cdot k=qk\T$, que es grande cuando los dos vectores apuntan en direcciones parecidas y tienen norma grande (módulo~2). Las claves deciden \emph{cuánto} contribuye cada par; los valores, \emph{qué} se contribuye. Separar ambos papeles permite que el criterio por el que un elemento es encontrado no coincida con la información que entrega.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=7mm,inner sep=4pt},
+  op/.style={draw,thick,circle,inner sep=1.5pt}]
+  \node[caja] (x) {$x_i$};
+  \node[caja,right=1.2cm of x,yshift=9mm] (q) {$q_i=x_i\WQ$};
+  \node[caja,right=1.2cm of x] (k) {$k_i=x_i\WK$};
+  \node[caja,right=1.2cm of x,yshift=-9mm] (v) {$v_i=x_i\WV$};
+  \draw[->] (x.east) -- (q.west);
+  \draw[->] (x.east) -- (k.west);
+  \draw[->] (x.east) -- (v.west);
+  \node[caja,right=1.3cm of k,yshift=4.5mm] (s) {$s_{ij}=q_i\cdot k_j$};
+  \node[caja,right=0.8cm of s] (sm) {$\alpha_{ij}=\softmax_j(s_{ij})$};
+  \node[caja,below=0.9cm of sm] (o) {$o_i=\sum_j\alpha_{ij}v_j$};
+  \draw[->] (q.east) -- (s.west);
+  \draw[->] (k.east) -- (s.west);
+  \draw[->] (s) -- (sm);
+  \draw[->] (sm) -- (o);
+  \draw[->] (v.east) -- (o.west);
+\end{tikzpicture}
+\caption{Autoatención para la posición $i$. Tres proyecciones aprendidas asignan a cada token los papeles de consulta, clave y valor; los parecidos de $q_i$ con todas las claves se normalizan con una softmax y ponderan los valores.}
+\label{fig:qkv}
+\end{figure}
+
+\begin{definicion}[Autoatención]\label{def:autoatencion}
+Sean $x_1,\dots,x_n\in\R^{1\times d}$ los vectores de los tokens de una secuencia y $\WQ,\WK\in\R^{d\times d_k}$, $\WV\in\R^{d\times d_v}$ matrices de parámetros. La \emph{autoatención} asigna a cada posición $i$ la salida $o_i=\Att\bigl(q_i;(k_j,v_j)_{j=1}^{n}\bigr)$, con
+\[
+q_i=x_i\WQ,\qquad k_j=x_j\WK,\qquad v_j=x_j\WV .
+\]
+Si las consultas proceden de una secuencia y las claves y valores de otra, se habla de \emph{atención cruzada}.
+\end{definicion}
+
+\begin{observacion}
+La \cref{fig:qkv} resume la definición. En un modelo de lenguaje del tipo \emph{decoder-only}, como los que se estudian en este curso, toda la atención es autoatención; la atención cruzada aparece en los modelos codificador-decodificador de traducción (\cref{sec:bahdanau}).
+\end{observacion}
+
+\section{Propiedades de la agrupación}
+
+\begin{proposicion}[Envolvente convexa]\label{prop:convexa}
+Para cualesquiera $q$, claves, valores y función de puntuación, la salida de la \cref{def:agrupacion} pertenece a la envolvente convexa $\conv\{v_1,\dots,v_n\}$. En particular, para cada coordenada $c$,
+\[
+\min_j v_j[c]\;\le\;\Att(q)[c]\;\le\;\max_j v_j[c].
+\]
+\end{proposicion}
+
+\begin{proof}
+Los pesos son exponenciales divididas por su suma, luego $\alpha_j>0$ y $\sum_j\alpha_j=1$. Una combinación lineal de $v_1,\dots,v_n$ con coeficientes no negativos que suman~1 es, por definición, una combinación convexa. Para la cota por coordenadas, sean $m=\min_jv_j[c]$ y $m'=\max_jv_j[c]$; multiplicando $m\le v_j[c]\le m'$ por $\alpha_j>0$ y sumando en $j$ se obtiene $m\sum_j\alpha_j\le\sum_j\alpha_jv_j[c]\le m'\sum_j\alpha_j$, y se usa $\sum_j\alpha_j=1$.
+\end{proof}
+
+La atención, por tanto, solo \emph{mezcla} información existente: no puede producir una coordenada mayor que la mayor de los valores. Por esa razón un bloque Transformer combina la atención con una red de alimentación hacia delante y con conexiones residuales (módulo~14).
+
+Para estudiar la dependencia respecto de la escala de las puntuaciones se introduce un factor $\beta>0$, el \emph{inverso de la temperatura} del módulo~1: $\alpha_j(\beta)=\exp(\beta s_j)/\sum_l\exp(\beta s_l)$, con $s_j=a(q,k_j)$.
+
+\begin{teorema}[Límites de temperatura]\label{teo:limites}
+Sean $s_1,\dots,s_n$ las puntuaciones y supóngase que el máximo $s^{\ast}=\max_js_j$ se alcanza en un único índice $j^{\ast}$. Entonces
+\[
+\lim_{\beta\to+\infty}\Att_\beta(q)=v_{j^{\ast}},\qquad
+\lim_{\beta\to 0^{+}}\Att_\beta(q)=\frac{1}{n}\sum_{j=1}^{n}v_j .
+\]
+\end{teorema}
+
+\begin{proof}
+Dividiendo numerador y denominador por $\exp(\beta s^{\ast})$,
+\[
+\alpha_j(\beta)=\frac{\exp\bigl(\beta(s_j-s^{\ast})\bigr)}{\sum_l\exp\bigl(\beta(s_l-s^{\ast})\bigr)} .
+\]
+Si $j\ne j^{\ast}$, entonces $s_j-s^{\ast}<0$ y $\exp(\beta(s_j-s^{\ast}))\to 0$ cuando $\beta\to+\infty$; el término $j^{\ast}$ vale $e^{0}=1$. El denominador tiende a~1, luego $\alpha_{j^{\ast}}\to 1$ y $\alpha_j\to 0$ para $j\ne j^{\ast}$. Cuando $\beta\to 0^{+}$, cada $\exp(\beta s_j)\to 1$ por continuidad, el denominador tiende a $n$ y $\alpha_j\to 1/n$. En ambos casos el límite de la salida se obtiene sumando, porque la suma es finita.
+\end{proof}
+
+La atención interpola, pues, entre el diccionario exacto (límite $\beta\to\infty$, que devuelve el valor de la clave más parecida) y la media simple de los valores ($\beta\to 0$). El caso con empates se trata en el \cref{eje:1-limites}.
+
+\section{Regresión por núcleos de Nadaraya y Watson}
+
+La idea de promediar respuestas con pesos que dependen del parecido entre la consulta y unos puntos de referencia es anterior al aprendizaje profundo. Zhang \emph{et al.}~\cite[§11.2]{d2l} la presentan a partir de la regresión no paramétrica.
+
+\begin{definicion}[Estimador de Nadaraya--Watson]\label{def:nw}
+Sean $(k_j,v_j)_{j=1}^{n}$ observaciones de entrada y salida y $\kappa(q,k)\ge 0$ un \emph{núcleo}. El estimador de Nadaraya--Watson en el punto $q$ es
+\[
+\hat f(q)=\sum_{j=1}^{n}\frac{\kappa(q,k_j)}{\sum_{l}\kappa(q,k_l)}\,v_j .
+\]
+Con el núcleo gaussiano, $\kappa(q,k)=\exp\bigl(-\tfrac12\norm{q-k}^{2}\bigr)$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:gauss}
+Con el núcleo gaussiano, el estimador de Nadaraya--Watson es la agrupación por atención con puntuación $a(q,k)=-\tfrac12\norm{q-k}^{2}$. Si además todas las claves tienen la misma norma, coincide con la agrupación con puntuación $a(q,k)=q\cdot k$.
+\end{proposicion}
+
+\begin{proof}
+La primera afirmación es la \cref{def:agrupacion} con $\exp a(q,k)=\kappa(q,k)$. Para la segunda, se desarrolla $-\tfrac12\norm{q-k_j}^{2}=q\cdot k_j-\tfrac12\norm{q}^{2}-\tfrac12\norm{k_j}^{2}$. Si $\norm{k_j}=r$ para todo $j$, los dos últimos términos no dependen de $j$. La softmax es invariante al sumar una misma constante a todas sus entradas (módulo~1), luego los pesos coinciden con los de $\softmax(q\cdot k_1,\dots,q\cdot k_n)$.
+\end{proof}
+
+\section{La atención aditiva de Bahdanau}
+\label{sec:bahdanau}
+
+En un traductor codificador-decodificador con redes recurrentes, el codificador produce un vector $h_j$ por cada palabra de la frase de origen. En el modelo clásico, el decodificador solo recibía el último de ellos, un resumen de tamaño fijo de toda la frase; Bahdanau, Cho y Bengio propusieron que en cada paso el decodificador construyese su propio resumen como media ponderada de todos los $h_j$~\cite[§3.1]{bahdanau}.
+
+\begin{definicion}[Atención aditiva]\label{def:aditiva}
+Sean $h_1,\dots,h_{T}$ los vectores del codificador y $s_{i-1}$ el estado del decodificador antes de emitir la palabra $i$. El \emph{vector de contexto} es
+\[
+c_i=\sum_{j=1}^{T}\alpha_{ij}h_j,\qquad \alpha_{ij}=\frac{\exp e_{ij}}{\sum_{l}\exp e_{il}},\qquad e_{ij}=v_a\T\tanh\bigl(W_as_{i-1}+U_ah_j\bigr),
+\]
+donde $W_a$, $U_a$ y $v_a$ son parámetros aprendidos (los vectores de esta definición son columnas, como en el artículo original).
+\end{definicion}
+
+Es una agrupación por atención en la que la consulta es $s_{i-1}$, claves y valores son los $h_j$ y la puntuación es una red de una capa oculta~\cite[apéndice~A.1.2]{bahdanau}. Vaswani \emph{et al.} señalan que la puntuación por producto escalar tiene una complejidad teórica similar, pero es mucho más rápida en la práctica porque se reduce a productos de matrices optimizados~\cite[§3.2.1]{vaswani}; es la que se estudia en el resto del módulo.
+
+\begin{lecturas}
+\item Zhang \emph{et al.}~\cite{d2l}, §11.1 «Queries, Keys, and Values», §11.2 «Attention Pooling by Similarity» y §11.4 «The Bahdanau Attention Mechanism».
+\item Bahdanau, Cho y Bengio~\cite{bahdanau}, §3.1 «Decoder: General Description» y apéndice~A.1.2 «Alignment Model».
+\item Jurafsky y Martin~\cite{jm3}, §7.1 «Attention».
+\item CS224N~\cite{cs224n}, clase~5, «Transformers».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-kv}
+Explique la diferencia entre el papel de la clave $k_j$ y el del valor $v_j$ en la \cref{def:agrupacion}. ¿Qué capacidad perdería el modelo si se impusiera $\WK=\WV$ (con $d_k=d_v$)?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-escalar}
+Una consulta $q=(1,1)$ se compara, con puntuación $a(q,k)=q\cdot k/\sqrt{2}$, con las claves $k_1=(1,0)$, $k_2=(0,1)$ y $k_3=(1,1)$, cuyos valores escalares son $10$, $20$ y $30$. Calcule los pesos de atención y la salida.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-aditiva}
+En la \cref{def:aditiva}, tómense $W_a=U_a=I_2$, $v_a=(1,1)\T$, el estado $s_{i-1}=(1,-1)\T$ y los vectores del codificador $h_1=(1,0)\T$, $h_2=(0,1)\T$, $h_3=(1,1)\T$. Calcule las puntuaciones $e_{ij}$, los pesos $\alpha_{ij}$ y el vector de contexto $c_i$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-copiar}
+Se usa la puntuación sin escalar $a(q,k)=q\cdot k$ con las claves ortonormales $k_1=(1,0,0)$, $k_2=(0,1,0)$, $k_3=(0,0,1)$ y los valores $v_1=(2,0)$, $v_2=(0,4)$, $v_3=(6,6)$. (a) ¿Qué condición deben cumplir la consulta y las claves para que casi todo el peso recaiga en un único índice? Compruébelo con $q=10\,k_3$. (b) Encuentre una consulta cuya salida sea aproximadamente $\tfrac12(v_1+v_2)$ y calcule la salida. (c) Repita el cálculo con $q=k_1+k_2$ y comente la diferencia.
+\fuente{adaptado de CS224N~\cite{cs224n}, tarea~3, pregunta~1, apartados (a) y (b) (datos numéricos añadidos).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-limites}
+Generalice el \cref{teo:limites} al caso con empates: si el máximo $s^{\ast}$ se alcanza en un conjunto $J^{\ast}$ de $r$ índices, demuestre que $\lim_{\beta\to\infty}\Att_\beta(q)=\tfrac1r\sum_{j\in J^{\ast}}v_j$. Deduzca de la \cref{prop:convexa} que, si todos los valores son iguales, la salida no depende de la consulta.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Atención por producto escalar escalado}
+\label{tema:2}
+% =====================================================================
+
+Este tema escribe la autoatención de todas las posiciones a la vez como dos productos de matrices y una softmax por filas, resuelve a mano un ejemplo completo, demuestra que la operación es equivariante por permutaciones y justifica el factor $1/\sqrt{d_k}$ con un argumento de varianza y con la jacobiana de la softmax. Se siguen la §3.2.1 de~\cite{vaswani}, las §7.1.1 y §7.3 de~\cite{jm3}, la §11.3 de~\cite{d2l} y la §12.1 de~\cite{bishopdl}.
+
+\section{Forma matricial}
+
+Se apilan las consultas, claves y valores de las $n$ posiciones como filas de $Q=X\WQ\in\R^{n\times d_k}$, $K=X\WK\in\R^{n\times d_k}$ y $V=X\WV\in\R^{n\times d_v}$.
+
+\begin{definicion}[Atención por producto escalar escalado]\label{def:sdpa}
+Para $Q\in\R^{n\times d_k}$, $K\in\R^{m\times d_k}$ y $V\in\R^{m\times d_v}$,
+\[
+\Att(Q,K,V)=\softmax\!\Bigl(\frac{QK\T}{\sqrt{d_k}}\Bigr)V,
+\]
+donde la softmax se aplica a cada fila. La matriz $A=\softmax(QK\T/\sqrt{d_k})\in\R^{n\times m}$ se llama \emph{matriz} (o \emph{mapa}) \emph{de atención}.
+\end{definicion}
+
+La entrada $(i,j)$ de $S=QK\T$ es $q_i\cdot k_j$, de modo que la fila $i$ de $A$ contiene los pesos de la \cref{def:agrupacion} para la consulta $q_i$ con puntuación $q\cdot k/\sqrt{d_k}$, y la fila $i$ de $AV$ es la salida $o_i$. La \cref{tab:formas} resume las formas. Vaswani \emph{et al.} introdujeron el nombre y la fórmula~\cite[§3.2.1, ec.~(1)]{vaswani}; la tarea~1 de CS336 la adopta con $m\ne n$ para cubrir la atención cruzada~\cite[§3.4.4]{cs336}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}clll@{}}
+\toprule
+Paso & Operación & Forma & Significado \\
+\midrule
+1 & $S=QK\T$ & $n\times m$ & $s_{ij}=q_i\cdot k_j$ \\
+2 & $S/\sqrt{d_k}$ & $n\times m$ & escalado (\cref{sec:escalado}) \\
+3 & $A=\softmax(S/\sqrt{d_k})$ & $n\times m$ & cada fila es una distribución \\
+4 & $O=AV$ & $n\times d_v$ & fila $i$: media ponderada de valores \\
+\bottomrule
+\end{tabular}
+\caption{Formas de las matrices intermedias de la atención.}
+\label{tab:formas}
+\end{table}
+
+\begin{ejemplo}[Tres tokens]\label{ej:tres}
+Sean $d_k=4$, $d_v=2$ y
+\[
+Q=\begin{pmatrix}2&0&2&0\\0&2&0&2\\2&2&0&0\end{pmatrix},\quad
+K=\begin{pmatrix}2&0&0&0\\0&2&0&2\\1&1&1&1\end{pmatrix},\quad
+V=\begin{pmatrix}1&0\\0&1\\1&1\end{pmatrix}.
+\]
+Los parecidos son, por ejemplo, $s_{11}=2\cdot 2=4$ y $s_{22}=2\cdot 2+2\cdot 2=8$; en total, y tras dividir por $\sqrt4=2$,
+\[
+S=\begin{pmatrix}4&0&4\\0&8&4\\4&4&4\end{pmatrix},\qquad
+\frac{S}{2}=\begin{pmatrix}2&0&2\\0&4&2\\2&2&2\end{pmatrix}.
+\]
+Fila~1: $e^{2}=7{,}389$, $e^{0}=1$, $e^{2}=7{,}389$, de suma $15{,}78$, y pesos $0{,}468$, $0{,}063$, $0{,}468$. Fila~2: $1$, $e^{4}=54{,}60$, $7{,}389$, de suma $62{,}99$, y pesos $0{,}016$, $0{,}867$, $0{,}117$. Fila~3: tres puntuaciones iguales, pesos $1/3$. Por tanto
+\[
+A=\begin{pmatrix}0{,}468&0{,}063&0{,}468\\0{,}016&0{,}867&0{,}117\\0{,}333&0{,}333&0{,}333\end{pmatrix},\qquad
+O=AV=\begin{pmatrix}0{,}937&0{,}532\\0{,}133&0{,}984\\0{,}667&0{,}667\end{pmatrix}.
+\]
+La consulta~2 busca las coordenadas segunda y cuarta, que ofrece sobre todo la clave~2: la posición~2 se atiende casi solo a sí misma. La consulta~3 es igual de parecida a todas las claves y promedia. Cada fila de $O$ está en la envolvente convexa de las filas de $V$ (\cref{prop:convexa}).
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,x=11mm,y=9mm]
+  \foreach \i/\row in {1/{0.468/0{,}468,0.063/0{,}063,0.468/0{,}468},2/{0.016/0{,}016,0.867/0{,}867,0.117/0{,}117},3/{0.333/0{,}333,0.333/0{,}333,0.333/0{,}333}}{
+    \foreach \a/\t [count=\j] in \row {
+      \pgfmathsetmacro{\c}{80*\a}
+      \fill[black!\c] (\j-1,-\i+1) rectangle (\j,-\i);
+      \draw[regla] (\j-1,-\i+1) rectangle (\j,-\i);
+      \ifdim\a pt>0.6pt \node[white] at (\j-0.5,-\i+0.5) {$\t$};\else\node at (\j-0.5,-\i+0.5) {$\t$};\fi
+    }
+    \node[left] at (0,-\i+0.5) {$i=\i$};
+  }
+  \foreach \j in {1,2,3} \node[above] at (\j-0.5,0) {$j=\j$};
+\end{tikzpicture}
+\caption{Mapa de atención del \cref{ej:tres}; la intensidad del gris es proporcional a $\alpha_{ij}$. La fila $i$ indica a qué posiciones atiende la posición $i$.}
+\label{fig:mapa}
+\end{figure}
+
+\section{Equivariancia por permutaciones}
+
+\begin{proposicion}[Equivariancia]\label{prop:equivariancia}
+Sea $f(X)=\softmax\bigl(X\WQ(X\WK)\T/\sqrt{d_k}\bigr)X\WV$ la autoatención sin máscara y sea $P\in\R^{n\times n}$ una matriz de permutación. Entonces $f(PX)=P\,f(X)$.
+\end{proposicion}
+
+\begin{proof}
+Sustituyendo $X$ por $PX$: $Q'=PX\WQ=PQ$, $K'=PK$, $V'=PV$. Luego $S'=PQ(PK)\T=PQK\T P\T=PSP\T$, que reordena filas y columnas de $S$ con la misma permutación. La softmax por filas actúa sobre cada fila por separado y permutar las entradas de un vector permuta del mismo modo las de su softmax; por tanto $A'=PAP\T$. Finalmente $O'=A'V'=PAP\T PV=PAV=PO$, porque $P\T P=I$: las columnas de $P$ son vectores distintos de la base canónica y, por tanto, ortonormales.
+\end{proof}
+
+La autoatención no distingue, por sí sola, el orden de los tokens: «el perro muerde al hombre» y «el hombre muerde al perro» producen las mismas salidas, solo que en otras filas. Por eso los modelos de lenguaje añaden información de posición a los vectores de entrada (módulo~14), y por eso la máscara causal del \cref{tema:3}, que sí depende del orden, rompe esta simetría.
+
+\section{Por qué se divide por \texorpdfstring{$\sqrt{d_k}$}{raíz de dk}}
+\label{sec:escalado}
+
+Vaswani \emph{et al.} justifican el factor con un argumento de varianza que enuncian en una nota al pie~\cite[§3.2.1, nota~4]{vaswani}; Zhang \emph{et al.}~\cite[§11.3.3]{d2l} y Jurafsky y Martin~\cite[§7.1.1]{jm3} lo reproducen. Se da aquí con demostración.
+
+\begin{teorema}[Varianza del producto escalar]\label{teo:varianza}
+Sean $q=(q_1,\dots,q_{d_k})$ y $k=(k_1,\dots,k_{d_k})$ vectores aleatorios cuyas $2d_k$ componentes son independientes, de media~0 y varianza~1. Entonces
+\[
+\E[q\cdot k]=0,\qquad \Var(q\cdot k)=d_k,\qquad \Var\Bigl(\frac{q\cdot k}{\sqrt{d_k}}\Bigr)=1 .
+\]
+\end{teorema}
+
+\begin{proof}
+Sea $X_i=q_ik_i$. Por la independencia de $q_i$ y $k_i$, $\E[X_i]=\E[q_i]\,\E[k_i]=0$. Además $\E[q_i^{2}]=\Var(q_i)+\E[q_i]^{2}=1$, e igual para $k_i$; como $q_i^{2}$ y $k_i^{2}$ también son independientes, $\Var(X_i)=\E[q_i^{2}k_i^{2}]-\E[X_i]^{2}=\E[q_i^{2}]\,\E[k_i^{2}]=1$. Las variables $X_1,\dots,X_{d_k}$ son independientes entre sí, porque cada una es función de un par de componentes distinto, de modo que la varianza de su suma es la suma de las varianzas (módulo~5): $\Var(q\cdot k)=\sum_i\Var(X_i)=d_k$. Por linealidad, $\E[q\cdot k]=0$, y $\Var(cY)=c^{2}\Var(Y)$ con $c=1/\sqrt{d_k}$ da la última igualdad.
+\end{proof}
+
+Por el teorema central del límite, $q\cdot k/\sqrt{d_k}$ es aproximadamente $\mathcal N(0,1)$ para $d_k$ grande. Sin el factor, con $d_k=64$ los parecidos tendrían desviación típica~8 en la inicialización y diferencias de~16 entre dos claves serían frecuentes. Una simulación con $2\cdot 10^{5}$ pares de vectores gaussianos da varianzas empíricas $4{,}00$ para $d_k=4$ y $63{,}8$ para $d_k=64$.
+
+Para ver por qué importa la escala se necesita la jacobiana de la softmax, calculada en el módulo~4 con la regla del cociente.
+
+\begin{proposicion}[Saturación de la softmax]\label{prop:saturacion}
+Sea $p=\softmax(z)\in\R^{n}$ y $J=\partial p/\partial z$, de entradas $J_{ij}=p_i(\delta_{ij}-p_j)$. Entonces
+\[
+\max_{i,j}\abs{J_{ij}}\;\le\;1-\max_{l}p_l .
+\]
+En consecuencia, si una probabilidad tiende a~1, todas las derivadas parciales de la softmax tienden a~0.
+\end{proposicion}
+
+\begin{proof}
+Sea $p_k=\max_lp_l$, de modo que $p_i\le 1-p_k$ para todo $i\ne k$ (las probabilidades suman~1). Si $i=j$, $\abs{J_{ii}}=p_i(1-p_i)$: para $i=k$ vale $p_k(1-p_k)\le 1-p_k$, y para $i\ne k$, $p_i(1-p_i)\le p_i\le 1-p_k$. Si $i\ne j$, $\abs{J_{ij}}=p_ip_j$ y al menos uno de los dos índices es distinto de $k$; si lo es $i$, $p_ip_j\le p_i\le 1-p_k$, y análogamente si lo es $j$.
+\end{proof}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+Logits $z$ & $\softmax(z)$ & $\max\abs{J_{ij}}$ \\
+\midrule
+$(1,0,0)$ & $(0{,}576;\allowbreak\ 0{,}212;\allowbreak\ 0{,}212)$ & $0{,}244$ \\
+$(8,0,0)$ & $(0{,}9993;\allowbreak\ 0{,}0003;\allowbreak\ 0{,}0003)$ & $0{,}00067$ \\
+\bottomrule
+\end{tabular}
+\caption{Con logits ocho veces mayores, las derivadas de la softmax se reducen en un factor de unos 360.}
+\label{tab:saturacion}
+\end{table}
+
+\begin{observacion}[El factor como temperatura]
+Dividir por $\sqrt{d_k}$ equivale a aplicar la softmax con temperatura $\tau=\sqrt{d_k}$ (módulo~1, tema~4). Sin ella, el modelo empezaría en la región saturada: en el \cref{ej:tres}, sin dividir por~2, el peso de la fila~2 sobre la posición~2 pasa de $0{,}867$ a $0{,}982$. Vaswani \emph{et al.} observan, en la misma línea, que sin escalado la atención aditiva supera a la de producto escalar cuando $d_k$ es grande~\cite[§3.2.1]{vaswani}. Durante el entrenamiento, la red puede modificar la escala efectiva agrandando o encogiendo $\WQ$ y $\WK$.
+\end{observacion}
+
+\begin{observacion}[Evaluación estable]
+Como la softmax es invariante al restar una constante a todas las entradas, se evalúa restando el máximo de cada fila antes de exponenciar, lo que evita desbordamientos en fp16 (módulo~11). La tarea~1 de CS336 exige implementarla así~\cite[§3.4.4]{cs336}.
+\end{observacion}
+
+\begin{lecturas}
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.2.1 «Scaled Dot-Product Attention» y su nota~4.
+\item Jurafsky y Martin~\cite{jm3}, §7.1.1 «Attention more formally» y §7.3 «Parallelizing computation using a single matrix X».
+\item Zhang \emph{et al.}~\cite{d2l}, §11.3 «Attention Scoring Functions», en particular §11.3.3.
+\item Bishop y Bishop~\cite{bishopdl}, cap.~12, §12.1 «Attention».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-formas}
+¿Qué formas tienen $S=QK\T$, $A$ y $O$ en la autoatención si $n=10$, $d_k=16$ y $d_v=32$? ¿Por qué $d_k$ no aparece en la forma de $O$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-var}
+En las hipótesis del \cref{teo:varianza}, calcule $\Var(q\cdot k)$ y la desviación típica de $q\cdot k$ y de $q\cdot k/\sqrt{d_k}$ para $d_k=64$ y $d_k=128$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-temp}
+Los logits de cuatro palabras candidatas son $z=(1{,}2;\allowbreak\ 0{,}9;\allowbreak\ 0{,}1;\allowbreak\ -0{,}5)$. Calcule $\softmax(z/\tau)$ para $\tau=0{,}2$ y $\tau=2$, compruebe que cada distribución suma~1 y describa los límites $\tau\to 0^{+}$ y $\tau\to\infty$. Relacione el resultado con el factor $1/\sqrt{d_k}$.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.5 (logits propios).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-jac}
+Para $z=(1,0,0)$, calcule la matriz jacobiana completa de la softmax y compruebe la cota de la \cref{prop:saturacion}. Verifique que la suma de cada columna de $J$ es~0 y explique por qué debe serlo.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-sigma}
+Generalice el \cref{teo:varianza} al caso en que las componentes tienen media~0 y varianza $\sigma^{2}$. ¿Qué factor $c$ hace que $\Var(c\,q\cdot k)=1$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cruzada}
+En la atención cruzada, las consultas $Q=Y\WQ$ proceden de una secuencia $Y\in\R^{m\times d}$ y las claves y valores, $K=X\WK$ y $V=X\WV$, de otra $X\in\R^{n\times d}$. Demuestre que la salida es \emph{invariante} (no solo equivariante) si se permutan las filas de $X$: para toda permutación $P$, $\Att(Q,PK,PV)=\Att(Q,K,V)$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{La máscara causal}
+\label{tema:3}
+% =====================================================================
+
+Un modelo de lenguaje autorregresivo factoriza la probabilidad de una secuencia con la regla de la cadena (módulo~1, tema~2): la distribución del token $t+1$ solo puede depender de los tokens $1,\dots,t$. Este tema define las máscaras aditivas, demuestra que sumar $-\infty$ antes de la softmax equivale a restringir la softmax al conjunto de posiciones permitidas, prueba que la máscara causal hace que cada salida dependa solo de su pasado y deduce de ello que una única pasada produce las $n$ predicciones de una secuencia. Se siguen la §3.2.3 de~\cite{vaswani}, la §7.3 de~\cite{jm3}, las §3.4.4 y §3.4.5 de la tarea~1 de CS336~\cite{cs336} y la §11.3.2.1 de~\cite{d2l}.
+
+\section{Máscaras aditivas}
+
+\begin{definicion}[Máscara aditiva]\label{def:mascara}
+Sea $\mathcal{P}\subseteq\{1,\dots,n\}\times\{1,\dots,m\}$ el conjunto de pares $(i,j)$ \emph{permitidos}, con la condición de que cada fila $i$ contenga al menos un par permitido. La \emph{máscara aditiva} asociada es la matriz $M\in\{0,-\infty\}^{n\times m}$ con $M_{ij}=0$ si $(i,j)\in\mathcal{P}$ y $M_{ij}=-\infty$ en otro caso. La \emph{atención enmascarada} es
+\[
+\Att_M(Q,K,V)=\softmax\!\Bigl(\frac{QK\T}{\sqrt{d_k}}+M\Bigr)V,
+\]
+con el convenio $e^{-\infty}=0$.
+\end{definicion}
+
+\begin{definicion}[Máscara causal]\label{def:causal}
+En la autoatención ($m=n$), la \emph{máscara causal} es la asociada a $\mathcal{P}=\{(i,j):j\le i\}$:
+\[
+M_{ij}=\begin{cases}0,& j\le i,\\-\infty,& j>i.\end{cases}
+\]
+Es triangular estrictamente superior en sus entradas $-\infty$; la diagonal siempre está permitida.
+\end{definicion}
+
+Vaswani \emph{et al.} la describen como el bloqueo de las conexiones «ilegales» de la autoatención del decodificador, fijando a $-\infty$ las entradas correspondientes de la softmax~\cite[§3.2.3]{vaswani}; Jurafsky y Martin la presentan en la §7.3 de~\cite{jm3}, y la tarea~1 de CS336 la implementa con una máscara booleana en la que \texttt{True} indica «puede atender»~\cite[§3.4.4]{cs336}. La \cref{fig:causal} muestra su estructura.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,x=8mm,y=8mm]
+  \foreach \i in {1,...,5}{
+    \foreach \j in {1,...,5}{
+      \ifnum\j>\i
+        \fill[black!12] (\j-1,-\i+1) rectangle (\j,-\i);
+        \node at (\j-0.5,-\i+0.5) {$-\infty$};
+      \else
+        \node at (\j-0.5,-\i+0.5) {$0$};
+      \fi
+      \draw[regla] (\j-1,-\i+1) rectangle (\j,-\i);
+    }
+    \node[left] at (0,-\i+0.5) {$i=\i$};
+    \node[above] at (\i-0.5,0) {$\i$};
+  }
+  \node[above] at (2.5,0.5) {posición atendida $j$};
+\end{tikzpicture}
+\caption{Máscara causal para $n=5$. La fila $i$ solo permite las posiciones $j\le i$; las celdas sombreadas reciben peso exactamente nulo.}
+\label{fig:causal}
+\end{figure}
+
+\begin{proposicion}[Softmax restringida]\label{prop:restringida}
+Sea $z\in\R^{m}$ y sea $\mathcal{P}_i\subseteq\{1,\dots,m\}$ no vacío. Si $\mu_j=0$ para $j\in\mathcal{P}_i$ y $\mu_j=-\infty$ en otro caso, entonces
+\[
+\softmax(z+\mu)_j=\begin{cases}\dfrac{e^{z_j}}{\sum_{l\in\mathcal{P}_i}e^{z_l}},& j\in\mathcal{P}_i,\\[2ex] 0,& j\notin\mathcal{P}_i.\end{cases}
+\]
+En particular, los pesos permitidos suman~1 y no dependen de las puntuaciones $z_j$ con $j\notin\mathcal{P}_i$.
+\end{proposicion}
+
+\begin{proof}
+Por el convenio $e^{-\infty}=0$, el numerador $e^{z_j+\mu_j}$ vale $e^{z_j}$ si $j\in\mathcal{P}_i$ y $0$ en otro caso, y el denominador $\sum_le^{z_l+\mu_l}$ se reduce a $\sum_{l\in\mathcal{P}_i}e^{z_l}$, que es positivo porque $\mathcal{P}_i\ne\varnothing$. Ninguna de las dos expresiones contiene $z_j$ con $j\notin\mathcal{P}_i$.
+\end{proof}
+
+La condición $\mathcal{P}_i\ne\varnothing$ es necesaria: una fila enteramente enmascarada daría $0/0$, que en coma flotante produce \texttt{NaN} (módulo~11). En la máscara causal no puede ocurrir, porque $(i,i)$ siempre está permitido.
+
+\begin{observacion}[Por qué $-\infty$ antes de la softmax]
+Sumar~0 antes de la softmax no anula nada, porque $e^{0}=1$. Poner a~0 los pesos \emph{después} de la softmax deja filas que suman menos de~1 y pesos del pasado más pequeños de lo debido; hay que renormalizar, y el resultado coincide entonces con el de la \cref{prop:restringida} (\cref{eje:3-renorm}). En la práctica se usa \texttt{-inf} o un número negativo grande; el \cref{eje:3-finito} cuantifica cuánto debe valer.
+\end{observacion}
+
+\begin{ejemplo}\label{ej:mascara}
+Con el \cref{ej:tres} y la máscara causal,
+\[
+\frac{S}{\sqrt{d_k}}+M=\begin{pmatrix}2&-\infty&-\infty\\0&4&-\infty\\2&2&2\end{pmatrix}
+\quad\Longrightarrow\quad
+A=\begin{pmatrix}1&0&0\\0{,}018&0{,}982&0\\0{,}333&0{,}333&0{,}333\end{pmatrix}.
+\]
+En la fila~2, $e^{0}=1$ y $e^{4}=54{,}60$, de modo que los pesos son $1/55{,}60=0{,}018$ y $0{,}982$. La primera posición solo puede atenderse a sí misma. La salida es $O=AV$, con filas $(1,0)$, $(0{,}018;\allowbreak\ 0{,}982)$ y $(0{,}667;\allowbreak\ 0{,}667)$.
+\end{ejemplo}
+
+\section{Causalidad}
+
+\begin{teorema}[Causalidad de la atención enmascarada]\label{teo:causal}
+Sean $q_i=x_i\WQ$, $k_j=x_j\WK$, $v_j=x_j\WV$ y sea $o_i$ la fila $i$ de la autoatención con máscara causal. Entonces, para cada $i$, $o_i$ es función únicamente de $x_1,\dots,x_i$.
+\end{teorema}
+
+\begin{proof}
+Por la \cref{prop:restringida} con $\mathcal{P}_i=\{1,\dots,i\}$,
+\[
+o_i=\sum_{j=1}^{i}\alpha_{ij}v_j,\qquad
+\alpha_{ij}=\frac{\exp\bigl(q_i\cdot k_j/\sqrt{d_k}\bigr)}{\sum_{l=1}^{i}\exp\bigl(q_i\cdot k_l/\sqrt{d_k}\bigr)} .
+\]
+En esta expresión solo intervienen $q_i$, que depende únicamente de $x_i$, y $k_l$ y $v_l$ con $l\le i$, que dependen únicamente de $x_l$. Luego $o_i$ no depende de $x_j$ para $j>i$.
+\end{proof}
+
+\begin{corolario}[Entrenamiento en paralelo]\label{cor:paralelo}
+Sea $f$ la autoatención con máscara causal y, para cada $t\le n$, sea $f_t$ la misma operación aplicada solo al prefijo $x_{1:t}$. Entonces la fila $t$ de $f(x_{1:n})$ coincide con la última fila de $f_t(x_{1:t})$. En consecuencia, una sola evaluación sobre la secuencia completa proporciona las $n$ representaciones que una red usa para predecir $x_2,\dots,x_{n+1}$, cada una calculada solo con su prefijo.
+\end{corolario}
+
+\begin{proof}
+Por el \cref{teo:causal}, la fila $t$ de $f(x_{1:n})$ es la expresión de su demostración con $i=t$, que solo usa $x_1,\dots,x_t$. La última fila de $f_t(x_{1:t})$ se obtiene con la misma fórmula, pues en el prefijo también están permitidas las posiciones $1,\dots,t$. Ambas coinciden.
+\end{proof}
+
+La tarea~1 de CS336 describe la alternativa ingenua, ejecutar la atención $n$ veces, una por prefijo, y la descarta en favor de la máscara~\cite[§3.4.5]{cs336}. Una red recurrente necesita, en cambio, $n$ pasos secuenciales, porque el estado en $t$ depende del estado en $t-1$ (módulo~12). Esta diferencia, que Vaswani \emph{et al.} cuantifican como $O(1)$ operaciones secuenciales frente a $O(n)$~\cite[§4, tabla~1]{vaswani}, es la razón práctica principal por la que los Transformer desplazaron a las redes recurrentes en el preentrenamiento de modelos de lenguaje.
+
+\begin{observacion}[Otras máscaras]
+La \cref{def:mascara} admite otros conjuntos $\mathcal{P}$. La máscara de relleno (\emph{padding}) prohíbe las posiciones añadidas para igualar la longitud de las secuencias de un lote~\cite[§11.3.2.1]{d2l}; la de ventana deslizante permite solo $i-w<j\le i$, lo que reduce el coste a $O(nw)$ (\cref{tema:4}). La combinación de varias máscaras es la intersección de sus conjuntos permitidos, es decir, la suma de sus matrices.
+\end{observacion}
+
+\begin{lecturas}
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.2.3 «Applications of Attention in our Model» y §4 «Why Self-Attention».
+\item Jurafsky y Martin~\cite{jm3}, §7.3, apartado «Masking out the future».
+\item CS336~\cite{cs336}, tarea~1, §3.4.4 «Scaled Dot-Product Attention» y §3.4.5 «Causal Multi-Head Self-Attention».
+\item Zhang \emph{et al.}~\cite{d2l}, §11.3.2.1 «Masked Softmax Operation».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-despues}
+Un estudiante implementa la máscara causal de dos formas erróneas: (a) pone a~0 los pesos futuros \emph{después} de la softmax; (b) pone a~0 las puntuaciones futuras \emph{antes} de la softmax. Con la fila~2 del \cref{ej:tres}, de puntuaciones escaladas $(0,4,2)$, calcule el resultado de cada versión y explique qué falla.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:3-jm}
+¿Por qué la máscara causal usa $-\infty$ y no~0 en las posiciones prohibidas? Calcule la fila de pesos correspondiente a las puntuaciones $(0,4,2)$, con el tercer token prohibido, en ambos casos.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.2 (datos numéricos añadidos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-calculo}
+Una matriz de puntuaciones ya escaladas es
+\[
+S=\begin{pmatrix}1&5&5\\0&\ln 3&5\\0&0&\ln 2\end{pmatrix}.
+\]
+Aplique la máscara causal, calcule $A$ y las salidas si los valores son los escalares $4$, $8$ y $12$. ¿Cambia algo si los cincos se sustituyen por cienes?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-finito}
+En lugar de $-\infty$, una implementación suma $-c$, con $c>0$ finito, a las puntuaciones prohibidas. Para la fila $(0,4,2)$ con el tercer token prohibido, halle el menor entero $c$ para el que el peso que se filtra al futuro es menor que $10^{-6}$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-renorm}
+Sea $p=\softmax(z)$ y $\mathcal{P}_i$ un conjunto no vacío de índices. Se define $\tilde p_j=p_j\,\mathbb{1}[j\in\mathcal{P}_i]/\sum_{l\in\mathcal{P}_i}p_l$, es decir, se anulan los pesos prohibidos después de la softmax y se renormaliza. Demuestre que $\tilde p=\softmax(z+\mu)$, con $\mu$ como en la \cref{prop:restringida}. ¿Por qué se prefiere, aun así, sumar la máscara antes?
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Atención multi-cabeza y coste computacional}
+\label{tema:4}
+% =====================================================================
+
+Una sola cabeza de atención define una única noción de parecido entre posiciones. La atención multi-cabeza ejecuta varias en paralelo, cada una en un subespacio de dimensión $d/h$, y combina sus resultados con una proyección lineal. Este tema la define, demuestra que su número de parámetros no depende del número de cabezas, muestra que cada cabeza tiene una forma bilineal de rango acotado, cuenta las operaciones de coma flotante de la capa y estudia la memoria de la matriz de atención, que es el obstáculo principal para los contextos largos. Se siguen la §3.2.2 y la §4 de~\cite{vaswani}, las §3.4.5 y §3.5 de la tarea~1 de CS336~\cite{cs336}, las §11.5 y §11.6.2 de~\cite{d2l} y las §7.1.1 y §7.3 de~\cite{jm3}.
+
+\section{Definición}
+
+\begin{definicion}[Atención multi-cabeza]\label{def:mha}
+Sean $d$ la dimensión del modelo, $h$ un divisor de $d$ y $d_k=d_v=d/h$. Para cada cabeza $r=1,\dots,h$ se toman matrices $\WQ^{(r)},\WK^{(r)},\WV^{(r)}\in\R^{d\times d/h}$, y además $\WO\in\R^{d\times d}$. La \emph{atención multi-cabeza} de $X\in\R^{n\times d}$ es
+\[
+\MHA(X)=\Concat\bigl(H_1,\dots,H_h\bigr)\,\WO,\qquad
+H_r=\Att\bigl(X\WQ^{(r)},X\WK^{(r)},X\WV^{(r)}\bigr)\in\R^{n\times d/h},
+\]
+donde $\Concat$ yuxtapone las $h$ matrices por columnas y la atención de cada cabeza puede llevar máscara causal.
+\end{definicion}
+
+Vaswani \emph{et al.} usan $d=512$ y $h=8$, de modo que $d_k=d_v=64$, y observan que el coste total es similar al de una sola cabeza de dimensión completa~\cite[§3.2.2]{vaswani}. Zhang \emph{et al.} dan la definición con dimensiones generales y la misma elección~\cite[§11.5.1]{d2l}.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=7mm,minimum width=20mm,inner sep=3pt,align=center}]
+  \node[caja] (x) {$X$\\[-1pt]{\scriptsize $n\times d$}};
+  \node[caja,right=1.3cm of x,yshift=13mm] (h1) {cabeza 1\\[-1pt]{\scriptsize $n\times d/h$}};
+  \node[caja,right=1.3cm of x] (h2) {cabeza 2\\[-1pt]{\scriptsize $n\times d/h$}};
+  \node[right=1.3cm of x,yshift=-10mm] (hd) {$\vdots$};
+  \node[caja,right=1.3cm of x,yshift=-19mm] (hh) {cabeza $h$\\[-1pt]{\scriptsize $n\times d/h$}};
+  \node[caja,right=1.3cm of h2] (c) {$\Concat$\\[-1pt]{\scriptsize $n\times d$}};
+  \node[caja,right=0.9cm of c] (wo) {$\cdot\,\WO$\\[-1pt]{\scriptsize $d\times d$}};
+  \node[caja,right=0.9cm of wo] (y) {$\MHA(X)$\\[-1pt]{\scriptsize $n\times d$}};
+  \foreach \t in {h1,h2,hh}{\draw[->] (x.east) -- (\t.west); \draw[->] (\t.east) -- (c.west);}
+  \draw[->] (c) -- (wo); \draw[->] (wo) -- (y);
+\end{tikzpicture}
+\caption{Atención multi-cabeza: $h$ atenciones independientes en subespacios de dimensión $d/h$, concatenadas y mezcladas por $\WO$.}
+\label{fig:mha}
+\end{figure}
+
+\begin{observacion}[Implementación]
+No se calculan $h$ productos pequeños. Se apilan las matrices de las cabezas en $\WQ=\bigl(\WQ^{(1)}\ \cdots\ \WQ^{(h)}\bigr)\in\R^{d\times d}$, se calcula $Q=X\WQ$ con un único producto y se reordena el resultado de forma $(n,d)$ a $(h,n,d/h)$; la fórmula de la atención se aplica entonces con un eje adicional de cabezas, que se trata como un eje de lote (módulo~3). La tarea~1 de CS336 pide calcular así las tres proyecciones con tres productos de matrices, o con uno solo concatenando las tres matrices~\cite[§3.4.5]{cs336}.
+\end{observacion}
+
+\section{Parámetros y estructura}
+
+\begin{proposicion}[Parámetros]\label{prop:param}
+Sin sesgos, la atención multi-cabeza tiene $4d^{2}$ parámetros, cualquiera que sea $h$.
+\end{proposicion}
+
+\begin{proof}
+Cada una de las $3h$ matrices $\WQ^{(r)},\WK^{(r)},\WV^{(r)}$ tiene $d\cdot d/h$ entradas; en total, $3h\cdot d^{2}/h=3d^{2}$. La matriz $\WO$ aporta $d^{2}$ más.
+\end{proof}
+
+Con $d=768$, la capa tiene $4\cdot 768^{2}=2\,359\,296$ parámetros; con $d=512$, $1\,048\,576$. En el módulo~14 se suman los $8d^{2}$ de la red de alimentación hacia delante con $d_{ff}=4d$ y se obtiene que la atención es un tercio de los parámetros de cada bloque.
+
+\begin{proposicion}[Descomposición por cabezas]\label{prop:descomp}
+Sea $\WO^{(r)}\in\R^{d/h\times d}$ el bloque de filas $(r-1)d/h+1,\dots,rd/h$ de $\WO$. Entonces
+\[
+\MHA(X)=\sum_{r=1}^{h}H_r\,\WO^{(r)}=\sum_{r=1}^{h}A_r\,X\,\WV^{(r)}\WO^{(r)},
+\]
+donde $A_r$ es la matriz de atención de la cabeza $r$. Además, las puntuaciones de la cabeza $r$ son $s^{(r)}_{ij}=x_i\,\WQ^{(r)}\WK^{(r)\top}x_j\T$, una forma bilineal cuya matriz $W_{QK}^{(r)}=\WQ^{(r)}\WK^{(r)\top}\in\R^{d\times d}$ tiene rango a lo sumo $d/h$.
+\end{proposicion}
+
+\begin{proof}
+El producto de una matriz particionada por columnas en bloques $H_1,\dots,H_h$ por otra particionada por filas en los bloques correspondientes es la suma de los productos de los bloques: $\bigl(H_1\cdots H_h\bigr)\WO=\sum_rH_r\WO^{(r)}$. Sustituyendo $H_r=A_r(X\WV^{(r)})$ se obtiene la segunda igualdad. Para las puntuaciones, $s^{(r)}_{ij}=q^{(r)}_i\cdot k^{(r)}_j=x_i\WQ^{(r)}\bigl(x_j\WK^{(r)}\bigr)\T$. Por último, el rango de un producto no supera el de ninguno de sus factores (módulo~3), y $\WQ^{(r)}$ tiene $d/h$ columnas, luego $\rg W_{QK}^{(r)}\le d/h$.
+\end{proof}
+
+La proposición muestra que la multi-cabeza no es una sola atención grande cortada en trozos: es una \emph{suma} de $h$ atenciones, cada una con su propia matriz de pesos $A_r$, una forma bilineal de rango $\le d/h$ que decide a dónde mirar y una aplicación $\WV^{(r)}\WO^{(r)}$ que decide qué escribir. Esta lectura es la base del análisis de circuitos del \cref{tema:5}. La tarea~3 de CS224N ilustra con un ejemplo de claves ruidosas por qué promediar dos cabezas puede ser más robusto que una sola~\cite[tarea~3, pregunta~1]{cs224n}.
+
+\begin{observacion}[Variantes]
+Muchos modelos abiertos comparten las claves y los valores entre grupos de cabezas (atención \emph{multi-query} y \emph{grouped-query}) para reducir la memoria de inferencia; se estudian en el módulo~18. Qué variante usan Claude, Gemini o Grok en sus versiones actuales no se ha publicado en detalle.
+\end{observacion}
+
+\section{Coste en operaciones}
+
+Se cuenta en operaciones de coma flotante (FLOP), con el convenio de CS336 de que una multiplicación seguida de una suma cuenta como dos~\cite[§3.5]{cs336}.
+
+\begin{lema}\label{lem:flops}
+El producto de una matriz $a\times b$ por una $b\times c$ requiere $2abc$ FLOP.
+\end{lema}
+
+\begin{proof}
+Cada una de las $ac$ entradas del resultado es un producto escalar de longitud $b$: $b$ multiplicaciones y $b-1$ sumas, unas $2b$ operaciones (exactamente $2b$ si se acumula sobre un cero inicial).
+\end{proof}
+
+\begin{proposicion}[Coste de la capa]\label{prop:coste}
+Con $h$ cabezas de dimensión $d/h$, una pasada de la atención multi-cabeza sobre $n$ posiciones requiere
+\begin{align*}
+\FLOP_{\text{proy}}&=8nd^{2} &&\text{(proyecciones $Q,K,V$ y $\WO$)},\\
+\FLOP_{\text{at}}&=4n^{2}d &&\text{(productos $QK\T$ y $AV$)},
+\end{align*}
+sin contar la softmax, que es de orden $hn^{2}$. La parte cuadrática domina si y solo si $n>2d$.
+\end{proposicion}
+
+\begin{proof}
+Por el \cref{lem:flops}, cada una de las cuatro proyecciones $(n\times d)(d\times d)$ cuesta $2nd^{2}$, en total $8nd^{2}$. En cada cabeza, $QK\T$ es $(n\times d/h)(d/h\times n)$ y cuesta $2n^{2}d/h$; $AV$ es $(n\times n)(n\times d/h)$ y cuesta lo mismo. Sumando las $h$ cabezas: $h\cdot 4n^{2}d/h=4n^{2}d$. Finalmente, $4n^{2}d>8nd^{2}$ equivale, dividiendo por $4nd>0$, a $n>2d$.
+\end{proof}
+
+Con $d=512$, la atención propiamente dicha domina a partir de $1024$ tokens. Vaswani \emph{et al.} resumen esta comparación en su tabla~1: complejidad por capa $O(n^{2}d)$ para la autoatención frente a $O(nd^{2})$ para una red recurrente, a cambio de $O(1)$ operaciones secuenciales y longitud máxima de camino $O(1)$ entre dos posiciones~\cite[§4]{vaswani}. Zhang \emph{et al.} hacen el mismo análisis en~\cite[§11.6.2]{d2l}.
+
+\section{Memoria y contexto largo}
+
+La matriz de atención tiene $n^{2}$ entradas por cabeza y por capa. En fp16, con dos bytes por número (módulo~11), ocupa $2n^{2}$ bytes.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}rr@{}}
+\toprule
+$n$ (tokens) & Memoria de $A$ (una cabeza, una capa, fp16) \\
+\midrule
+$4096$ & $0{,}034$ GB \\
+$10^{5}$ & $20$ GB \\
+$10^{6}$ & $2000$ GB \\
+\bottomrule
+\end{tabular}
+\caption{Memoria de una matriz de atención completa ($1\text{ GB}=10^{9}$ bytes).}
+\label{tab:memoria}
+\end{table}
+
+Multiplicar el contexto por $k$ multiplica esta memoria y los $4n^{2}d$ FLOP por $k^{2}$. Las técnicas que lo mitigan se estudian en módulos posteriores: FlashAttention~\cite{dao} calcula la softmax por bloques sin almacenar $A$ completa, de modo que la memoria adicional pasa a ser lineal en $n$ mientras el número de FLOP sigue siendo $O(n^{2}d)$ (módulo~17); las ventanas deslizantes y la atención dispersa reducen el conjunto permitido $\mathcal{P}$; y en inferencia la caché de claves y valores evita recalcular las del pasado (módulo~19).
+
+\begin{observacion}[Contexto largo en modelos comerciales]
+El informe técnico de Gemini~1.5~\cite{gemini15} documenta recuperación casi perfecta en experimentos con contextos de hasta diez millones de tokens, y Anthropic ofrece para Claude ventanas de cientos de miles de tokens. Ninguna de las dos empresas ha publicado cómo resuelven internamente el coste cuadrático.
+\end{observacion}
+
+\begin{lecturas}
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.2.2 «Multi-Head Attention» y §4 «Why Self-Attention», tabla~1.
+\item CS336~\cite{cs336}, tarea~1, §3.4.5 y §3.5 «The Full Transformer LM», problema \emph{transformer\_accounting}.
+\item Zhang \emph{et al.}~\cite{d2l}, §11.5 «Multi-Head Attention» y §11.6.2 «Comparing CNNs, RNNs, and Self-Attention».
+\item Jurafsky y Martin~\cite{jm3}, §7.1.1 y §7.3.
+\item Dao \emph{et al.}~\cite{dao}, para una primera lectura de FlashAttention.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-vf}
+Justifique si son verdaderas o falsas: (a) duplicar el número de cabezas con $d$ fijo duplica los parámetros de la atención; (b) la autoatención sin máscara ni información de posición da el mismo resultado, salvo el orden de las filas, si se barajan los tokens; (c) la máscara causal impide entrenar en paralelo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-param}
+Cuente los parámetros sin sesgos de una atención multi-cabeza con $d=512$ y $h=8$. ¿Cuántos tiene cada $\WQ^{(r)}$? Compruebe que las ocho juntas forman una matriz $d\times d$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-flops}
+(a) Calcule los FLOP de $QK\T$ para una cabeza con $n=2048$ y $d_k=128$, y los de $QK\T$ y $AV$ juntos. (b) Con $d=512$ y $n=2048$, compare $8nd^{2}$ con $4n^{2}d$ y compruebe el criterio $n>2d$ de la \cref{prop:coste}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-mem}
+¿Cuánta memoria ocupa la matriz de atención de una cabeza y una capa en fp16 con $n=10^{5}$? ¿Y con $n=10^{6}$? ¿Por qué factor se multiplica el coste de la atención al pasar de $1024$ a $8192$ tokens?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-jm}
+Un Transformer tiene $L=6$ capas, $d=512$, $A=8$ cabezas con $d_k=d_v=d/A$ y una red de alimentación hacia delante con $d_{ff}=4d$ (dos matrices). Sin sesgos ni normalizaciones: (a) cuente los parámetros de $\WQ$, $\WK$, $\WV$ y $\WO$ de una capa y diga si dependen de $A$; (b) cuente los de la red de alimentación; (c) demuestre que la pila tiene unos $12Ld^{2}$ parámetros y calcúlelos.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.1 (con valores numéricos).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-cs336}
+Considérese un modelo del tamaño de GPT-2 pequeño: $L=12$, $d=768$, vocabulario $\abs{\V}=50\,257$, red de alimentación con $d_{ff}=4d$ y contexto $n=1024$. Por capa, las proyecciones $Q,K,V$ cuestan $6nd^{2}$ FLOP, la salida $\WO$ $2nd^{2}$, la atención $4n^{2}d$ y la red de alimentación $16nd^{2}$; la capa de salida, una sola vez, $2nd\abs{\V}$. (a) Calcule los FLOP de cada componente y su porcentaje del total. (b) Repita el cálculo con $n=16\,384$: ¿por qué factor crece el total y qué componente pasa a dominar? (c) Deduzca de la \cref{prop:coste} a partir de qué $n$ la atención supera a la red de alimentación.
+\fuente{adaptado de CS336~\cite{cs336}, tarea~1, §3.5, problema \emph{transformer\_accounting}, apartados (b) a (e) (con GPT-2 pequeño en lugar de GPT-2 XL).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-rango}
+(a) Demuestre que una cabeza con $d_k<d$ no puede representar una forma bilineal $x_iBx_j\T$ arbitraria: existe $B\in\R^{d\times d}$ que no se escribe como $\WQ\WK\T$ con $\WQ,\WK\in\R^{d\times d_k}$. (b) Demuestre, en cambio, que toda $B$ de rango $\le d_k$ sí se escribe así. (c) Con $d=512$ y $h=8$, ¿cuál es el rango máximo de la matriz $\sum_{r}W_{QK}^{(r)}$ que se obtendría sumando las ocho formas bilineales, y por qué esa suma no describe la atención multi-cabeza?
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Circuitos de atención y memorias asociativas}
+\label{tema:5}
+% =====================================================================
+
+Los temas anteriores tratan la atención como una operación aislada. Este tema estudia dos lecturas estructurales de ella. La primera, debida a Elhage \emph{et al.}~\cite{elhage}, descompone cada cabeza en un circuito que decide a dónde mirar y otro que decide qué copiar, y muestra que dos cabezas en capas sucesivas pueden componerse para implementar una \emph{cabeza de inducción}, el mecanismo que Olsson \emph{et al.}~\cite{olsson} relacionaron con el aprendizaje en contexto. La segunda, debida a Ramsauer \emph{et al.}~\cite{ramsauer}, identifica la atención con la regla de actualización de una red de Hopfield moderna, una memoria asociativa direccionable por contenido. Se siguen esos tres artículos y la §10.6 de~\cite{jm3}.
+
+\section{El flujo residual y los circuitos QK y OV}
+
+En un Transformer, cada capa \emph{suma} su salida a la representación de cada posición, que recorre así la red como un \emph{flujo residual} (módulos~11 y~14). Elhage \emph{et al.} estudian modelos formados solo por capas de atención, en los que el vector final de la posición $i$ es su embedding más las contribuciones de todas las cabezas de todas las capas~\cite{elhage}. Por la \cref{prop:descomp}, la contribución de una cabeza a la posición $i$ es
+\[
+\sum_{j\le i}\alpha_{ij}\;x_j\,W_{OV},\qquad
+\alpha_{ij}=\softmax_j\Bigl(\frac{x_i\,W_{QK}\,x_j\T}{\sqrt{d_k}}\Bigr),
+\]
+con $W_{QK}=\WQ\WK\T$ y $W_{OV}=\WV\WO^{(r)}$, ambas de tamaño $d\times d$ (en esta sección se omite el índice de la cabeza).
+
+\begin{definicion}[Circuitos QK y OV]\label{def:circuitos}
+En una cabeza de atención, el \emph{circuito QK} es la forma bilineal $W_{QK}=\WQ\WK\T$, que determina los pesos de atención, y el \emph{circuito OV} es la aplicación lineal $W_{OV}=\WV\WO$, que determina qué se escribe en el flujo residual de la posición que atiende a partir de la posición atendida.
+\end{definicion}
+
+Los dos circuitos son independientes: el primero decide \emph{a dónde} se mira; el segundo, \emph{qué} se copia. Si los vectores de entrada son \emph{one-hot}, $x_iW_{QK}x_j\T$ es una entrada de la matriz $W_{QK}$ y la tabla completa de preferencias de la cabeza puede leerse directamente.
+
+\section{Cabezas de inducción}
+
+Una \emph{cabeza de inducción} implementa la regla «si antes apareció $a$ seguido de $b$ y ahora vuelve a aparecer $a$, predecir $b$», es decir, completa patrones del tipo $[a][b]\dots[a]\to[b]$~\cite{olsson}. Permite copiar del propio contexto secuencias que nunca se vieron en el entrenamiento, como un nombre propio inventado que se repite en un texto.
+
+\begin{proposicion}\label{prop:una-capa}
+En un modelo de una sola capa de atención cuyas entradas en cada posición son el embedding de su token más el de su posición, la puntuación $s_{ij}$ es función de $(x_i,x_j)$. En consecuencia, para dos posiciones permitidas $j,l\le i$, el cociente $\alpha_{ij}/\alpha_{il}$ solo depende de $x_i$, $x_j$ y $x_l$; en particular, ninguna cabeza de esa capa puede preferir la posición $j$ a la $l$ en función del token \emph{anterior} $x_{j-1}$.
+\end{proposicion}
+
+\begin{proof}
+La puntuación es $s_{ij}=x_iW_{QK}x_j\T/\sqrt{d_k}$, que solo contiene $x_i$ y $x_j$. Por la \cref{prop:restringida}, los pesos permitidos comparten el mismo denominador, de modo que $\alpha_{ij}/\alpha_{il}=\exp(s_{ij}-s_{il})$, función de $x_i$, $x_j$ y $x_l$. Si $j-1\notin\{i,j,l\}$, cambiar el token $x_{j-1}$ no altera ese cociente.
+\end{proof}
+
+Hace falta, por tanto, que una capa anterior haya escrito en la posición $j$ información sobre $x_{j-1}$. La construcción de Elhage \emph{et al.} usa dos cabezas~\cite{elhage}:
+\begin{enumerate}[label=\arabic*.]
+  \item una \emph{cabeza de token anterior} en la capa~1, cuyo mapa de atención es la subdiagonal: la posición $j$ atiende a $j-1$ y su circuito OV copia la identidad del token, de modo que escribe en $j$ «mi token anterior era $x_{j-1}$»;
+  \item una \emph{cabeza de inducción} en la capa~2, cuyas claves se construyen a partir de lo escrito por la capa~1 y cuya consulta es el token actual: la posición $i$ atiende a las $j$ con $x_{j-1}=x_i$, y su circuito OV copia el token $x_j$.
+\end{enumerate}
+Que las claves de la capa~2 lean la salida de una cabeza de la capa~1 se llama \emph{composición K}; análogamente se definen las composiciones Q y V. La \cref{fig:induccion} ilustra el mecanismo.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},x=13mm,
+  tok/.style={draw,thick,rounded corners=2pt,minimum width=11mm,minimum height=6mm}]
+  \foreach \t/\l [count=\i from 0] in {$\langle s\rangle$/0,el/1,gato/2,come/3,$\cdots$/{},el/$i$}{
+    \node[tok] (t\i) at (\i,0) {\t};
+    \node[below=1pt of t\i,font=\scriptsize] {\l};
+  }
+  \node[tok,dashed] (p) at (7.1,0) {gato};
+  \node[below=1pt of p,font=\scriptsize] {$i+1$};
+  \draw[->,thick,regla] (t2.north) to[bend right=50] node[above,font=\scriptsize,text=black]{capa 1} (t1.north);
+  \draw[->,thick] (t5.north) to[bend right=35] node[above,font=\scriptsize]{capa 2: busca «anterior $=$ el»} (t2.north);
+  \draw[->] (t5.east) -- node[above,font=\scriptsize]{predice} (p.west);
+\end{tikzpicture}
+\caption{Cabeza de inducción. La capa~1 escribe en la posición~2 que su token anterior es «el»; en una posición posterior $i$ con el token «el», la consulta de la capa~2 encaja con esa clave y el circuito OV copia «gato», que se convierte en la predicción para la posición $i+1$.}
+\label{fig:induccion}
+\end{figure}
+
+\begin{teorema}[Cabeza de token anterior]\label{teo:previo}
+Sean $p_0,\dots,p_{n-1}$ vectores \emph{one-hot} de posición y $\beta>0$. Con máscara causal, consultas $q_i=\beta p_i$ y claves $k_j=\beta p_{j+1}$ (con $p_n=0$), y sin escalado adicional, el peso que la posición $i\ge 1$ asigna a $i-1$ es
+\[
+\alpha_{i,i-1}=\frac{e^{\beta^{2}}}{e^{\beta^{2}}+i}\xrightarrow[\beta\to\infty]{}1 .
+\]
+\end{teorema}
+
+\begin{proof}
+Para $j\le i$, $q_i\cdot k_j=\beta^{2}\,p_i\cdot p_{j+1}$, que vale $\beta^{2}$ si $j+1=i$ y $0$ en otro caso, porque los vectores de posición son ortonormales. La fila $i$ tiene $i+1$ posiciones permitidas, $j=0,\dots,i$: una con puntuación $\beta^{2}$ y las $i$ restantes con puntuación~0. Por la \cref{prop:restringida}, $\alpha_{i,i-1}=e^{\beta^{2}}/(e^{\beta^{2}}+i\cdot e^{0})$, que tiende a~1 porque $i/e^{\beta^{2}}\to 0$.
+\end{proof}
+
+Con valores $v_j=e_{x_j}$ (el \emph{one-hot} del token), la salida de esta cabeza en la posición $j$ es, para $\beta$ grande, aproximadamente $e_{x_{j-1}}$. El \cref{eje:5-induccion} completa la construcción con la segunda capa.
+
+\begin{observacion}[Evidencia empírica]
+Olsson \emph{et al.} presentan seis líneas de evidencia complementarias de que las cabezas de inducción explican una parte importante del aprendizaje en contexto: entre otras, que se forman durante el entrenamiento en el mismo intervalo en el que la capacidad de aprendizaje en contexto mejora bruscamente, visible como un escalón en la curva de pérdida. La evidencia es causal en modelos pequeños formados solo por atención y correlacional en modelos mayores con redes de alimentación hacia delante~\cite{olsson}. Jurafsky y Martin resumen estos resultados en la §10.6 de~\cite{jm3}; el módulo~23 retoma los circuitos.
+\end{observacion}
+
+\section{Atención y redes de Hopfield modernas}
+
+Una memoria asociativa almacena patrones y, ante un estímulo parecido a uno de ellos, devuelve el patrón completo. Ramsauer \emph{et al.} definen una red de Hopfield con estados continuos cuya regla de actualización es la atención~\cite[§2]{ramsauer}. En esta sección se usa su convención: $X=(x_1,\dots,x_N)\in\R^{d\times N}$ tiene los patrones almacenados como \emph{columnas} y el estado $\xi\in\R^{d}$ es un vector columna.
+
+\begin{definicion}[Energía de Hopfield moderna]\label{def:hopfield}
+Sean $\beta>0$ y $\lse(\beta,z)=\beta^{-1}\ln\sum_{l=1}^{N}e^{\beta z_l}$. La energía del estado $\xi$ es
+\[
+E(\xi)=-\lse\bigl(\beta,X\T\xi\bigr)+\tfrac12\,\xi\T\xi+\beta^{-1}\ln N+\tfrac12M^{2},\qquad M=\max_l\norm{x_l},
+\]
+y la \emph{regla de actualización} es $\xi^{\text{nuevo}}=X\softmax\bigl(\beta X\T\xi\bigr)$.
+\end{definicion}
+
+\begin{proposicion}[Puntos estacionarios]\label{prop:hopfield}
+El gradiente de la energía es $\nabla E(\xi)=\xi-X\softmax(\beta X\T\xi)$. Por tanto, $\xi$ es un punto estacionario de $E$ si y solo si es un punto fijo de la regla de actualización, y la actualización consiste en saltar al punto que anula el gradiente de la parte cuadrática con la parte $\lse$ congelada.
+\end{proposicion}
+
+\begin{proof}
+Sea $z=X\T\xi$. Para la función $g(z)=\beta^{-1}\ln\sum_le^{\beta z_l}$, $\partial g/\partial z_l=\beta^{-1}\cdot\beta e^{\beta z_l}/\sum_me^{\beta z_m}=\softmax(\beta z)_l$. Por la regla de la cadena (módulo~4), con $\partial z/\partial\xi=X\T$, se tiene $\nabla_\xi\lse(\beta,X\T\xi)=X\softmax(\beta X\T\xi)$. El gradiente de $\tfrac12\xi\T\xi$ es $\xi$ y los dos últimos términos son constantes. Por tanto $\nabla E(\xi)=0$ si y solo si $\xi=X\softmax(\beta X\T\xi)$. La última afirmación se sigue de que $\xi^{\text{nuevo}}$ es la solución de $\xi-c=0$ con $c=X\softmax(\beta X\T\xi)$ fijo.
+\end{proof}
+
+Ramsauer \emph{et al.} demuestran además que la actualización hace decrecer la energía y converge, que la red puede almacenar un número de patrones exponencial en la dimensión y que, si los patrones están bien separados, un solo paso basta para recuperar uno de ellos con error exponencialmente pequeño~\cite[§2, teoremas~1 a~5]{ramsauer}.
+
+\begin{observacion}[Hopfield como atención]
+Si los patrones almacenados y los estados se proyectan linealmente para formar claves, valores y consultas y se toma $\beta=1/\sqrt{d_k}$, la regla de actualización, escrita con vectores fila, adopta la forma $\softmax(QK\T/\sqrt{d_k})V$ de la \cref{def:sdpa}~\cite[§2]{ramsauer}. La atención es, pues, un paso de recuperación en una memoria asociativa, y $\beta$ desempeña el papel de inverso de una temperatura: el \cref{teo:limites} describe sus dos regímenes extremos, recuperación de un patrón y media de todos ellos.
+\end{observacion}
+
+\begin{lecturas}
+\item Elhage \emph{et al.}~\cite{elhage}, «A Mathematical Framework for Transformer Circuits»: modelos de solo atención, circuitos QK y OV y composición de cabezas.
+\item Olsson \emph{et al.}~\cite{olsson}, «In-context Learning and Induction Heads».
+\item Jurafsky y Martin~\cite{jm3}, §10.6 «In-Context Learning and Induction Heads».
+\item Ramsauer \emph{et al.}~\cite{ramsauer}, §2 «Modern Hopfield Nets with Continuous States».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-capa}
+Explique con un ejemplo concreto por qué una cabeza de una sola capa no puede completar «el señor Dursley \dots el señor» con «Dursley» si solo dispone de los embeddings de token y de posición. ¿Qué información debe haberse escrito antes en la posición de «Dursley»?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-previo}
+En la cabeza del \cref{teo:previo}: (a) calcule $\alpha_{5,4}$ con $\beta=2$; (b) halle el menor $\beta$ que garantiza $\alpha_{i,i-1}\ge 0{,}99$ para todas las posiciones de una secuencia de diez tokens ($i\le 9$).
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-hop}
+Sean $\beta=1$, los patrones $x_1=(2,0)\T$ y $x_2=(0,2)\T$ y el estado inicial $\xi=(1;\allowbreak\ 0{,}5)\T$. Aplique dos veces la regla de actualización de la \cref{def:hopfield} y diga a qué patrón se acerca el estado.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-induccion}
+Diseñe una cabeza de inducción de dos capas para tokens con embeddings \emph{one-hot} y posiciones \emph{one-hot}, indicando consultas, claves y valores de cada capa (con $\beta=10$). Aplíquela a la secuencia «$\langle s\rangle$ el gato come pescado y luego el gato duerme» (posiciones $0$ a~$9$) y determine qué predice en las posiciones~7, 8 y~9.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-jac}
+Sea $o(\xi)=X\softmax(\beta X\T\xi)$ la regla de actualización, con patrones $x_1,\dots,x_N$ y pesos $p=\softmax(\beta X\T\xi)$. (a) Demuestre que su jacobiana es $\partial o/\partial\xi=\beta\bigl(\sum_lp_lx_lx_l\T-o\,o\T\bigr)$, es decir, $\beta$ veces la covarianza de los patrones bajo la distribución $p$. (b) Compruébelo en dimensión uno con $\beta=1$, patrones $0$ y $2$ y $\xi=\tfrac12\ln 3$. (c) ¿Qué ocurre con la jacobiana cuando $p$ se concentra en un solo patrón?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §11.1, ejercicio~2 (con el factor $\beta$ y un caso numérico).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-recup}
+Sean $x_1,\dots,x_N\in\R^{d}$ patrones ortonormales y $\xi=x_k$. Demuestre que tras una actualización
+\[
+\norm{\xi^{\text{nuevo}}-x_k}=\frac{\sqrt{N(N-1)}}{e^{\beta}+N-1},
+\]
+y calcule el error con $N=4$ y $\beta=5$.
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los resultados exactos se dan como fracción o como expresión cerrada cuando existe. Todos los valores numéricos se han comprobado con un programa en Python.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-kv}
+\datos $o=\sum_j\alpha_jv_j$ con $\alpha_j=\softmax_j\bigl(a(q,k_j)\bigr)$; $k_j=x_j\WK$, $v_j=x_j\WV$.
+\planteamiento localizar en qué parte de la \cref{def:agrupacion} interviene cada vector.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La clave $k_j$ solo aparece en la puntuación $a(q,k_j)$: determina \emph{si} la posición $j$ recibe peso y cuánto.
+  \item El valor $v_j$ solo aparece en la suma ponderada: determina \emph{qué} información aporta la posición $j$ cuando recibe peso.
+  \item Con $\WK=\WV$, ambos vectores coinciden: las características por las que un token es encontrado serían las mismas que transmite. Un token no podría, por ejemplo, anunciarse por su categoría gramatical y transmitir su significado.
+\end{enumerate}
+\resultado \textbf{la clave fija el peso y el valor fija el contenido}; imponer $\WK=\WV$ obliga a que el criterio de búsqueda y la información transmitida vivan en el mismo subespacio, lo que reduce la capacidad del modelo.
+\comprobacion en el \cref{ej:tres}, la tercera clave $(1,1,1,1)$ hace que la posición~3 sea «medio parecida» a todas las consultas, mientras que su valor $(1,1)$ aporta las dos coordenadas: los papeles son distintos.
+\end{solucion}
+
+\begin{solucion}{eje:1-escalar}
+\datos $q=(1,1)$; $k_1=(1,0)$, $k_2=(0,1)$, $k_3=(1,1)$; valores $10$, $20$, $30$; $a(q,k)=q\cdot k/\sqrt2$.
+\planteamiento puntuaciones, softmax y media ponderada (\cref{def:agrupacion}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Productos escalares: $q\cdot k_1=1$, $q\cdot k_2=1$, $q\cdot k_3=2$.
+  \item Escalado: $1/\sqrt2=0{,}7071$ (dos veces) y $2/\sqrt2=1{,}414$.
+  \item Exponenciales: $e^{0{,}7071}=2{,}028$ (dos veces) y $e^{1{,}414}=4{,}113$; suma $2{,}028+2{,}028+4{,}113=8{,}169$.
+  \item Pesos: $2{,}028/8{,}169=0{,}2483$ (dos veces) y $4{,}113/8{,}169=0{,}5035$.
+  \item Salida: $0{,}2483\cdot 10+0{,}2483\cdot 20+0{,}5035\cdot 30=2{,}483+4{,}966+15{,}10=22{,}55$.
+\end{enumerate}
+\resultado pesos \textbf{$(0{,}2483;\allowbreak\ 0{,}2483;\allowbreak\ 0{,}5035)$}; salida \textbf{$22{,}55$}.
+\comprobacion los pesos suman $1{,}000$ y la salida está entre $10$ y $30$ (\cref{prop:convexa}); supera la media simple, $20$, porque $k_3$ es la clave más parecida a $q$.
+\end{solucion}
+
+\begin{solucion}{eje:1-aditiva}
+\datos $W_a=U_a=I_2$, $v_a=(1,1)\T$, $s_{i-1}=(1,-1)\T$; $h_1=(1,0)\T$, $h_2=(0,1)\T$, $h_3=(1,1)\T$.
+\planteamiento $e_{ij}=v_a\T\tanh(s_{i-1}+h_j)$ es la suma de las dos componentes de $\tanh(s_{i-1}+h_j)$; después, softmax y media ponderada (\cref{def:aditiva}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $s_{i-1}+h_1=(2,-1)$, $\tanh=(0{,}9640;\allowbreak\ -0{,}7616)$, $e_{i1}=0{,}2024$.
+  \item $s_{i-1}+h_2=(1,0)$, $\tanh=(0{,}7616;\allowbreak\ 0)$, $e_{i2}=0{,}7616$.
+  \item $s_{i-1}+h_3=(2,0)$, $\tanh=(0{,}9640;\allowbreak\ 0)$, $e_{i3}=0{,}9640$.
+  \item Exponenciales: $e^{0{,}2024}=1{,}224$, $e^{0{,}7616}=2{,}142$, $e^{0{,}9640}=2{,}622$; suma $5{,}988$.
+  \item Pesos: $1{,}224/5{,}988=0{,}2045$, $2{,}142/5{,}988=0{,}3577$, $2{,}622/5{,}988=0{,}4379$.
+  \item Contexto: $c_i=0{,}2045\,(1,0)+0{,}3577\,(0,1)+0{,}4379\,(1,1)=(0{,}2045+0{,}4379;\allowbreak\ 0{,}3577+0{,}4379)=(0{,}6424;\allowbreak\ 0{,}7955)$.
+\end{enumerate}
+\resultado $e_{i\cdot}=(0{,}2024;\allowbreak\ 0{,}7616;\allowbreak\ 0{,}9640)$, $\alpha_{i\cdot}=(0{,}2045;\allowbreak\ 0{,}3577;\allowbreak\ 0{,}4379)$ y \textbf{$c_i=(0{,}6424;\allowbreak\ 0{,}7955)$}.
+\comprobacion los pesos suman $1{,}000$, y cada coordenada de $c_i$ está en $[0,1]$, el rango de las coordenadas de los $h_j$ (\cref{prop:convexa}).
+\end{solucion}
+
+\begin{solucion}{eje:1-copiar}
+\datos $k_1,k_2,k_3$ base canónica de $\R^{3}$; $v_1=(2,0)$, $v_2=(0,4)$, $v_3=(6,6)$; $\alpha=\softmax(q\cdot k_1,q\cdot k_2,q\cdot k_3)$.
+\planteamiento con claves ortonormales, $q\cdot k_j$ es la coordenada $j$ de $q$; la concentración del peso depende de las diferencias entre puntuaciones (\cref{teo:limites}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Condición: $q\cdot k_j\gg q\cdot k_l$ para todo $l\ne j$; es decir, $q$ alineada con $k_j$, de norma grande y casi ortogonal a las demás claves.
+  \item Con $q=10k_3=(0,0,10)$: puntuaciones $0,0,10$; exponenciales $1,1,e^{10}=22\,026$; suma $22\,028$. Pesos $4{,}540\cdot 10^{-5}$ (dos veces) y $0{,}99991$.
+  \item Salida: $4{,}540\cdot10^{-5}(2,0)+4{,}540\cdot10^{-5}(0,4)+0{,}99991\,(6,6)=(5{,}9995;\allowbreak\ 5{,}9996)\approx v_3$.
+  \item (b) Con $q=10(k_1+k_2)=(10,10,0)$: exponenciales $e^{10},e^{10},1$, suma $44\,053$; pesos $0{,}49999$ (dos veces) y $2{,}270\cdot10^{-5}$.
+  \item Salida: $0{,}49999(2,0)+0{,}49999(0,4)+2{,}270\cdot10^{-5}(6,6)=(1{,}0001;\allowbreak\ 2{,}0001)\approx\tfrac12(v_1+v_2)=(1,2)$.
+  \item (c) Con $q=k_1+k_2=(1,1,0)$: exponenciales $e=2{,}718$ (dos veces) y $1$, suma $6{,}437$; pesos $0{,}4223$, $0{,}4223$, $0{,}1554$.
+  \item Salida: $0{,}4223(2,0)+0{,}4223(0,4)+0{,}1554(6,6)=(0{,}8446+0{,}9322;\allowbreak\ 1{,}689+0{,}9322)=(1{,}777;\allowbreak\ 2{,}621)$.
+\end{enumerate}
+\resultado (a) $q$ alineada con una clave y de norma grande; con $10k_3$, \textbf{$c\approx(6,6)=v_3$}. (b) $q=10(k_1+k_2)$ da \textbf{$c\approx(1,2)$}. (c) Sin el factor~10, \textbf{$c=(1{,}777;\allowbreak\ 2{,}621)$}: el valor $v_3$ se filtra con un peso del $15{,}5\,\%$.
+\comprobacion en los tres casos los pesos suman~1. La norma de $q$ actúa como el factor $\beta$ del \cref{teo:limites}; en un modelo entrenado, la red la ajusta agrandando $\WQ$.
+\end{solucion}
+
+\begin{solucion}{eje:1-limites}
+\datos $\alpha_j(\beta)=e^{\beta s_j}/\sum_le^{\beta s_l}$; $s^{\ast}=\max_js_j$, alcanzado en $J^{\ast}$ con $\abs{J^{\ast}}=r$.
+\planteamiento repetir la demostración del \cref{teo:limites} sin suponer unicidad.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Dividiendo por $e^{\beta s^{\ast}}$: $\alpha_j(\beta)=e^{\beta(s_j-s^{\ast})}/\sum_le^{\beta(s_l-s^{\ast})}$.
+  \item Si $j\in J^{\ast}$, el numerador vale $e^{0}=1$ para todo $\beta$; si $j\notin J^{\ast}$, $s_j-s^{\ast}<0$ y el numerador tiende a~0 cuando $\beta\to\infty$.
+  \item El denominador es la suma de $r$ unos y de términos que tienden a~0: tiende a $r$.
+  \item Luego $\alpha_j\to 1/r$ si $j\in J^{\ast}$ y $\alpha_j\to 0$ en otro caso, y la salida tiende a $\sum_{j\in J^{\ast}}\tfrac1r v_j$.
+  \item Si $v_1=\dots=v_n=v$, la envolvente convexa de la \cref{prop:convexa} es el punto $\{v\}$, luego la salida vale $v$ para toda consulta.
+\end{enumerate}
+\resultado $\displaystyle\lim_{\beta\to\infty}\Att_\beta(q)=\frac1r\sum_{j\in J^{\ast}}v_j$; con valores iguales, la salida es constante.
+\comprobacion con $r=1$ se recupera el \cref{teo:limites}. En la fila~3 del \cref{ej:tres}, las tres puntuaciones empatan y la salida es la media $(0{,}667;\allowbreak\ 0{,}667)$ para cualquier $\beta$, de acuerdo con el resultado con $r=3$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-formas}
+\datos $n=10$, $d_k=16$, $d_v=32$; $Q,K\in\R^{10\times16}$, $V\in\R^{10\times32}$.
+\planteamiento regla de formas $(a\times b)(b\times c)=a\times c$; la softmax por filas conserva la forma.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $S=QK\T$: $(10\times16)(16\times10)=10\times10$.
+  \item $A=\softmax(S/4)$: $10\times10$.
+  \item $O=AV$: $(10\times10)(10\times32)=10\times32$.
+\end{enumerate}
+\resultado \textbf{$S$ y $A$ son $10\times10$; $O$ es $10\times32$.} La dimensión $d_k$ se contrae en el producto escalar $q_i\cdot k_j$ y no sobrevive en la salida.
+\comprobacion $O$ tiene una fila por posición, y cada fila es una combinación de valores, de dimensión $d_v=32$ (\cref{tab:formas}).
+\end{solucion}
+
+\begin{solucion}{eje:2-var}
+\datos componentes independientes de media~0 y varianza~1; $d_k\in\{64,128\}$.
+\planteamiento por el \cref{teo:varianza}, $\Var(q\cdot k)=d_k$ y $\Var(q\cdot k/\sqrt{d_k})=1$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $d_k=64$: varianza $64$, desviación típica $\sqrt{64}=8$.
+  \item $d_k=128$: varianza $128$, desviación típica $\sqrt{128}=8\sqrt2=11{,}31$.
+  \item Tras escalar: varianza $d_k/d_k=1$ y desviación típica~1 en ambos casos.
+\end{enumerate}
+\resultado \textbf{varianzas $64$ y $128$ (desviaciones $8$ y $11{,}31$); tras escalar, $1$ y $1$.}
+\comprobacion la simulación citada tras el \cref{teo:varianza} da $63{,}8$ para $d_k=64$, a menos de un $0{,}5\,\%$ del valor teórico.
+\end{solucion}
+
+\begin{solucion}{eje:2-temp}
+\datos $z=(1{,}2;\allowbreak\ 0{,}9;\allowbreak\ 0{,}1;\allowbreak\ -0{,}5)$; $\tau\in\{0{,}2;\allowbreak\ 2\}$.
+\planteamiento $\softmax(z/\tau)_i=e^{z_i/\tau}/\sum_je^{z_j/\tau}$; dividir por $\tau$ es multiplicar por $\beta=1/\tau$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\tau=0{,}2$: $z/\tau=(6;\allowbreak\ 4{,}5;\allowbreak\ 0{,}5;\allowbreak\ -2{,}5)$. Exponenciales $403{,}4$; $90{,}02$; $1{,}649$; $0{,}08208$; suma $495{,}2$.
+  \item Probabilidades: $0{,}8147$; $0{,}1818$; $0{,}003330$; $0{,}0001657$.
+  \item $\tau=2$: $z/\tau=(0{,}6;\allowbreak\ 0{,}45;\allowbreak\ 0{,}05;\allowbreak\ -0{,}25)$. Exponenciales $1{,}822$; $1{,}568$; $1{,}051$; $0{,}7788$; suma $5{,}221$.
+  \item Probabilidades: $0{,}3490$; $0{,}3004$; $0{,}2014$; $0{,}1492$.
+  \item $\tau\to0^{+}$ equivale a $\beta\to\infty$: por el \cref{teo:limites}, la distribución tiende a $(1,0,0,0)$, el \emph{argmax}. $\tau\to\infty$ equivale a $\beta\to0$: tiende a la uniforme $(0{,}25;\allowbreak\ 0{,}25;\allowbreak\ 0{,}25;\allowbreak\ 0{,}25)$.
+\end{enumerate}
+\resultado \textbf{$\tau=0{,}2$: $(0{,}8147;\allowbreak\ 0{,}1818;\allowbreak\ 0{,}0033;\allowbreak\ 0{,}0002)$; $\tau=2$: $(0{,}3490;\allowbreak\ 0{,}3004;\allowbreak\ 0{,}2014;\allowbreak\ 0{,}1492)$}; los límites son el \emph{argmax} y la uniforme. En la atención, $\sqrt{d_k}$ desempeña el papel de $\tau$: sin él, las puntuaciones crecen con $d_k$ y es como trabajar con una temperatura demasiado baja.
+\comprobacion las dos distribuciones suman $1{,}000$; con $\tau=1$ se obtiene $(0{,}4432;\allowbreak\ 0{,}3283;\allowbreak\ 0{,}1475;\allowbreak\ 0{,}0810)$, intermedia entre ambas.
+\end{solucion}
+
+\begin{solucion}{eje:2-jac}
+\datos $z=(1,0,0)$; $J_{ij}=p_i(\delta_{ij}-p_j)$, es decir, $J=\diag(p)-p\,p\T$.
+\planteamiento calcular $p$ y sustituir.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $p=\bigl(e,1,1\bigr)/(e+2)$: $e+2=4{,}718$, luego $p=(0{,}5761;\allowbreak\ 0{,}2119;\allowbreak\ 0{,}2119)$.
+  \item Diagonal: $p_1(1-p_1)=0{,}5761\cdot0{,}4239=0{,}2442$; $p_2(1-p_2)=0{,}2119\cdot0{,}7881=0{,}1670$, igual para $p_3$.
+  \item Fuera de la diagonal: $-p_1p_2=-0{,}1221$, $-p_1p_3=-0{,}1221$, $-p_2p_3=-0{,}04492$.
+  \item Cota: $1-\max_lp_l=1-0{,}5761=0{,}4239\ge0{,}2442=\max\abs{J_{ij}}$.
+  \item Suma de la columna~1: $0{,}2442-0{,}1221-0{,}1221=0$; de la columna~2: $-0{,}1221+0{,}1670-0{,}04492=0$ (con el redondeo).
+  \item Motivo: $\sum_ip_i=1$ para todo $z$, luego $\sum_i\partial p_i/\partial z_j=\partial(1)/\partial z_j=0$.
+\end{enumerate}
+\resultado
+\[
+J=\begin{pmatrix}0{,}2442&-0{,}1221&-0{,}1221\\-0{,}1221&0{,}1670&-0{,}04492\\-0{,}1221&-0{,}04492&0{,}1670\end{pmatrix},\qquad \max\abs{J_{ij}}=0{,}2442\le0{,}4239 .
+\]
+\comprobacion el máximo coincide con el de la \cref{tab:saturacion}. La matriz es simétrica, como corresponde a la hessiana de $\LSE$ (módulo~4).
+\end{solucion}
+
+\begin{solucion}{eje:2-sigma}
+\datos $q_i,k_i$ independientes, de media~0 y varianza $\sigma^{2}$, $i=1,\dots,d_k$.
+\planteamiento repetir la demostración del \cref{teo:varianza} con $\sigma^{2}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\E[q_ik_i]=\E[q_i]\,\E[k_i]=0$.
+  \item $\E[q_i^{2}]=\Var(q_i)+\E[q_i]^{2}=\sigma^{2}$, igual para $k_i$.
+  \item $\Var(q_ik_i)=\E[q_i^{2}]\,\E[k_i^{2}]-0=\sigma^{4}$.
+  \item Los $d_k$ sumandos son independientes: $\Var(q\cdot k)=d_k\sigma^{4}$.
+  \item $\Var(c\,q\cdot k)=c^{2}d_k\sigma^{4}=1$ si y solo si $c=1/(\sigma^{2}\sqrt{d_k})$ (tomando $c>0$).
+\end{enumerate}
+\resultado \textbf{$\Var(q\cdot k)=d_k\sigma^{4}$ y $c=1/(\sigma^{2}\sqrt{d_k})$.}
+\comprobacion con $\sigma=1$ se recupera $1/\sqrt{d_k}$. Con $\sigma=2$ y $d_k=16$, la fórmula da $16\cdot16=256$; una simulación con $2\cdot10^{5}$ pares da $256{,}6$. En la práctica se usa $1/\sqrt{d_k}$ y las capas de normalización (módulo~11) mantienen $\sigma\approx1$.
+\end{solucion}
+
+\begin{solucion}{eje:2-cruzada}
+\datos $Q\in\R^{m\times d_k}$; $K=X\WK$, $V=X\WV$ con $X\in\R^{n\times d}$; $P\in\R^{n\times n}$ de permutación.
+\planteamiento sustituir $X$ por $PX$, de modo que $K'=PK$ y $V'=PV$, y seguir cada operación como en la \cref{prop:equivariancia}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Puntuaciones: $S'=Q(PK)\T=QK\T P\T=SP\T$. Multiplicar por $P\T$ a la derecha permuta las \emph{columnas} de $S$.
+  \item La softmax de cada fila es equivariante respecto de permutaciones de sus entradas: $A'=\softmax(S'/\sqrt{d_k})=AP\T$.
+  \item Salida: $O'=A'V'=AP\T PV=AV=O$, porque $P\T P=I$.
+\end{enumerate}
+\resultado \textbf{$\Att(Q,PK,PV)=\Att(Q,K,V)$}: la atención cruzada trata la memoria $(K,V)$ como un conjunto no ordenado.
+\comprobacion en la autoatención la permutación afecta también a las consultas y aparece un factor $P$ a la izquierda: se recupera $O'=PO$, la equivariancia de la \cref{prop:equivariancia}.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-despues}
+\datos puntuaciones escaladas $(0,4,2)$; el tercer token es futuro.
+\planteamiento comparar cada versión con la correcta, $\softmax(0,4,-\infty)=(0{,}018;\allowbreak\ 0{,}982;\allowbreak\ 0)$ (\cref{ej:mascara}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\softmax(0,4,2)=(0{,}01588;\allowbreak\ 0{,}8668;\allowbreak\ 0{,}1173)$. Anulando el tercero queda $(0{,}01588;\allowbreak\ 0{,}8668;\allowbreak\ 0)$, que suma $0{,}8827$.
+  \item Renormalizando: $0{,}01588/0{,}8827=0{,}01799$ y $0{,}8668/0{,}8827=0{,}9820$, que es el resultado correcto; sin renormalizar, la fila no es una distribución.
+  \item (b) Puntuaciones $(0,4,0)$: $\softmax=(0{,}01767;\allowbreak\ 0{,}9647;\allowbreak\ 0{,}01767)$. Como $e^{0}=1$, el futuro conserva peso.
+\end{enumerate}
+\resultado \textbf{(a) la fila suma $0{,}883$ y los pesos del pasado son menores de lo debido} (habría que renormalizar); \textbf{(b) el token futuro recibe un $1{,}8\,\%$ del peso}: el modelo «ve» el futuro.
+\comprobacion la versión (a) renormalizada coincide con la correcta, como predice el \cref{eje:3-renorm}.
+\end{solucion}
+
+\begin{solucion}{eje:3-jm}
+\datos fila $(0,4,2)$, tercer token prohibido.
+\planteamiento calcular $\softmax(0,4,-\infty)$ y $\softmax(0,4,0)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Con $-\infty$: exponenciales $1$; $54{,}60$; $0$. Suma $55{,}60$. Pesos $0{,}01799$; $0{,}9820$; $0$.
+  \item Con~0: exponenciales $1$; $54{,}60$; $1$. Suma $56{,}60$. Pesos $0{,}01767$; $0{,}9647$; $0{,}01767$.
+  \item Con~0, la posición prohibida recibe peso, y además el resultado depende del valor que tuviera la puntuación original sustituida, lo que es arbitrario.
+\end{enumerate}
+\resultado \textbf{con $-\infty$: $(0{,}018;\allowbreak\ 0{,}982;\allowbreak\ 0)$; con~0: $(0{,}0177;\allowbreak\ 0{,}9647;\allowbreak\ 0{,}0177)$.} Solo $-\infty$ anula exactamente el peso, porque $e^{-\infty}=0$ mientras que $e^{0}=1$.
+\comprobacion la fila con $-\infty$ coincide con la del \cref{ej:mascara}; ambas filas suman~1.
+\end{solucion}
+
+\begin{solucion}{eje:3-calculo}
+\datos $S$ escalada como en el enunciado; valores $4$, $8$, $12$.
+\planteamiento sumar la máscara causal y aplicar la \cref{prop:restringida} fila a fila.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Con máscara, las entradas por encima de la diagonal pasan a $-\infty$.
+  \item Fila~1: solo queda $e^{1}$; pesos $(1,0,0)$.
+  \item Fila~2: $e^{0}=1$, $e^{\ln3}=3$; suma~4; pesos $(1/4,3/4,0)$.
+  \item Fila~3: $e^{0}=1$, $e^{0}=1$, $e^{\ln2}=2$; suma~4; pesos $(1/4,1/4,1/2)$.
+  \item Salidas: $o_1=4$; $o_2=\tfrac14\cdot4+\tfrac34\cdot8=1+6=7$; $o_3=\tfrac14\cdot4+\tfrac14\cdot8+\tfrac12\cdot12=1+2+6=9$.
+\end{enumerate}
+\resultado
+\[
+A=\begin{pmatrix}1&0&0\\1/4&3/4&0\\1/4&1/4&1/2\end{pmatrix},\qquad (o_1,o_2,o_3)=(4,7,9).
+\]
+Sustituir los cincos por cienes \textbf{no cambia nada}: son puntuaciones prohibidas y, por la \cref{prop:restringida}, los pesos no dependen de ellas.
+\comprobacion cada fila suma~1 y cada salida está entre el mínimo y el máximo de los valores permitidos: $o_2\in[4,8]$, $o_3\in[4,12]$.
+\end{solucion}
+
+\begin{solucion}{eje:3-finito}
+\datos fila $(0,4,2)$; se suma $-c$ al tercer elemento; umbral $10^{-6}$.
+\planteamiento el peso filtrado es $w(c)=e^{2-c}/(1+e^{4}+e^{2-c})$, decreciente en $c$; se despeja $c$ de $w(c)<10^{-6}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $1+e^{4}=55{,}60$. La condición $w<10^{-6}$ equivale a $e^{2-c}(1-10^{-6})<10^{-6}\cdot55{,}60$, es decir, $e^{2-c}<5{,}560\cdot10^{-5}$ (el factor $1-10^{-6}$ es despreciable).
+  \item Tomando logaritmos: $2-c<\ln(5{,}560\cdot10^{-5})=-9{,}797$, luego $c>11{,}80$.
+  \item El menor entero es $c=12$. Verificación: $w(12)=e^{-10}/(55{,}60+e^{-10})=4{,}540\cdot10^{-5}/55{,}60=8{,}17\cdot10^{-7}$; $w(11)=e^{-9}/55{,}60=2{,}22\cdot10^{-6}$.
+\end{enumerate}
+\resultado \textbf{$c=12$}, con un peso filtrado de $8{,}17\cdot10^{-7}$.
+\comprobacion el umbral depende de la diferencia entre la puntuación prohibida y las permitidas, que no está acotada a priori; por eso se usa $-\infty$ o el menor número representable, y no un valor fijo pequeño.
+\end{solucion}
+
+\begin{solucion}{eje:3-renorm}
+\datos $p_j=e^{z_j}/Z$ con $Z=\sum_le^{z_l}$; $\tilde p_j=p_j\mathbb{1}[j\in\mathcal{P}_i]/\sum_{l\in\mathcal{P}_i}p_l$.
+\planteamiento sustituir $p_j$ y simplificar $Z$; comparar con la \cref{prop:restringida}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Para $j\in\mathcal{P}_i$: $\tilde p_j=\dfrac{e^{z_j}/Z}{\sum_{l\in\mathcal{P}_i}e^{z_l}/Z}=\dfrac{e^{z_j}}{\sum_{l\in\mathcal{P}_i}e^{z_l}}$.
+  \item Para $j\notin\mathcal{P}_i$: $\tilde p_j=0$.
+  \item Ambas expresiones coinciden con las de la \cref{prop:restringida}; luego $\tilde p=\softmax(z+\mu)$.
+  \item Preferencia por la máscara previa: evita una segunda pasada de normalización y, sobre todo, es numéricamente robusta. Si una puntuación prohibida es mucho mayor que las permitidas, los $p_j$ permitidos pueden redondearse a~0 en coma flotante y la renormalización produce $0/0$; restando el máximo \emph{de las permitidas}, la máscara previa nunca lo hace.
+\end{enumerate}
+\resultado \textbf{$\tilde p=\softmax(z+\mu)$}: anular y renormalizar es matemáticamente equivalente, pero más caro y menos estable.
+\comprobacion con $z=(0,4,2)$ y $\mathcal{P}_i=\{1,2\}$ se obtiene $(0{,}01799;\allowbreak\ 0{,}9820;\allowbreak\ 0)$ por ambos caminos (\cref{eje:3-despues}).
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-vf}
+\planteamiento contrastar cada afirmación con la \cref{prop:param}, la \cref{prop:equivariancia} y el \cref{cor:paralelo}.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Falsa.} Los parámetros son $4d^{2}$ para todo $h$: cambiar $h$ solo cambia cómo se cortan $\WQ$, $\WK$ y $\WV$ en bloques de $d\times d/h$.
+  \item \textbf{Verdadera.} Por la \cref{prop:equivariancia}, $f(PX)=Pf(X)$: cada token recibe la misma salida, en otra fila. Por eso se añade información de posición (módulo~14).
+  \item \textbf{Falsa.} Por el \cref{cor:paralelo}, una sola pasada con máscara produce las $n$ predicciones; la máscara es precisamente lo que permite entrenar en paralelo.
+\end{enumerate}
+\resultado \textbf{(a) falsa; (b) verdadera; (c) falsa.}
+\comprobacion para (a), con $d=512$: $4\cdot512^{2}=1\,048\,576$ tanto con $h=8$ (bloques de $64$ columnas) como con $h=16$ (bloques de $32$).
+\end{solucion}
+
+\begin{solucion}{eje:4-param}
+\datos $d=512$, $h=8$, sin sesgos.
+\planteamiento \cref{prop:param}; cada $\WQ^{(r)}$ es $d\times d/h$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $d^{2}=262\,144$; $4d^{2}=1\,048\,576$.
+  \item $d/h=64$; $\WQ^{(r)}\in\R^{512\times64}$ tiene $32\,768$ parámetros.
+  \item $8\cdot32\,768=262\,144=512^{2}$: las ocho juntas, yuxtapuestas por columnas, forman $\WQ\in\R^{512\times512}$.
+\end{enumerate}
+\resultado \textbf{$1\,048\,576$ parámetros; $32\,768$ por cada $\WQ^{(r)}$.}
+\comprobacion coincide con la cifra dada tras la \cref{prop:param} para $d=512$.
+\end{solucion}
+
+\begin{solucion}{eje:4-flops}
+\datos (a) $n=2048$, $d_k=128$; (b) $d=512$, $n=2048$.
+\planteamiento \cref{lem:flops} y \cref{prop:coste}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $QK\T$ es $(2048\times128)(128\times2048)$: $2\cdot2048\cdot128\cdot2048=2\cdot4\,194\,304\cdot128=1\,073\,741\,824\approx1{,}074\cdot10^{9}$ FLOP, exactamente $2^{30}$.
+  \item $AV$ es $(2048\times2048)(2048\times128)$ y cuesta lo mismo; en total, $2\,147\,483\,648\approx2{,}147\cdot10^{9}$ FLOP.
+  \item (b) Proyecciones: $8nd^{2}=8\cdot2048\cdot262\,144=4\,294\,967\,296\approx4{,}295\cdot10^{9}$.
+  \item Atención: $4n^{2}d=4\cdot4\,194\,304\cdot512=8\,589\,934\,592\approx8{,}590\cdot10^{9}$.
+  \item Cociente: $4n^{2}d/(8nd^{2})=n/(2d)=2048/1024=2$; como $n=2048>2d=1024$, domina la parte cuadrática.
+\end{enumerate}
+\resultado \textbf{(a) $1{,}074\cdot10^{9}$ FLOP para $QK\T$ y $2{,}147\cdot10^{9}$ con $AV$; (b) $4{,}295\cdot10^{9}$ frente a $8{,}590\cdot10^{9}$: la atención cuesta el doble}, de acuerdo con el criterio $n>2d$.
+\comprobacion con potencias de~2: $2\cdot2^{11}\cdot2^{7}\cdot2^{11}=2^{30}$ y $8\cdot2^{11}\cdot2^{18}=2^{32}=4\,294\,967\,296$.
+\end{solucion}
+
+\begin{solucion}{eje:4-mem}
+\datos fp16, $2$ bytes por número; $n^{2}$ números por cabeza y capa; $1\text{ GB}=10^{9}$ bytes.
+\planteamiento memoria $=2n^{2}$ bytes; el coste de la atención es proporcional a $n^{2}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $n=10^{5}$: $2\cdot10^{10}$ bytes $=20$ GB.
+  \item $n=10^{6}$: $2\cdot10^{12}$ bytes $=2000$ GB.
+  \item $8192/1024=8$; el coste se multiplica por $8^{2}=64$.
+\end{enumerate}
+\resultado \textbf{$20$ GB; $2000$ GB; factor $64$.}
+\comprobacion de $10^{5}$ a $10^{6}$, $n$ se multiplica por~10 y la memoria por $100$: $20\cdot100=2000$, como en la \cref{tab:memoria}.
+\end{solucion}
+
+\begin{solucion}{eje:4-jm}
+\datos $L=6$, $d=512$, $A=8$, $d_k=d_v=64$, $d_{ff}=2048$.
+\planteamiento contar las entradas de cada matriz y sumar.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\WQ,\WK,\WV$: $A$ cabezas de $d\times d/A$, es decir, $d^{2}$ cada una; con $\WO$, $4d^{2}=4\cdot262\,144=1\,048\,576$. No depende de $A$, porque $A\cdot d/A=d$.
+  \item (b) Red de alimentación: $d\cdot d_{ff}+d_{ff}\cdot d=2\cdot4d^{2}=8d^{2}=2\,097\,152$.
+  \item (c) Por capa, $4d^{2}+8d^{2}=12d^{2}=3\,145\,728$; la pila, $12Ld^{2}=6\cdot3\,145\,728=18\,874\,368$.
+\end{enumerate}
+\resultado \textbf{(a) $1\,048\,576$, independiente de $A$; (b) $2\,097\,152$; (c) $12Ld^{2}=18\,874\,368\approx1{,}89\cdot10^{7}$.}
+\comprobacion la atención es $4/12=1/3$ de cada bloque. Los embeddings y la capa de salida, de $\abs{\V}\,d$ parámetros, no están incluidos en $12Ld^{2}$.
+\end{solucion}
+
+\begin{solucion}{eje:4-cs336}
+\datos $L=12$, $d=768$, $\abs{\V}=50\,257$; $n=1024$ y $n=16\,384$.
+\planteamiento sustituir en cada fórmula, multiplicar por $L$ las que son por capa y sumar. Se trabaja en unidades de $10^{9}$ FLOP.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Auxiliares con $n=1024$: $d^{2}=589\,824$; $n^{2}=1\,048\,576$; $nd^{2}=603\,979\,776$.
+  \item Proyecciones ($8nd^{2}$ por capa): $12\cdot8\cdot603\,979\,776=57{,}98\cdot10^{9}$.
+  \item Atención ($4n^{2}d$ por capa): $12\cdot4\cdot1\,048\,576\cdot768=38{,}65\cdot10^{9}$.
+  \item Red de alimentación ($16nd^{2}$ por capa): $12\cdot16\cdot603\,979\,776=116{,}0\cdot10^{9}$.
+  \item Capa de salida: $2\cdot1024\cdot768\cdot50\,257=79{,}05\cdot10^{9}$.
+  \item Total: $291{,}6\cdot10^{9}$ (exactamente $291\,648\,307\,200$). Porcentajes: proyecciones $19{,}9\,\%$, atención $13{,}3\,\%$, red de alimentación $39{,}8\,\%$, salida $27{,}1\,\%$.
+  \item (b) Con $n=16\,384=16\cdot1024$, los términos lineales en $n$ se multiplican por~16 y la atención por $16^{2}=256$: proyecciones $927{,}7$, atención $9896$, red de alimentación $1855$, salida $1265$ (en $10^{9}$ FLOP).
+  \item Total: $13\,944\cdot10^{9}\approx1{,}394\cdot10^{13}$; cociente $13\,944/291{,}6=47{,}8$. Porcentajes: atención $71{,}0\,\%$, red de alimentación $13{,}3\,\%$, salida $9{,}1\,\%$, proyecciones $6{,}7\,\%$.
+  \item (c) La atención supera a la red de alimentación cuando $4n^{2}d>16nd^{2}$, es decir, $n>4d=3072$.
+\end{enumerate}
+\resultado \textbf{con $n=1024$, $2{,}916\cdot10^{11}$ FLOP y domina la red de alimentación ($39{,}8\,\%$); con $n=16\,384$, $1{,}394\cdot10^{13}$ FLOP ($\times47{,}8$) y domina la atención ($71{,}0\,\%$).} La atención supera a la red de alimentación a partir de $n=3072$ y a las proyecciones a partir de $n=2d=1536$.
+\comprobacion los porcentajes suman $100{,}1\,\%$ por redondeo en ambos casos. El total crece menos que $256$ veces porque solo una parte del coste es cuadrática.
+\end{solucion}
+
+\begin{solucion}{eje:4-rango}
+\datos $\WQ,\WK\in\R^{d\times d_k}$ con $d_k<d$; en (c), $d=512$, $h=8$, $d_k=64$.
+\planteamiento usar que el rango de un producto no supera el de sus factores y la factorización de rango (módulo~3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Para cualesquiera $\WQ,\WK$, $\rg(\WQ\WK\T)\le\rg\WQ\le d_k<d$. La matriz $B=I_d$ tiene rango $d$, luego no se escribe como $\WQ\WK\T$.
+  \item (b) Si $\rg B=r\le d_k$, sean $c_1,\dots,c_r$ una base de su espacio de columnas y $C\in\R^{d\times r}$ la matriz que las tiene por columnas. Cada columna de $B$ es combinación de ellas: $B=CR$ con $R\in\R^{r\times d}$. Basta tomar $\WQ=(C\ \ 0)$ y $\WK=(R\T\ \ 0)$, completadas con $d_k-r$ columnas nulas, para que $\WQ\WK\T=CR=B$.
+  \item (c) La suma de ocho matrices de rango $\le64$ tiene rango $\le8\cdot64=512=d$, que puede ser completo.
+  \item Pero la atención multi-cabeza no aplica una softmax a la suma de las puntuaciones: aplica una softmax distinta a cada cabeza y suma después las salidas (\cref{prop:descomp}). Por la no linealidad de la softmax, $\sum_r\softmax(S_r)\ne\softmax(\sum_rS_r)$ en general.
+\end{enumerate}
+\resultado \textbf{(a) $I_d$ no es representable; (b) toda forma de rango $\le d_k$ sí; (c) rango $\le512$, pero la suma no describe la multi-cabeza, que combina $h$ distribuciones de atención distintas.}
+\comprobacion ejemplo de la no linealidad con dos cabezas de una sola fila y puntuaciones $S_1=(2,0)$, $S_2=(0,0)$: $\softmax(S_1)+\softmax(S_2)=(0{,}8808+0{,}5;\allowbreak\ 0{,}1192+0{,}5)=(1{,}381;\allowbreak\ 0{,}6192)$, mientras que $2\,\softmax(S_1+S_2)=2\,\softmax(2,0)=(1{,}762;\allowbreak\ 0{,}2384)$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-capa}
+\datos secuencia «el señor Dursley \dots el señor»; la posición final contiene «señor».
+\planteamiento aplicar la \cref{prop:una-capa}: los pesos de la posición final solo comparan $x_i$ con cada $x_j$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Para predecir «Dursley», la posición final debería atender a la posición de «Dursley», cuyo rasgo distintivo es que \emph{su token anterior} es «señor».
+  \item En una capa, la puntuación de esa posición depende de los embeddings de «señor» (consulta) y de «Dursley» y su posición (clave). Una cabeza podría aprender a preferir «Dursley», pero solo como token concreto, no como «el token que siguió a señor».
+  \item Si «Dursley» nunca se vio en el entrenamiento, ninguna preferencia aprendida lo favorece; y si el nombre fuera otro, haría falta otra preferencia distinta.
+  \item Lo necesario es que una capa anterior haya escrito en la posición de «Dursley» la información «mi token anterior es señor» (cabeza de token anterior).
+\end{enumerate}
+\resultado \textbf{con una sola capa no puede seleccionarse la posición por su token anterior; hace falta que antes se haya escrito en la posición de «Dursley» la identidad de su predecesor.}
+\comprobacion es exactamente la composición K de dos capas descrita tras la \cref{prop:una-capa}.
+\end{solucion}
+
+\begin{solucion}{eje:5-previo}
+\datos $\alpha_{i,i-1}=e^{\beta^{2}}/(e^{\beta^{2}}+i)$ (\cref{teo:previo}).
+\planteamiento sustituir; para (b), la condición es más exigente cuanto mayor es $i$, luego basta imponerla en $i=9$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\beta=2$: $e^{4}=54{,}60$; $\alpha_{5,4}=54{,}60/(54{,}60+5)=54{,}60/59{,}60=0{,}9161$.
+  \item (b) $\alpha\ge0{,}99$ equivale a $e^{\beta^{2}}\ge0{,}99\,(e^{\beta^{2}}+i)$, es decir, $0{,}01\,e^{\beta^{2}}\ge0{,}99\,i$, o $e^{\beta^{2}}\ge99\,i$.
+  \item Con $i=9$: $e^{\beta^{2}}\ge891$, $\beta^{2}\ge\ln891=6{,}792$, $\beta\ge2{,}606$.
+\end{enumerate}
+\resultado \textbf{(a) $\alpha_{5,4}=0{,}9161$; (b) $\beta\ge2{,}606$.}
+\comprobacion con $\beta^{2}=\ln891$, $\alpha_{9,8}=891/(891+9)=891/900=0{,}99$ exactamente.
+\end{solucion}
+
+\begin{solucion}{eje:5-hop}
+\datos $\beta=1$; $X=\begin{pmatrix}2&0\\0&2\end{pmatrix}$ (columnas $x_1,x_2$); $\xi^{(0)}=(1;\allowbreak\ 0{,}5)\T$.
+\planteamiento $\xi^{(t+1)}=X\softmax(X\T\xi^{(t)})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $X\T\xi^{(0)}=(2,1)$. Softmax: $e^{2}/(e^{2}+e)=1/(1+e^{-1})=0{,}7311$ y $0{,}2689$.
+  \item $\xi^{(1)}=0{,}7311\,(2,0)+0{,}2689\,(0,2)=(1{,}462;\allowbreak\ 0{,}5379)$.
+  \item $X\T\xi^{(1)}=(2{,}924;\allowbreak\ 1{,}076)$; diferencia $1{,}848$; pesos $1/(1+e^{-1{,}848})=0{,}8640$ y $0{,}1360$.
+  \item $\xi^{(2)}=0{,}8640\,(2,0)+0{,}1360\,(0,2)=(1{,}728;\allowbreak\ 0{,}2721)$.
+\end{enumerate}
+\resultado \textbf{$\xi^{(1)}=(1{,}462;\allowbreak\ 0{,}5379)$, $\xi^{(2)}=(1{,}728;\allowbreak\ 0{,}2721)$}: el estado se acerca al patrón $x_1=(2,0)$, el más parecido al estímulo inicial.
+\comprobacion una tercera actualización da pesos $(0{,}9484;\allowbreak\ 0{,}0516)$ y $\xi^{(3)}=(1{,}897;\allowbreak\ 0{,}1032)$, aún más cerca de $x_1$; cada estado está en el segmento que une $x_1$ y $x_2$ (\cref{prop:convexa}).
+\end{solucion}
+
+\begin{solucion}{eje:5-induccion}
+\datos secuencia «$\langle s\rangle$ el gato come pescado y luego el gato duerme», posiciones $0$ a~$9$; $e_t$ \emph{one-hot} de token, $p_i$ \emph{one-hot} de posición; $\beta=10$; máscara causal; sin escalado adicional.
+\planteamiento capa~1: cabeza de token anterior (\cref{teo:previo}); capa~2: consulta con el token actual y claves con la salida de la capa~1 (composición K).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Capa~1: $q_i=\beta p_i$, $k_j=\beta p_{j+1}$, $v_j=e_{x_j}$. Por el \cref{teo:previo}, $\alpha_{i,i-1}=e^{100}/(e^{100}+i)\approx1$, y la salida es $h_i\approx e_{x_{i-1}}$ para $i\ge1$ (en $i=0$, $h_0=e_{\langle s\rangle}$).
+  \item Capa~2: $q_i=\beta e_{x_i}$, $k_j=\beta h_j$, $v_j=e_{x_j}$. La puntuación $q_i\cdot k_j\approx\beta^{2}=100$ si $x_{j-1}=x_i$ y $\approx0$ en otro caso.
+  \item Posición~7 («el»): entre $j\le7$, solo $j=2$ cumple $x_{j-1}=x_1=$ «el» (la propia $j=8$ está prohibida por la máscara). Peso $\approx1$ en $j=2$; valor $e_{\text{gato}}$: predice \textbf{«gato»}.
+  \item Posición~8 («gato»): solo $j=3$ cumple $x_{2}=$ «gato». Valor $e_{\text{come}}$: predice \textbf{«come»}.
+  \item Posición~9 («duerme»): ninguna $j\le9$ tiene «duerme» como token anterior; todas las puntuaciones valen~0 y la atención es uniforme, $1/10$ por posición: no se copia nada útil.
+\end{enumerate}
+\resultado \textbf{capa~1: $Q=\beta\cdot$posición, $K=\beta\cdot$posición desplazada, $V=$ token; capa~2: $Q=\beta\cdot$token actual, $K=\beta\cdot$salida de la capa~1, $V=$ token.} Predice «gato» tras el segundo «el» y «come» tras el segundo «gato»; en la posición~9 no hay patrón previo.
+\comprobacion una simulación en NumPy da pesos $1{,}0000$ en la posición~2 (para $i=7$) y en la~3 (para $i=8$), y peso máximo $0{,}1=1/10$ en $i=9$.
+\end{solucion}
+
+\begin{solucion}{eje:5-jac}
+\datos $o(\xi)=\sum_lp_lx_l$, $p_l=e^{\beta x_l\T\xi}/Z$, $Z=\sum_me^{\beta x_m\T\xi}$.
+\planteamiento derivar $p_l$ respecto de $\xi$ con la regla del cociente (módulo~4) y sustituir.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\nabla_\xi e^{\beta x_l\T\xi}=\beta e^{\beta x_l\T\xi}x_l$ y $\nabla_\xi Z=\beta\sum_me^{\beta x_m\T\xi}x_m=\beta Z\,o$.
+  \item Regla del cociente: $\nabla_\xi p_l=\bigl(\beta e^{\beta x_l\T\xi}x_lZ-e^{\beta x_l\T\xi}\beta Zo\bigr)/Z^{2}=\beta p_l(x_l-o)$.
+  \item $\dfrac{\partial o}{\partial\xi}=\sum_lx_l(\nabla_\xi p_l)\T=\beta\sum_lp_lx_l(x_l-o)\T=\beta\Bigl(\sum_lp_lx_lx_l\T-o\,o\T\Bigr)$, usando $\sum_lp_lx_l=o$.
+  \item La matriz entre paréntesis es $\E_p[xx\T]-\E_p[x]\E_p[x]\T=\Cov_p(x)$.
+  \item (b) Patrones $0$ y $2$, $\xi=\tfrac12\ln3$: puntuaciones $0$ y $\ln3$; pesos $1/4$ y $3/4$; $o=\tfrac34\cdot2=1{,}5$; $\E_p[x^{2}]=\tfrac34\cdot4=3$; varianza $3-1{,}5^{2}=0{,}75$.
+  \item (c) Si $p$ se concentra en un patrón, $\Cov_p(x)\to0$ y la jacobiana se anula.
+\end{enumerate}
+\resultado \textbf{$\partial o/\partial\xi=\beta\Cov_p(x)$; en el ejemplo, $do/d\xi=0{,}75$; con $p$ concentrada, la jacobiana tiende a~0.}
+\comprobacion la diferencia finita $[o(\xi+10^{-6})-o(\xi-10^{-6})]/(2\cdot10^{-6})$ da $0{,}7500$. El apartado (c) es la saturación de la \cref{prop:saturacion} vista desde la salida: un punto fijo bien separado es estable porque pequeñas perturbaciones del estado apenas cambian la salida.
+\end{solucion}
+
+\begin{solucion}{eje:5-recup}
+\datos $x_1,\dots,x_N$ ortonormales; $\xi=x_k$; $\xi^{\text{nuevo}}=X\softmax(\beta X\T\xi)$.
+\planteamiento calcular los pesos y la norma del error con el teorema de Pitágoras.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Por ortonormalidad, $X\T x_k=e_k$: puntuación~1 en $k$ y~0 en el resto.
+  \item Pesos: $p_k=e^{\beta}/(e^{\beta}+N-1)$ y $p_l=w:=1/(e^{\beta}+N-1)$ para $l\ne k$. Además $1-p_k=(N-1)w$.
+  \item $\xi^{\text{nuevo}}-x_k=-(1-p_k)x_k+\sum_{l\ne k}w\,x_l$.
+  \item Como los $x_l$ son ortonormales: $\norm{\xi^{\text{nuevo}}-x_k}^{2}=(1-p_k)^{2}+(N-1)w^{2}=(N-1)^{2}w^{2}+(N-1)w^{2}=N(N-1)w^{2}$.
+  \item Raíz: $\norm{\xi^{\text{nuevo}}-x_k}=\sqrt{N(N-1)}\,w$.
+  \item Con $N=4$, $\beta=5$: $e^{5}=148{,}4$; $w=1/151{,}4=0{,}006605$; $\sqrt{12}=3{,}464$; error $3{,}464\cdot0{,}006605=0{,}02288$.
+\end{enumerate}
+\resultado \textbf{$\norm{\xi^{\text{nuevo}}-x_k}=\sqrt{N(N-1)}/(e^{\beta}+N-1)$; con $N=4$ y $\beta=5$, $0{,}02288$.}
+\comprobacion el error decrece como $e^{-\beta}$: es el error de recuperación exponencialmente pequeño de~\cite[§2]{ramsauer} en su caso más sencillo. El cálculo directo con la matriz identidad de $4\times4$ da el mismo valor.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{bahdanau}
+D.~Bahdanau, K.~Cho e Y.~Bengio.
+\newblock Neural machine translation by jointly learning to align and translate.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2015.
+\newblock \url{https://arxiv.org/abs/1409.0473}
+
+\bibitem{bishopdl}
+C.~M. Bishop y H.~Bishop.
+\newblock \emph{Deep Learning: Foundations and Concepts}.
+\newblock Springer, 2024.
+\newblock Cap.~12, «Transformers» (§12.1 «Attention»).
+\newblock \url{https://www.bishopbook.com/}
+
+\bibitem{cs224n}
+D.~Yang y Y.~Choi.
+\newblock CS224N: Natural Language Processing with Deep Learning.
+\newblock Stanford University, invierno de 2026. Clase~5, «Transformers»; tarea~3, «Self-Attention and Transformers».
+\newblock \url{https://web.stanford.edu/class/cs224n/}
+
+\bibitem{cs336}
+Equipo docente de CS336.
+\newblock CS336: Language Modeling from Scratch. Tarea~1, «Basics», versión 26.0.3.
+\newblock Stanford University, primavera de 2026.
+\newblock \url{https://github.com/stanford-cs336/assignment1-basics}
+
+\bibitem{dao}
+T.~Dao, D.~Y. Fu, S.~Ermon, A.~Rudra y C.~Ré.
+\newblock FlashAttention: Fast and memory-efficient exact attention with IO-awareness.
+\newblock En \emph{Advances in Neural Information Processing Systems 35}, 2022.
+\newblock \url{https://arxiv.org/abs/2205.14135}
+
+\bibitem{elhage}
+N.~Elhage, N.~Nanda, C.~Olsson \emph{et al.}
+\newblock A mathematical framework for Transformer circuits.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 2021.
+\newblock \url{https://transformer-circuits.pub/2021/framework/index.html}
+
+\bibitem{gemini15}
+Gemini Team, Google.
+\newblock Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context.
+\newblock Informe técnico, 2024.
+\newblock \url{https://arxiv.org/abs/2403.05530}
+
+\bibitem{jm3}
+D.~Jurafsky y J.~H. Martin.
+\newblock \emph{Speech and Language Processing}, 3.ª ed., borrador del 19 de agosto de 2026.
+\newblock Cap.~7, «Transformers and Pretraining»; cap.~10, «Interpretability».
+\newblock \url{https://web.stanford.edu/~jurafsky/slp3/}
+
+\bibitem{olsson}
+C.~Olsson, N.~Elhage, N.~Nanda \emph{et al.}
+\newblock In-context learning and induction heads.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 2022.
+\newblock \url{https://arxiv.org/abs/2209.11895}
+
+\bibitem{ramsauer}
+H.~Ramsauer, B.~Schäfl, J.~Lehner, P.~Seidl, M.~Widrich, T.~Adler, L.~Gruber, M.~Holzleitner, M.~Pavlović, G.~K. Sandve, V.~Greiff, D.~Kreil, M.~Kopp, G.~Klambauer, J.~Brandstetter y S.~Hochreiter.
+\newblock Hopfield networks is all you need.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2021.
+\newblock \url{https://arxiv.org/abs/2008.02217}
+
+\bibitem{vaswani}
+A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N. Gomez, Ł.~Kaiser e I.~Polosukhin.
+\newblock Attention is all you need.
+\newblock En \emph{Advances in Neural Information Processing Systems 30}, 2017.
+\newblock \url{https://arxiv.org/abs/1706.03762}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock Cap.~11, «Attention Mechanisms and Transformers».
+\newblock \url{https://d2l.ai/}
+
+\end{thebibliography}
+
+
+\end{document}

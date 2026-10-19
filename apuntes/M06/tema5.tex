@@ -1,0 +1,181 @@
+% =====================================================================
+\chapter{Entropía, física y ajuste por preferencias}
+\label{tema:5}
+% =====================================================================
+
+Este tema relaciona la entropía de Shannon con la entropía de la física estadística y muestra que la misma herramienta, la desigualdad de Gibbs, resuelve tres problemas en apariencia distintos: la distribución de máxima entropía con una restricción de energía media, que es la distribución de Boltzmann y, en particular, la función softmax; el principio variacional de la energía libre; y el problema de maximizar una recompensa con una penalización de Kullback--Leibler, que está en la base del ajuste de los LLM por preferencias humanas. Se sigue~\cite[cap.~12]{ct} y el artículo de Jaynes~\cite{jaynes} para la máxima entropía, el artículo de Landauer~\cite{landauer} para el coste físico del borrado y los artículos de Ouyang \emph{et al.}~\cite{instructgpt} y Rafailov \emph{et al.}~\cite{dpo} para el ajuste por preferencias. El tema «Applications of information theory in other sciences» de~\cite{camit} trata el mismo puente con la física.
+
+En este tema los logaritmos son naturales y las entropías y divergencias se miden en nats, salvo indicación expresa.
+
+\section{La entropía en la física estadística}
+
+Un sistema físico macroscópico, descrito por unas pocas magnitudes (energía, volumen, número de partículas), es compatible con un número enorme de configuraciones microscópicas o \emph{microestados}.
+
+\begin{definicion}[Entropías de Boltzmann y de Gibbs]\label{def:boltzmann}
+Si un macroestado es compatible con $W$ microestados equiprobables, su \emph{entropía de Boltzmann} es $S=k_B\ln W$. Si los microestados tienen probabilidades $p_i$, la \emph{entropía de Gibbs} es
+\[
+S=-k_B\sum_ip_i\ln p_i,
+\]
+donde $k_B=1{,}380649\cdot10^{-23}\,\mathrm{J/K}$ es la constante de Boltzmann.
+\end{definicion}
+
+La entropía de Gibbs es $k_B$ veces la entropía de Shannon en nats, y la de Boltzmann es el caso uniforme, en el que $H=\ln W$. La entropía termodinámica de un macroestado es, salvo la constante $k_B$, la cantidad de información que falta para identificar el microestado~\cite{jaynes}.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Física estadística & Teoría de la información \\
+\midrule
+microestado & mensaje o secuencia concreta \\
+$S=k_B\ln W$ & $H=\log W$ bits (caso uniforme) \\
+$S=-k_B\sum_ip_i\ln p_i$ & $H=-\sum_ip_i\log p_i$ \\
+distribución de Boltzmann $e^{-E/k_BT}/Z$ & softmax de los logits con temperatura \\
+energía libre $F=\langle E\rangle-TS$ & objetivo con penalización de Kullback--Leibler \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{proposicion}\label{prop:binomial}
+Para $0\le k\le n$, $\binom{n}{k}\le 2^{nH_b(k/n)}$, donde $H_b$ es la entropía binaria en bits.
+\end{proposicion}
+
+\begin{proof}
+Si $k\in\{0,n\}$, ambos miembros valen~1. En otro caso, sea $\theta=k/n\in(0,1)$. Por el binomio de Newton,
+\[
+1=\sum_{j=0}^{n}\binom{n}{j}\theta^{j}(1-\theta)^{n-j}\ge\binom{n}{k}\theta^{k}(1-\theta)^{n-k}.
+\]
+Además, $\log_2\bigl(\theta^{k}(1-\theta)^{n-k}\bigr)=n\bigl(\theta\log_2\theta+(1-\theta)\log_2(1-\theta)\bigr)=-nH_b(\theta)$, luego $\theta^{k}(1-\theta)^{n-k}=2^{-nH_b(\theta)}$ y se obtiene la desigualdad.
+\end{proof}
+
+\begin{ejemplo}\label{ej:monedas}
+Las secuencias de 100 lanzamientos con exactamente 50 caras son $\binom{100}{50}$, y la entropía del macroestado «50 caras» es $\log_2\binom{100}{50}=96{,}35$ bits: identificar la secuencia exacta dentro de él requiere casi tanta información como los 100 bits de una secuencia arbitraria. La \cref{prop:binomial} da la cota $100\,H_b(0{,}5)=100$ bits. El exponente es ajustado: las secuencias «típicas», con una proporción de caras próxima a $\theta$, son del orden de $2^{nH_b(\theta)}$, salvo un factor polinómico en $n$.
+\end{ejemplo}
+
+\section{Máxima entropía y distribución de Boltzmann}
+
+Cuando de una distribución solo se conoce el valor medio de una magnitud, el principio de máxima entropía de Jaynes~\cite{jaynes} propone elegir, entre todas las distribuciones compatibles, la de mayor entropía: la que no añade ninguna información que no se tenga.
+
+\begin{teorema}[Distribución de máxima entropía]\label{teo:maxent}
+Sea $E\colon\X\to\R$ una función de energía sobre un alfabeto finito, sea $\lambda\in\R$ y sea
+\[
+p_\lambda(x)=\frac{e^{-\lambda E(x)}}{Z(\lambda)},\qquad Z(\lambda)=\sum_{x\in\X}e^{-\lambda E(x)}.
+\]
+Para toda distribución $p$ sobre $\X$ con la misma energía media, $\E_p[E]=\E_{p_\lambda}[E]$, se cumple $H(p)\le H(p_\lambda)$, con igualdad si y solo si $p=p_\lambda$.
+\end{teorema}
+
+\begin{proof}
+Como $-\ln p_\lambda(x)=\lambda E(x)+\ln Z(\lambda)$, para cualquier $p$
+\[
+H(p)=-\sum_xp(x)\ln p_\lambda(x)-\KL{p}{p_\lambda}=\lambda\,\E_p[E]+\ln Z(\lambda)-\KL{p}{p_\lambda}.
+\]
+Aplicada a $p=p_\lambda$, la misma identidad da $H(p_\lambda)=\lambda\,\E_{p_\lambda}[E]+\ln Z(\lambda)$. Si las energías medias coinciden, restando se obtiene $H(p)=H(p_\lambda)-\KL{p}{p_\lambda}\le H(p_\lambda)$, con igualdad si y solo si $p=p_\lambda$ (\cref{teo:gibbs})~\cite[§12.1]{ct}.
+\end{proof}
+
+En física, $\lambda=1/(k_BT)$ y $p_\lambda$ es la \emph{distribución de Boltzmann} a temperatura $T$: los estados de energía baja son más probables, y tanto más cuanto menor es la temperatura.
+
+\begin{observacion}[Conexión con los LLM]
+La función softmax con temperatura del módulo~1, $\softmax(z/T)_i=e^{z_i/T}/\sum_je^{z_j/T}$, es una distribución de Boltzmann con energías $E_i=-z_i$ y $\lambda=1/T$. Por el \cref{teo:maxent}, es la distribución de máxima entropía entre todas las que tienen el mismo logit medio. Subir la temperatura acerca la distribución a la uniforme, de entropía máxima $\ln K$; bajarla la concentra en el logit mayor.
+\end{observacion}
+
+\section{Energía libre y principio variacional}
+
+El problema siguiente aparece en física, con la energía libre, y en el ajuste de modelos de lenguaje, con una recompensa. Sean $\pref$ una distribución de referencia sobre un conjunto finito de respuestas $\mathcal{Y}$, con $\pref(y)>0$ para todo $y$, una recompensa $r\colon\mathcal{Y}\to\R$ y un coeficiente $\beta>0$. Se busca la distribución $\pi$ que maximiza
+\[
+\mathcal{F}(\pi)=\E_{y\sim\pi}[r(y)]-\beta\,\KL{\pi}{\pref}.
+\]
+
+\begin{teorema}[Principio variacional de Gibbs]\label{teo:variacional}
+Sean $Z=\sum_y\pref(y)\,e^{r(y)/\beta}$ y $\pi^{*}(y)=\pref(y)\,e^{r(y)/\beta}/Z$. Para toda distribución $\pi$ sobre $\mathcal{Y}$,
+\[
+\mathcal{F}(\pi)=\beta\ln Z-\beta\,\KL{\pi}{\pi^{*}}.
+\]
+En consecuencia, $\pi^{*}$ es el único maximizador de $\mathcal{F}$ y el valor máximo es $\beta\ln Z$.
+\end{teorema}
+
+\begin{proof}
+Tomando logaritmos en la definición de $\pi^{*}$, $r(y)=\beta\ln\frac{\pi^{*}(y)}{\pref(y)}+\beta\ln Z$ para todo $y$. Entonces
+\[
+\mathcal{F}(\pi)=\sum_y\pi(y)\Bigl[\beta\ln\frac{\pi^{*}(y)}{\pref(y)}+\beta\ln Z\Bigr]-\beta\sum_y\pi(y)\ln\frac{\pi(y)}{\pref(y)}
+=\beta\ln Z+\beta\sum_y\pi(y)\ln\frac{\pi^{*}(y)}{\pi(y)},
+\]
+y el último sumatorio es $-\KL{\pi}{\pi^{*}}$. La unicidad y el valor máximo se siguen del \cref{teo:gibbs}.
+\end{proof}
+
+\begin{corolario}\label{cor:energia-libre}
+Si $\pref$ es uniforme sobre $K$ respuestas, $\mathcal{F}(\pi)=\E_\pi[r]+\beta H(\pi)-\beta\ln K$. Con energía $E=-r$ y temperatura $\beta$, maximizar $\mathcal{F}$ equivale a minimizar la \emph{energía libre} $\E_\pi[E]-\beta H(\pi)$, cuyo minimizador es la distribución de Boltzmann.
+\end{corolario}
+
+\begin{proof}
+Si $\pref(y)=1/K$, $\KL{\pi}{\pref}=\sum_y\pi(y)\ln\bigl(K\pi(y)\bigr)=\ln K-H(\pi)$; se sustituye en $\mathcal{F}$.
+\end{proof}
+
+\section{El ajuste por preferencias con penalización de Kullback--Leibler}
+
+Tras el preentrenamiento y el ajuste supervisado, un modelo de lenguaje se ajusta a las preferencias humanas con aprendizaje por refuerzo (RLHF, módulo~21). Un \emph{modelo de recompensa} $r(x,y)$, entrenado con comparaciones humanas, puntúa la respuesta $y$ al mensaje $x$. Maximizar solo $r$ llevaría el modelo hacia respuestas extrañas que explotan los defectos del modelo de recompensa (\emph{reward hacking}). Por ello, Ouyang \emph{et al.}~\cite{instructgpt} añaden a la recompensa una penalización por alejarse del modelo supervisado $\pref$, que en esperanza es $\beta\,\KL{\pi}{\pref}$; para cada mensaje $x$ se maximiza la cantidad $\mathcal{F}$ del apartado anterior.
+
+Por el \cref{teo:variacional}, la política óptima es $\pi^{*}(y\mid x)\propto\pref(y\mid x)\,e^{r(x,y)/\beta}$: la referencia «recalentada» por la recompensa, con $\beta$ en el papel de temperatura. En la práctica el conjunto de respuestas es inmenso y $\pi^{*}$ no se calcula de forma explícita, sino que se aproxima con métodos de gradiente; el teorema describe a qué apunta esa optimización.
+
+\begin{ejemplo}\label{ej:rlhf}
+Sean tres respuestas con $\pref=(0{,}5;\ 0{,}3;\ 0{,}2)$ y recompensas $r=(0,1,2)$. La tabla da la política óptima, la recompensa media y la divergencia respecto de la referencia (en nats) para tres valores de $\beta$:
+\begin{center}
+\begin{tabular}{@{}cccc@{}}
+\toprule
+$\beta$ & $\pi^{*}$ & $\E_{\pi^{*}}[r]$ & $\KL{\pi^{*}}{\pref}$ \\
+\midrule
+$0{,}5$ & $(0{,}037;\ 0{,}163;\ 0{,}801)$ & $1{,}764$ & $0{,}915$ \\
+$1$ & $(0{,}179;\ 0{,}292;\ 0{,}529)$ & $1{,}350$ & $0{,}323$ \\
+$2$ & $(0{,}325;\ 0{,}322;\ 0{,}353)$ & $1{,}028$ & $0{,}084$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Con $\beta$ pequeño la política persigue la recompensa y se aleja de la referencia; con $\beta$ grande apenas se mueve. Para $\beta=1$, $\mathcal{F}(\pi^{*})=1{,}350-0{,}323=1{,}027$, que coincide con $\ln Z=\ln\bigl(0{,}5+0{,}3e+0{,}2e^{2}\bigr)=1{,}027$, como predice el \cref{teo:variacional}.
+\end{ejemplo}
+
+\begin{observacion}[Optimización directa de preferencias]
+Despejando la recompensa en la solución óptima, $r(x,y)=\beta\ln\bigl(\pi^{*}(y\mid x)/\pref(y\mid x)\bigr)+\beta\ln Z(x)$: cada política define implícitamente una recompensa. Rafailov \emph{et al.}~\cite{dpo} observan que, en el modelo de Bradley--Terry de comparaciones por pares, el término $\beta\ln Z(x)$ se cancela, y obtienen un método, DPO, que ajusta la política directamente con las comparaciones humanas, sin entrenar un modelo de recompensa separado (\cref{eje:5-dpo}).
+\end{observacion}
+
+\section{El coste físico de la información}
+
+\begin{proposicion}[Principio de Landauer]\label{prop:landauer}
+Borrar un bit de información en un sistema en contacto con un entorno a temperatura $T$ disipa en el entorno un calor de al menos $k_BT\ln 2$.
+\end{proposicion}
+
+La idea, debida a Landauer~\cite{landauer}, es la siguiente. Un bit de memoria cuyo valor se desconoce está en uno de dos estados equiprobables, con entropía $k_B\ln 2$; tras el borrado, que lo pone siempre a~0, su entropía es nula. Como la entropía total no puede disminuir, al menos $k_B\ln 2$ de entropía pasa al entorno, lo que exige un calor $Q\ge T\,\Delta S=k_BT\ln 2$. A $T=300$~K, este mínimo vale $1{,}380649\cdot10^{-23}\cdot300\cdot0{,}6931=2{,}87\cdot10^{-21}$~J por bit. Los circuitos actuales disipan muchos órdenes de magnitud más por operación; el módulo~17 retoma la cuestión del coste energético del cómputo.
+
+\begin{lecturas}
+\item Cover y Thomas~\cite{ct}, §12.1 «Maximum Entropy Distributions» y §12.2 «Examples».
+\item Jaynes~\cite{jaynes}, principio de máxima entropía y su relación con la mecánica estadística.
+\item Landauer~\cite{landauer}, artículo original sobre la irreversibilidad y el calor del cómputo.
+\item Ouyang \emph{et al.}~\cite{instructgpt}, objetivo con penalización de Kullback--Leibler.
+\item Rafailov \emph{et al.}~\cite{dpo}, deducción de la solución óptima y del método DPO.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-beta}
+En el \cref{teo:variacional}, describa $\pi^{*}$ en los límites $\beta\to\infty$ y $\beta\to 0^{+}$, suponiendo que hay una única respuesta de recompensa máxima. Explique qué papel cumple $\beta$ en el ajuste por preferencias de un LLM.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-monedas}
+Se lanzan 10 monedas. Calcule, en bits, la entropía de Boltzmann de los macroestados «exactamente 5 caras» y «exactamente 2 caras» (todas las secuencias compatibles equiprobables) y compárelas con la cota $nH_b(k/n)$ de la \cref{prop:binomial}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-landauer}
+Calcule el calor mínimo que, según el principio de Landauer, disipa el borrado de 1~GB ($8\cdot10^{9}$ bits) a $300$~K. Exprese también el mínimo por bit en electronvoltios ($1\,\mathrm{eV}=1{,}602\cdot10^{-19}$~J).
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-rlhf}
+Sean $\pref=(1/2,1/2)$, $r=(0,1)$ y $\beta=1$. Calcule $\pi^{*}$, $\E_{\pi^{*}}[r]$, $\KL{\pi^{*}}{\pref}$ en nats y el valor del objetivo $\mathcal{F}(\pi^{*})$, y compruebe que coincide con $\ln Z$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-lagrange}
+Sea $f\colon\X\to\R$ una función sobre un alfabeto finito y $\alpha$ un número real. Mediante multiplicadores de Lagrange, demuestre que una distribución con todas sus probabilidades positivas que maximice $H(p)$ con la restricción $\sum_xp(x)f(x)=\alpha$ tiene la forma $p(x)=e^{-\lambda f(x)}/Z$ para algún $\lambda\in\R$. Compare el método con la demostración del \cref{teo:maxent}.
+\fuente{adaptado de Universidad de Cambridge, \emph{Information Theory}~\cite{camit}, \emph{Examples Sheet}, \emph{Supervision}~1, ejercicio~5.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-dpo}
+En el modelo de Bradley--Terry, la probabilidad de que una persona prefiera la respuesta $y_1$ a la $y_2$ ante el mensaje $x$ es $\sigma\bigl(r(x,y_1)-r(x,y_2)\bigr)$, con $\sigma(u)=1/(1+e^{-u})$. (a) Usando la expresión de $r$ en función de $\pi^{*}$, demuestre que esa probabilidad solo depende de los cocientes $\pi^{*}(y_i\mid x)/\pref(y_i\mid x)$ y no de $Z(x)$. (b) Con los datos del \cref{eje:5-rlhf}, calcule la diferencia de recompensas implícita y la probabilidad de preferir la segunda respuesta.
+\fuente{adaptado de Rafailov \emph{et al.}~\cite{dpo}, deducción del objetivo DPO.}
+\end{ejercicio}

@@ -1,0 +1,161 @@
+% =====================================================================
+\chapter{El modelo de lenguaje neuronal}
+\label{tema:6}
+% =====================================================================
+
+Este tema reúne los anteriores en un modelo de lenguaje. Bengio, Ducharme, Vincent y Jauvin~\cite{bengio} propusieron en 2003 sustituir la tabla de un modelo de $n$-gramas por una red: cada token del contexto se convierte en un vector, los vectores se concatenan y un MLP produce la distribución del token siguiente. La presentación sigue la §2 del artículo original y la §6.5 de~\cite{jm3}; la motivación por el tamaño de las tablas, la §9.3 de~\cite{d2l}. Los resultados numéricos son los de la práctica del módulo, con el corpus de nombres del módulo~1.
+
+\section{La maldición de la dimensionalidad}
+
+Un modelo de $n$-gramas sobre un vocabulario de $K$ tokens tiene $K^{n}$ entradas (módulo~1, tema~2). Con $K=28$ y un contexto de tres caracteres ($n=4$), la tabla tiene $28^{4}=614\,656$ casillas, frente a los $1885$ ejemplos de entrenamiento del corpus de nombres: casi todos los contextos no se han visto nunca y su estimación depende por completo del suavizado. El problema de fondo es que la tabla trata cada contexto como un símbolo aislado. Los contextos «.an» y «.en» no comparten nada, aunque las vocales \texttt{a} y \texttt{e} aparezcan en entornos parecidos.
+
+\section{Embeddings como capa lineal}
+
+\begin{definicion}[Matriz de embeddings]
+Sea $\V$ un vocabulario de $K$ tokens y $d\ge 1$. Una \emph{matriz de embeddings} es $C\in\R^{K\times d}$; el \emph{embedding} del token de índice $i$ es su fila $C[i]=e_i^{\top}C\in\R^{1\times d}$, donde $e_i$ es el vector \emph{one-hot} de $i$ (módulo~2, tema~5).
+\end{definicion}
+
+\begin{proposicion}[Gradiente de los embeddings]\label{prop:grad-embedding}
+Sea un contexto de tokens $(x_1,\dots,x_c)$ y sea $e=(C[x_1],\dots,C[x_c])\in\R^{1\times cd}$ la concatenación de sus embeddings. Si $\nabla_{\!e}L=(g_1,\dots,g_c)$ con $g_j\in\R^{1\times d}$, entonces
+\[
+\nabla_{\!C[i]}L=\sum_{j\,:\,x_j=i}g_j\qquad\text{para cada token } i,
+\]
+y las filas de los tokens que no aparecen en el contexto tienen gradiente nulo.
+\end{proposicion}
+
+\begin{proof}
+La fila $C[i]$ interviene en $e$ una vez por cada posición $j$ con $x_j=i$, como copia exacta. Por la \cref{prop:cadena-grafo}, las contribuciones de los distintos sucesores se suman, y cada copia aporta $g_j$ porque la derivada de la identidad es la identidad.
+\end{proof}
+
+En la práctica, las bibliotecas no multiplican por vectores \emph{one-hot}: leen la fila correspondiente y, en la pasada hacia atrás, acumulan los gradientes en las filas usadas (en NumPy, con \texttt{np.add.at}).
+
+\section{El modelo de Bengio \emph{et al.}}
+
+\begin{definicion}[Modelo de lenguaje neuronal prealimentado]\label{def:bengio}
+Sea $n\ge 2$ el orden del modelo y $c=n-1$ la longitud del contexto. Dado el contexto $(x_{t-c},\dots,x_{t-1})$, se calcula
+\[
+e=\bigl(C[x_{t-1}],\dots,C[x_{t-c}]\bigr)\in\R^{1\times cd},\qquad
+y=b+eW+\tanh(\tilde b+eH)\,U\in\R^{1\times K},
+\]
+con $H\in\R^{cd\times h}$, $\tilde b\in\R^{1\times h}$, $U\in\R^{h\times K}$, $b\in\R^{1\times K}$ y una matriz opcional de \emph{conexiones directas} $W\in\R^{cd\times K}$, y se toma $P(x_t=k\mid\text{contexto})=\softmax(y)_k$~\cite[§2]{bengio}.
+\end{definicion}
+
+\begin{proposicion}[Número de parámetros]\label{prop:param-bengio}
+Con conexiones directas, el modelo de la \cref{def:bengio} tiene
+\[
+K(1+nd+h)+h\bigl(1+(n-1)d\bigr)
+\]
+parámetros; sin ellas, $K(1+nd+h)+h(1+(n-1)d)-K(n-1)d$.
+\end{proposicion}
+
+\begin{proof}
+Se suman $Kd$ de $C$, $K$ de $b$, $K(n-1)d$ de $W$, $Kh$ de $U$, $h$ de $\tilde b$ y $h(n-1)d$ de $H$. Agrupando los términos con factor $K$, $K(d+1+(n-1)d+h)=K(1+nd+h)$, y los demás dan $h(1+(n-1)d)$.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth,scale=0.95,
+  n/.style={draw,rounded corners=2pt,minimum height=7mm,inner sep=3pt,font=\small}]
+  \node[n] (c3) at (0,1.2) {$x_{t-3}$};
+  \node[n] (c2) at (0,0) {$x_{t-2}$};
+  \node[n] (c1) at (0,-1.2) {$x_{t-1}$};
+  \node[n] (e3) at (2.2,1.2) {$C[x_{t-3}]$};
+  \node[n] (e2) at (2.2,0) {$C[x_{t-2}]$};
+  \node[n] (e1) at (2.2,-1.2) {$C[x_{t-1}]$};
+  \node[n,minimum height=3.1cm] (cat) at (4.1,0) {$e\in\R^{3d}$};
+  \node[n] (hid) at (6.7,0) {$\ReLU(eW_1+b_1)$};
+  \node[n] (out) at (10.0,0) {$\softmax(hW_2+b_2)$};
+  \foreach \i in {1,2,3} {\draw[->] (c\i)--(e\i); \draw[->] (e\i)--(e\i-|cat.west);}
+  \draw[->] (cat)--(hid); \draw[->] (hid)--(out);
+  \node[font=\scriptsize,below=1mm of hid] {$h\in\R^{H}$};
+  \node[font=\scriptsize,below=1mm of out] {$P(\cdot\mid\text{contexto})\in\R^{K}$};
+  \draw[decorate,decoration={brace,amplitude=4pt,mirror}] ($(e1.south west)+(0,-0.15)$)--($(e1.south east)+(0,-0.15)$) node[midway,below=4pt,font=\scriptsize]{misma matriz $C$};
+\end{tikzpicture}
+\caption{Modelo de lenguaje neuronal de la práctica, con contexto de tres tokens.}\label{fig:bengio}
+\end{figure}
+
+\begin{ejemplo}[El modelo de la práctica]\label{ej:practica}
+La práctica del módulo usa la variante de la \cref{fig:bengio}: activación ReLU en lugar de tanh, sin conexiones directas, con $K=28$, $d=10$, contexto de $c=3$ caracteres y $H=64$ unidades ocultas. Sus parámetros son $C$: $28\cdot 10=280$; $W_1$: $30\cdot 64=1920$; $b_1$: $64$; $W_2$: $64\cdot 28=1792$; $b_2$: $28$; en total, $4084$. Con conexiones directas se añadirían $28\cdot 30=840$, para un total de $4924$, que es lo que da la fórmula de la \cref{prop:param-bengio} con $n=4$, $d=10$ y $h=64$.
+\end{ejemplo}
+
+\section{Entrenamiento y regularización}
+
+Los parámetros $\theta$ se ajustan minimizando la entropía cruzada media sobre los $N$ pares (contexto, token siguiente) de entrenamiento, con decaimiento de pesos (módulo~7):
+\[
+J(\theta)=-\frac1N\sum_{r=1}^{N}\ln P_\theta\bigl(x^{(r)}_t\mid\text{contexto}^{(r)}\bigr)+\frac{\lambda}{2}\norm{\theta}^{2},
+\qquad \theta\leftarrow\theta-\eta\bigl(\nabla\mathcal{L}(\theta)+\lambda\theta\bigr),
+\]
+donde $\mathcal{L}$ es el primer término de $J$. El gradiente de $\mathcal{L}$ se obtiene con el \cref{teo:backprop}, aplicado al lote completo, y con la \cref{prop:grad-embedding} para $C$. La perplejidad es $\PPL=e^{\mathcal{L}}$ (módulo~1, tema~5).
+
+\begin{table}[h]
+\centering\small
+\caption{Perplejidades en el corpus de nombres del módulo~1 (1000 pasos de descenso por lotes completos, $\eta=0{,}5$).}\label{tab:resultados}
+\begin{tabular}{@{}lcrcc@{}}
+\toprule
+Modelo & Contexto & Parámetros & \multicolumn{2}{c@{}}{PPL} \\
+\cmidrule(l){4-5}
+ & & & entren. & valid. \\
+\midrule
+Uniforme & 0 & 0 & 28 & 28 \\
+Bigramas, suavizado $\alpha=0{,}2$ & 1 & 784 & --- & $12{,}42$ \\
+MLP, $d=10$, $H=64$, $\lambda=0{,}005$ & 3 & 4084 & $6{,}62$ & $10{,}45$ \\
+MLP sin decaimiento ($\lambda=0$) & 3 & 4084 & $3{,}76$ & $30{,}73$ \\
+Tabla de 4-gramas & 3 & 614\,656 & --- & (casi vacía) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El MLP regularizado reduce la perplejidad de validación del modelo de bigramas en un $16\,\%$, de $12{,}42$ a $10{,}45$, con menos de una centésima parte de los parámetros de una tabla de 4-gramas. Sin decaimiento de pesos, la red memoriza los nombres de entrenamiento: la perplejidad de entrenamiento baja a $3{,}76$ y la de validación sube a $30{,}73$, peor que el modelo uniforme. Es el sobreajuste del módulo~8.
+
+\section{Por qué generaliza}
+
+La red no ve tokens, sino vectores. Si dos tokens tienen embeddings próximos, los contextos que difieren solo en ellos producen distribuciones próximas. El resultado siguiente lo cuantifica. Se usa la norma espectral $\norm{A}_2=\max_{\norm{v}=1}\norm{vA}$ (módulo~3).
+
+\begin{proposicion}\label{prop:lipschitz}
+Sea $f(e)=\ReLU(eW_1+b_1)W_2+b_2$ la función que lleva la concatenación de embeddings a los logits, y sea $p(e)=\softmax(f(e))$. Para todo par $e,e'$ y todo token $k$,
+\[
+\norm{f(e)-f(e')}\le\norm{W_1}_2\norm{W_2}_2\,\norm{e-e'},\qquad
+\abs{\ln p_k(e)-\ln p_k(e')}\le 2\,\norm{W_1}_2\norm{W_2}_2\,\norm{e-e'}.
+\]
+\end{proposicion}
+
+\begin{proof}
+La ReLU cumple $\abs{\ReLU(s)-\ReLU(t)}\le\abs{s-t}$ componente a componente, luego $\norm{\ReLU(u)-\ReLU(u')}\le\norm{u-u'}$. Por tanto $\norm{f(e)-f(e')}\le\norm{(eW_1-e'W_1)}\,\norm{W_2}_2\le\norm{e-e'}\,\norm{W_1}_2\norm{W_2}_2$. Para la segunda desigualdad, sea $z=f(e)$, $z'=f(e')$ y $\Delta=\max_j\abs{z_j-z'_j}$. Como $z'_j\le z_j+\Delta$ para todo $j$ y la función $\LSE$ es creciente en cada componente y cumple $\LSE(z+\Delta\mathbf{1})=\LSE(z)+\Delta$, se tiene $\LSE(z')\le\LSE(z)+\Delta$, y por simetría $\abs{\LSE(z)-\LSE(z')}\le\Delta$. Entonces $\abs{\ln p_k(e)-\ln p_k(e')}=\abs{(z_k-z'_k)-(\LSE(z)-\LSE(z'))}\le 2\Delta\le 2\norm{z-z'}$.
+\end{proof}
+
+Los embeddings se aprenden junto con el resto de la red, y tokens que aparecen en contextos parecidos reciben gradientes parecidos (\cref{prop:grad-embedding}); en la práctica del módulo, las vocales acaban agrupadas sin que nadie haya indicado a la red qué es una vocal. Lo aprendido para un contexto se transfiere así, por la \cref{prop:lipschitz}, a todos los contextos cercanos.
+
+\begin{observacion}[Conexión con los LLM]
+El esquema «tokens $\to$ vectores $\to$ red compartida $\to$ softmax» es el de todo modelo de lenguaje neuronal actual. El Transformer (módulos~13 y~14) conserva la capa de embeddings, el MLP por token y la salida softmax, y sustituye la concatenación de un contexto de longitud fija por la atención, que combina un número variable de tokens con pesos que dependen de su contenido.
+\end{observacion}
+
+\begin{lecturas}
+\item Bengio \emph{et al.}~\cite{bengio}, §1 y §2: motivación y modelo.
+\item Jurafsky y Martin~\cite{jm3}, §6.5 «Embeddings as the input to neural net classifiers», en particular el modelo de lenguaje con embeddings concatenados.
+\item Zhang \emph{et al.}~\cite{d2l}, §9.3 «Language Models».
+\item Stanford CS224N~\cite{cs224n}, clase~4 «Language Models and RNNs», primera parte.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-sobreajuste}
+Sin decaimiento de pesos, el MLP del \cref{tab:resultados} tiene perplejidad $3{,}76$ en entrenamiento y $30{,}73$ en validación. (a) ¿Qué fenómeno indica? (b) Exprese ambas cifras como entropía cruzada en nats. (c) ¿Qué dos cambios reducirían el problema?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-tabla}
+Un corpus de entrenamiento tiene $N=10^{5}$ tokens y un vocabulario de $K=10^{4}$ palabras. (a) ¿Cuántas entradas tiene la tabla de un modelo de 4-gramas? (b) ¿Cuántos 4-gramas distintos pueden aparecer, como máximo, en el corpus? (c) ¿Qué fracción máxima de la tabla se estima a partir de datos observados?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §9.3, ejercicio~1.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-param}
+Para el modelo del \cref{ej:practica}: (a) ¿cuántos parámetros tiene $W_1$? (b) ¿Cómo cambia el total si se duplica $d$? (c) ¿Y si se amplía el contexto a 8 caracteres?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-embgrad}
+Con $d=2$, el contexto es $(\texttt{a},\texttt{n},\texttt{a})$ y el gradiente respecto a la concatenación de embeddings es $\nabla_{\!e}L=(0{,}1;\,-0{,}2;\,0{,}3;\,0;\,-0{,}4;\,0{,}5)$. Calcule los gradientes de las filas $C[\texttt{a}]$, $C[\texttt{n}]$ y $C[\texttt{e}]$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-bigrama}
+Considérese el modelo de la \cref{def:bengio} con contexto de un token ($n=2$), sin capa oculta ($h=0$) y con conexiones directas, de modo que los logits son $y=C[x_{t-1}]W+b$. (a) Demuestre que si $d\ge K$ el modelo puede representar exactamente cualquier modelo de bigramas con todas sus probabilidades positivas. (b) Demuestre que la matriz $K\times K$ de logits, cuya fila $u$ es el vector de logits del contexto $u$, tiene rango a lo sumo $d+1$, y que la matriz de log-probabilidades $\ln P(v\mid u)$ tiene rango a lo sumo $d+2$. Deduzca que con $d+2<K$ hay modelos de bigramas que no pueden representarse.
+\end{ejercicio}

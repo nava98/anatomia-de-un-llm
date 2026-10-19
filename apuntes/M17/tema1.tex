@@ -1,0 +1,135 @@
+% =====================================================================
+\chapter{Cómputo matricial y aceleradores}
+\label{tema:1}
+% =====================================================================
+
+Casi todo el cómputo de un modelo de lenguaje consiste en productos de matrices densas. Este tema cuenta con precisión esas operaciones, deduce la regla de seis operaciones por parámetro y por token del entrenamiento y describe los dos diseños de hardware que las ejecutan de forma eficiente: la GPU, con sus núcleos tensoriales, y la matriz sistólica de la TPU. Se siguen los capítulos~4 y~7 de Hennessy y Patterson~\cite{hp}, la clase sobre GPU de CMU 15-418/618~\cite{cmu418}, la contabilidad de recursos de la tarea~1 de CS336~\cite[§3.5]{cs336a1}, el artículo de Kaplan \emph{et al.}~\cite[§2.1]{kaplan} y el de Jouppi \emph{et al.}~\cite{jouppi}.
+
+\section{Contar operaciones}
+
+\begin{definicion}[FLOP]
+Se llama \emph{operación en coma flotante} (FLOP, del inglés \emph{floating-point operation}) a una suma o a una multiplicación de dos números reales representados en coma flotante. Una multiplicación seguida de una suma acumulada, $c\gets c+ab$ (operación MAC o FMA), cuenta como dos FLOP. El \emph{rendimiento} de un dispositivo se mide en FLOP por segundo (FLOP/s).
+\end{definicion}
+
+Conviene distinguir \emph{FLOP} (cantidad de operaciones) de \emph{FLOP/s} (velocidad). En este módulo, $1$~TFLOP/s $=10^{12}$~FLOP/s.
+
+\begin{proposicion}[Coste del producto de matrices]\label{prop:flop-matmul}
+Sean $A\in\R^{m\times k}$ y $B\in\R^{k\times n}$. El cálculo directo de $C=AB$ requiere $2mkn$ FLOP.
+\end{proposicion}
+
+\begin{proof}
+Cada elemento $C_{ij}=\sum_{l=1}^{k}A_{il}B_{lj}$ es un producto escalar de longitud $k$: $k$ multiplicaciones y, partiendo de un acumulador nulo, $k$ sumas, es decir, $2k$ FLOP. Como $C$ tiene $mn$ elementos, el total es $2k\cdot mn=2mkn$.
+\end{proof}
+
+\begin{observacion}
+Estrictamente bastan $k-1$ sumas por elemento, pero el convenio $2mkn$ es el habitual~\cite[§3.5]{cs336a1} y coincide con el número de operaciones MAC multiplicado por dos. Algoritmos como el de Strassen reducen el exponente asintótico, pero no se usan en el entrenamiento de redes porque son menos estables numéricamente y peor adaptados al hardware.
+\end{observacion}
+
+\begin{ejemplo}[Una capa lineal de un Transformer]\label{ej:capa-lineal}
+Una proyección $Y=XW$ con $X\in\R^{T\times d}$ ($T=2048$ tokens) y $W\in\R^{d\times d}$ ($d=4096$) cuesta $2\cdot 2048\cdot 4096\cdot 4096=6{,}87\cdot 10^{10}$ FLOP. Por la \cref{prop:flop-matmul}, el coste es $2$ FLOP por cada parámetro de $W$ y por cada token.
+\end{ejemplo}
+
+\section{La regla de seis operaciones por parámetro y token}
+
+\begin{proposicion}[Coste de entrenamiento de una capa lineal]\label{prop:6nd-capa}
+Sea una capa lineal $Y=XW$ con $X\in\R^{T\times a}$ y $W\in\R^{a\times b}$, y sea $G=\partial\mathcal{L}/\partial Y\in\R^{T\times b}$ el gradiente que llega a su salida. La pasada hacia delante cuesta $2Tab$ FLOP y la pasada hacia atrás, que calcula $\partial\mathcal{L}/\partial X$ y $\partial\mathcal{L}/\partial W$, cuesta $4Tab$ FLOP. En total, $6$ FLOP por parámetro y por token.
+\end{proposicion}
+
+\begin{proof}
+La pasada hacia delante es un producto $(T\times a)(a\times b)$ y cuesta $2Tab$ por la \cref{prop:flop-matmul}. Por la regla de la cadena en forma matricial (módulo~10), $\partial\mathcal{L}/\partial X=GW\T$, producto $(T\times b)(b\times a)$ de coste $2Tba$, y $\partial\mathcal{L}/\partial W=X\T G$, producto $(a\times T)(T\times b)$ de coste $2aTb$. La pasada hacia atrás cuesta $4Tab$ y el total, $6Tab$. Como la capa tiene $ab$ parámetros y procesa $T$ tokens, el coste por parámetro y token es $6Tab/(abT)=6$.
+\end{proof}
+
+\begin{corolario}[Regla $C\approx 6ND$]\label{cor:6nd}
+Si casi todos los parámetros de un modelo pertenecen a capas lineales y se desprecian las operaciones que no multiplican pesos (normalizaciones, activaciones, producto $QK\T$ de la atención), entrenar un modelo de $N$ parámetros con $D$ tokens cuesta $C\approx 6ND$ FLOP: $2ND$ en la pasada hacia delante y $4ND$ en la pasada hacia atrás.
+\end{corolario}
+
+\begin{proof}
+Basta sumar la \cref{prop:6nd-capa} sobre todas las capas lineales: cada uno de los $N$ parámetros contribuye $6$ FLOP por token, y hay $D$ tokens.
+\end{proof}
+
+La aproximación es la de Kaplan \emph{et al.}~\cite[§2.1 y tabla~1]{kaplan}, que estiman la pasada hacia delante en $2N+2n_{\mathrm{capas}}n_{\mathrm{ctx}}d$ FLOP por token; el segundo término, debido a la atención, es pequeño cuando $n_{\mathrm{ctx}}\ll 12d$. Los parámetros de la tabla de \emph{embeddings} de entrada no intervienen en productos de matrices (se leen por índice) y suelen excluirse de $N$.
+
+\section{Arquitectura de una GPU}
+
+Una CPU dedica la mayor parte de su superficie a hacer rápido un único hilo de ejecución: cachés grandes, predicción de saltos, ejecución fuera de orden. Una GPU invierte el compromiso y dedica la superficie a muchas unidades aritméticas sencillas que ejecutan la misma instrucción sobre datos distintos~\cite[cap.~4]{hp}.
+
+\begin{definicion}[Modelo de ejecución SIMT]
+Una GPU de NVIDIA está formada por \emph{multiprocesadores de streaming} (SM). Un programa para GPU (\emph{kernel}) se lanza como una rejilla de \emph{bloques de hilos}; cada bloque se asigna a un SM y sus hilos pueden cooperar a través de una memoria compartida del SM. El SM ejecuta los hilos en grupos de 32, llamados \emph{warps}, que avanzan con la misma instrucción sobre datos distintos (\emph{single instruction, multiple threads}).
+\end{definicion}
+
+Si los hilos de un warp toman ramas distintas de una condición, el SM ejecuta las dos ramas una tras otra (\emph{divergencia}), y el rendimiento cae. Mientras un warp espera un dato de memoria, el SM ejecuta otro: la GPU oculta la latencia de la memoria con paralelismo, no con cachés~\cite{cmu418}. La A100 tiene 108 SM, cada uno con un banco de registros de 256~KB y 192~KB de memoria L1 y compartida~\cite{a100}.
+
+\begin{definicion}[Núcleo tensorial]
+Un \emph{núcleo tensorial} (\emph{tensor core}) es una unidad que ejecuta en una sola instrucción el producto acumulado $D\gets AB+C$ de pequeñas matrices, con $A$ y $B$ en un formato de baja precisión (fp16, bf16, fp8) y el acumulador en mayor precisión (normalmente fp32).
+\end{definicion}
+
+Los núcleos tensoriales aparecieron en la arquitectura Volta (2017). En la A100, el rendimiento máximo en bf16 con núcleos tensoriales es de 312~TFLOP/s, frente a 19{,}5~TFLOP/s en fp32 con las unidades ordinarias~\cite{a100}: un factor $312/19{,}5=16$. Un programa que no expresa su cálculo como productos de matrices en baja precisión desaprovecha casi todo el chip.
+
+\section{Matrices sistólicas}
+
+\begin{definicion}[Matriz sistólica]
+Una \emph{matriz sistólica} de $n\times n$ es una rejilla de celdas MAC conectadas solo con sus vecinas. En cada ciclo de reloj, cada celda recibe un valor por la izquierda y otro por arriba, acumula su producto y los reenvía a la derecha y hacia abajo. En la variante \emph{de salida estacionaria}, la celda $(i,j)$ acumula el elemento $C_{ij}$ del producto.
+\end{definicion}
+
+El nombre alude al latido del corazón: los datos recorren la rejilla a ritmo constante. La ventaja es la reutilización. Cada elemento de $A$ que entra por el borde izquierdo es usado por las $n$ celdas de su fila sin volver a leerse de memoria, y lo mismo cada elemento de $B$ en su columna. Para ello las filas de $A$ y las columnas de $B$ entran escalonadas, como en la \cref{fig:sistolica}; el \cref{eje:1-sistolica} demuestra que cada celda recibe los factores correctos en el mismo ciclo.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  mac/.style={draw,thick,minimum size=11mm}]
+  \foreach \i in {1,2,3}{\foreach \j in {1,2,3}{
+     \node[mac] (c\i\j) at (1.6*\j,-1.6*\i) {$c_{\i\j}$};}}
+  \foreach \i in {1,2,3}{\foreach \j/\k in {1/2,2/3}{\draw[->] (c\i\j) -- (c\i\k);}}
+  \foreach \j in {1,2,3}{\foreach \i/\k in {1/2,2/3}{\draw[->] (c\i\j) -- (c\k\j);}}
+  \node[anchor=east] at (0.5,-1.6) {$a_{13}\;a_{12}\;a_{11}$};
+  \node[anchor=east] at (0.5,-3.2) {$a_{23}\;a_{22}\;a_{21}\;\cdot$};
+  \node[anchor=east] at (0.5,-4.8) {$a_{33}\;a_{32}\;a_{31}\;\cdot\;\cdot$};
+  \foreach \i in {1,2,3}{\draw[->] (0.55,-1.6*\i) -- (c\i1);}
+  \node[anchor=south,align=center] at (1.6,-0.35) {$b_{31}$\\$b_{21}$\\$b_{11}$};
+  \node[anchor=south,align=center] at (3.2,-0.35) {$b_{32}$\\$b_{22}$\\$b_{12}$\\$\cdot$};
+  \node[anchor=south,align=center] at (4.8,-0.35) {$b_{33}$\\$b_{23}$\\$b_{13}$\\$\cdot$\\$\cdot$};
+  \foreach \j in {1,2,3}{\draw[->] (1.6*\j,-0.35) -- (c1\j);}
+\end{tikzpicture}
+\caption{Matriz sistólica de salida estacionaria de $3\times 3$. Las filas de $A$ entran por la izquierda y las columnas de $B$ por arriba, retrasadas un ciclo por cada fila o columna (los puntos indican ciclos de espera). La celda $(i,j)$ acumula $c_{ij}=\sum_k a_{ik}b_{kj}$.}
+\label{fig:sistolica}
+\end{figure}
+
+\begin{ejemplo}[TPU v1]\label{ej:tpu}
+La primera TPU de Google~\cite{jouppi} contiene una matriz sistólica de $256\times 256=65\,536$ celdas MAC de 8 bits y funciona a 700~MHz. Su rendimiento máximo es $65\,536\cdot 2\cdot 7\cdot 10^{8}=9{,}18\cdot 10^{13}$ operaciones por segundo, unas 92 billones (92~TOPS), que es la cifra publicada. Cada operando leído se reutiliza 256 veces dentro de la rejilla.
+\end{ejemplo}
+
+\begin{observacion}
+Los núcleos tensoriales de una GPU y la matriz sistólica de una TPU son dos soluciones al mismo problema: aumentar el número de operaciones por cada dato leído. El \cref{tema:2} cuantifica esta idea con la intensidad aritmética. El capítulo~7 de Hennessy y Patterson~\cite{hp} presenta la TPU como ejemplo de \emph{arquitectura de dominio específico}: renuncia a la generalidad a cambio de eficiencia en una sola operación.
+\end{observacion}
+
+\begin{lecturas}
+\item Hennessy y Patterson~\cite{hp}, cap.~4, «Data-Level Parallelism in Vector, SIMD, and GPU Architectures», y cap.~7, «Domain-Specific Architectures» (sección sobre la TPU).
+\item CMU 15-418/618~\cite{cmu418}, clases «Modern multicore processors» y «Graphic processing units and CUDA».
+\item CS336~\cite{cs336a1}, tarea~1, §3.5, apartado \emph{Resource accounting}.
+\item Kaplan \emph{et al.}~\cite{kaplan}, §2.1 y tabla~1 (recuento de FLOP de un Transformer).
+\item Jouppi \emph{et al.}~\cite{jouppi}, descripción de la unidad de multiplicación de matrices.
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-reutilizacion}
+En una matriz sistólica de $n\times n$ que calcula $C=AB$ con $A,B\in\R^{n\times n}$: (a) ¿cuántas operaciones MAC realiza en total cada celda?; (b) ¿cuántas veces se usa cada elemento de $A$ leído de memoria?; (c) explique por qué este diseño reduce la energía por operación respecto a leer los dos operandos de memoria en cada MAC.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-flop}
+(a) Calcule los FLOP del producto de una matriz $2\times 3$ por una $3\times 4$. (b) Una capa lineal $W\in\R^{4096\times 16\,384}$ procesa un lote de $8$ secuencias de $2048$ tokens. Calcule los FLOP de la pasada hacia delante, de la pasada hacia atrás y del paso completo, y compruebe que el total es $6$ FLOP por parámetro y token.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-tpu}
+(a) Compruebe la cifra de 92~TOPS de la TPU v1 a partir de sus datos (\cref{ej:tpu}). (b) ¿Cuánto tardaría, como mínimo, en multiplicar dos matrices de $4096\times 4096$ en int8? (c) Calcule el cociente entre el rendimiento bf16 de los núcleos tensoriales de la A100 y su rendimiento fp32 ordinario.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-gpt2}
+Un Transformer de tipo GPT-2 \emph{small} sin sesgos tiene vocabulario $V=50\,257$, contexto $T=1024$, $L=12$ bloques, $d=768$ y un MLP SwiGLU con $d_{\mathrm{ff}}=2048$ (tres matrices $d\times d_{\mathrm{ff}}$). La tabla de \emph{embeddings} y la cabeza de salida son matrices distintas, y cada bloque tiene dos RMSNorm, más una final ($d$ parámetros cada una). (a) Cuente los parámetros y la memoria que ocupan en fp32. (b) Cuente los FLOP de una pasada hacia delante de una secuencia de $T$ tokens (solo productos de matrices) y el porcentaje que corresponde a las proyecciones de la atención, a los productos $QK\T$ y por $V$, al MLP y a la cabeza de salida.
+\fuente{adaptado de CS336~\cite{cs336a1}, tarea~1, §3.5, problema \texttt{transformer\_accounting}, apartado~(d) (configuración simplificada).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-sistolica}
+Considere la matriz sistólica de salida estacionaria de $n\times n$ de la \cref{fig:sistolica}. El elemento $a_{ik}$ entra en la celda $(i,1)$ en el ciclo $t=k+i-1$ y avanza una celda a la derecha por ciclo; el elemento $b_{kj}$ entra en la celda $(1,j)$ en el ciclo $t=k+j-1$ y avanza una celda hacia abajo por ciclo. Demuestre que $a_{ik}$ y $b_{kj}$ llegan a la celda $(i,j)$ en el mismo ciclo, que la celda $(i,j)$ recibe exactamente los $n$ pares $(a_{ik},b_{kj})$, $k=1,\dots,n$, y que el producto completo termina en el ciclo $3n-2$.
+\end{ejercicio}

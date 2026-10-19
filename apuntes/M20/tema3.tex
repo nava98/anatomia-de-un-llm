@@ -1,0 +1,183 @@
+% =====================================================================
+\chapter{Olvido catastrófico}
+\label{tema:3}
+% =====================================================================
+
+Al ajustar todos los pesos con una tarea estrecha, el modelo pierde capacidades que tenía. Este tema define el fenómeno, lo analiza en un modelo cuadrático que puede resolverse a mano y deduce la penalización de la consolidación elástica de pesos (EWC) como aproximación bayesiana. El fenómeno se describió en redes conexionistas en el trabajo de McCloskey y Cohen~\cite{mccloskey}; EWC procede de Kirkpatrick \emph{et al.}~\cite{kirkpatrick}; la aproximación de Laplace sigue el §4.4 de Bishop~\cite{bishop}, y el análisis cuadrático de la penalización, el §7.1.1 de Goodfellow, Bengio y Courville~\cite{gbc}.
+
+\section{El fenómeno}
+
+\begin{definicion}[Olvido]\label{def:olvido}
+Sean $\mathcal{L}_A$ la pérdida de una tarea antigua, $\theta_0$ unos parámetros que la resuelven y $\theta_B$ los parámetros obtenidos al ajustar $\theta_0$ con una tarea nueva de pérdida $\mathcal{L}_B$. El \emph{olvido} es el aumento $\mathcal{L}_A(\theta_B)-\mathcal{L}_A(\theta_0)$. Se habla de \emph{olvido catastrófico} cuando ese aumento es comparable al que tendría un modelo sin entrenar en la tarea~$A$.
+\end{definicion}
+
+McCloskey y Cohen~\cite{mccloskey} mostraron en 1989 que una red entrenada secuencialmente en dos tareas pierde casi por completo la primera al aprender la segunda, a diferencia de lo que ocurre en el aprendizaje humano. La causa es que los mismos parámetros codifican ambas tareas y el gradiente de $\mathcal{L}_B$ no tiene en cuenta cuánto importa cada parámetro para~$A$.
+
+\begin{ejemplo}[El olvido en la práctica del módulo]\label{ej:olvido-practica}
+La práctica mide la pérdida del mini-GPT sobre el texto de preentrenamiento antes y después del ajuste supervisado:
+\begin{center}\small
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Modelo & Exactitud en prueba & Pérdida de texto (nats) \\
+\midrule
+Base & $0$ & $0{,}192$ \\
+SFT completo ($\eta=10^{-3}$) & $0{,}300$ & $2{,}073$ \\
+SFT con LoRA ($r=4$, $\eta=10^{-2}$) & $0{,}450$ & $5{,}058$ \\
+LoRA con el adaptador desactivado & $0$ & $0{,}192$ \\
+LoRA con repetición de texto & $0{,}475$ & $0{,}194$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+La pérdida de texto de los modelos ajustados se dispara. Desactivar el adaptador LoRA devuelve exactamente el modelo base, porque la matriz $W$ no se ha modificado (\cref{tema:5}). Mezclar en cada paso una fracción de pérdida de preentrenamiento (repetición, \cref{def:replay}) conserva la tarea y casi no olvida.
+\end{ejemplo}
+
+\section{Un modelo cuadrático del compromiso}
+
+\begin{proposicion}[Muelle hacia el modelo preentrenado]\label{prop:muelle}
+Sean $a,\theta_0\in\R$ y $\lambda\ge 0$, y sea
+\[
+\mathcal{L}(\theta)=(\theta-a)^{2}+\lambda(\theta-\theta_0)^{2}.
+\]
+El único minimizador es $\theta^{\ast}=(a+\lambda\theta_0)/(1+\lambda)$. En él, el olvido medido como $(\theta^{\ast}-\theta_0)^{2}$ y el error en la tarea nueva $(\theta^{\ast}-a)^{2}$ valen
+\[
+(\theta^{\ast}-\theta_0)^{2}=\frac{(a-\theta_0)^{2}}{(1+\lambda)^{2}},\qquad (\theta^{\ast}-a)^{2}=\frac{\lambda^{2}(a-\theta_0)^{2}}{(1+\lambda)^{2}}.
+\]
+\end{proposicion}
+
+\begin{proof}
+$\mathcal{L}'(\theta)=2(\theta-a)+2\lambda(\theta-\theta_0)$ se anula si y solo si $\theta(1+\lambda)=a+\lambda\theta_0$. Como $\mathcal{L}''=2(1+\lambda)>0$, $\mathcal{L}$ es estrictamente convexa y el punto crítico es el mínimo global. Además, $\theta^{\ast}-\theta_0=(a-\theta_0)/(1+\lambda)$ y $\theta^{\ast}-a=\lambda(\theta_0-a)/(1+\lambda)$; elevando al cuadrado se obtienen las fórmulas.
+\end{proof}
+
+\begin{corolario}\label{cor:frontera}
+Las distancias $\abs{\theta^{\ast}-\theta_0}$ y $\abs{\theta^{\ast}-a}$ suman $\abs{a-\theta_0}$ para todo $\lambda\ge 0$: $\theta^{\ast}$ recorre el segmento entre $a$ y $\theta_0$, desde $\theta^{\ast}=a$ ($\lambda=0$, olvido máximo) hasta $\theta^{\ast}\to\theta_0$ ($\lambda\to\infty$, ningún aprendizaje).
+\end{corolario}
+
+\begin{proof}
+Por la proposición, $\abs{\theta^{\ast}-\theta_0}+\abs{\theta^{\ast}-a}=\frac{1+\lambda}{1+\lambda}\abs{a-\theta_0}$. Los límites se leen en la expresión de $\theta^{\ast}$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:muelle}
+Con $\theta_0=1$ y $a=3$, la \cref{prop:muelle} da $\theta^{\ast}=(3+\lambda)/(1+\lambda)$:
+\begin{center}\small
+\begin{tabular}{@{}cccc@{}}
+\toprule
+$\lambda$ & $\theta^{\ast}$ & Olvido $(\theta^{\ast}-1)^{2}$ & Error en la tarea $(\theta^{\ast}-3)^{2}$ \\
+\midrule
+$0$ & $3$ & $4$ & $0$ \\
+$1$ & $2$ & $1$ & $1$ \\
+$3$ & $1{,}5$ & $0{,}25$ & $2{,}25$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{ejemplo}
+
+La penalización $\lambda(\theta-\theta_0)^{2}$ es la energía potencial de un muelle de constante $2\lambda$ anclado en $\theta_0$, y $\theta^{\ast}$ es el punto de equilibrio entre dos fuerzas lineales. El problema real tiene millones de parámetros, y no todos importan igual para la tarea antigua: conviene un muelle más rígido en los parámetros importantes. Esa es la idea de EWC.
+
+\section{Consolidación elástica de pesos}
+
+\subsection{Justificación bayesiana}
+
+Sean $\mathcal{D}_A$ y $\mathcal{D}_B$ los datos de las dos tareas, condicionalmente independientes dado $\theta$. Por el teorema de Bayes,
+\begin{equation}\label{eq:bayes-secuencial}
+\ln p(\theta\mid\mathcal{D}_A,\mathcal{D}_B)=\ln p(\mathcal{D}_B\mid\theta)+\ln p(\theta\mid\mathcal{D}_A)-\ln p(\mathcal{D}_B\mid\mathcal{D}_A).
+\end{equation}
+El último término no depende de $\theta$. Toda la información sobre la tarea~$A$ está en la distribución a posteriori $p(\theta\mid\mathcal{D}_A)$, que no puede calcularse exactamente. La \emph{aproximación de Laplace}~\cite[§4.4]{bishop} la sustituye por una gaussiana centrada en su moda.
+
+\begin{definicion}[Aproximación de Laplace]\label{def:laplace}
+Sea $\theta_A$ un máximo de $g(\theta)=\ln p(\theta\mid\mathcal{D}_A)$ y sea $H_A=-\nabla^{2}g(\theta_A)$, definida positiva. La aproximación de Laplace es $p(\theta\mid\mathcal{D}_A)\approx\mathcal{N}(\theta;\theta_A,H_A^{-1})$, que se obtiene del desarrollo de Taylor de segundo orden $g(\theta)\approx g(\theta_A)-\frac12(\theta-\theta_A)\T H_A(\theta-\theta_A)$, en el que el término lineal se anula porque $\nabla g(\theta_A)=0$.
+\end{definicion}
+
+Sustituyendo en~\eqref{eq:bayes-secuencial}, maximizar la distribución a posteriori conjunta equivale aproximadamente a minimizar
+\[
+-\ln p(\mathcal{D}_B\mid\theta)+\tfrac12(\theta-\theta_A)\T H_A(\theta-\theta_A).
+\]
+Queda por estimar $H_A$, una matriz de $D\times D$ con $D$ del orden de millones.
+
+\subsection{Información de Fisher}
+
+\begin{definicion}[Información de Fisher]\label{def:fisher}
+Sea $p_\theta$ una familia de distribuciones derivable en $\theta$. Su \emph{matriz de información de Fisher} es
+\[
+\Fis(\theta)=\E_{x\sim p_\theta}\bigl[\nabla_\theta\ln p_\theta(x)\,\nabla_\theta\ln p_\theta(x)\T\bigr].
+\]
+El vector $\nabla_\theta\ln p_\theta(x)$ se llama \emph{función de puntuación} (\emph{score}).
+\end{definicion}
+
+$\Fis(\theta)$ es semidefinida positiva por ser la esperanza de matrices de la forma $vv\T$. Solo requiere gradientes de primer orden.
+
+\begin{proposicion}[Fisher como hessiano esperado]\label{prop:fisher-hess}
+Supóngase que se pueden intercambiar derivada e integral. Entonces $\E_{x\sim p_\theta}[\nabla_\theta\ln p_\theta(x)]=0$ y
+\[
+\Fis(\theta)=-\E_{x\sim p_\theta}\bigl[\nabla^{2}_\theta\ln p_\theta(x)\bigr].
+\]
+\end{proposicion}
+
+\begin{proof}
+Como $\nabla\ln p_\theta=\nabla p_\theta/p_\theta$, se tiene $\E[\nabla\ln p_\theta]=\int\nabla p_\theta(x)\,dx=\nabla\int p_\theta(x)\,dx=\nabla 1=0$. Derivando de nuevo, $\nabla^{2}\ln p_\theta=\nabla^{2}p_\theta/p_\theta-\nabla\ln p_\theta\,\nabla\ln p_\theta\T$. Tomando esperanzas, el primer término da $\int\nabla^{2}p_\theta(x)\,dx=\nabla^{2}1=0$, de modo que $\E[\nabla^{2}\ln p_\theta]=-\Fis(\theta)$.
+\end{proof}
+
+Si $\mathcal{D}_A$ consta de $n$ ejemplos y la distribución a priori es plana, $H_A=-\sum_{i}\nabla^{2}\ln p_\theta(x_i)\big|_{\theta_A}$, y por la ley de los grandes números y la \cref{prop:fisher-hess} se aproxima por $n\,\Fis(\theta_A)$ cuando el modelo describe bien los datos. Kirkpatrick \emph{et al.} se quedan además con la diagonal, $F_i=\Fis_{ii}(\theta_A)$, que se estima promediando los cuadrados de las componentes del gradiente.
+
+\begin{definicion}[EWC]\label{def:ewc}
+Sean $\theta_A$ los parámetros tras la tarea~$A$ y $F_i$ la diagonal de su matriz de Fisher. La \emph{consolidación elástica de pesos} minimiza
+\[
+\mathcal{L}_{\mathrm{EWC}}(\theta)=\mathcal{L}_B(\theta)+\sum_{i=1}^{D}\frac{\lambda}{2}F_i\,(\theta_i-\theta_{A,i})^{2},
+\]
+donde $\lambda>0$ regula la importancia de la tarea antigua~\cite{kirkpatrick}.
+\end{definicion}
+
+Cada parámetro tiene su propio muelle, de constante $\lambda F_i$: los parámetros a los que la verosimilitud de la tarea~$A$ es sensible (Fisher grande) quedan rígidos y los demás pueden moverse libremente. La \cref{prop:muelle} es el caso de un solo parámetro en el que el coeficiente $\frac{\lambda}{2}F$ de EWC hace el papel del $\lambda$ de la proposición.
+
+\section{Otros remedios}
+
+\begin{definicion}[Repetición]\label{def:replay}
+La \emph{repetición} (\emph{replay}) mezcla en cada paso ejemplos de la tarea antigua: con $\beta\in[0,1)$, se minimiza $(1-\beta)\mathcal{L}_B(\theta)+\beta\,\mathcal{L}_A(\theta)$.
+\end{definicion}
+
+Otros remedios habituales son una tasa de aprendizaje pequeña y pocas épocas, las técnicas de ULMFiT (\cref{tema:1}) y modificar pocos parámetros, como hacen los métodos del \cref{tema:4} y LoRA (\cref{tema:5}). El módulo~21 penalizará la divergencia de Kullback--Leibler entre el modelo ajustado y uno de referencia. Esa penalización actúa en el espacio de las distribuciones de salida, pero localmente coincide con un muelle en el espacio de parámetros cuya rigidez es la información de Fisher.
+
+\begin{proposicion}[Desarrollo local de la divergencia KL]\label{prop:kl-fisher}
+Bajo las hipótesis de la \cref{prop:fisher-hess}, y si $\ln p_\theta$ es tres veces derivable,
+\[
+D_{\mathrm{KL}}\bigl(p_{\theta_0}\,\big\|\,p_{\theta_0+\delta}\bigr)=\tfrac12\,\delta\T\Fis(\theta_0)\,\delta+O(\norm{\delta}^{3}).
+\]
+\end{proposicion}
+
+\begin{proof}
+Sea $k(\delta)=D_{\mathrm{KL}}(p_{\theta_0}\|p_{\theta_0+\delta})=\E_{x\sim p_{\theta_0}}[\ln p_{\theta_0}(x)-\ln p_{\theta_0+\delta}(x)]$. Se tiene $k(0)=0$. Su gradiente en $\delta=0$ es $-\E_{p_{\theta_0}}[\nabla\ln p_{\theta_0}]=0$ por la \cref{prop:fisher-hess}, y su hessiano en $\delta=0$ es $-\E_{p_{\theta_0}}[\nabla^{2}\ln p_{\theta_0}]=\Fis(\theta_0)$ por la misma proposición. El desarrollo de Taylor de segundo orden con resto de orden tres da el enunciado.
+\end{proof}
+
+\begin{lecturas}
+\item McCloskey y Cohen~\cite{mccloskey}, descripción original de la interferencia catastrófica.
+\item Kirkpatrick \emph{et al.}~\cite{kirkpatrick}, sección sobre la consolidación elástica de pesos y su justificación bayesiana.
+\item Bishop~\cite{bishop}, §4.4 «The Laplace Approximation».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §7.1.1 «$L^2$ Parameter Regularization».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-remedios}
+Enumere cuatro remedios contra el olvido catastrófico y clasifíquelos según actúen sobre los datos, sobre la pérdida, sobre el optimizador o sobre los parámetros que se entrenan. ¿Cuál de ellos permite recuperar \emph{exactamente} el modelo base después del ajuste, y por qué?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-muelle}
+En el modelo cuadrático con $\theta_0=1$, tarea $(\theta-3)^{2}$ y muelle $\lambda(\theta-\theta_0)^{2}$, deduzca $\theta^{\ast}(\lambda)$ sin usar la \cref{prop:muelle} y calcule $\theta^{\ast}$, el olvido $(\theta^{\ast}-1)^{2}$ y el error en la tarea para $\lambda=2$. ¿Qué ocurre cuando $\lambda\to\infty$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-ewc}
+Un modelo tiene dos parámetros, con $\theta_A=(1,1)$ tras la tarea antigua y diagonal de Fisher $F=(4;\,0{,}25)$. La tarea nueva tiene pérdida $\mathcal{L}_B(\theta)=(\theta_1-3)^{2}+(\theta_2-3)^{2}$. Con $\lambda=2$, minimice $\mathcal{L}_{\mathrm{EWC}}$ y calcule la penalización $\frac12\sum_iF_i(\theta^{\ast}_i-1)^{2}$, que aproxima el aumento de la pérdida antigua, y el error en la tarea nueva $\mathcal{L}_B(\theta^{\ast})$. ¿Qué parámetro se mueve más y por qué?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-replay}
+Con un solo parámetro, $\mathcal{L}_B(\theta)=(\theta-3)^{2}$ y $\mathcal{L}_A(\theta)=(\theta-1)^{2}$, la repetición con proporción $\beta$ minimiza $(1-\beta)\mathcal{L}_B+\beta\mathcal{L}_A$. (a) Halle $\theta^{\ast}(\beta)$ y evalúelo para $\beta=0{,}25$. (b) Compruebe que coincide con el muelle de la \cref{prop:muelle} para $\lambda=\beta/(1-\beta)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-fisher}
+Sea una variable de Bernoulli parametrizada por su logit, $p_z(1)=\sigma(z)$ y $p_z(0)=1-\sigma(z)$, con $\sigma$ la función logística. (a) Calcule la función de puntuación y demuestre que $\Fis(z)=\sigma(z)(1-\sigma(z))$. (b) Evalúela en $z=0$ y en $z=\ln 9$. (c) Si estos fueran dos parámetros de un modelo, ¿cuál quedaría más rígido con EWC?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-gbc}
+Sea $\mathcal{L}_B(\theta)=\frac12(\theta-\theta_B)\T H(\theta-\theta_B)$, con $H$ simétrica definida positiva de autovalores $h_1,\dots,h_D$ y autovectores ortonormales $q_1,\dots,q_D$, y sea la penalización $\frac{\lambda}{2}\norm{\theta-\theta_0}^{2}$. (a) Demuestre que el minimizador es $\theta^{\ast}=(H+\lambda I)^{-1}(H\theta_B+\lambda\theta_0)$. (b) Demuestre que la componente de $\theta^{\ast}-\theta_0$ en la dirección $q_i$ es la de $\theta_B-\theta_0$ multiplicada por $h_i/(h_i+\lambda)$. (c) Evalúe $\theta^{\ast}$ con $H=\diag(10;\,0{,}1)$, $\lambda=1$, $\theta_0=0$ y $\theta_B=(1,1)$, e interprete el resultado.
+\fuente{adaptado de Goodfellow, Bengio y Courville~\cite{gbc}, §7.1.1 (análisis cuadrático de la penalización $L^{2}$, aquí centrada en $\theta_0$ en lugar de en el origen).}
+\end{ejercicio}

@@ -1,0 +1,221 @@
+% =====================================================================
+\chapter{Sondas y métodos de atribución}
+\label{tema:2}
+% =====================================================================
+
+Este tema estudia dos familias de herramientas que interrogan a un modelo sin modificarlo. Las \emph{sondas} preguntan si una propiedad está codificada en las activaciones de una capa; los \emph{métodos de atribución} preguntan qué partes de la entrada son responsables de una salida. Las sondas lineales siguen a Alain y Bengio~\cite{alain} y al §10.2 de Jurafsky y Martin~\cite{jm3}; las tareas de control, a Hewitt y Liang~\cite{hewitt-liang}, y la sonda estructural, a Hewitt y Manning~\cite{hewitt-manning}. Los gradientes integrados y sus axiomas proceden de Sundararajan, Taly y Yan~\cite{sundararajan}, y los valores de Shapley aplicados a la explicación de modelos, de Lundberg y Lee~\cite{lundberg}. La regresión logística y su relación con los modelos generativos gaussianos remiten al módulo~8 y al §4.2 de Bishop~\cite{bishop}.
+
+\section{Sondas lineales}
+
+\begin{definicion}[Sonda lineal]\label{def:sonda}
+Sea $h_\ell(u)\in\R^{d}$ la activación de la capa $\ell$ de un modelo congelado para la entrada $u$, y sea $y(u)\in\{0,1\}$ una propiedad de la entrada. Una \emph{sonda lineal} es un clasificador logístico
+\[
+p(y=1\mid h)=\sigma\bigl(w\T h+w_0\bigr),\qquad \sigma(z)=\frac{1}{1+e^{-z}},
+\]
+entrenado con la entropía cruzada sobre pares $(h_\ell(u_i),y_i)$ sin propagar gradientes al modelo. Si la sonda alcanza una exactitud alta en datos de prueba, se dice que la propiedad es \emph{linealmente decodificable} en la capa $\ell$~\cite{alain}.
+\end{definicion}
+
+Alain y Bengio entrenaron sondas en cada capa de redes de visión y observaron que la separabilidad lineal de las clases aumenta de forma monótona con la profundidad, aunque el entrenamiento solo la exige en la última capa~\cite{alain}.
+
+\begin{proposicion}[El entrenamiento de una sonda es convexo]\label{prop:sonda-convexa}
+Sea $\tilde y_i=2y_i-1\in\{-1,1\}$. La pérdida media
+\[
+J(w,w_0)=\frac1n\sum_{i=1}^{n}\ln\bigl(1+e^{-\tilde y_i(w\T h_i+w_0)}\bigr)
+\]
+coincide con la entropía cruzada de la sonda y es una función convexa de $(w,w_0)$.
+\end{proposicion}
+
+\begin{proof}
+Si $y_i=1$, el término es $-\ln\sigma(z_i)=\ln(1+e^{-z_i})$; si $y_i=0$, es $-\ln(1-\sigma(z_i))=-\ln\sigma(-z_i)=\ln(1+e^{z_i})$, con $z_i=w\T h_i+w_0$. En ambos casos vale $g(-\tilde y_iz_i)$ con $g(t)=\ln(1+e^{t})$. La función $g$ es convexa, porque $g''(t)=\sigma(t)(1-\sigma(t))>0$. Como $(w,w_0)\mapsto-\tilde y_iz_i$ es lineal y la composición de una función convexa con una aplicación afín es convexa, cada sumando es convexo, y también lo es su media.
+\end{proof}
+
+La convexidad garantiza que el resultado de la sonda no depende de la inicialización: si la sonda falla, no es por un mal mínimo local, sino porque la propiedad no es linealmente separable en esa capa (o porque faltan datos).
+
+\begin{ejemplo}[Una sonda a lo largo del flujo]\label{ej:sonda}
+Sea la sonda $w=(2,-1)$, $w_0=0$, aplicada a los flujos del \cref{ej:atribucion}. En $(1,0)$ y en $(1{,}5;\allowbreak\ 1)$ se obtiene $z=2$ y $\sigma(2)=0{,}881$; en el flujo final $(1;\allowbreak\ 1{,}5)$, $z=0{,}5$ y $\sigma=0{,}622$. Por la linealidad de $z$, la aportación de cada componente a la puntuación de la sonda es $w\T c$: la atención no modifica la propiedad ($w\T a_1=0$) y el MLP la debilita ($w\T m_1=-1{,}5$).
+\end{ejemplo}
+
+\section{Qué demuestra una sonda}
+\label{sec:2-control}
+
+Que una sonda acierte no implica que el modelo use la propiedad. Pueden fallar dos cosas: que la sonda sea tan expresiva que aprenda la tarea por sí misma, y que la información esté presente pero el modelo no la lea.
+
+\begin{definicion}[Tarea de control y selectividad]\label{def:control}
+Sea una tarea lingüística que asigna a cada aparición de una palabra una etiqueta de un conjunto $\mathcal{Y}$. Su \emph{tarea de control} asigna a cada \emph{tipo} de palabra una etiqueta de $\mathcal{Y}$ elegida al azar una vez y la usa para todas sus apariciones. La \emph{selectividad} de una sonda es la diferencia entre su exactitud en la tarea lingüística y en la tarea de control~\cite[§2]{hewitt-liang}.
+\end{definicion}
+
+La tarea de control solo puede resolverse memorizando la correspondencia entre tipos de palabra y etiquetas, sin usar el contexto. Una sonda selectiva acierta la tarea real y falla la de control. Hewitt y Liang observan, para el etiquetado gramatical con la capa~1 de ELMo, que una sonda lineal alcanza el $97{,}2\,\%$ en la tarea y el $71{,}2\,\%$ en la de control, mientras que un perceptrón de una capa oculta alcanza el $97{,}3\,\%$ y el $92{,}8\,\%$~\cite[§3.5]{hewitt-liang}: la sonda más potente apenas gana exactitud y pierde casi toda la selectividad.
+
+\begin{observacion}\label{obs:usado}
+Decodificable no es lo mismo que usado. Para afirmar que el modelo \emph{usa} una dirección hay que intervenir sobre ella y observar el cambio de conducta (\cref{tema:5}); Jurafsky y Martin~\cite[§10.2]{jm3} hacen la misma advertencia.
+\end{observacion}
+
+Una sonda tampoco identifica de forma única la dirección de un concepto. La proposición siguiente muestra que el vector $w$ de la regresión logística no coincide en general con la diferencia de medias de las dos clases.
+
+\begin{proposicion}[Clases gaussianas con covarianza común]\label{prop:lda}
+Sean $h\mid y=k\sim\mathcal{N}(\mu_k,\Sigma)$ para $k\in\{0,1\}$, con $\Sigma$ definida positiva y $P(y=1)=\pi$. Entonces
+\[
+P(y=1\mid h)=\sigma\bigl(w\T h+w_0\bigr),\qquad w=\Sigma^{-1}(\mu_1-\mu_0).
+\]
+\end{proposicion}
+
+\begin{proof}
+Por el teorema de Bayes, $P(y=1\mid h)=\sigma(a)$ con $a=\ln\frac{\pi\,\mathcal{N}(h;\mu_1,\Sigma)}{(1-\pi)\,\mathcal{N}(h;\mu_0,\Sigma)}$~\cite[§4.2]{bishop}. Las constantes de normalización de las dos densidades coinciden, y
+\[
+a=-\tfrac12(h-\mu_1)\T\Sigma^{-1}(h-\mu_1)+\tfrac12(h-\mu_0)\T\Sigma^{-1}(h-\mu_0)+\ln\tfrac{\pi}{1-\pi}.
+\]
+Al desarrollar, los términos $h\T\Sigma^{-1}h$ se cancelan y queda $a=(\mu_1-\mu_0)\T\Sigma^{-1}h+w_0$, con $w_0$ independiente de $h$. Como $\Sigma^{-1}$ es simétrica, $(\mu_1-\mu_0)\T\Sigma^{-1}h=w\T h$.
+\end{proof}
+
+\begin{ejemplo}[La sonda corrige el ruido correlacionado]\label{ej:lda}
+Sean $\mu_1-\mu_0=(1,0)$ y $\Sigma=\begin{pmatrix}1&0{,}8\\0{,}8&1\end{pmatrix}$. Como $\det\Sigma=0{,}36$, $w=\Sigma^{-1}(1,0)=\frac{1}{0{,}36}(1,-0{,}8)=(2{,}778;\allowbreak\ -2{,}222)$. La segunda coordenada no distingue las clases, pero está correlacionada con el ruido de la primera, y el clasificador óptimo la resta para cancelarlo. La diferencia de medias $(1,0)$ indica en qué dirección se \emph{mueven} las activaciones cuando cambia el concepto; $w$ indica cómo \emph{leerlo} mejor. Para intervenir sobre el concepto (\cref{tema:5}) se usa con frecuencia la primera.
+\end{ejemplo}
+
+\section{La sonda estructural}
+
+Las sondas de clasificación preguntan por propiedades de una palabra. Hewitt y Manning preguntan por una estructura completa: el árbol de dependencias de la frase.
+
+\begin{definicion}[Sonda estructural]\label{def:estructural}
+Sean $h_1,\dots,h_T$ las representaciones de las palabras de una frase y $B\in\R^{r\times d}$. La \emph{sonda estructural de distancia} define
+\[
+d_B(h_i,h_j)^{2}=\bigl(B(h_i-h_j)\bigr)\T\bigl(B(h_i-h_j)\bigr)=\norm{B(h_i-h_j)}^{2}
+\]
+y entrena $B$ para que $d_B(h_i,h_j)^2$ aproxime la distancia entre las palabras $i$ y $j$ en el árbol sintáctico. La \emph{sonda de profundidad} entrena $\norm{Bh_i}^{2}$ para que aproxime la profundidad de la palabra $i$ en el árbol~\cite{hewitt-manning}.
+\end{definicion}
+
+Como $d_B(h_i,h_j)^2=(h_i-h_j)\T B\T B(h_i-h_j)$ y $B\T B$ es semidefinida positiva, la sonda busca una métrica lineal en el espacio de representaciones. Hewitt y Manning encuentran transformaciones de este tipo para ELMo y BERT, y no para las representaciones de control, lo que sugiere que los árboles sintácticos están codificados en la geometría de esos modelos~\cite{hewitt-manning}.
+
+\section{La hipótesis de representación lineal}
+
+Las sondas lineales, las analogías de palabras del módulo~2 ($\text{rey}-\text{hombre}+\text{mujer}\approx\text{reina}$) y los vectores de dirección del \cref{tema:5} apuntan a una misma conjetura.
+
+\begin{definicion}[Hipótesis de representación lineal]\label{def:hrl}
+La \emph{hipótesis de representación lineal} afirma que muchos conceptos de alto nivel están representados en el espacio de activaciones como \emph{direcciones}: existe un vector $v$ tal que la presencia o la intensidad del concepto se lee mediante la proyección $v\T h$ y se modifica sumando múltiplos de $v$.
+\end{definicion}
+
+Park, Choe y Veitch~\cite{park} formalizan esta idea para los modelos de lenguaje y distinguen la versión «de lectura» (sondas) de la versión «de escritura» (intervenciones). El \cref{tema:3} explica por qué las direcciones, y no las neuronas individuales, son la unidad natural de análisis.
+
+\section{Atribución por gradientes y gradientes integrados}
+
+Sea $F:\R^{n}\to\R$ una función diferenciable a trozos, por ejemplo la probabilidad o el logit de un token en función de los embeddings de entrada. Un \emph{método de atribución} asigna a cada entrada $x$ un vector $(A_1(x),\dots,A_n(x))$ que mide la responsabilidad de cada coordenada en el valor $F(x)$. Muchos métodos lo hacen respecto de una \emph{base} $x'$ que representa la ausencia de información (por ejemplo, el embedding nulo).
+
+\begin{definicion}[Axiomas de sensibilidad y completitud]\label{def:axiomas}
+Un método de atribución con base $x'$ cumple:
+\begin{enumerate}
+  \item \emph{sensibilidad}~(a) si, para toda $x$ que difiere de $x'$ en una sola coordenada $i$ con $F(x)\neq F(x')$, se tiene $A_i(x)\neq 0$;
+  \item \emph{invariancia ante la implementación} si da las mismas atribuciones a dos redes que calculan la misma función;
+  \item \emph{completitud} si $\sum_{i=1}^{n}A_i(x)=F(x)-F(x')$.
+\end{enumerate}
+\end{definicion}
+
+\begin{ejemplo}[El gradiente no es sensible]\label{ej:saturacion}
+Sea $F(x)=1-\relu(1-x)$ en $\R$, con base $x'=0$. Entonces $F(0)=0$ y $F(2)=1$, pero $F'(2)=0$, porque $F$ es constante e igual a~1 en $[1,\infty)$. La atribución por gradiente, $A(x)=F'(x)$, y la de gradiente por entrada, $A(x)=x\,F'(x)$, valen~0 en $x=2$, aunque la entrada es la única responsable del cambio de~0 a~1. Es el ejemplo de saturación de Sundararajan \emph{et al.}~\cite[§2.1]{sundararajan}.
+\end{ejemplo}
+
+\begin{definicion}[Gradientes integrados]\label{def:ig}
+El \emph{gradiente integrado} de la coordenada $i$ en $x$, con base $x'$, es
+\[
+\IG_i(x;x')=(x_i-x'_i)\int_{0}^{1}\frac{\partial F}{\partial x_i}\bigl(x'+\alpha(x-x')\bigr)\,d\alpha,
+\]
+la integral del gradiente a lo largo del segmento que va de $x'$ a $x$~\cite[§3, ec.~(1)]{sundararajan}.
+\end{definicion}
+
+\begin{proposicion}[Completitud de los gradientes integrados]\label{prop:completitud}
+Si $F$ es continua en el segmento $[x',x]$ y diferenciable en él salvo en un número finito de puntos, entonces
+\[
+\sum_{i=1}^{n}\IG_i(x;x')=F(x)-F(x').
+\]
+En particular, los gradientes integrados cumplen la sensibilidad~(a).
+\end{proposicion}
+
+\begin{proof}
+Sea $\gamma(\alpha)=x'+\alpha(x-x')$ y $g(\alpha)=F(\gamma(\alpha))$ para $\alpha\in[0,1]$. Por la regla de la cadena (módulo~4), allí donde $F$ es diferenciable,
+\[
+g'(\alpha)=\sum_{i=1}^{n}\frac{\partial F}{\partial x_i}(\gamma(\alpha))\,\gamma_i'(\alpha)=\sum_{i=1}^{n}\frac{\partial F}{\partial x_i}(\gamma(\alpha))\,(x_i-x'_i).
+\]
+La función $g$ es continua y derivable salvo en un número finito de puntos, de modo que el teorema fundamental del cálculo, aplicado en cada subintervalo, da $\int_0^1g'(\alpha)\,d\alpha=g(1)-g(0)=F(x)-F(x')$. Intercambiando la suma finita y la integral, el miembro izquierdo es $\sum_i\IG_i(x;x')$. Para la sensibilidad, si $x$ y $x'$ difieren solo en la coordenada $i$, los demás factores $x_j-x'_j$ son nulos, $\IG_j=0$ para $j\neq i$, y la completitud da $\IG_i=F(x)-F(x')\neq 0$.
+\end{proof}
+
+En el \cref{ej:saturacion}, $\IG(2;0)=2\int_0^1F'(2\alpha)\,d\alpha=2\int_0^{1/2}1\,d\alpha=1=F(2)-F(0)$. Los gradientes integrados dependen solo de las derivadas de la función, no de cómo se implementa, y por eso cumplen también la invariancia ante la implementación. Sundararajan \emph{et al.} demuestran además que son el único método de «camino» que respeta la simetría entre variables~\cite[§4.2, teorema~1]{sundararajan}. En la práctica, la integral se aproxima con una suma de Riemann de entre 20 y 300 pasos, y se comprueba que las atribuciones suman aproximadamente $F(x)-F(x')$~\cite[§5]{sundararajan}.
+
+\section{Valores de Shapley y SHAP}
+
+Los gradientes integrados reparten un cambio continuo. Los valores de Shapley, de la teoría de juegos cooperativos, reparten el valor de un conjunto de «jugadores» que pueden estar presentes o ausentes.
+
+\begin{definicion}[Valor de Shapley]\label{def:shapley}
+Sea $N=\{1,\dots,M\}$ y sea $v:2^{N}\to\R$ con $v(\varnothing)=0$, un \emph{juego cooperativo}. El \emph{valor de Shapley} del jugador $i$ es
+\[
+\phi_i(v)=\sum_{S\subseteq N\setminus\{i\}}\frac{\abs{S}!\,(M-\abs{S}-1)!}{M!}\,\bigl(v(S\cup\{i\})-v(S)\bigr).
+\]
+\end{definicion}
+
+\begin{proposicion}[Forma por permutaciones y eficiencia]\label{prop:shapley}
+Sea $\Pi$ el conjunto de las $M!$ ordenaciones de $N$ y, para $\pi\in\Pi$, sea $P_i^{\pi}$ el conjunto de jugadores que preceden a $i$ en $\pi$. Entonces
+\[
+\phi_i(v)=\frac{1}{M!}\sum_{\pi\in\Pi}\bigl(v(P_i^{\pi}\cup\{i\})-v(P_i^{\pi})\bigr),\qquad \sum_{i=1}^{M}\phi_i(v)=v(N).
+\]
+\end{proposicion}
+
+\begin{proof}
+Fijado $S\subseteq N\setminus\{i\}$, las ordenaciones en las que los predecesores de $i$ son exactamente $S$ se obtienen colocando primero los $\abs{S}$ elementos de $S$ en cualquier orden, después $i$ y después los $M-\abs{S}-1$ restantes en cualquier orden: hay $\abs{S}!\,(M-\abs{S}-1)!$. Agrupando las ordenaciones según $P_i^{\pi}$ se obtiene la \cref{def:shapley}. Para la eficiencia, se fija $\pi=(\pi_1,\dots,\pi_M)$ y se suman las contribuciones marginales de todos los jugadores: la suma es telescópica, $\sum_{k=1}^{M}\bigl(v(\{\pi_1,\dots,\pi_k\})-v(\{\pi_1,\dots,\pi_{k-1}\})\bigr)=v(N)-v(\varnothing)=v(N)$. Promediando sobre las $M!$ ordenaciones se obtiene $\sum_i\phi_i=v(N)$.
+\end{proof}
+
+Los valores de Shapley cumplen además la \emph{simetría} (dos jugadores intercambiables reciben lo mismo), el \emph{jugador nulo} (quien no cambia ninguna coalición recibe~0) y la \emph{linealidad} en $v$; el teorema de Shapley afirma que son la única asignación con estas cuatro propiedades.
+
+\begin{ejemplo}[Un juego de tres jugadores]\label{ej:shapley}
+Sea $v(\{1\})=1$, $v(\{2\})=2$, $v(\{3\})=0$, $v(\{1,2\})=4$, $v(\{1,3\})=1$, $v(\{2,3\})=3$ y $v(\{1,2,3\})=5$. Para el jugador~1, con pesos $\tfrac13$ para $S=\varnothing$ y $S=\{2,3\}$ y $\tfrac16$ para $S=\{2\}$ y $S=\{3\}$:
+\[
+\phi_1=\tfrac13(1-0)+\tfrac16(4-2)+\tfrac16(1-0)+\tfrac13(5-3)=\tfrac13+\tfrac13+\tfrac16+\tfrac23=1{,}5.
+\]
+Del mismo modo, $\phi_2=3$ y $\phi_3=0{,}5$, y $1{,}5+3+0{,}5=5=v(N)$, como exige la \cref{prop:shapley}.
+\end{ejemplo}
+
+\begin{definicion}[SHAP]\label{def:shap}
+Sea $f$ un modelo, $x$ una entrada con $M$ características y, para $S\subseteq N$, sea $f_x(S)$ el valor esperado de $f$ cuando se fijan las características de $S$ a sus valores en $x$ y las demás se toman de una distribución de referencia. Los \emph{valores SHAP} de $x$ son los valores de Shapley del juego $v(S)=f_x(S)-f_x(\varnothing)$~\cite[§2 y teorema~1]{lundberg}.
+\end{definicion}
+
+Lundberg y Lee demuestran que, entre las explicaciones aditivas $g(z')=\phi_0+\sum_i\phi_iz'_i$, los valores SHAP son la única que cumple sus propiedades de precisión local, ausencia y consistencia~\cite[teorema~1]{lundberg}. En un modelo de lenguaje, los jugadores pueden ser los tokens del contexto y «ausente» puede significar sustituirlos por un token neutro. El coste exacto crece como $2^{M}$, por lo que se usan aproximaciones por muestreo o el método \emph{Kernel SHAP}.
+
+\begin{proposicion}[SHAP de un modelo lineal]\label{prop:shap-lineal}
+Si $f(x)=w_0+\sum_iw_ix_i$ y la distribución de referencia tiene características independientes con medias $\E[X_i]$, entonces $\phi_i=w_i\bigl(x_i-\E[X_i]\bigr)$.
+\end{proposicion}
+
+\begin{proof}
+Por la linealidad de la esperanza, $f_x(S)=w_0+\sum_{i\in S}w_ix_i+\sum_{i\notin S}w_i\E[X_i]$. La contribución marginal de $i$ a cualquier coalición $S\not\ni i$ es $f_x(S\cup\{i\})-f_x(S)=w_i(x_i-\E[X_i])$, que no depende de $S$. Como los pesos de la \cref{def:shapley} suman~1 (son las probabilidades de los posibles conjuntos de predecesores), $\phi_i=w_i(x_i-\E[X_i])$.
+\end{proof}
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, §10.2 «Probing».
+\item Alain y Bengio~\cite{alain}; Hewitt y Liang~\cite{hewitt-liang}, §2 y §3.5; Hewitt y Manning~\cite{hewitt-manning}.
+\item Sundararajan, Taly y Yan~\cite{sundararajan}, §2 a §5.
+\item Lundberg y Lee~\cite{lundberg}, §2 a §4.
+\item Bishop~\cite{bishop}, §4.2, para los modelos generativos con covarianza común.
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-selectividad}
+Con los datos de Hewitt y Liang citados en la \cref{sec:2-control}, calcule la selectividad de la sonda lineal y del perceptrón. ¿Cuál de las dos permite concluir más sobre la representación? ¿Qué conclusión sería errónea si solo se mirara la exactitud en la tarea lingüística?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-sonda}
+Sobre los flujos del \cref{eje:1-lens}, aplique la sonda $w=(1,1)$, $w_0=-1$ tras cada etapa. ¿Qué componente escribe la propiedad y cuál la deja igual? Explique por qué el MLP, que cambia mucho los logits, no altera la puntuación de la sonda.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-ig}
+Sea $F(x_1,x_2)=x_1x_2$, con base $x'=(0,0)$ y entrada $x=(2,3)$. (a) Calcule los gradientes integrados y compruebe la completitud. (b) Calcule la atribución de gradiente por entrada, $x_i\,\partial F/\partial x_i(x)$, y compruebe que no es completa.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-shap}
+Sea $f(x)=x_1x_2+x_3$, la entrada $x=(1,2,3)$ y la referencia $(0,0,0)$, de modo que $v(S)$ es el valor de $f$ con las coordenadas de $S$ tomadas de $x$ y las demás nulas. (a) Escriba $v(S)$ para los ocho subconjuntos. (b) Calcule los valores de Shapley y compruebe la eficiencia. (c) Calcule los gradientes integrados con base~0 y compárelos.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cuadratica}
+Sea $F(x)=\sum_iw_ix_i+\sum_{i<j}b_{ij}x_ix_j$, con base $x'=0$, y sea $b_{ji}=b_{ij}$. (a) Demuestre que $\IG_i(x;0)=w_ix_i+\tfrac12\sum_{j\neq i}b_{ij}x_ix_j$. (b) Demuestre que el valor de Shapley de la coordenada $i$ en el juego $v(S)=F(x_S)$, donde $x_S$ conserva las coordenadas de $S$ y anula las demás, es el mismo. (c) Interprete el factor $\tfrac12$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cs229}
+(a) Demuestre que el hessiano de la entropía cruzada media de una sonda logística, con $\theta=(w_0,w)$ y $\tilde h_i=(1,h_i)$, es $H=\frac1n\sum_i\sigma_i(1-\sigma_i)\tilde h_i\tilde h_i\T$, y que $z\T Hz\ge 0$ para todo $z$. (b) Con dos activaciones de dimensión~1, $h_1=2$ con $y_1=1$ y $h_2=0$ con $y_2=0$, calcule en $\theta_0=0$ el gradiente, el hessiano y un paso de Newton. (c) Compare la pérdida antes y después del paso.
+\fuente{adaptado de Stanford CS229~\cite{cs229ps}, verano de 2019, \emph{Problem Set}~1, problema~1, apartados (a) y (b) (datos nuevos, interpretados como activaciones de un modelo congelado).}
+\end{ejercicio}

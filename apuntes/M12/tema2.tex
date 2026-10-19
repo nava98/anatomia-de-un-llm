@@ -1,0 +1,170 @@
+% =====================================================================
+\chapter{El algoritmo BPE}
+\label{tema:2}
+% =====================================================================
+
+El algoritmo BPE (\emph{Byte Pair Encoding}) construye un vocabulario de subpalabras de abajo arriba: parte de los símbolos básicos y fusiona, una y otra vez, el par adyacente más frecuente. Lo propuso Gage como método de compresión de datos~\cite{gage}, y Sennrich, Haddow y Birch lo adaptaron a la segmentación de palabras para la traducción automática~\cite[§3.2]{sennrich}; Radford \emph{et al.} lo aplicaron a bytes en GPT-2~\cite[§2.2]{gpt2}. Este tema define el algoritmo, demuestra cuánto acorta cada fusión y prueba que la decodificación recupera el texto. Se sigue~\cite[§2.4]{jm3} y la §2.4 de la tarea~1 de CS336~\cite{cs336}.
+
+\section{Entrenamiento}
+
+\begin{definicion}[Corpus de palabras y pares]\label{def:corpus-bpe}
+Un \emph{corpus de entrenamiento} es un conjunto finito de palabras $w$, cada una con una frecuencia $n_w\ge 1$ y escrita como una secuencia de símbolos de un vocabulario $\V$. Para dos símbolos $a,b\in\V$, la \emph{frecuencia del par} $(a,b)$ es
+\[
+N(a,b)=\sum_{w}n_w\cdot\#\{\,i : w_i=a,\ w_{i+1}=b\,\},
+\]
+el número de posiciones en que $b$ sigue inmediatamente a $a$, ponderado por la frecuencia de cada palabra.
+\end{definicion}
+
+\begin{definicion}[Fusión]
+La \emph{fusión} del par $(a,b)$ sustituye en cada palabra, recorriéndola de izquierda a derecha, cada aparición de $a$ seguido de $b$ por un símbolo nuevo $ab=a\Vert b$, y añade $ab$ al vocabulario.
+\end{definicion}
+
+\begin{definicion}[Entrenamiento de BPE]\label{def:bpe}
+Dados un corpus escrito en un vocabulario inicial $\V_0$ y un número de fusiones $k$, el \emph{entrenamiento de BPE} repite $k$ veces:
+\begin{enumerate}[label=\arabic*.]
+  \item calcular $N(a,b)$ para todos los pares adyacentes;
+  \item elegir un par $(a^{*},b^{*})$ de frecuencia máxima, con una regla de desempate fija;
+  \item fusionarlo y anotar la regla $a^{*}+b^{*}\to a^{*}b^{*}$.
+\end{enumerate}
+El resultado es la \emph{lista ordenada de fusiones} $\mu_1,\dots,\mu_k$, que constituye el tokenizador.
+\end{definicion}
+
+Las palabras se obtienen del texto en un paso previo, la \emph{pretokenización}, de modo que las fusiones nunca cruzan el límite entre dos palabras~\cite[§3.2]{sennrich}. Sennrich \emph{et al.} añaden al final de cada palabra un símbolo especial de fin de palabra para poder reconstruir los espacios.
+
+\begin{proposicion}\label{prop:tam-vocab}
+Tras $k$ fusiones, el vocabulario tiene a lo sumo $\abs{\V_0}+k$ símbolos, con igualdad cuando las $k$ cadenas creadas son distintas entre sí y no pertenecen a $\V_0$. En particular, si $\V_0$ está formado por símbolos de longitud~1, $\abs{\V}=\abs{\V_0}+k$ salvo repeticiones de una misma cadena obtenida por dos caminos distintos.
+\end{proposicion}
+
+\begin{proof}
+Cada fusión añade exactamente un símbolo, $a^{*}\Vert b^{*}$, y no elimina ninguno; por inducción sobre $k$, el número de símbolos añadidos es $k$ y el vocabulario tiene a lo sumo $\abs{\V_0}+k$ elementos distintos. Si los $k$ símbolos creados son cadenas distintas y ajenas a $\V_0$, no hay coincidencias y se alcanza la igualdad. Un símbolo creado tiene longitud al menos~2, de modo que nunca coincide con un símbolo de longitud~1.
+\end{proof}
+
+En la práctica se usa la igualdad $\abs{\V}=\abs{\V_0}+k$, y $k$ es el único hiperparámetro del entrenamiento~\cite[§3.2]{sennrich}.
+
+\begin{lema}\label{lem:solape}
+Si $a\neq b$, dos apariciones del par $(a,b)$ en una secuencia no comparten ninguna posición.
+\end{lema}
+
+\begin{proof}
+Dos apariciones distintas que compartieran una posición ocuparían las posiciones $(i,i+1)$ y $(i+1,i+2)$. El símbolo de la posición $i+1$ sería el segundo del primer par, luego $b$, y el primero del segundo, luego $a$. Así $a=b$, en contra de la hipótesis.
+\end{proof}
+
+\begin{proposicion}[Compresión de una fusión]\label{prop:compresion}
+Sea un corpus con $L$ símbolos en total (contando cada palabra $n_w$ veces) y sea $(a,b)$, con $a\neq b$, un par de frecuencia $N(a,b)=c$. Tras fusionarlo, el corpus tiene $L-c$ símbolos.
+\end{proposicion}
+
+\begin{proof}
+Por el \cref{lem:solape}, las $c$ apariciones ocupan posiciones disjuntas, de modo que la fusión las sustituye todas. Cada sustitución convierte dos símbolos en uno y resta exactamente~1 a la longitud; las sustituciones no interfieren entre sí, así que la longitud total baja en $c$.
+\end{proof}
+
+\begin{observacion}
+Si $a=b$, las apariciones pueden solaparse: «\tok{aaa}» contiene dos pares $(\tok{a},\tok{a})$, pero la fusión de izquierda a derecha solo puede aplicar una y deja «\tok{aa}\sep\tok{a}». En ese caso la longitud baja en el número de apariciones \emph{no solapadas}. Por la \cref{prop:compresion}, elegir el par más frecuente es elegir la fusión que más acorta el corpus en ese paso: BPE es un algoritmo \emph{voraz}. No garantiza la segmentación globalmente más corta con $k$ fusiones, pero funciona bien en la práctica.
+\end{observacion}
+
+\begin{ejemplo}[Entrenamiento a mano]\label{ej:bpe-casa}
+Corpus: «casa» $\times 3$, «casas» $\times 2$, «masa» $\times 1$, «mesa» $\times 1$, con $\V_0$ formado por las letras y $L=3\cdot 4+2\cdot 5+4+4=30$ símbolos. En el primer paso, $(\tok{a},\tok{s})$ aparece una vez en cada «casa», dos en cada «casas», una en «masa» y ninguna en «mesa»: $N(\tok{a},\tok{s})=3+4+1=8$. El \cref{tab:bpe-casa} recoge los cuatro primeros pasos. Cada longitud es la anterior menos la frecuencia del par fusionado, como afirma la \cref{prop:compresion}: $30-8=22$, $22-5=17$, $17-3=14$ y $14-2=12$.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\footnotesize
+\setlength{\tabcolsep}{4pt}
+\caption{Cuatro fusiones de BPE sobre el corpus del \cref{ej:bpe-casa}. El punto separa los símbolos de cada palabra.}\label{tab:bpe-casa}
+\begin{tabularx}{\textwidth}{@{}cll>{\raggedright\arraybackslash}Xr@{}}
+\toprule
+Paso & Pares más frecuentes & Fusión & Corpus resultante & $L$ \\
+\midrule
+0 & --- & --- & \tok{c}\sep\tok{a}\sep\tok{s}\sep\tok{a}\,($\times3$); \tok{c}\sep\tok{a}\sep\tok{s}\sep\tok{a}\sep\tok{s}\,($\times2$); \tok{m}\sep\tok{a}\sep\tok{s}\sep\tok{a}; \tok{m}\sep\tok{e}\sep\tok{s}\sep\tok{a} & 30 \\
+1 & $(\tok{a},\tok{s})$ 8, $(\tok{s},\tok{a})$ 7 & $\tok{a}+\tok{s}$ & \tok{c}\sep\tok{as}\sep\tok{a}\,($\times3$); \tok{c}\sep\tok{as}\sep\tok{as}\,($\times2$); \tok{m}\sep\tok{as}\sep\tok{a}; \tok{m}\sep\tok{e}\sep\tok{s}\sep\tok{a} & 22 \\
+2 & $(\tok{c},\tok{as})$ 5, $(\tok{as},\tok{a})$ 4 & $\tok{c}+\tok{as}$ & \tok{cas}\sep\tok{a}\,($\times3$); \tok{cas}\sep\tok{as}\,($\times2$); \tok{m}\sep\tok{as}\sep\tok{a}; \tok{m}\sep\tok{e}\sep\tok{s}\sep\tok{a} & 17 \\
+3 & $(\tok{cas},\tok{a})$ 3, $(\tok{cas},\tok{as})$ 2 & $\tok{cas}+\tok{a}$ & \tok{casa}\,($\times3$); \tok{cas}\sep\tok{as}\,($\times2$); \tok{m}\sep\tok{as}\sep\tok{a}; \tok{m}\sep\tok{e}\sep\tok{s}\sep\tok{a} & 14 \\
+4 & $(\tok{cas},\tok{as})$ 2, resto 1 & $\tok{cas}+\tok{as}$ & \tok{casa}\,($\times3$); \tok{casas}\,($\times2$); \tok{m}\sep\tok{as}\sep\tok{a}; \tok{m}\sep\tok{e}\sep\tok{s}\sep\tok{a} & 12 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Codificación y decodificación}
+
+\begin{definicion}[Codificación BPE]\label{def:cod-bpe}
+Para codificar una palabra nueva se escribe en símbolos de $\V_0$ y se aplican las fusiones $\mu_1,\dots,\mu_k$ \emph{en el orden en que se aprendieron}, cada una a toda la palabra, de izquierda a derecha. La \emph{decodificación} de una secuencia de tokens es la concatenación de las cadenas que representan.
+\end{definicion}
+
+\begin{ejemplo}\label{ej:codificar}
+Con las fusiones del \cref{tab:bpe-casa}, «pasas» $=\tok{p}\sep\tok{a}\sep\tok{s}\sep\tok{a}\sep\tok{s}$ pasa a $\tok{p}\sep\tok{as}\sep\tok{as}$ con $\mu_1$ y ninguna otra fusión aplica: 3 tokens. «cosas» da $\tok{c}\sep\tok{o}\sep\tok{s}\sep\tok{as}$, 4 tokens, porque el par $(\tok{c},\tok{o})$ nunca se vio. «casasas» da $\tok{casas}\sep\tok{as}$, 2 tokens. Las frecuencias del texto que se codifica no intervienen: solo importa el orden de las fusiones~\cite[§2.4.2]{jm3}.
+\end{ejemplo}
+
+\begin{teorema}[Corrección de BPE]\label{teo:bpe-correcto}
+Sea $\V_0$ un vocabulario inicial tal que toda cadena admite una escritura en símbolos de $\V_0$, y sea $\delta$ la decodificación por concatenación. Para toda cadena $x$, la codificación $\tau(x)$ está definida y $\delta(\tau(x))=x$.
+\end{teorema}
+
+\begin{proof}
+Sea $t^{(j)}=(t^{(j)}_1,\dots,t^{(j)}_{m_j})$ la secuencia de tokens tras aplicar las $j$ primeras fusiones, y sea $\delta(t^{(j)})=t^{(j)}_1\Vert\dots\Vert t^{(j)}_{m_j}$. Se demuestra por inducción sobre $j$ que $\delta(t^{(j)})=x$.
+
+Para $j=0$, $t^{(0)}$ es la escritura de $x$ en símbolos de $\V_0$, que existe por hipótesis, y su concatenación es $x$. Supóngase $\delta(t^{(j-1)})=x$. La fusión $\mu_j=(a,b)$ sustituye ciertos pares de tokens consecutivos $t_i=a$, $t_{i+1}=b$ por el token $a\Vert b$; como la concatenación es asociativa, $\dots\Vert a\Vert b\Vert\dots=\dots\Vert(a\Vert b)\Vert\dots$ y la concatenación total no cambia. Así $\delta(t^{(j)})=x$ para todo $j$, y en particular para $j=k$.
+\end{proof}
+
+\begin{corolario}\label{cor:no-unk}
+Un tokenizador BPE nunca falla: en el peor caso no se aplica ninguna fusión y se devuelven los símbolos de $\V_0$. Con $\V_0=\mathcal{B}$ (BPE a nivel de byte), por el \cref{cor:vocab256} no hay tokens desconocidos.
+\end{corolario}
+
+\section{Desempates y determinismo}
+
+Cuando varios pares empatan en frecuencia máxima, el paso~2 de la \cref{def:bpe} necesita una regla. Cualquier regla sirve, pero debe ser fija para que el tokenizador sea reproducible. La tarea de CS336 elige el par mayor en orden lexicográfico~\cite[§2.4]{cs336}; otra opción frecuente es el primer par que aparece en el corpus. Reglas distintas producen tokenizadores distintos (\cref{eje:2-lex}).
+
+\begin{observacion}
+La codificación de la \cref{def:cod-bpe} es determinista: la misma cadena da siempre la misma secuencia de tokens. El modelo unigram del \cref{tema:3}, en cambio, define una distribución sobre segmentaciones y permite muestrearlas.
+\end{observacion}
+
+\section{BPE a nivel de byte y pretokenización}
+
+GPT-2 aplica BPE a los bytes UTF-8 del texto, con $\V_0=\mathcal{B}$ y $\abs{\V_0}=256$, en lugar de los más de $1{,}3\cdot 10^{5}$ símbolos que exigiría partir de los puntos de código~\cite[§2.2]{gpt2}. Su vocabulario tiene $50\,257$ tokens~\cite[§2.3]{gpt2}: los 256 bytes, un token especial de fin de texto y $50\,000$ fusiones (\cref{eje:2-fusiones}).
+
+\begin{definicion}[Pretokenización]
+La \emph{pretokenización} divide el texto en fragmentos mediante una expresión regular antes de aplicar BPE, y las fusiones se aplican dentro de cada fragmento~\cite[§2.6.9]{jm3}. En GPT-2, cada fragmento es típicamente una palabra con su espacio delante (\tok{\vs lugar}, \tok{\vs de}), un signo de puntuación o un grupo de dígitos; así se impide fusionar bytes de categorías distintas~\cite[§2.2]{gpt2}.
+\end{definicion}
+
+Sin pretokenización, BPE aprende tokens que mezclan palabras y puntuación, como «\tok{de\vs su\vs hacienda.\vs}». Una consecuencia de la pretokenización es que \tok{\vs hidalgo} y \tok{hidalgo} son tokens distintos: un espacio de más al final de un texto cambia su tokenización.
+
+\begin{observacion}[Tokens que contienen medio carácter]
+Con $\V_0=\mathcal{B}$, un token puede ser un fragmento de un carácter multibyte, por ejemplo el byte \hx{C3} solo. Por el \cref{teo:bpe-correcto}, la concatenación de todos los tokens de un texto es su cadena UTF-8, que se decodifica sin pérdida (\cref{teo:prefijo}). Pero un token aislado puede no ser UTF-8 válido, y una interfaz que decodifica cada token al recibirlo debe guardar en un búfer los bytes de un carácter incompleto (\cref{eje:2-medio}).
+\end{observacion}
+
+\begin{lecturas}
+\item Sennrich, Haddow y Birch~\cite{sennrich}, §3.2 «Byte Pair Encoding (BPE)», con el algoritmo~1.
+\item Jurafsky y Martin~\cite{jm3}, §2.4 «Subword Tokenization: Byte-Pair Encoding» (§2.4.1--2.4.3) y §2.6.9 sobre las expresiones regulares de la pretokenización.
+\item Stanford CS336~\cite{cs336}, tarea~1, §2.4 (entrenamiento de BPE) y §2.5 (implementación).
+\item Radford \emph{et al.}~\cite{gpt2}, §2.2 «Input Representation».
+\item Zhang \emph{et al.}~\cite{d2l}, §15.6.2 «Byte Pair Encoding».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-unk}
+¿Por qué el BPE a nivel de byte nunca produce un token desconocido? ¿Qué tamaño tiene su vocabulario inicial?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:2-fusiones}
+(a) Si BPE parte de $n$ símbolos, ¿cuántas fusiones hacen falta para llegar a un vocabulario de $m$ símbolos? (b) GPT-2 parte de 256 bytes, tiene un token especial de fin de texto, que no se obtiene por fusión, y su vocabulario mide $50\,257$. ¿Cuántas fusiones aprendió?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §15.6, ejercicio~3 (se añade el apartado b).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-rana}
+Aplique 3 fusiones de BPE al corpus «rana» $\times 1$, «lana» $\times 2$, «ana» $\times 1$, «plan» $\times 1$. Indique en cada paso el par elegido, su frecuencia y el número total de símbolos.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-codificar}
+Con las cuatro fusiones del \cref{tab:bpe-casa}, codifique «masas», «casa» y «cascas».
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-lex}
+Ante un empate de frecuencias se fusiona el par lexicográficamente mayor (se compara el primer símbolo y, si coincide, el segundo; una cadena es mayor que cualquiera de sus prefijos propios). Corpus: «paso» $\times 4$, «pasos» $\times 2$, «piso» $\times 3$, «pisos» $\times 3$. (a) Aplique 4 fusiones indicando conteos, empates, par elegido y número de símbolos. (b) Codifique «peso», «sopa» y «oso».
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §2.4, ejemplo \emph{bpe\_example} (corpus cambiado).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-compresion}
+Demuestre la \cref{prop:compresion} sin usar el \cref{lem:solape}, razonando directamente sobre las posiciones. Dé un contraejemplo cuando $a=b$ y calcule la longitud tras fusionar $(\tok{a},\tok{a})$ en «\tok{aaaa}» y en «\tok{aaaaa}».
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-medio}
+Un tokenizador BPE de bytes tiene como token el byte \hx{C3} solo. (a) ¿Qué ocurre al decodificarlo aislado? (b) Demuestre que decodificar la secuencia completa de tokens de un texto devuelve siempre el texto original. (c) Explique qué ve un usuario si una interfaz decodifica cada token al recibirlo y la «ñ» llega partida en dos tokens, y proponga un remedio.
+\end{ejercicio}

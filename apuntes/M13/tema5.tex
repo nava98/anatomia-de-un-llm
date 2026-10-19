@@ -1,0 +1,140 @@
+% =====================================================================
+\chapter{Circuitos de atención y memorias asociativas}
+\label{tema:5}
+% =====================================================================
+
+Los temas anteriores tratan la atención como una operación aislada. Este tema estudia dos lecturas estructurales de ella. La primera, debida a Elhage \emph{et al.}~\cite{elhage}, descompone cada cabeza en un circuito que decide a dónde mirar y otro que decide qué copiar, y muestra que dos cabezas en capas sucesivas pueden componerse para implementar una \emph{cabeza de inducción}, el mecanismo que Olsson \emph{et al.}~\cite{olsson} relacionaron con el aprendizaje en contexto. La segunda, debida a Ramsauer \emph{et al.}~\cite{ramsauer}, identifica la atención con la regla de actualización de una red de Hopfield moderna, una memoria asociativa direccionable por contenido. Se siguen esos tres artículos y la §10.6 de~\cite{jm3}.
+
+\section{El flujo residual y los circuitos QK y OV}
+
+En un Transformer, cada capa \emph{suma} su salida a la representación de cada posición, que recorre así la red como un \emph{flujo residual} (módulos~11 y~14). Elhage \emph{et al.} estudian modelos formados solo por capas de atención, en los que el vector final de la posición $i$ es su embedding más las contribuciones de todas las cabezas de todas las capas~\cite{elhage}. Por la \cref{prop:descomp}, la contribución de una cabeza a la posición $i$ es
+\[
+\sum_{j\le i}\alpha_{ij}\;x_j\,W_{OV},\qquad
+\alpha_{ij}=\softmax_j\Bigl(\frac{x_i\,W_{QK}\,x_j\T}{\sqrt{d_k}}\Bigr),
+\]
+con $W_{QK}=\WQ\WK\T$ y $W_{OV}=\WV\WO^{(r)}$, ambas de tamaño $d\times d$ (en esta sección se omite el índice de la cabeza).
+
+\begin{definicion}[Circuitos QK y OV]\label{def:circuitos}
+En una cabeza de atención, el \emph{circuito QK} es la forma bilineal $W_{QK}=\WQ\WK\T$, que determina los pesos de atención, y el \emph{circuito OV} es la aplicación lineal $W_{OV}=\WV\WO$, que determina qué se escribe en el flujo residual de la posición que atiende a partir de la posición atendida.
+\end{definicion}
+
+Los dos circuitos son independientes: el primero decide \emph{a dónde} se mira; el segundo, \emph{qué} se copia. Si los vectores de entrada son \emph{one-hot}, $x_iW_{QK}x_j\T$ es una entrada de la matriz $W_{QK}$ y la tabla completa de preferencias de la cabeza puede leerse directamente.
+
+\section{Cabezas de inducción}
+
+Una \emph{cabeza de inducción} implementa la regla «si antes apareció $a$ seguido de $b$ y ahora vuelve a aparecer $a$, predecir $b$», es decir, completa patrones del tipo $[a][b]\dots[a]\to[b]$~\cite{olsson}. Permite copiar del propio contexto secuencias que nunca se vieron en el entrenamiento, como un nombre propio inventado que se repite en un texto.
+
+\begin{proposicion}\label{prop:una-capa}
+En un modelo de una sola capa de atención cuyas entradas en cada posición son el embedding de su token más el de su posición, la puntuación $s_{ij}$ es función de $(x_i,x_j)$. En consecuencia, para dos posiciones permitidas $j,l\le i$, el cociente $\alpha_{ij}/\alpha_{il}$ solo depende de $x_i$, $x_j$ y $x_l$; en particular, ninguna cabeza de esa capa puede preferir la posición $j$ a la $l$ en función del token \emph{anterior} $x_{j-1}$.
+\end{proposicion}
+
+\begin{proof}
+La puntuación es $s_{ij}=x_iW_{QK}x_j\T/\sqrt{d_k}$, que solo contiene $x_i$ y $x_j$. Por la \cref{prop:restringida}, los pesos permitidos comparten el mismo denominador, de modo que $\alpha_{ij}/\alpha_{il}=\exp(s_{ij}-s_{il})$, función de $x_i$, $x_j$ y $x_l$. Si $j-1\notin\{i,j,l\}$, cambiar el token $x_{j-1}$ no altera ese cociente.
+\end{proof}
+
+Hace falta, por tanto, que una capa anterior haya escrito en la posición $j$ información sobre $x_{j-1}$. La construcción de Elhage \emph{et al.} usa dos cabezas~\cite{elhage}:
+\begin{enumerate}[label=\arabic*.]
+  \item una \emph{cabeza de token anterior} en la capa~1, cuyo mapa de atención es la subdiagonal: la posición $j$ atiende a $j-1$ y su circuito OV copia la identidad del token, de modo que escribe en $j$ «mi token anterior era $x_{j-1}$»;
+  \item una \emph{cabeza de inducción} en la capa~2, cuyas claves se construyen a partir de lo escrito por la capa~1 y cuya consulta es el token actual: la posición $i$ atiende a las $j$ con $x_{j-1}=x_i$, y su circuito OV copia el token $x_j$.
+\end{enumerate}
+Que las claves de la capa~2 lean la salida de una cabeza de la capa~1 se llama \emph{composición K}; análogamente se definen las composiciones Q y V. La \cref{fig:induccion} ilustra el mecanismo.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},x=13mm,
+  tok/.style={draw,thick,rounded corners=2pt,minimum width=11mm,minimum height=6mm}]
+  \foreach \t/\l [count=\i from 0] in {$\langle s\rangle$/0,el/1,gato/2,come/3,$\cdots$/{},el/$i$}{
+    \node[tok] (t\i) at (\i,0) {\t};
+    \node[below=1pt of t\i,font=\scriptsize] {\l};
+  }
+  \node[tok,dashed] (p) at (7.1,0) {gato};
+  \node[below=1pt of p,font=\scriptsize] {$i+1$};
+  \draw[->,thick,regla] (t2.north) to[bend right=50] node[above,font=\scriptsize,text=black]{capa 1} (t1.north);
+  \draw[->,thick] (t5.north) to[bend right=35] node[above,font=\scriptsize]{capa 2: busca «anterior $=$ el»} (t2.north);
+  \draw[->] (t5.east) -- node[above,font=\scriptsize]{predice} (p.west);
+\end{tikzpicture}
+\caption{Cabeza de inducción. La capa~1 escribe en la posición~2 que su token anterior es «el»; en una posición posterior $i$ con el token «el», la consulta de la capa~2 encaja con esa clave y el circuito OV copia «gato», que se convierte en la predicción para la posición $i+1$.}
+\label{fig:induccion}
+\end{figure}
+
+\begin{teorema}[Cabeza de token anterior]\label{teo:previo}
+Sean $p_0,\dots,p_{n-1}$ vectores \emph{one-hot} de posición y $\beta>0$. Con máscara causal, consultas $q_i=\beta p_i$ y claves $k_j=\beta p_{j+1}$ (con $p_n=0$), y sin escalado adicional, el peso que la posición $i\ge 1$ asigna a $i-1$ es
+\[
+\alpha_{i,i-1}=\frac{e^{\beta^{2}}}{e^{\beta^{2}}+i}\xrightarrow[\beta\to\infty]{}1 .
+\]
+\end{teorema}
+
+\begin{proof}
+Para $j\le i$, $q_i\cdot k_j=\beta^{2}\,p_i\cdot p_{j+1}$, que vale $\beta^{2}$ si $j+1=i$ y $0$ en otro caso, porque los vectores de posición son ortonormales. La fila $i$ tiene $i+1$ posiciones permitidas, $j=0,\dots,i$: una con puntuación $\beta^{2}$ y las $i$ restantes con puntuación~0. Por la \cref{prop:restringida}, $\alpha_{i,i-1}=e^{\beta^{2}}/(e^{\beta^{2}}+i\cdot e^{0})$, que tiende a~1 porque $i/e^{\beta^{2}}\to 0$.
+\end{proof}
+
+Con valores $v_j=e_{x_j}$ (el \emph{one-hot} del token), la salida de esta cabeza en la posición $j$ es, para $\beta$ grande, aproximadamente $e_{x_{j-1}}$. El \cref{eje:5-induccion} completa la construcción con la segunda capa.
+
+\begin{observacion}[Evidencia empírica]
+Olsson \emph{et al.} presentan seis líneas de evidencia complementarias de que las cabezas de inducción explican una parte importante del aprendizaje en contexto: entre otras, que se forman durante el entrenamiento en el mismo intervalo en el que la capacidad de aprendizaje en contexto mejora bruscamente, visible como un escalón en la curva de pérdida. La evidencia es causal en modelos pequeños formados solo por atención y correlacional en modelos mayores con redes de alimentación hacia delante~\cite{olsson}. Jurafsky y Martin resumen estos resultados en la §10.6 de~\cite{jm3}; el módulo~23 retoma los circuitos.
+\end{observacion}
+
+\section{Atención y redes de Hopfield modernas}
+
+Una memoria asociativa almacena patrones y, ante un estímulo parecido a uno de ellos, devuelve el patrón completo. Ramsauer \emph{et al.} definen una red de Hopfield con estados continuos cuya regla de actualización es la atención~\cite[§2]{ramsauer}. En esta sección se usa su convención: $X=(x_1,\dots,x_N)\in\R^{d\times N}$ tiene los patrones almacenados como \emph{columnas} y el estado $\xi\in\R^{d}$ es un vector columna.
+
+\begin{definicion}[Energía de Hopfield moderna]\label{def:hopfield}
+Sean $\beta>0$ y $\lse(\beta,z)=\beta^{-1}\ln\sum_{l=1}^{N}e^{\beta z_l}$. La energía del estado $\xi$ es
+\[
+E(\xi)=-\lse\bigl(\beta,X\T\xi\bigr)+\tfrac12\,\xi\T\xi+\beta^{-1}\ln N+\tfrac12M^{2},\qquad M=\max_l\norm{x_l},
+\]
+y la \emph{regla de actualización} es $\xi^{\text{nuevo}}=X\softmax\bigl(\beta X\T\xi\bigr)$.
+\end{definicion}
+
+\begin{proposicion}[Puntos estacionarios]\label{prop:hopfield}
+El gradiente de la energía es $\nabla E(\xi)=\xi-X\softmax(\beta X\T\xi)$. Por tanto, $\xi$ es un punto estacionario de $E$ si y solo si es un punto fijo de la regla de actualización, y la actualización consiste en saltar al punto que anula el gradiente de la parte cuadrática con la parte $\lse$ congelada.
+\end{proposicion}
+
+\begin{proof}
+Sea $z=X\T\xi$. Para la función $g(z)=\beta^{-1}\ln\sum_le^{\beta z_l}$, $\partial g/\partial z_l=\beta^{-1}\cdot\beta e^{\beta z_l}/\sum_me^{\beta z_m}=\softmax(\beta z)_l$. Por la regla de la cadena (módulo~4), con $\partial z/\partial\xi=X\T$, se tiene $\nabla_\xi\lse(\beta,X\T\xi)=X\softmax(\beta X\T\xi)$. El gradiente de $\tfrac12\xi\T\xi$ es $\xi$ y los dos últimos términos son constantes. Por tanto $\nabla E(\xi)=0$ si y solo si $\xi=X\softmax(\beta X\T\xi)$. La última afirmación se sigue de que $\xi^{\text{nuevo}}$ es la solución de $\xi-c=0$ con $c=X\softmax(\beta X\T\xi)$ fijo.
+\end{proof}
+
+Ramsauer \emph{et al.} demuestran además que la actualización hace decrecer la energía y converge, que la red puede almacenar un número de patrones exponencial en la dimensión y que, si los patrones están bien separados, un solo paso basta para recuperar uno de ellos con error exponencialmente pequeño~\cite[§2, teoremas~1 a~5]{ramsauer}.
+
+\begin{observacion}[Hopfield como atención]
+Si los patrones almacenados y los estados se proyectan linealmente para formar claves, valores y consultas y se toma $\beta=1/\sqrt{d_k}$, la regla de actualización, escrita con vectores fila, adopta la forma $\softmax(QK\T/\sqrt{d_k})V$ de la \cref{def:sdpa}~\cite[§2]{ramsauer}. La atención es, pues, un paso de recuperación en una memoria asociativa, y $\beta$ desempeña el papel de inverso de una temperatura: el \cref{teo:limites} describe sus dos regímenes extremos, recuperación de un patrón y media de todos ellos.
+\end{observacion}
+
+\begin{lecturas}
+\item Elhage \emph{et al.}~\cite{elhage}, «A Mathematical Framework for Transformer Circuits»: modelos de solo atención, circuitos QK y OV y composición de cabezas.
+\item Olsson \emph{et al.}~\cite{olsson}, «In-context Learning and Induction Heads».
+\item Jurafsky y Martin~\cite{jm3}, §10.6 «In-Context Learning and Induction Heads».
+\item Ramsauer \emph{et al.}~\cite{ramsauer}, §2 «Modern Hopfield Nets with Continuous States».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-capa}
+Explique con un ejemplo concreto por qué una cabeza de una sola capa no puede completar «el señor Dursley \dots el señor» con «Dursley» si solo dispone de los embeddings de token y de posición. ¿Qué información debe haberse escrito antes en la posición de «Dursley»?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-previo}
+En la cabeza del \cref{teo:previo}: (a) calcule $\alpha_{5,4}$ con $\beta=2$; (b) halle el menor $\beta$ que garantiza $\alpha_{i,i-1}\ge 0{,}99$ para todas las posiciones de una secuencia de diez tokens ($i\le 9$).
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-hop}
+Sean $\beta=1$, los patrones $x_1=(2,0)\T$ y $x_2=(0,2)\T$ y el estado inicial $\xi=(1;\allowbreak\ 0{,}5)\T$. Aplique dos veces la regla de actualización de la \cref{def:hopfield} y diga a qué patrón se acerca el estado.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-induccion}
+Diseñe una cabeza de inducción de dos capas para tokens con embeddings \emph{one-hot} y posiciones \emph{one-hot}, indicando consultas, claves y valores de cada capa (con $\beta=10$). Aplíquela a la secuencia «$\langle s\rangle$ el gato come pescado y luego el gato duerme» (posiciones $0$ a~$9$) y determine qué predice en las posiciones~7, 8 y~9.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-jac}
+Sea $o(\xi)=X\softmax(\beta X\T\xi)$ la regla de actualización, con patrones $x_1,\dots,x_N$ y pesos $p=\softmax(\beta X\T\xi)$. (a) Demuestre que su jacobiana es $\partial o/\partial\xi=\beta\bigl(\sum_lp_lx_lx_l\T-o\,o\T\bigr)$, es decir, $\beta$ veces la covarianza de los patrones bajo la distribución $p$. (b) Compruébelo en dimensión uno con $\beta=1$, patrones $0$ y $2$ y $\xi=\tfrac12\ln 3$. (c) ¿Qué ocurre con la jacobiana cuando $p$ se concentra en un solo patrón?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §11.1, ejercicio~2 (con el factor $\beta$ y un caso numérico).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-recup}
+Sean $x_1,\dots,x_N\in\R^{d}$ patrones ortonormales y $\xi=x_k$. Demuestre que tras una actualización
+\[
+\norm{\xi^{\text{nuevo}}-x_k}=\frac{\sqrt{N(N-1)}}{e^{\beta}+N-1},
+\]
+y calcule el error con $N=4$ y $\beta=5$.
+\end{ejercicio}

@@ -1,0 +1,564 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "a4def5bd",
+   "metadata": {},
+   "source": [
+    "# Módulo 12 · Práctica: tu propio tokenizador BPE\n",
+    "\n",
+    "Vas a construir desde cero un **tokenizador BPE a nivel de byte**, el mismo tipo que usan GPT-2 y muchos LLM actuales, y a entrenarlo sobre el inicio de *El Quijote* (dominio público, embebido abajo: unos 2,5 KB). Después medirás cuánto comprime (bytes por token) y por qué el español, los números o el ruso cuestan distinto.\n",
+    "\n",
+    "**Cómo trabajar:** ejecuta en orden. Completa las celdas `# TU CÓDIGO` y ejecuta la `# Comprobación` que va detrás.\n",
+    "\n",
+    "| Parte | Qué haces |\n",
+    "| --- | --- |\n",
+    "| 1 | Texto y UTF-8: por qué la ñ ocupa 2 bytes |\n",
+    "| 2 | Contar pares y fusionar |\n",
+    "| 3 | Entrenar BPE |\n",
+    "| 4 | Codificar y decodificar |\n",
+    "| 5 | Medir la compresión |\n",
+    "| 6 | Efectos curiosos: idiomas, números, medios caracteres |\n",
+    "| 7 | Pretokenización (demo) |\n",
+    "| 8 | Retos |"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b8fd8ca3",
+   "metadata": {},
+   "source": [
+    "## Parte 1 · Texto y UTF-8\n",
+    "\n",
+    "Usamos el primer capítulo de *El Quijote* (1605), en dominio público. No hay descargas: el texto va en la celda."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "c0fbbc5c",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "TEXTO = 'En un lugar de la Mancha, de cuyo nombre no quiero acordarme, no ha mucho tiempo que vivía un hidalgo de los de lanza en astillero, adarga antigua, rocín flaco y galgo corredor. Una olla de algo más vaca que carnero, salpicón las más noches, duelos y quebrantos los sábados, lantejas los viernes, algún palomino de añadidura los domingos, consumían las tres partes de su hacienda. El resto della concluían sayo de velarte, calzas de velludo para las fiestas, con sus pantuflos de lo mesmo, y los días de entresemana se honraba con su vellorí de lo más fino. Tenía en su casa una ama que pasaba de los cuarenta, y una sobrina que no llegaba a los veinte, y un mozo de campo y plaza, que así ensillaba el rocín como tomaba la podadera. Frisaba la edad de nuestro hidalgo con los cincuenta años; era de complexión recia, seco de carnes, enjuto de rostro, gran madrugador y amigo de la caza. Quieren decir que tenía el sobrenombre de Quijada, o Quesada, que en esto hay alguna diferencia en los autores que deste caso escriben; aunque por conjeturas verosímiles se deja entender que se llamaba Quijana. Pero esto importa poco a nuestro cuento; basta que en la narración dél no se salga un punto de la verdad.\\nEs, pues, de saber que este sobredicho hidalgo, los ratos que estaba ocioso, que eran los más del año, se daba a leer libros de caballerías, con tanta afición y gusto, que olvidó casi de todo punto el ejercicio de la caza, y aun la administración de su hacienda. Y llegó a tanto su curiosidad y desatino en esto, que vendió muchas hanegas de tierra de sembradura para comprar libros de caballerías en que leer, y así, llevó a su casa todos cuantos pudo haber dellos; y de todos, ningunos le parecían tan bien como los que compuso el famoso Feliciano de Silva, porque la claridad de su prosa y aquellas entricadas razones suyas le parecían de perlas, y más cuando llegaba a leer aquellos requiebros y cartas de desafíos, donde en muchas partes hallaba escrito: «La razón de la sinrazón que a mi razón se hace, de tal manera mi razón enflaquece, que con razón me quejo de la vuestra fermosura». Y también cuando leía: «Los altos cielos que de vuestra divinidad divinamente con las estrellas os fortifican, y os hacen merecedora del merecimiento que merece la vuestra grandeza».\\nCon estas razones perdía el pobre caballero el juicio, y desvelábase por entenderlas y desentrañarles el sentido, que no se lo sacara ni las entendiera el mesmo Aristóteles, si resucitara para solo ello.'\n",
+    "print(len(TEXTO), 'caracteres')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "531b2450",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import matplotlib.pyplot as plt\n",
+    "from collections import Counter\n",
+    "\n",
+    "for s in [\"a\", \"ñ\", \"á\", \"año\", \"€\", \"😀\"]:\n",
+    "    b = s.encode(\"utf-8\")\n",
+    "    print(f\"{s!r:6} {len(s)} caracteres -> {len(b)} bytes {list(b)}  {[format(x, '08b') for x in b]}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "d11f398b",
+   "metadata": {},
+   "source": [
+    "Un carácter con código mayor que 127 usa el patrón `110xxxxx 10xxxxxx` (2 bytes). La ñ es U+00F1 = 241, y sus 11 bits se reparten así: `11000011 10110001` = C3 B1.\n",
+    "\n",
+    "**Ejercicio 1.** Calcula `n_bytes` (bytes UTF-8 de `TEXTO`) y `extra`, la diferencia entre bytes y caracteres. Crea también `no_ascii`, un `Counter` con los caracteres de `TEXTO` cuyo código (`ord`) es mayor que 127."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "2fad20d0",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# TU CÓDIGO\n",
+    "n_bytes = None\n",
+    "extra = None\n",
+    "no_ascii = None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "5c091ff6",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert n_bytes == 2536, f\"Esperaba 2536 bytes y tienes {n_bytes}\"\n",
+    "assert extra == 52, \"Cada carácter no ASCII de este texto añade 1 byte extra\"\n",
+    "assert no_ascii[\"ñ\"] == 4 and sum(no_ascii.values()) == 52, \"Revisa el filtro ord(c) > 127\"\n",
+    "print(\"Correcto:\", dict(no_ascii))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "81c6eaf3",
+   "metadata": {},
+   "source": [
+    "## Parte 2 · Contar pares y fusionar\n",
+    "\n",
+    "Trabajamos con listas de enteros: al principio, los bytes (0–255). Cada fusión crea un entero nuevo (256, 257, …).\n",
+    "\n",
+    "**Ejercicio 2.** Escribe `contar_pares(ids)`, que devuelve un `Counter` con los pares adyacentes, y `fusionar(ids, par, nuevo)`, que sustituye cada aparición de `par` (de izquierda a derecha, sin solapes) por `nuevo`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f8aabf17",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def contar_pares(ids):\n",
+    "    # TU CÓDIGO\n",
+    "    pass\n",
+    "\n",
+    "def fusionar(ids, par, nuevo):\n",
+    "    # TU CÓDIGO\n",
+    "    pass"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "0682b4e1",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert contar_pares([1, 2, 3, 1, 2]) == Counter({(1, 2): 2, (2, 3): 1, (3, 1): 1}), \"contar_pares falla\"\n",
+    "assert fusionar([1, 2, 3, 1, 2], (1, 2), 99) == [99, 3, 99], \"fusionar falla\"\n",
+    "assert fusionar([5, 5, 5, 5], (5, 5), 7) == [7, 7], \"Sin solapes: 'aaaa' -> 'aa aa'\"\n",
+    "assert fusionar([5, 5, 5], (5, 5), 7) == [7, 5], \"De izquierda a derecha\"\n",
+    "print(\"Correcto\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b133c519",
+   "metadata": {},
+   "source": [
+    "## Parte 3 · Entrenar BPE\n",
+    "\n",
+    "El algoritmo de la sección 12.2: contar, elegir el par más frecuente, fusionar y anotar, `n` veces.\n",
+    "\n",
+    "**Ejercicio 3.** Completa `entrenar(texto, n)`. Devuelve `merges` (diccionario `par -> nuevo id`, en orden) y `vocab` (diccionario `id -> bytes`). Usa `max(c, key=c.get)` para elegir el par: en caso de empate gana el que apareció antes, y así todos obtenemos el mismo resultado."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "2feeb535",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def entrenar(texto, n):\n",
+    "    ids = list(texto.encode(\"utf-8\"))\n",
+    "    merges = {}\n",
+    "    vocab = {i: bytes([i]) for i in range(256)}\n",
+    "    for k in range(n):\n",
+    "        # TU CÓDIGO: contar, elegir par, fusionar, guardar en merges y vocab\n",
+    "        pass\n",
+    "    return merges, vocab"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "d3526ed6",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación 1: ejemplo clásico \"aaabdaaabac\"\n",
+    "m, v = entrenar(\"aaabdaaabac\", 3)\n",
+    "assert [v[i] for i in m.values()] == [b\"aa\", b\"aaa\", b\"aaab\"], f\"Fusiones: {[v[i] for i in m.values()]}\"\n",
+    "# Comprobación 2: El Quijote\n",
+    "merges, vocab = entrenar(TEXTO, 300)\n",
+    "assert len(merges) == 300 and len(vocab) == 556, \"Debe haber 256 + 300 tokens\"\n",
+    "assert vocab[256] == b\"e \", f\"La primera fusión debería ser 'e ' y es {vocab[256]!r}\"\n",
+    "print(\"Correcto. Primeras 15 fusiones:\")\n",
+    "for t in range(256, 271):\n",
+    "    print(t, repr(vocab[t].decode(\"utf-8\", errors=\"replace\")))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "22dfda79",
+   "metadata": {},
+   "source": [
+    "Las primeras fusiones capturan terminaciones con espacio («e␣», «a␣», «s␣») y palabras frecuentes («de␣», «que␣»). Busca dónde aparecen los tokens de la ñ y las tildes:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "ca943cb1",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "for t, b in vocab.items():\n",
+    "    if t >= 256 and b\"\\xc3\" in b:\n",
+    "        print(t, \"puesto\", t - 255, repr(b.decode(\"utf-8\", errors=\"replace\")))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "73c50913",
+   "metadata": {},
+   "source": [
+    "## Parte 4 · Codificar y decodificar\n",
+    "\n",
+    "Para codificar un texto nuevo se aplican las fusiones **en el orden en que se aprendieron**. Truco: en cada paso, entre los pares presentes, fusiona el que tenga el id de fusión más pequeño.\n",
+    "\n",
+    "**Ejercicio 4.** Completa `codificar(texto, merges)` y `decodificar(ids, vocab)` (une los bytes y decodifica con `errors=\"replace\"`)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "9132aaa6",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def codificar(texto, merges):\n",
+    "    ids = list(texto.encode(\"utf-8\"))\n",
+    "    while len(ids) >= 2:\n",
+    "        # TU CÓDIGO: elige el par con menor merges.get(par, inf); si no está en merges, para\n",
+    "        pass\n",
+    "    return ids\n",
+    "\n",
+    "def decodificar(ids, vocab):\n",
+    "    # TU CÓDIGO\n",
+    "    pass"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "e26030b5",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert codificar(\"aaabdaaabac\", m) == [258, 100, 258, 97, 99], \"Codificación de 'aaabdaaabac' incorrecta\"\n",
+    "ids = codificar(TEXTO, merges)\n",
+    "assert decodificar(ids, vocab) == TEXTO, \"Codificar y decodificar debe devolver el texto exacto\"\n",
+    "assert decodificar(codificar(\"¡Ñandú pingüino 😀!\", merges), vocab) == \"¡Ñandú pingüino 😀!\", \"Debe funcionar con cualquier texto\"\n",
+    "assert abs(len(ids) - 819) <= 5, f\"Esperaba unos 819 tokens y tienes {len(ids)}\"\n",
+    "def ver(s):\n",
+    "    return [vocab[i].decode(\"utf-8\", errors=\"replace\") for i in codificar(s, merges)]\n",
+    "print(len(ids), \"tokens\")\n",
+    "for w in [\"caballerías\", \"hidalgo\", \"razón\", \"rocín\"]:\n",
+    "    print(w, ver(w))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "31c63ffb",
+   "metadata": {},
+   "source": [
+    "## Parte 5 · Medir la compresión\n",
+    "\n",
+    "$$\\text{compresión} = \\frac{\\text{bytes}}{\\text{tokens}}$$\n",
+    "\n",
+    "**Ejercicio 5.** Para cada `N` de la lista, quédate con las `N` primeras fusiones (`dict(list(merges.items())[:N])`), codifica `TEXTO` y guarda en `bpt` los bytes por token."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4898f622",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "Ns = [0, 10, 25, 50, 100, 200, 300]\n",
+    "bpt = []\n",
+    "# TU CÓDIGO"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "1f78c0de",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert len(bpt) == len(Ns) and bpt[0] == 1.0, \"Con 0 fusiones, 1 byte por token\"\n",
+    "assert all(a < b for a, b in zip(bpt, bpt[1:])), \"La compresión debe crecer con las fusiones\"\n",
+    "assert abs(bpt[-1] - 3.10) < 0.03, f\"Con 300 fusiones esperaba ≈ 3,10 bytes/token y tienes {bpt[-1]:.3f}\"\n",
+    "for N, x in zip(Ns, bpt):\n",
+    "    print(f\"{N:4d} fusiones -> {x:.3f} bytes/token\")\n",
+    "plt.plot(Ns, bpt, \"o-\"); plt.xlabel(\"fusiones\"); plt.ylabel(\"bytes por token\"); plt.title(\"Compresión del BPE\"); plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "8aaee349",
+   "metadata": {},
+   "source": [
+    "Medir sobre el texto de entrenamiento es hacer trampa (módulo 8). **Ejercicio 6.** Entrena con los dos primeros párrafos (`tr`) y 200 fusiones, y calcula los bytes por token en `tr` (`bpt_tr`) y en el tercer párrafo (`bpt_te`)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "86686acf",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "parrafos = TEXTO.split(\"\\n\")\n",
+    "tr, te = \"\\n\".join(parrafos[:2]), parrafos[2]\n",
+    "# TU CÓDIGO\n",
+    "bpt_tr = None\n",
+    "bpt_te = None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "7162522e",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert bpt_tr is not None and bpt_te is not None, \"Calcula ambas\"\n",
+    "assert bpt_te < bpt_tr, \"El texto no visto debería comprimirse peor\"\n",
+    "print(f\"entrenamiento {bpt_tr:.3f} · validación {bpt_te:.3f}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "d7b616f3",
+   "metadata": {},
+   "source": [
+    "## Parte 6 · Efectos curiosos\n",
+    "\n",
+    "El mismo mensaje no cuesta lo mismo en todos los idiomas. Nuestro tokenizador solo ha visto español:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "9d760ef7",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "frases = {\"español\": \"El perro ladra en la plaza.\",\n",
+    "          \"inglés\": \"The dog barks in the square.\",\n",
+    "          \"ruso\": \"Собака лает.\",\n",
+    "          \"número\": \"1605\"}\n",
+    "for idioma, f in frases.items():\n",
+    "    nb, nt = len(f.encode()), len(codificar(f, merges))\n",
+    "    print(f\"{idioma:8} {nb:3d} bytes -> {nt:3d} tokens ({nb/nt:.2f} bytes/token)  {ver(f)}\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a54635dc",
+   "metadata": {},
+   "source": [
+    "El ruso sale a 1 token por byte: ninguna fusión aprendida encaja con el cirílico. Los números quedan dígito a dígito: no hay fusiones de cifras.\n",
+    "\n",
+    "**Ejercicio 7 (medios caracteres).** Busca en `vocab` los tokens cuyos bytes **no** se pueden decodificar como UTF-8 válido (usa `try: b.decode(\"utf-8\")` / `except UnicodeDecodeError`). Guarda sus ids en `rotos`. ¿Qué tienen en común?"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "7b15294d",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "rotos = []\n",
+    "# TU CÓDIGO"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "81af5211",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert 195 in rotos, \"El byte 0xC3 (195) solo no es UTF-8 válido\"\n",
+    "assert all(t not in rotos for t in range(128)), \"Los bytes ASCII siempre son válidos\"\n",
+    "print(len(rotos), \"tokens no decodificables solos; entre los aprendidos:\",\n",
+    "      [vocab[t] for t in rotos if t >= 256])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "03d1fd17",
+   "metadata": {},
+   "source": [
+    "## Parte 7 · Pretokenización (demo)\n",
+    "\n",
+    "Sin límites entre palabras, BPE aprende tokens que cruzan frases. Mira los más largos:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "52fa71fa",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "print(sorted((b.decode(\"utf-8\", \"replace\") for b in vocab.values()), key=len)[-3:])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "36064df6",
+   "metadata": {},
+   "source": [
+    "GPT-2 primero trocea con una expresión regular en «palabras con su espacio delante» y aplica BPE dentro de cada trozo. Aquí, una versión simplificada:"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "26736557",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import re\n",
+    "PAT = re.compile(r\" ?\\w+| ?[^\\w\\s]+|\\s+\")\n",
+    "trozos = PAT.findall(TEXTO)\n",
+    "print(len(trozos), trozos[:8])\n",
+    "assert \"\".join(trozos) == TEXTO\n",
+    "\n",
+    "def entrenar_pre(texto, n):\n",
+    "    frec = Counter(PAT.findall(texto))\n",
+    "    palabras = {tuple(w.encode()): f for w, f in frec.items()}\n",
+    "    merges, vocab = {}, {i: bytes([i]) for i in range(256)}\n",
+    "    for k in range(n):\n",
+    "        c = Counter()\n",
+    "        for w, f in palabras.items():\n",
+    "            for p in zip(w, w[1:]):\n",
+    "                c[p] += f\n",
+    "        if not c or max(c.values()) < 2:\n",
+    "            break\n",
+    "        par = max(c, key=c.get); nuevo = 256 + k\n",
+    "        merges[par] = nuevo; vocab[nuevo] = vocab[par[0]] + vocab[par[1]]\n",
+    "        palabras = {tuple(fusionar(list(w), par, nuevo)): f for w, f in palabras.items()}\n",
+    "    return merges, vocab\n",
+    "\n",
+    "mp, vp = entrenar_pre(TEXTO, 300)\n",
+    "ids_p = [i for t in PAT.findall(TEXTO) for i in codificar(t, mp)]\n",
+    "print(len(mp), \"fusiones ·\", round(n_bytes / len(ids_p), 3), \"bytes/token\")\n",
+    "print(\"Tokens más largos:\", sorted((b.decode(\"utf-8\", \"replace\") for b in vp.values()), key=len)[-5:])"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "b0b4657d",
+   "metadata": {},
+   "source": [
+    "Comprime algo menos sobre este texto, pero sus tokens son palabras reales (« caballerías», « hacienda») que generalizan a otros textos.\n",
+    "\n",
+    "## Parte 8 · Retos\n",
+    "\n",
+    "1. **Cuenta letras.** Escribe una función que diga cuántas «r» tiene cada token de `ver(\"ferrocarril\")`. ¿Qué debe saber el modelo para contestar?\n",
+    "2. **Vocabulario y coste.** Si cada token tiene un embedding de d = 4.096, ¿cuántos parámetros añade cada fusión? ¿Y 100.000 fusiones?\n",
+    "3. **Unigram.** Programa con programación dinámica la segmentación más probable de «casas» con el vocabulario de la sección 12.4 y comprueba que es «casa · s».\n",
+    "4. **Tu texto.** Entrena con otro texto tuyo (mensajes, apuntes) y compara los bytes por token.\n",
+    "\n",
+    "---\n",
+    "### Soluciones de referencia\n",
+    "Inténtalo antes de mirar."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4074669b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# --- Ejercicio 1 ---\n",
+    "# n_bytes = len(TEXTO.encode(\"utf-8\"))\n",
+    "# extra = n_bytes - len(TEXTO)\n",
+    "# no_ascii = Counter(c for c in TEXTO if ord(c) > 127)\n",
+    "# --- Ejercicio 2 ---\n",
+    "# def contar_pares(ids):\n",
+    "#     return Counter(zip(ids, ids[1:]))\n",
+    "#\n",
+    "# def fusionar(ids, par, nuevo):\n",
+    "#     out, i = [], 0\n",
+    "#     while i < len(ids):\n",
+    "#         if i < len(ids) - 1 and (ids[i], ids[i + 1]) == par:\n",
+    "#             out.append(nuevo); i += 2\n",
+    "#         else:\n",
+    "#             out.append(ids[i]); i += 1\n",
+    "#     return out\n",
+    "# --- Ejercicio 3 ---\n",
+    "# def entrenar(texto, n):\n",
+    "#     ids = list(texto.encode(\"utf-8\"))\n",
+    "#     merges = {}\n",
+    "#     vocab = {i: bytes([i]) for i in range(256)}\n",
+    "#     for k in range(n):\n",
+    "#         c = contar_pares(ids)\n",
+    "#         if not c:\n",
+    "#             break\n",
+    "#         par = max(c, key=c.get)\n",
+    "#         nuevo = 256 + k\n",
+    "#         ids = fusionar(ids, par, nuevo)\n",
+    "#         merges[par] = nuevo\n",
+    "#         vocab[nuevo] = vocab[par[0]] + vocab[par[1]]\n",
+    "#     return merges, vocab\n",
+    "# --- Ejercicio 4 ---\n",
+    "# def codificar(texto, merges):\n",
+    "#     ids = list(texto.encode(\"utf-8\"))\n",
+    "#     while len(ids) >= 2:\n",
+    "#         c = contar_pares(ids)\n",
+    "#         par = min(c, key=lambda p: merges.get(p, float(\"inf\")))\n",
+    "#         if par not in merges:\n",
+    "#             break\n",
+    "#         ids = fusionar(ids, par, merges[par])\n",
+    "#     return ids\n",
+    "#\n",
+    "# def decodificar(ids, vocab):\n",
+    "#     return b\"\".join(vocab[i] for i in ids).decode(\"utf-8\", errors=\"replace\")\n",
+    "# --- Ejercicio 5 ---\n",
+    "# Ns = [0, 10, 25, 50, 100, 200, 300]\n",
+    "# bpt = []\n",
+    "# for N in Ns:\n",
+    "#     mN = dict(list(merges.items())[:N])\n",
+    "#     bpt.append(n_bytes / len(codificar(TEXTO, mN)))\n",
+    "# --- Ejercicio 6 ---\n",
+    "# parrafos = TEXTO.split(\"\\n\")\n",
+    "# tr, te = \"\\n\".join(parrafos[:2]), parrafos[2]\n",
+    "# m2, v2 = entrenar(tr, 200)\n",
+    "# bpt_tr = len(tr.encode()) / len(codificar(tr, m2))\n",
+    "# bpt_te = len(te.encode()) / len(codificar(te, m2))\n",
+    "# --- Ejercicio 7 ---\n",
+    "# rotos = []\n",
+    "# for t, b in vocab.items():\n",
+    "#     try:\n",
+    "#         b.decode(\"utf-8\")\n",
+    "#     except UnicodeDecodeError:\n",
+    "#         rotos.append(t)"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "name": "python"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}

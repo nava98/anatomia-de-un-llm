@@ -1,0 +1,134 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase III — Módulo 13
+%  Atención
+%  Compilar: latexmk -r ../latexmkrc M13-atencion.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 13}
+
+\hypersetup{pdftitle={Módulo 13. Atención},pdfauthor={Anatomía de un LLM}}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\uno}{\mathbf{1}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\rg}{\operatorname{rg}}
+\newcommand{\Att}{\operatorname{Attn}}
+\newcommand{\MHA}{\operatorname{MHA}}
+\newcommand{\Concat}{\operatorname{Concat}}
+\newcommand{\lse}{\operatorname{lse}}
+\newcommand{\conv}{\operatorname{conv}}
+\newcommand{\FLOP}{\mathrm{FLOP}}
+\newcommand{\WQ}{W_{Q}}
+\newcommand{\WK}{W_{K}}
+\newcommand{\WV}{W_{V}}
+\newcommand{\WO}{W_{O}}
+\newcommand{\tk}[1]{\text{«#1»}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase III \textperiodcentered\ Secuencias y Transformer}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 13\par}\vspace{0.3cm}
+{\LARGE Atención\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Una red recurrente resume todo el pasado de una secuencia en un vector de dimensión fija y lo actualiza token a token. El mecanismo de atención sustituye ese resumen por una consulta directa: cada posición calcula su parecido con todas las demás, lo convierte en una distribución de probabilidad mediante una softmax y devuelve la media de unos vectores de valor ponderada por esa distribución. La operación es diferenciable, se expresa con dos productos de matrices y se evalúa en paralelo sobre toda la secuencia. Introducida en traducción automática por Bahdanau, Cho y Bengio y convertida en la pieza central del Transformer por Vaswani \emph{et al.}, es el componente que distingue a los grandes modelos de lenguaje actuales (Claude, Gemini, Grok y los modelos abiertos) de sus predecesores. Este módulo la estudia con detalle: su definición como agrupación ponderada, la forma matricial con producto escalar escalado y la justificación probabilística del factor $1/\sqrt{d_k}$, la máscara causal que permite entrenar un modelo autorregresivo en paralelo, la atención multi-cabeza con su recuento de parámetros y de operaciones, y dos lecturas estructurales de la operación: los circuitos de cabezas de inducción y las memorias asociativas de Hopfield.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item definir la agrupación por atención con consultas, claves y valores, relacionarla con la regresión por núcleos de Nadaraya y Watson y con la atención aditiva de Bahdanau, y demostrar que su salida pertenece a la envolvente convexa de los valores;
+  \item calcular a mano $\softmax(QK\T/\sqrt{d_k})V$, demostrar que la varianza del producto escalar de vectores aleatorios independientes es $d_k$ y explicar, mediante la jacobiana de la softmax, por qué la saturación anula el gradiente;
+  \item demostrar que la autoatención es equivariante por permutaciones y que la máscara causal con $-\infty$ antes de la softmax garantiza la causalidad y permite obtener $n$ predicciones en una sola pasada;
+  \item construir la atención multi-cabeza, contar sus parámetros y sus operaciones de coma flotante y determinar a partir de qué longitud domina el coste cuadrático;
+  \item describir los circuitos QK y OV de una cabeza, construir a mano una cabeza de inducción de dos capas y deducir la equivalencia entre la regla de actualización de una red de Hopfield moderna y la atención.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1, la softmax con temperatura (tema~4). Del módulo~2, el producto escalar, el producto de matrices y su recuento de operaciones; del módulo~3, el rango de una matriz. Del módulo~4, la matriz jacobiana y la regla de la cadena. Del módulo~5, la esperanza, la varianza, la independencia y el teorema central del límite, que se usan en el tema~2. Del módulo~11, la aritmética de 16 bits y la evaluación estable de la softmax. Del módulo~12, los embeddings de tokens y las redes recurrentes, cuyo cuello de botella motiva el tema~1.
+
+\section*{Organización}
+\begin{center}
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Atención como agrupación ponderada & \cite{d2l}, \cite{bahdanau}, \cite{jm3}, \cite{cs224n} \\
+2 & Atención por producto escalar escalado & \cite{vaswani}, \cite{jm3}, \cite{d2l}, \cite{bishopdl} \\
+3 & La máscara causal & \cite{vaswani}, \cite{jm3}, \cite{cs336} \\
+4 & Atención multi-cabeza y coste computacional & \cite{vaswani}, \cite{cs336}, \cite{d2l}, \cite{jm3} \\
+5 & Circuitos de atención y memorias asociativas & \cite{elhage}, \cite{olsson}, \cite{ramsauer}, \cite{d2l} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La presentación de la atención como agrupación ponderada sigue las secciones~11.1 a~11.4 de Zhang \emph{et al.}~\cite{d2l} y el artículo de Bahdanau, Cho y Bengio~\cite{bahdanau}. La forma matricial, el escalado, la máscara y la atención multi-cabeza siguen las secciones~3.2.1 a~3.2.3 y~4 del artículo de Vaswani \emph{et al.}~\cite{vaswani}, el capítulo~7 de Jurafsky y Martin~\cite{jm3} (§7.1 y §7.3), la sección~12.1 de Bishop y Bishop~\cite{bishopdl}, las secciones~11.3, 11.5 y~11.6 de~\cite{d2l} y la clase~5 y la tarea~3 del curso CS224N de Stanford~\cite{cs224n}. El recuento de operaciones sigue la tarea~1 del curso CS336 de Stanford~\cite{cs336} (§3.4.4, §3.4.5 y §3.5). El tema~5 sigue los artículos de Elhage \emph{et al.}~\cite{elhage} y Olsson \emph{et al.}~\cite{olsson}, de Anthropic, la §10.6 de~\cite{jm3} y el artículo de Ramsauer \emph{et al.}~\cite{ramsauer}. Sobre Claude, Gemini y Grok solo se usa información pública: los informes técnicos documentan longitudes de contexto, pero no la variante de atención ni la forma en que se reduce su coste.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$n$, $d$ & longitud de la secuencia y dimensión del modelo \\
+$x_i\in\R^{1\times d}$, $X\in\R^{n\times d}$ & vector (fila) del token $i$ y matriz que los apila \\
+$q_i,k_j\in\R^{1\times d_k}$, $v_j\in\R^{1\times d_v}$ & consulta (\emph{query}), clave (\emph{key}) y valor (\emph{value}) \\
+$Q,K,V$ & matrices que apilan consultas, claves y valores \\
+$\WQ,\WK\in\R^{d\times d_k}$, $\WV\in\R^{d\times d_v}$ & matrices de proyección aprendidas \\
+$S=QK\T$, $s_{ij}=q_i\cdot k_j$ & matriz de puntuaciones (parecidos) \\
+$A$, $\alpha_{ij}$ & matriz de atención y peso que la posición $i$ asigna a la $j$ \\
+$O=AV$, $o_i$ & salida de la atención \\
+$M$ & máscara aditiva, con entradas $0$ o $-\infty$ \\
+$h$, $\WO$ & número de cabezas y proyección de salida \\
+$\beta$, $\tau=1/\beta$ & inverso de la temperatura y temperatura \\
+$P$ & matriz de permutación \\
+$\conv\{v_1,\dots,v_n\}$ & envolvente convexa de los valores \\
+$e_t$, $p_i$ & vectores \emph{one-hot} de token y de posición (tema~5) \\
+\bottomrule
+\end{tabular}
+\end{center}
+Los vectores de token, consulta, clave y valor son vectores fila, como en~\cite{vaswani} y~\cite{jm3}; así, $Q=X\WQ$. La softmax de una matriz se aplica por filas.
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

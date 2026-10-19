@@ -1,0 +1,192 @@
+% =====================================================================
+\chapter{Gradientes que se desvanecen o explotan}
+\label{tema:1}
+% =====================================================================
+
+En una red profunda, el gradiente que recibe una capa es el producto de los jacobianos de todas las capas que tiene por encima. Este tema formaliza esa observación, acota la norma del producto mediante valores singulares y deduce de ella los dos fenómenos que dificultan el entrenamiento en profundidad: el desvanecimiento y la explosión del gradiente. Se estudian después sus dos causas principales, la escala de los pesos y la saturación de las activaciones, y se obtiene la inicialización que mantiene constante la varianza de la señal. Se sigue~\cite[§8.2.5, §10.7]{gbc}, \cite[§5.4 y §9.7]{d2l} y los artículos de Pascanu, Mikolov y Bengio~\cite{pascanu}, Glorot y Bengio~\cite{glorot} y He \emph{et al.}~\cite{he-init}.
+
+\section{El gradiente como producto de jacobianos}
+
+\begin{definicion}[Red profunda de anchura constante]\label{def:red}
+Sea $L\ge 1$. Una \emph{red de $L$ capas} con anchura $d$ y activación $f\colon\R\to\R$ derivable transforma una entrada $h_0\in\R^{d}$ mediante
+\[
+z_\ell=W_\ell h_{\ell-1},\qquad h_\ell=f(z_\ell),\qquad \ell=1,\dots,L,
+\]
+con $W_\ell\in\R^{d\times d}$ y $f$ aplicada componente a componente. La pérdida $\Loss$ depende de la entrada solo a través de $h_L$. El \emph{jacobiano de la capa $\ell$} es
+\[
+J_\ell=\frac{\partial h_\ell}{\partial h_{\ell-1}}=\diag\bigl(f'(z_\ell)\bigr)\,W_\ell .
+\]
+\end{definicion}
+
+Los sesgos se omiten porque no intervienen en los jacobianos respecto de las activaciones. La anchura constante simplifica la notación; todos los resultados se extienden a anchuras variables.
+
+\begin{proposicion}[Gradiente en profundidad]\label{prop:grad-prof}
+Con la notación de la \cref{def:red}, escribiendo los gradientes como vectores columna,
+\[
+\nabla_{h_{\ell}}\Loss=J_{\ell+1}\T J_{\ell+2}\T\cdots J_L\T\,\nabla_{h_L}\Loss,
+\qquad
+\frac{\partial\Loss}{\partial W_\ell}=\Bigl(\diag\bigl(f'(z_\ell)\bigr)\nabla_{h_\ell}\Loss\Bigr)\,h_{\ell-1}\T .
+\]
+\end{proposicion}
+
+\begin{proof}
+La regla de la cadena del módulo~4 para la composición $h_{\ell}\mapsto h_{\ell+1}\mapsto\cdots\mapsto h_L\mapsto\Loss$ da $\partial\Loss/\partial h_\ell=(\partial\Loss/\partial h_L)\,J_L J_{L-1}\cdots J_{\ell+1}$ como vector fila; trasponiendo se obtiene la primera igualdad. Para la segunda, $(z_\ell)_i=\sum_j (W_\ell)_{ij}(h_{\ell-1})_j$, luego $\partial\Loss/\partial(W_\ell)_{ij}=(\partial\Loss/\partial (z_\ell)_i)\,(h_{\ell-1})_j$, y $\partial\Loss/\partial(z_\ell)_i=f'((z_\ell)_i)\,\partial\Loss/\partial(h_\ell)_i$ porque $f$ actúa componente a componente.
+\end{proof}
+
+El gradiente de los pesos de la capa $\ell$ contiene, por tanto, el producto de los $L-\ell$ jacobianos que tiene encima. Las primeras capas atraviesan casi todos.
+
+\begin{ejemplo}[Caso escalar]\label{ej:escalar}
+Si $d=1$ y cada jacobiano vale una constante $a>0$, el gradiente que llega a $h_0$ es $a^{L}$ veces el de $h_L$. La \cref{tab:factores} muestra que pequeñas desviaciones de $a=1$ se amplifican exponencialmente con la profundidad.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}cccl@{}}
+\toprule
+Factor por capa $a$ & $L=10$ & $L=24$ & Efecto \\
+\midrule
+$0{,}25$ & $9{,}5\cdot 10^{-7}$ & $3{,}6\cdot 10^{-15}$ & desvanecimiento extremo \\
+$0{,}5$ & $9{,}8\cdot 10^{-4}$ & $6{,}0\cdot 10^{-8}$ & las primeras capas no aprenden \\
+$1$ & $1$ & $1$ & caso ideal \\
+$1{,}1$ & $2{,}59$ & $9{,}85$ & crecimiento moderado \\
+$1{,}5$ & $57{,}7$ & $1{,}7\cdot 10^{4}$ & explosión \\
+\bottomrule
+\end{tabular}
+\caption{Factor $a^{L}$ por el que se multiplica el gradiente al atravesar $L$ capas escalares.}
+\label{tab:factores}
+\end{table}
+
+\section{Cotas mediante valores singulares}
+
+Para matrices, el papel del factor $a$ lo desempeñan los valores singulares. Para $A\in\R^{d\times d}$ se escribe $\norm{A}_2=\max_{\norm{x}=1}\norm{Ax}$ (el mayor valor singular, módulo~3) y $\smin(A)=\min_{\norm{x}=1}\norm{Ax}$ (el menor). Ambos coinciden para $A$ y $A\T$.
+
+\begin{lema}\label{lem:producto}
+Para $A,B\in\R^{d\times d}$ se cumple $\smin(A)\,\smin(B)\le\smin(AB)\le\norm{AB}_2\le\norm{A}_2\norm{B}_2$.
+\end{lema}
+
+\begin{proof}
+Sea $x$ con $\norm{x}=1$. Por definición, $\norm{Ay}\le\norm{A}_2\norm{y}$ y $\norm{Ay}\ge\smin(A)\norm{y}$ para todo $y$. Con $y=Bx$:
+$\norm{ABx}\le\norm{A}_2\norm{Bx}\le\norm{A}_2\norm{B}_2$ y $\norm{ABx}\ge\smin(A)\norm{Bx}\ge\smin(A)\smin(B)$. Tomando el máximo y el mínimo sobre $x$ se obtienen las desigualdades extremas; la central es inmediata.
+\end{proof}
+
+\begin{teorema}[Cotas del gradiente en profundidad]\label{teo:cotas}
+Con la notación de la \cref{def:red},
+\[
+\prod_{\ell=1}^{L}\smin(J_\ell)\;\le\;\frac{\norm{\nabla_{h_0}\Loss}}{\norm{\nabla_{h_L}\Loss}}\;\le\;\prod_{\ell=1}^{L}\norm{J_\ell}_2\;\le\;\prod_{\ell=1}^{L}\gamma\,\norm{W_\ell}_2,
+\qquad \gamma=\sup_{t\in\R}\abs{f'(t)} .
+\]
+\end{teorema}
+
+\begin{proof}
+Por la \cref{prop:grad-prof}, $\nabla_{h_0}\Loss=J_1\T\cdots J_L\T\nabla_{h_L}\Loss$. Aplicando el \cref{lem:producto} $L-1$ veces y usando que $\smin$ y $\norm{\cdot}_2$ no cambian al trasponer se obtienen las dos primeras desigualdades. La última se sigue de $\norm{J_\ell}_2\le\norm{\diag(f'(z_\ell))}_2\norm{W_\ell}_2$ y de que la norma espectral de una matriz diagonal es el mayor valor absoluto de su diagonal, que es a lo sumo $\gamma$.
+\end{proof}
+
+\begin{corolario}[Condición suficiente de desvanecimiento]\label{cor:pascanu}
+Si existe $\lambda<1$ tal que $\gamma\norm{W_\ell}_2\le\lambda$ para todo $\ell$, entonces $\norm{\nabla_{h_0}\Loss}\le\lambda^{L}\norm{\nabla_{h_L}\Loss}$, que tiende a~0 exponencialmente con $L$. En consecuencia, que el gradiente explote exige que $\norm{W_\ell}_2>1/\gamma$ para alguna capa.
+\end{corolario}
+
+\begin{proof}
+La primera afirmación es la cota superior del \cref{teo:cotas}. La segunda es su contrarrecíproca: si $\norm{W_\ell}_2\le 1/\gamma$ en todas las capas, el cociente de normas es a lo sumo~1 y el gradiente no puede crecer.
+\end{proof}
+
+En una red recurrente la misma matriz $W$ se aplica una vez por paso de tiempo, de modo que el corolario se lee con $L$ igual a la longitud de la secuencia. Es el resultado de~\cite[§2.1]{pascanu}: con $\gamma=1$ para $\tanh$ y $\gamma=1/4$ para la sigmoide logística, basta $\norm{W}_2<1/\gamma$ para que el gradiente se desvanezca a lo largo del tiempo. Goodfellow \emph{et al.}~\cite[§10.7]{gbc} y Zhang \emph{et al.}~\cite[§9.7.2]{d2l} presentan el caso lineal, en el que el gradiente contiene las potencias $W^{t}$.
+
+\begin{ejemplo}[Potencias de una matriz simétrica]\label{ej:potencias}
+Sea $M=\begin{psmallmatrix}0{,}85&0{,}35\\0{,}35&0{,}85\end{psmallmatrix}$, con autovalores $1{,}2$ y $0{,}5$ y autovectores $(1,1)/\sqrt2$ y $(1,-1)/\sqrt2$. Para $x=(1,0)$,
+\[
+M^{k}x=\tfrac12\bigl(1{,}2^{k}+0{,}5^{k},\ 1{,}2^{k}-0{,}5^{k}\bigr).
+\]
+Con $k=10$: $1{,}2^{10}=6{,}192$ y $0{,}5^{10}=9{,}8\cdot 10^{-4}$, luego $M^{10}x=(3{,}096;\,3{,}095)$. La componente en la dirección del autovalor~$0{,}5$ ha desaparecido y la norma crece como $1{,}2^{k}$: una misma matriz hace explotar unas direcciones y desvanecer otras.
+\end{ejemplo}
+
+\begin{observacion}
+Los productos de muchos factores grandes crean en la superficie de pérdida regiones casi verticales, llamadas \emph{acantilados}~\cite[§8.2.4]{gbc}. Un paso de gradiente en una de ellas puede expulsar los parámetros lejos de la región que se estaba explorando. El recorte del gradiente del \cref{tema:4} es el remedio estándar.
+\end{observacion}
+
+\section{Saturación de las activaciones}
+
+El factor $\diag(f'(z_\ell))$ del jacobiano depende de las preactivaciones. Para las activaciones del módulo~9:
+\begin{itemize}[leftmargin=1.4em]
+  \item $\tanh'(t)=1-\tanh^{2}(t)\in(0,1]$, con máximo en $t=0$. Vale $0{,}420$ en $t=1$, $0{,}0707$ en $t=2$ y $0{,}0099$ en $t=3$.
+  \item La sigmoide $s(t)=1/(1+e^{-t})$ cumple $s'(t)=s(t)(1-s(t))\le 1/4$.
+  \item $\ReLU'(t)=1$ si $t>0$ y $0$ si $t<0$.
+\end{itemize}
+
+Una unidad con $\abs{z}$ grande está \emph{saturada}: su derivada es casi nula y anula la fila correspondiente del jacobiano. Si una unidad ReLU tiene preactivación negativa para todas las entradas, su gradiente es exactamente cero y deja de aprender. Por el \cref{teo:cotas}, basta que una sola capa tenga $\smin(J_\ell)$ pequeño para que el producto completo pueda serlo.
+
+\section{Propagación de la varianza e inicialización}
+
+La escala de los pesos se elige para que la varianza de la señal no crezca ni decrezca de una capa a la siguiente. El resultado clave es el siguiente~\cite[§5.4.2]{d2l}.
+
+\begin{teorema}[Propagación de la varianza]\label{teo:varianza}
+Sea $y=\sum_{i=1}^{n}w_ix_i$, donde las $2n$ variables $w_1,\dots,w_n,x_1,\dots,x_n$ son independientes, $\E[w_i]=0$, $\Var(w_i)=\sigma^{2}$ y $\E[x_i^{2}]=q$ para todo $i$. Entonces $\E[y]=0$ y
+\[
+\Var(y)=n\,\sigma^{2}\,q .
+\]
+Si además $\E[x_i]=0$, entonces $q=\Var(x_i)$.
+\end{teorema}
+
+\begin{proof}
+Por independencia, $\E[w_ix_i]=\E[w_i]\E[x_i]=0$, luego $\E[y]=0$. Para $i\ne j$, $\E[(w_ix_i)(w_jx_j)]=\E[w_i]\E[w_j]\E[x_ix_j]=0$: los sumandos están incorrelados y sus varianzas se suman. Cada una vale $\Var(w_ix_i)=\E[w_i^{2}x_i^{2}]=\E[w_i^{2}]\E[x_i^{2}]=\sigma^{2}q$. Sumando los $n$ términos se obtiene el enunciado.
+\end{proof}
+
+\begin{corolario}[Inicialización de Xavier]\label{cor:xavier}
+En una red lineal ($f(t)=t$) con entradas centradas, $\Var(z_\ell)=(n\sigma^{2})^{\ell}\Var(h_0)$. La varianza se conserva en todas las capas si y solo si $\sigma^{2}=1/n$. La pasada hacia atrás multiplica por las matrices traspuestas, cuyo número de entradas por fila es el de salidas, y la varianza del gradiente se conserva con $\sigma^{2}=1/n_{\text{sal}}$; Glorot y Bengio~\cite{glorot} proponen el compromiso $\sigma^{2}=2/(n_{\text{ent}}+n_{\text{sal}})$.
+\end{corolario}
+
+\begin{proof}
+Aplicando el \cref{teo:varianza} capa a capa, cada una multiplica la varianza por $n\sigma^{2}$; tras $\ell$ capas el factor es $(n\sigma^{2})^{\ell}$, que vale~1 para todo $\ell$ si y solo si $n\sigma^{2}=1$.
+\end{proof}
+
+\begin{proposicion}[Inicialización de He]\label{prop:he}
+Sea $z$ una variable aleatoria con densidad simétrica respecto de~0 y varianza $v$. Entonces $\E[\ReLU(z)^{2}]=v/2$. En consecuencia, en una red ReLU la varianza de las preactivaciones se conserva con $\sigma^{2}=2/n$~\cite{he-init}.
+\end{proposicion}
+
+\begin{proof}
+Por simetría, $\int_{0}^{\infty}t^{2}\rho(t)\,dt=\int_{-\infty}^{0}t^{2}\rho(t)\,dt$, y su suma es $\E[z^{2}]=v$. Como $\ReLU(z)^{2}$ vale $z^{2}$ si $z>0$ y~0 en otro caso, $\E[\ReLU(z)^{2}]=\int_{0}^{\infty}t^{2}\rho(t)\,dt=v/2$. Por el \cref{teo:varianza} con $q=v/2$, la preactivación siguiente tiene varianza $n\sigma^{2}v/2$, igual a $v$ si y solo si $\sigma^{2}=2/n$.
+\end{proof}
+
+\begin{ejemplo}[Inicialización por defecto de una capa lineal]\label{ej:pytorch}
+Una capa lineal de PyTorch inicializa sus pesos con distribución uniforme en $[-1/\sqrt n,\,1/\sqrt n]$. La varianza de la uniforme en $[-a,a]$ es $a^{2}/3$, luego $\sigma^{2}=1/(3n)$ y $n\sigma^{2}=1/3$. En una red lineal de 24 capas la desviación típica de la señal se multiplica por $(1/\sqrt3)^{24}=3^{-12}\approx 1{,}9\cdot 10^{-6}$, y el gradiente sufre un factor del mismo orden. En la práctica del módulo, una red de 24 capas $\tanh$ con esta inicialización da un cociente de $1{,}4\cdot 10^{-5}$ entre la norma del gradiente de la primera capa y la de la última.
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+Las redes recurrentes del módulo~12 aplican el mismo jacobiano una vez por token, y el \cref{cor:pascanu} explica su dificultad para aprender dependencias largas. El Transformer evita la recurrencia, pero apila decenas de bloques; lo que lo hace entrenable es la conexión residual del \cref{tema:2}, no una inicialización perfecta.
+\end{observacion}
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.2.4 «Cliffs and Exploding Gradients», §8.2.5 «Long-Term Dependencies», §8.4 «Parameter Initialization Strategies» y §10.7 «The Challenge of Long-Term Dependencies».
+\item Zhang \emph{et al.}~\cite{d2l}, §5.4 «Numerical Stability and Initialization» y §9.7 «Backpropagation Through Time».
+\item Bishop y Bishop~\cite{bishopdl}, §7.2.5 «Parameter initialization».
+\item Pascanu, Mikolov y Bengio~\cite{pascanu}, §2.1 «The mechanics».
+\item Notas de CS231n~\cite{cs231n}, «Neural Networks Part 2», apartado «Weight Initialization».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-congelada}
+Explique por qué, en una red de 24 capas sin conexiones residuales, la primera capa puede quedar prácticamente «congelada» aunque la última aprenda con normalidad. Use la \cref{prop:grad-prof} y el \cref{ej:pytorch}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-factores}
+Calcule el factor por el que se multiplica el gradiente tras 24 capas escalares si cada una contribuye con (a) $0{,}5$; (b) $1{,}1$. (c) ¿Cuántas capas con factor $0{,}5$ hacen falta para que el factor caiga por debajo de $2^{-24}\approx 6\cdot 10^{-8}$, el menor número positivo representable en fp16 (\cref{tema:5})?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-saturacion}
+(a) Calcule $\tanh'(t)$ para $t=0,1,2,3$. (b) En una red escalar de 5 capas $\tanh$ con pesos $w_\ell=1$, todas las preactivaciones valen~2. Calcule el factor del gradiente entre la salida y la entrada. (c) ¿Qué factor daría la sigmoide en el mejor caso posible?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-xavier}
+Una capa tiene $n=64$ entradas. (a) Calcule la desviación típica $\sigma$ de los pesos que conserva la varianza en una red lineal y la que la conserva en una red ReLU. (b) Calcule el factor $n\sigma^{2}$ de la inicialización por defecto del \cref{ej:pytorch} y la varianza de la señal tras 10 capas lineales, partiendo de varianza~1.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-singulares}
+(a) Demuestre que, para matrices cuadradas, todos los valores singulares de $AB$ están comprendidos entre $\smin(A)\smin(B)$ y $\norm{A}_2\norm{B}_2$. (b) Deduzca que si los jacobianos de una red cumplen $s_{\min}\le\smin(J_\ell)$ y $\norm{J_\ell}_2\le s_{\max}$, el cociente del \cref{teo:cotas} está entre $s_{\min}^{L}$ y $s_{\max}^{L}$, y calcule ambos extremos para $s_{\min}=0{,}9$, $s_{\max}=1{,}1$ y $L=24$. (c) ¿Qué indica el resultado sobre las condiciones que deben cumplir los jacobianos para que el gradiente esté bien condicionado?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.4, ejercicio~3 (cotas de los autovalores de un producto de matrices).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-potencias}
+Sea $M\in\R^{d\times d}$ simétrica con autovalores $\lambda_1>\abs{\lambda_2}\ge\dots\ge\abs{\lambda_d}$ y autovectores ortonormales $v_1,\dots,v_d$. (a) Demuestre que $M^{k}$ tiene autovalores $\lambda_i^{k}$ con los mismos autovectores. (b) Demuestre que, si $x$ tiene componente no nula sobre $v_1$, la dirección de $M^{k}x$ converge a la de $\pm v_1$. (c) Compruebe (b) con la matriz del \cref{ej:potencias} para $k=1$ y $k=10$. (d) Explique qué implica para los gradientes de una red recurrente.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §9.7, ejercicio~1.}
+\end{ejercicio}

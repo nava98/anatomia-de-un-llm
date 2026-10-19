@@ -1,0 +1,167 @@
+% =====================================================================
+\chapter{Atención local y contexto largo}
+\label{tema:3}
+% =====================================================================
+
+La atención causal completa evalúa del orden de $T^{2}/2$ pares de posiciones por capa, y su caché crece linealmente con $T$. Este tema estudia dos respuestas complementarias. La primera limita a cada token a una ventana de posiciones recientes, de modo que el coste por capa pasa a ser lineal en $T$ y la caché queda acotada; la profundidad del modelo recupera parte del alcance perdido. La segunda permite que un modelo entrenado con un contexto corto funcione con uno más largo, modificando las frecuencias de RoPE. Se sigue a Jiang \emph{et al.}~\cite[§2]{mistral} para la ventana deslizante, a Beltagy \emph{et al.}~\cite[§3.1]{longformer} para los patrones dispersos, a Chen \emph{et al.}~\cite[§2]{pi} y a Peng \emph{et al.}~\cite[§2--3]{yarn} para la extensión del contexto, y las clases~3 y~10 de CS336~\cite{cs336}.
+
+\section{Atención con ventana deslizante}
+
+\begin{definicion}[Atención con ventana deslizante]\label{def:swa}
+Sea $W\ge 1$. La \emph{atención con ventana deslizante} de tamaño $W$ usa la máscara
+\[
+M_{ij}=\begin{cases}0&\text{si } i-W<j\le i,\\ -\infty&\text{en otro caso,}\end{cases}
+\]
+de modo que la posición $i$ atiende a las $\min(i,W)$ posiciones $j\in\{\max(1,i-W+1),\dots,i\}$, incluida ella misma. Con $W\ge T$ se recupera la máscara causal.
+\end{definicion}
+
+\begin{proposicion}[Pares evaluados]\label{prop:pares}
+Para una secuencia de $T$ tokens, la atención causal completa evalúa $T(T+1)/2$ pares $(i,j)$ por capa y cabeza. Con ventana $W\le T$ evalúa
+\[
+\frac{W(W+1)}{2}+(T-W)\,W=TW-\frac{W(W-1)}{2}
+\]
+pares. Para $T\gg W$, el cociente entre ambos recuentos es aproximadamente $T/(2W)$.
+\end{proposicion}
+
+\begin{proof}
+La fila $i$ de la atención completa tiene $i$ posiciones permitidas, y $\sum_{i=1}^{T}i=T(T+1)/2$. Con ventana, las filas $i\le W$ tienen $i$ posiciones, que suman $W(W+1)/2$, y las $T-W$ filas restantes tienen $W$ cada una. Desarrollando, $W(W+1)/2+TW-W^{2}=TW-W(W-1)/2$. El cociente es $\frac{T(T+1)/2}{TW-W(W-1)/2}$; dividiendo numerador y denominador por $TW$ y haciendo $T\to\infty$ con $W$ fijo, tiende a $\frac{T+1}{2W}\approx T/(2W)$.
+\end{proof}
+
+\section{Campo receptivo}
+
+Una capa con ventana solo mezcla información de $W$ posiciones, pero la capa siguiente recibe vectores que ya resumen otras $W$, como en una red convolucional.
+
+\begin{teorema}[Campo receptivo de la atención con ventana]\label{teo:campo}
+En una pila de $L$ capas de atención con ventana $W$, y con conexiones residuales y subcapas posición a posición entre ellas, la salida de la posición $i$ tras la capa $L$ solo puede depender de las entradas en las posiciones $\{i-L(W-1),\dots,i\}$. El campo receptivo tiene, por tanto, $L(W-1)+1$ posiciones.
+\end{teorema}
+
+\begin{proof}
+Por inducción sobre $L$. Para $L=1$, la posición $i$ lee las posiciones $j\in[i-W+1,i]$, un intervalo de $W=1\cdot(W-1)+1$ posiciones; la conexión residual y el MLP actúan sobre la propia posición $i$, que ya está incluida. Supóngase el resultado cierto para $L$ capas. La capa $L+1$ en la posición $i$ combina las salidas de la capa $L$ en las posiciones $j\in[i-W+1,i]$, y por la hipótesis cada una depende de las entradas en $[j-L(W-1),j]$. La unión de esos intervalos es $[i-W+1-L(W-1),\,i]=[i-(L+1)(W-1),\,i]$, porque los intervalos son consecutivos y se solapan. Tiene $(L+1)(W-1)+1$ posiciones.
+\end{proof}
+
+\begin{ejemplo}[Mistral 7B]\label{ej:mistral}
+Mistral 7B usa $W=4096$ y $L=32$~\cite[tabla~1]{mistral}. Por el \cref{teo:campo}, el campo receptivo de la última capa es $32\cdot 4095+1=131\,041$ tokens. El artículo da la aproximación $LW=131\,072$, «unos 131\,000 tokens»~\cite[§2]{mistral}.
+\end{ejemplo}
+
+\begin{observacion}
+El \cref{teo:campo} da una cota superior de la dependencia, no una garantía de que la información llegue. Un dato situado a $10^{5}$ posiciones de distancia solo puede alcanzar la posición $i$ tras pasar por decenas de capas intermedias, cada una de las cuales lo mezcla con otros. Por eso la clase~10 de CS336 advierte que la atención local puede perjudicar la calidad y que la solución habitual es intercalar capas locales y globales~\cite{cs336}.
+\end{observacion}
+
+\section{La caché circular}
+
+\begin{definicion}[Caché circular]\label{def:circular}
+Con ventana $W$, la \emph{caché circular} de una capa tiene $W$ ranuras $0,\dots,W-1$. Las claves y los valores de la posición $i\ge 0$ se escriben en la ranura $i\bmod W$, sobrescribiendo lo que hubiera~\cite[§2]{mistral}.
+\end{definicion}
+
+\begin{proposicion}[Corrección de la caché circular]\label{prop:circular}
+Tras escribir la posición $i$, la caché contiene exactamente las claves y los valores de las posiciones $\max(0,i-W+1),\dots,i$, que son las que la posición $i$ necesita.
+\end{proposicion}
+
+\begin{proof}
+Los $W$ enteros consecutivos $i-W+1,\dots,i$ tienen restos distintos módulo $W$: si dos de ellos, $a<b$, tuvieran el mismo resto, $W$ dividiría a $b-a\in\{1,\dots,W-1\}$, lo que es imposible. Ocupan, por tanto, $W$ ranuras distintas, es decir, todas. Cada ranura contiene la última posición escrita en ella, y la última posición $\le i$ con resto $r$ es la única del intervalo $[i-W+1,i]$ con ese resto. Si $i<W-1$, solo se han escrito las ranuras $0,\dots,i$ y contienen las posiciones $0,\dots,i$.
+\end{proof}
+
+La memoria de la caché pasa a ser $2L\nkv\dhd Ws$ bytes por secuencia, independiente de $T$. En Mistral 7B ($L=32$, $\nkv=8$, $\dhd=128$), en bf16 son $512$~MiB, frente a $4$~GiB para una secuencia de $32\,768$ tokens sin ventana: el artículo cita esa reducción de $8\times$~\cite[§2]{mistral}.
+
+\section{Patrones dispersos e híbridos}
+
+Longformer combina tres patrones~\cite[§3.1]{longformer}: la ventana deslizante; la \emph{ventana dilatada}, en la que cada posición atiende a $w$ posiciones separadas por saltos de tamaño $\delta$, con un campo receptivo del orden de $L\,\delta\,w$; y la \emph{atención global} de unas pocas posiciones elegidas, que atienden a toda la secuencia y a las que atiende toda la secuencia. El coste sigue siendo $O(Tw)$.
+
+Los modelos recientes prefieren alternar capas. La clase~3 de CS336 cita un modelo con una capa de atención completa cada cuatro y el resto con ventana, y la clase~10 recoge un diseño con una capa global cada seis~\cite{cs336}.
+
+\begin{proposicion}[Caché de un modelo híbrido]\label{prop:hibrido}
+Sea un modelo de $L$ capas en el que una fracción $\rho$ usa atención completa y el resto ventana $W$. Con $T\ge W$, su caché es la de un modelo de atención completa multiplicada por $\rho+(1-\rho)W/T$.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:cache}, la caché es proporcional a la suma, sobre las capas, del número de posiciones guardadas: $\rho L\cdot T+(1-\rho)L\cdot W$. Dividiendo por $LT$ se obtiene el factor.
+\end{proof}
+
+Con $\rho=1/4$, $W=4096$ y $T=131\,072$, el factor es $0{,}25+0{,}75/32=0{,}2734$: la caché se reduce a algo más de una cuarta parte, dominada por las capas globales.
+
+\section{RoPE y longitudes de onda}
+
+RoPE (módulo~14, tema~4) gira cada par de coordenadas $i\in\{0,\dots,\dhd/2-1\}$ de consultas y claves un ángulo $m\theta_i$ en la posición $m$, con $\theta_i=\beta_0^{-2i/\dhd}$ y base $\beta_0=10^{4}$ en el artículo original~\cite[§3.2.2]{roformer}. Llama~3 usa $\beta_0=5\cdot 10^{5}$~\cite[tabla~3]{llama3}.
+
+\begin{definicion}[Longitud de onda]\label{def:onda}
+La \emph{longitud de onda} del par $i$ es $\lambda_i=2\pi/\theta_i=2\pi\beta_0^{2i/\dhd}$: el número de posiciones tras el cual la rotación da una vuelta completa~\cite[ec.~8]{yarn}.
+\end{definicion}
+
+Las longitudes de onda crecen geométricamente desde $\lambda_0=2\pi\approx 6{,}283$ hasta $\lambda_{\dhd/2-1}=2\pi\beta_0^{1-2/\dhd}$. Con $\dhd=128$ y $\beta_0=10^{4}$, la mayor es $54\,410$; con $\beta_0=5\cdot 10^{5}$, unos $2{,}56\cdot 10^{6}$. Los pares de longitud de onda corta codifican la posición relativa con precisión; los de longitud de onda mayor que el contexto de entrenamiento no completan nunca una vuelta durante el entrenamiento, de modo que se comportan casi como una codificación absoluta de la posición.
+
+\section{Extensión del contexto}
+
+Sea un modelo entrenado con contexto $L_0$ que se quiere usar con $L'>L_0$, y sea $s_{\mathrm{e}}=L'/L_0$. Usar posiciones $m\ge L_0$ sin más (extrapolación) produce ángulos $m\theta_i$ que los pares de onda larga nunca vieron, y la calidad se degrada rápidamente~\cite[§2.2]{pi}.
+
+\begin{definicion}[Interpolación de posiciones]\label{def:pi}
+La \emph{interpolación de posiciones} (PI) sustituye la posición $m$ por $m/s_{\mathrm{e}}$ antes de aplicar RoPE: el ángulo del par $i$ pasa a ser $m\theta_i/s_{\mathrm{e}}$~\cite[§2.3, ec.~4]{pi}.
+\end{definicion}
+
+Con PI, todo ángulo usado con $m<L'$ es menor que $L_0\theta_i$, es decir, está dentro del intervalo visto en el entrenamiento. Chen \emph{et al.} demuestran que el error al interpolar entre posiciones conocidas está acotado por una cantidad mucho menor que la cota correspondiente a la extrapolación~\cite[§2.3, teorema~2.1]{pi}, y extienden modelos LLaMA hasta $32\,768$ tokens con unos 1000 pasos de ajuste. El inconveniente es que PI comprime también los pares de onda corta, que no lo necesitaban, y la resolución entre posiciones cercanas empeora en un factor $s_{\mathrm{e}}$.
+
+\begin{definicion}[Cambio de base NTK]\label{def:ntk}
+La interpolación \emph{consciente del NTK} conserva las posiciones y cambia la base por
+\[
+\beta_0'=\beta_0\,s_{\mathrm{e}}^{\dhd/(\dhd-2)}
+\]
+\cite[§3.1]{yarn}.
+\end{definicion}
+
+\begin{proposicion}[Efecto del cambio de base]\label{prop:ntk}
+Con la base $\beta_0'$ de la \cref{def:ntk}, las nuevas frecuencias son $\theta_i'=\theta_i\,s_{\mathrm{e}}^{-2i/(\dhd-2)}$. En particular, $\theta_0'=\theta_0$ (el par más rápido no cambia) y $\theta'_{\dhd/2-1}=\theta_{\dhd/2-1}/s_{\mathrm{e}}$ (el más lento se interpola exactamente como en PI). Las frecuencias intermedias se dividen por factores que crecen geométricamente con $i$ entre $1$ y $s_{\mathrm{e}}$.
+\end{proposicion}
+
+\begin{proof}
+$\theta_i'=(\beta_0')^{-2i/\dhd}=\beta_0^{-2i/\dhd}\,s_{\mathrm{e}}^{-\frac{\dhd}{\dhd-2}\cdot\frac{2i}{\dhd}}=\theta_i\,s_{\mathrm{e}}^{-2i/(\dhd-2)}$. Con $i=0$ el exponente es $0$; con $i=\dhd/2-1$ es $-2(\dhd/2-1)/(\dhd-2)=-1$. El factor $s_{\mathrm{e}}^{2i/(\dhd-2)}$ es una progresión geométrica en $i$ de razón $s_{\mathrm{e}}^{2/(\dhd-2)}>1$.
+\end{proof}
+
+YaRN refina esta idea en dos pasos~\cite[§3.2 y §3.3]{yarn}. Primero, decide para cada par según el cociente $r_i=L_0/\lambda_i$, que cuenta cuántas vueltas completa en el contexto original: si $r_i>\beta$ (onda corta) no interpola; si $r_i<\alpha$ (onda larga) interpola como PI; entre ambos valores mezcla linealmente las dos opciones. Para Llama, $\alpha=1$ y $\beta=32$. Segundo, multiplica los logits de la atención por un factor de temperatura, implementado escalando consultas y claves por $\sqrt{1/t}=0{,}1\ln s_{\mathrm{e}}+1$~\cite[§3.3]{yarn}. Con $s_{\mathrm{e}}=16$, $\sqrt{1/t}=1{,}277$. Los autores extienden Llama~2 a $128\,000$ tokens con 400 pasos de ajuste~\cite[§4.1]{yarn}.
+
+\begin{ejemplo}[Qué pares interpola YaRN]\label{ej:yarn}
+Con $L_0=4096$, $\dhd=128$ y $\beta_0=10^{4}$, $r_i=4096/(2\pi\cdot 10^{4\cdot 2i/128})$. Para $i=0$, $r_0=651{,}9$; para $i=20$, $r_{20}=36{,}66$; para $i=40$, $r_{40}=2{,}061$; para $i=46$, $r_{46}=0{,}8693$. Con $\alpha=1$ y $\beta=32$, los pares $i=0,\dots,20$ no se interpolan, los pares $i=46,\dots,63$ se interpolan como en PI y los 25 intermedios se mezclan.
+\end{ejemplo}
+
+\begin{observacion}[Entrenamiento por etapas]
+La extensión del contexto también puede hacerse durante el preentrenamiento. Llama~3 405B se entrena primero con $8192$ tokens y amplía el contexto hasta $128\,000$ en seis etapas, con unos $8\cdot 10^{11}$ tokens, al final del preentrenamiento, porque el coste de la atención crece cuadráticamente con la longitud~\cite[§3.4.2]{llama3}. El informe de Gemini~1.5 afirma que el modelo recupera información en contextos de hasta $10^{7}$ tokens, pero no publica el mecanismo que lo permite~\cite[§3.1]{gemini15}.
+\end{observacion}
+
+\begin{lecturas}
+\item Jiang \emph{et al.}~\cite{mistral}, §2: «Sliding Window Attention» y «Rolling Buffer Cache».
+\item Beltagy \emph{et al.}~\cite{longformer}, §3.1 «Attention Pattern».
+\item Chen \emph{et al.}~\cite{pi}, §2.3 «Proposed approach: Position Interpolation».
+\item Peng \emph{et al.}~\cite{yarn}, §2 y §3 (NTK-aware, NTK-by-parts y YaRN).
+\item Su \emph{et al.}~\cite{roformer}, §3.3 y §3.4.3 «Long-term decay of RoPE».
+\item Zhang \emph{et al.}~\cite{d2l}, §11.6.2 «Comparing CNNs, RNNs, and Self-Attention».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-vf}
+Justifique si son verdaderas o falsas: (a) con ventana deslizante, la caché KV de una capa no depende de la longitud de la secuencia; (b) la interpolación de posiciones comprime por igual todos los pares de frecuencias, y el cambio de base NTK no; (c) en una sola capa con ventana $W$, la posición $i$ puede recibir información de la posición $i-W$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-pares}
+Con $T=16\,384$ y $W=4096$, cuente exactamente los pares que evalúan la atención causal completa y la de ventana, calcule su cociente y compárelo con la aproximación $T/(2W)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-circular}
+Una caché circular tiene $W=4$ ranuras y se procesan las posiciones $0,1,\dots,9$. (a) ¿En qué ranura se escribe cada posición? (b) ¿Qué posición contiene cada ranura tras procesar la posición~9? (c) Compruebe la \cref{prop:circular} para $i=9$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-ntk}
+Sean $\dhd=128$, $\beta_0=10^{4}$ y $s_{\mathrm{e}}=4$. (a) Calcule la nueva base de la \cref{def:ntk}. (b) Calcule $\theta_0$, $\theta_{32}$ y $\theta_{63}$ originales, con PI y con el cambio de base NTK. (c) ¿Por qué factor divide cada método la frecuencia $\theta_{32}$? (d) Calcule el factor de YaRN $\sqrt{1/t}$.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:3-d2l}
+Una capa de autoatención sobre $n$ tokens de dimensión $d$ cuesta $O(n^{2}d)$ operaciones; una capa recurrente con estado de dimensión $d$, $O(nd^{2})$; una convolución con núcleo de tamaño $k$, $O(knd^{2})$. Con $n=4096$, $d=1024$ y $k=3$, evalúe las tres expresiones. ¿A partir de qué $n$ la atención es más cara que la capa recurrente? ¿Qué limitación tiene la convolución que no tiene la atención?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §11.6.2 («Comparing CNNs, RNNs, and Self-Attention») y §11.6.5, ejercicio~1.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-dilatada}
+Una ventana dilatada de tamaño $w$ y dilatación $\delta$ permite que la posición $i$ atienda a las posiciones $i,\,i-\delta,\,i-2\delta,\dots,i-(w-1)\delta$. Demuestre que, tras $L$ capas, la salida en $i$ solo depende de entradas en $[i-L\delta(w-1),\,i]$, y que la posición $i-L\delta(w-1)$ sí puede influir. ¿Influyen todas las posiciones del intervalo? Relacione el resultado con la estimación $L\delta w$ de Longformer.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-ntk-dem}
+(a) Demuestre que el cambio de base NTK es la única elección de base $\beta_0'$ que deja $\theta_0$ fija y divide $\theta_{\dhd/2-1}$ exactamente por $s_{\mathrm{e}}$. (b) Demuestre que, con PI, el mayor ángulo usado por el par $i$ en un contexto de $L'$ tokens es el mismo que en el entrenamiento con $L_0$ tokens.
+\end{ejercicio}

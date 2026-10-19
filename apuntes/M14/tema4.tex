@@ -1,0 +1,200 @@
+% =====================================================================
+\chapter{Codificación de la posición: sinusoidal y RoPE}
+\label{tema:4}
+% =====================================================================
+
+Sin información de posición, la atención trata la secuencia como un conjunto. Este tema demuestra esa propiedad, define la codificación sinusoidal del Transformer original y las posiciones aprendidas de GPT-2, y estudia con detalle la codificación rotatoria RoPE de LLaMA, cuya puntuación de atención solo depende de la distancia entre tokens. Se sigue~\cite[§3.5]{vaswani}, \cite[§11.6.3]{d2l}, \cite[§12.1.9]{bishopdl}, \cite[§7.4]{jm3}, el artículo de Su \emph{et al.}~\cite[§3.2]{roformer} y las secciones~2 y~3 de la práctica~4 de CS224N~\cite{cs224n}.
+
+\section{La atención no ve el orden}
+
+\begin{proposicion}[Equivariancia por permutaciones]\label{prop:equivariancia}
+Sea
+\[
+f(X)=\softmax\bigl(XW_Q(XW_K)\T/\sqrt{d_k}\bigr)XW_V
+\]
+la autoatención \emph{sin máscara}, con la softmax por filas. Para toda matriz de permutación $P$, $f(PX)=P\,f(X)$.
+\end{proposicion}
+
+\begin{proof}
+Sea $S=XW_QW_K\T X\T/\sqrt{d_k}$. Con $PX$ en lugar de $X$, la matriz de puntuaciones es $PSP\T$, cuya entrada $(t,u)$ es $S_{\pi(t)\pi(u)}$. La softmax por filas de $PSP\T$ es $P\softmax(S)P\T$: la fila $t$ contiene los mismos números que la fila $\pi(t)$ de $S$, reordenados por $\pi$, y la softmax de un vector reordenado es la softmax reordenada. Por tanto $f(PX)=P\softmax(S)P\T PXW_V=P\softmax(S)XW_V=Pf(X)$, porque $P\T P=I$.
+\end{proof}
+
+Junto con el \cref{lem:filas}, la \cref{prop:equivariancia} implica que un Transformer sin máscara y sin posiciones es equivariante: barajar los tokens de la entrada solo baraja las filas de la salida, de modo que «el perro muerde al hombre» y «el hombre muerde al perro» producen los mismos vectores por palabra. La máscara causal rompe la simetría (\cref{eje:1-perm-mascara}), y la práctica de CS336 recuerda que un decoder causal puede, en principio, inferir posiciones sin codificación explícita~\cite[§7.3]{cs336}; aun así, todos los modelos de la \cref{tab:modelos} codifican la posición de forma explícita.
+
+\section{Codificación sinusoidal y posiciones aprendidas}
+
+\begin{definicion}[Codificación sinusoidal]\label{def:sinusoidal}
+Sea $d$ par y $\omega_i=10000^{-2i/d}$ para $i=0,\dots,d/2-1$. La \emph{codificación sinusoidal} de la posición $p\in\mathbb{N}$ es el vector $\PE(p)\in\R^{d}$ con componentes
+\[
+\PE(p)_{2i}=\sin(p\,\omega_i),\qquad \PE(p)_{2i+1}=\cos(p\,\omega_i),
+\]
+que se suma al embedding del token: $h^{0}_t=e_{x_t}+\PE(t)$~\cite[§3.5]{vaswani}.
+\end{definicion}
+
+Cada par $(2i,2i+1)$ es un punto que gira sobre la circunferencia unidad con frecuencia angular $\omega_i$; las frecuencias decrecen geométricamente desde $\omega_0=1$ hasta $\omega_{d/2-1}\approx 10^{-4}$. Es como un reloj con $d/2$ agujas que giran a velocidades distintas~\cite[§11.6.3.1]{d2l}.
+
+\begin{ejemplo}\label{ej:pe4}
+Con $d=4$: $\omega_0=1$ y $\omega_1=10000^{-1/2}=0{,}01$. Entonces $\PE(1)=(0{,}8415;\;0{,}5403;\;0{,}0100;\;1{,}0000)$ y $\PE(2)=(0{,}9093;\;-0{,}4161;\;0{,}0200;\;0{,}9998)$, redondeando a cuatro decimales. La norma es constante: $\norm{\PE(p)}^{2}=d/2=2$ para todo $p$.
+\end{ejemplo}
+
+\begin{teorema}[Desplazamiento lineal]\label{teo:desplazamiento}
+Para cada $k\in\mathbb{Z}$ existe una matriz ortogonal $M_k\in\R^{d\times d}$, que no depende de $p$, tal que $\PE(p+k)=M_k\,\PE(p)$ para todo $p$.
+\end{teorema}
+
+\begin{proof}
+Se fija un par $i$ y se escribe $a=p\,\omega_i$, $b=k\,\omega_i$. Por las fórmulas del seno y del coseno de la suma,
+\[
+\begin{pmatrix}\sin(a+b)\\ \cos(a+b)\end{pmatrix}=\begin{pmatrix}\cos b&\sin b\\ -\sin b&\cos b\end{pmatrix}\begin{pmatrix}\sin a\\ \cos a\end{pmatrix}.
+\]
+La matriz $2\times 2$ solo depende de $b=k\omega_i$ y es una rotación, luego ortogonal. Sea $M_k$ la matriz diagonal por bloques con estos $d/2$ bloques; es ortogonal porque lo es cada bloque, y la igualdad se cumple par a par.
+\end{proof}
+
+El \cref{teo:desplazamiento} es la afirmación de Vaswani \emph{et al.}~\cite[§3.5]{vaswani} de que $\PE(p+k)$ es una función lineal de $\PE(p)$ para cada desplazamiento fijo, y la propiedad de posición relativa de~\cite[§11.6.3.2]{d2l}. La esperanza era que la red aprendiera a atender por posiciones relativas mediante esa aplicación lineal.
+
+\begin{definicion}[Posiciones aprendidas]
+Un modelo con \emph{posiciones aprendidas} añade una matriz de parámetros $W_P\in\R^{\nctx\times d}$ y suma su fila $t$ al embedding del token $t$. Es la opción de GPT-2~\cite{gpt2}. Aporta $\nctx d$ parámetros y no define ninguna codificación para posiciones $t>\nctx$.
+\end{definicion}
+
+\section{Codificación rotatoria (RoPE)}
+
+En lugar de sumar la posición al embedding, RoPE la introduce en cada capa, girando las consultas y las claves~\cite{roformer}. Sea
+\[
+R(\alpha)=\begin{pmatrix}\cos\alpha&-\sin\alpha\\ \sin\alpha&\cos\alpha\end{pmatrix}
+\]
+la rotación plana de ángulo $\alpha$.
+
+\begin{lema}[Rotaciones planas]\label{lem:rotaciones}
+Para todos $a,b\in\R$: (i) $R(a)R(b)=R(a+b)$; (ii) $R(a)\T=R(-a)$; (iii) en consecuencia, $R(a)\T R(b)=R(b-a)$ y $R(a)$ es ortogonal.
+\end{lema}
+
+\begin{proof}
+(i) La entrada $(1,1)$ del producto es $\cos a\cos b-\sin a\sin b=\cos(a+b)$ y la entrada $(2,1)$ es $\sin a\cos b+\cos a\sin b=\sin(a+b)$; las entradas $(1,2)$ y $(2,2)$ son $-\sin(a+b)$ y $\cos(a+b)$ por el mismo cálculo. (ii) Al trasponer se intercambian los senos de fuera de la diagonal; como $\cos(-a)=\cos a$ y $\sin(-a)=-\sin a$, el resultado es $R(-a)$. (iii) $R(a)\T R(b)=R(-a)R(b)=R(b-a)$ por (ii) y (i); con $b=a$ se obtiene $R(a)\T R(a)=R(0)=I$.
+\end{proof}
+
+\begin{definicion}[RoPE]\label{def:rope}
+Sea $d_k$ par y $\theta_i=10000^{-2i/d_k}$ para $i=0,\dots,d_k/2-1$. Para cada posición $m$ se define la matriz diagonal por bloques
+\[
+R_m=\diag\bigl(R(m\theta_0),\,R(m\theta_1),\,\dots,\,R(m\theta_{d_k/2-1})\bigr)\in\R^{d_k\times d_k}.
+\]
+RoPE sustituye, en cada cabeza y cada capa, la consulta $q_m$ del token $m$ por $\tilde q_m=R_mq_m$ y la clave $k_n$ del token $n$ por $\tilde k_n=R_nk_n$. Los valores $v_n$ no se modifican.
+\end{definicion}
+
+\begin{teorema}[RoPE es relativa]\label{teo:rope}
+Para todos $q,k\in\R^{d_k}$ y todas las posiciones $m,n$,
+\[
+(R_mq)\T(R_nk)=q\T R_{n-m}\,k.
+\]
+En particular, la puntuación de atención entre el token $m$ y el token $n$ solo depende de las posiciones a través de la diferencia $n-m$.
+\end{teorema}
+
+\begin{proof}
+La traspuesta de una matriz diagonal por bloques es la matriz diagonal por bloques de las traspuestas, y el producto de dos matrices diagonales por bloques con bloques del mismo tamaño se calcula bloque a bloque. Por el \cref{lem:rotaciones}(iii) aplicado a cada bloque,
+\[
+R_m\T R_n=\diag\bigl(R(m\theta_i)\T R(n\theta_i)\bigr)_{i}=\diag\bigl(R((n-m)\theta_i)\bigr)_{i}=R_{n-m}.
+\]
+Finalmente, $(R_mq)\T(R_nk)=q\T R_m\T R_nk=q\T R_{n-m}k$.
+\end{proof}
+
+\begin{corolario}\label{cor:rope-norma}
+RoPE conserva las normas: $\norm{R_mq}=\norm{q}$. Solo modifica el ángulo entre la consulta y la clave.
+\end{corolario}
+
+\begin{proof}
+$R_m$ es ortogonal por el \cref{lem:rotaciones}, luego $\norm{R_mq}^{2}=q\T R_m\T R_mq=q\T q$.
+\end{proof}
+
+Para un solo par ($d_k=2$), si $\varphi=(n-m)\theta$, el desarrollo de $q\T R(\varphi)k$ es
+\begin{equation}\label{eq:rope2d}
+q\T R(\varphi)\,k=(q\cdot k)\cos\varphi-(q_1k_2-q_2k_1)\sin\varphi .
+\end{equation}
+
+\begin{ejemplo}[Misma distancia, misma puntuación]\label{ej:rope}
+Sean $d_k=2$, $\theta=\pi/6$, $q=(1,2)$ y $k=(3,1)$, de modo que $q\cdot k=5$ y $q_1k_2-q_2k_1=-5$. Por~\eqref{eq:rope2d}, para $n-m=-2$ la puntuación es $5\cos(-\pi/3)+5\sin(-\pi/3)=2{,}5-4{,}330=-1{,}830$, y para $n-m=+2$ es $2{,}5+4{,}330=6{,}830$. La \cref{tab:rope} muestra que tres pares de posiciones con la misma diferencia dan la misma puntuación.
+\end{ejemplo}
+
+\begin{table}[ht]
+\centering\small
+\caption{Puntuaciones $(R_mq)\T(R_nk)$ del \cref{ej:rope}.}\label{tab:rope}
+\begin{tabular}{@{}cccr@{}}
+\toprule
+$m$ (consulta) & $n$ (clave) & $n-m$ & Puntuación \\
+\midrule
+3 & 1 & $-2$ & $-1{,}830$ \\
+5 & 3 & $-2$ & $-1{,}830$ \\
+2 & 0 & $-2$ & $-1{,}830$ \\
+1 & 3 & $+2$ & $6{,}830$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proposicion}[Forma compleja]\label{prop:rope-compleja}
+Identifíquese cada par $(a,b)$ con el número complejo $z=a+ib$. Entonces la rotación $R(\alpha)$ equivale a multiplicar por $e^{i\alpha}$, y, con $\langle u,v\rangle=\Real(u\bar v)$, el producto escalar de dos pares rotados es
+\[
+\bigl\langle z_1e^{im\theta},\,z_2e^{in\theta}\bigr\rangle=\Real\bigl(z_1\bar z_2\,e^{i(m-n)\theta}\bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+$e^{i\alpha}(a+ib)=(a\cos\alpha-b\sin\alpha)+i(a\sin\alpha+b\cos\alpha)$, que es el vector $R(\alpha)(a,b)\T$. Para $u=a+ib$ y $v=c+id$, $\Real(u\bar v)=ac+bd$ es el producto escalar real. Finalmente, $\overline{z_2e^{in\theta}}=\bar z_2e^{-in\theta}$, y los exponentes se suman.
+\end{proof}
+
+La forma compleja es la que usan el artículo original~\cite[§3.2.1]{roformer} y el código de LLaMA~\cite{llamacode}, que agrupa las componentes consecutivas de $q$ y $k$ en números complejos. La fase $e^{i(m-n)\theta}$ hace el papel del desfase entre dos osciladores de la misma frecuencia: solo importa la diferencia de fases, como en la interferencia de dos ondas.
+
+\begin{table}[ht]
+\centering\small
+\caption{Comparación de las codificaciones de posición. La propiedad relativa es la del \cref{teo:desplazamiento} para la sinusoidal y la del \cref{teo:rope} para RoPE.}\label{tab:posiciones}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Método & Dónde actúa & Parámetros & Relativa & Modelos \\
+\midrule
+Sinusoidal & suma al embedding & $0$ & indirecta & Transformer \\
+Aprendida & suma al embedding & $\nctx d$ & no & GPT-2, GPT-3 \\
+RoPE & gira $q$ y $k$ en cada capa & $0$ & exacta & LLaMA, Qwen \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Conexión con los LLM]
+RoPE no gira los valores $v$: la posición debe influir en \emph{a quién} se atiende, no en \emph{qué} contenido se copia al flujo residual. La práctica de CS336 precalcula los cosenos y senos una sola vez y los comparte entre capas, porque RoPE no tiene parámetros entrenables~\cite[§3.4.3]{cs336}. Los métodos para ampliar el contexto de un modelo con RoPE (módulo~16) modifican las frecuencias $\theta_i$; la más lenta tiene periodo $2\pi\cdot 10000^{(d_k-2)/d_k}$, que con la dimensión por cabeza de LLaMA-2~7B, $d_k=128$, vale unas $54\,410$ posiciones.
+\end{observacion}
+
+\begin{lecturas}
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.5 «Positional Encoding».
+\item Zhang \emph{et al.}~\cite{d2l}, §11.6.3 «Positional Encoding» (posición absoluta y relativa).
+\item Bishop y Bishop~\cite{bishopdl}, §12.1.9 «Positional encoding».
+\item Su \emph{et al.}~\cite{roformer}, §3.2 «Rotary position embedding».
+\item CS224N~\cite{cs224n}, práctica~4, sección~2 «Position Embeddings Exploration».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-v}
+¿Por qué RoPE gira $q$ y $k$ pero no $v$? ¿Qué ocurriría si también girase $v$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-pe}
+Calcule $\PE(1)$ y $\PE(2)$ con $d=4$ y compruebe que cada par cumple $\sin^{2}+\cos^{2}=1$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-mk}
+Con $d=2$ ($\omega_0=1$), escriba la matriz $M_1$ del \cref{teo:desplazamiento} con cuatro decimales y compruebe numéricamente que $M_1\PE(1)=\PE(2)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-rope}
+Con $d_k=2$, $\theta=\pi/6$, $q=(1,2)$ y $k=(3,1)$, calcule $R(3\theta)q$, $R(\theta)k$ y su producto escalar. Compruebe que coincide con $q\T R(-2\theta)k$ y que $\norm{R(\theta)k}=\norm{k}$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-rope-dem}
+Demuestre el \cref{teo:rope} para RoPE en $d_k$ dimensiones, justificando cada propiedad de las matrices diagonales por bloques que se use. Compruebe el caso $m=n$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-perm}
+Una capa calcula $Q=XW_Q$, $K=XW_K$, $V=XW_V$, $H=\softmax(QK\T/\sqrt d)V$ y $Z=\ReLU(HW_1+\uno b_1)W_2+\uno b_2$, con $X\in\R^{T\times d}$ y $\uno$ un vector columna de unos. (a) Demuestre que, si $X'=PX$ con $P$ de permutación, entonces $Z'=PZ$; puede usar $\softmax(PAP\T)=P\softmax(A)P\T$ y $\ReLU(PA)=P\ReLU(A)$. (b) Explique por qué es un problema para modelar texto. (c) ¿Pueden dos posiciones enteras distintas recibir la misma codificación sinusoidal?
+\fuente{adaptado de CS224N~\cite{cs224n}, práctica~4, sección~2, apartados (a) y (b).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-compleja}
+Escriba cada par de componentes como un complejo y defina $\RoPE(z,t)=z\,e^{it\theta}$. (a) Demuestre que $\langle\RoPE(z_1,t_1),\RoPE(z_2,t_2)\rangle=\langle\RoPE(z_1,t_1-t_2),\RoPE(z_2,0)\rangle$, con $\langle u,v\rangle=\Real(u\bar v)$. (b) Compruébelo con $z_1=1+2i$, $z_2=3+i$, $\theta=\pi/6$, $t_1=3$ y $t_2=1$.
+\fuente{adaptado de CS224N~\cite{cs224n}, práctica~4, sección~3, apartado (g)(ii) «Relative Embeddings».}
+\end{ejercicio}

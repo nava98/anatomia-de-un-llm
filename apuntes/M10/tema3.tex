@@ -1,0 +1,210 @@
+% =====================================================================
+\chapter{El modo inverso y la retropropagación}
+\label{tema:3}
+% =====================================================================
+
+El modo inverso recorre la traza dos veces: hacia delante, para calcular y guardar los valores, y hacia atrás, para propagar desde la salida la derivada de esta respecto a cada variable. Este tema define los adjuntos, demuestra que el algoritmo calcula un producto vector-jacobiano, estudia el papel del orden topológico y aplica el método a mano. Se siguen la §3.2 de~\cite{baydin}, el capítulo~3 de~\cite{gw}, las §6.5.2--6.5.6 de~\cite{gbc}, las notas «Backpropagation, Intuitions» de~\cite{cs231n} y la §5.3 de~\cite{d2l}.
+
+\section{Adjuntos}
+
+Se fija una traza de $f\colon\R^{n}\to\R$ con salida escalar $y=v_\ell$, y un punto $x$ en el que se han calculado todos los valores $v_i$.
+
+\begin{definicion}[Adjuntos]\label{def:adjunto}
+Los \emph{adjuntos} de la traza se obtienen así: se inicializan $\bar v_\ell=1$ y $\bar v_j=0$ para $j<\ell$, y se recorren las operaciones en orden decreciente, $i=\ell,\ell-1,\dots,1$, ejecutando para cada argumento $j\pre i$ la actualización
+\[
+\bar v_j\;\mathrel{+}=\;\bar v_i\,\frac{\partial\varphi_i}{\partial v_j}.
+\]
+El valor final de $\bar v_j$ se llama \emph{adjunto} de $v_j$.
+\end{definicion}
+
+Equivalentemente, el valor final de cada adjunto es
+\[
+\bar v_j=\sum_{i\,:\,j\pre i}\bar v_i\,\frac{\partial\varphi_i}{\partial v_j},
+\]
+la suma sobre todas las operaciones que usan $v_j$. El símbolo $\mathrel{+}=$ es esencial: si $v_j$ alimenta a varias operaciones, su adjunto acumula una contribución de cada una.
+
+Para enunciar qué calculan los adjuntos, sea $F_i(v_{1-n},\dots,v_i)$ la salida que se obtiene al ejecutar las operaciones $i+1,\dots,\ell$ de la traza a partir de unos valores \emph{arbitrarios} de las variables $v_{1-n},\dots,v_i$, tratadas como independientes. Así, $F_\ell(v_{1-n},\dots,v_\ell)=v_\ell$ y $F_0(x)=f(x)$, y $\partial F_i/\partial v_i$ mide la sensibilidad de la salida a una perturbación de $v_i$ introducida justo después de calcularla.
+
+\begin{teorema}[Corrección del modo inverso]\label{teo:inverso}
+Para cada $i\in\{0,\dots,\ell\}$, después de procesar las operaciones $\ell,\dots,i+1$, los acumuladores cumplen $\bar v_j=\partial F_i/\partial v_j$ para todo $j\le i$. En particular, al terminar,
+\[
+\bar v_{k-n}=\frac{\partial f}{\partial x_k}(x)\quad(k=1,\dots,n),\qquad\text{es decir,}\qquad(\bar v_{1-n},\dots,\bar v_0)=\nabla f(x)\T ,
+\]
+y el adjunto de cada variable intermedia es $\bar v_i=\partial F_i/\partial v_i$.
+\end{teorema}
+
+\begin{proof}
+Por inducción descendente sobre $i$. Para $i=\ell$ no se ha procesado ninguna operación: $\bar v_\ell=1=\partial F_\ell/\partial v_\ell$ y $\bar v_j=0=\partial F_\ell/\partial v_j$ para $j<\ell$, porque $F_\ell=v_\ell$.
+
+Supóngase cierto para $i$ y procésese la operación $i$. Por definición de las funciones $F$,
+\[
+F_{i-1}(v_{1-n},\dots,v_{i-1})=F_i\bigl(v_{1-n},\dots,v_{i-1},\,\varphi_i((v_j)_{j\pre i})\bigr).
+\]
+Por la regla de la cadena, para $j\le i-1$,
+\[
+\frac{\partial F_{i-1}}{\partial v_j}=\frac{\partial F_i}{\partial v_j}+\frac{\partial F_i}{\partial v_i}\,\frac{\partial\varphi_i}{\partial v_j},
+\]
+donde $\partial\varphi_i/\partial v_j=0$ si $j\not\pre i$. Por la hipótesis de inducción, el primer sumando es el valor actual de $\bar v_j$ y el factor $\partial F_i/\partial v_i$ es el valor actual de $\bar v_i$. La actualización de la \cref{def:adjunto} suma exactamente $\bar v_i\,\partial\varphi_i/\partial v_j$ a $\bar v_j$ para $j\pre i$ y no modifica los demás, luego tras ella $\bar v_j=\partial F_{i-1}/\partial v_j$ para todo $j\le i-1$.
+
+Para $i=0$ se obtiene $\bar v_{k-n}=\partial F_0/\partial x_k=\partial f/\partial x_k$. Por último, el acumulador $\bar v_i$ no cambia después de procesar la operación $i$, porque las operaciones $i-1,\dots,1$ solo actualizan sus argumentos, de índice menor que el suyo; su valor final es, pues, $\partial F_i/\partial v_i$.
+\end{proof}
+
+La demostración muestra por qué el orden importa: cuando se procesa la operación $i$, el acumulador $\bar v_i$ debe estar completo, lo que exige haber procesado antes todas las operaciones que usan $v_i$. Es la regla de la cadena en un grafo del módulo~9 (tema~5), ahora con su algoritmo.
+
+\begin{proposicion}[El modo inverso calcula $\bar y\T J$]\label{prop:vjp}
+Sea $f\colon\R^{n}\to\R^{m}$ y $\bar y\in\R^{m}$. Si se inicializan los adjuntos de las salidas con las componentes de $\bar y$ y se ejecuta el recorrido de la \cref{def:adjunto}, los adjuntos de las entradas forman el vector fila $\bar x\T=\bar y\T J_f(x)$. En consecuencia, el jacobiano completo requiere $m$ pasadas inversas, una por fila.
+\end{proposicion}
+
+\begin{proof}
+Se añade a la traza una operación final $v_{\ell+1}=\sum_{r}\bar y_r\,y_r$, lineal en las salidas, y se aplica el \cref{teo:inverso} a la función escalar $g(x)=\bar y\T f(x)$: los adjuntos de las entradas son $\nabla g(x)\T=\bar y\T J_f(x)$. Procesar la operación añadida asigna a cada salida $y_r$ el adjunto $\bar y_r$, que es la inicialización del enunciado. Con $\bar y=e_r$ se obtiene la fila $r$ de $J_f(x)$.
+\end{proof}
+
+\section{El algoritmo}
+
+\begin{figure}[h]
+\centering
+\fbox{\begin{minipage}{0.86\textwidth}\small
+\textbf{Modo inverso} (entrada: traza de $f\colon\R^{n}\to\R$, punto $x$).
+\begin{enumerate}[label=\arabic*.,leftmargin=1.6em]
+  \item \emph{Pasada hacia delante.} Para $i=1,\dots,\ell$: calcular $v_i=\varphi_i((v_j)_{j\pre i})$ y guardar los valores que necesitarán las derivadas locales.
+  \item \emph{Inicialización.} $\bar v_\ell\gets 1$; $\bar v_j\gets 0$ para $j<\ell$.
+  \item \emph{Pasada hacia atrás.} Para $i=\ell,\ell-1,\dots,1$ y para cada $j\pre i$: $\bar v_j\gets\bar v_j+\bar v_i\,\partial\varphi_i/\partial v_j$.
+  \item \emph{Salida.} $\nabla f(x)=(\bar v_{1-n},\dots,\bar v_0)\T$.
+\end{enumerate}
+\end{minipage}}
+\caption{El modo inverso de la diferenciación automática~\cite[§3.2]{baydin}. En redes neuronales se llama \emph{retropropagación}~\cite[§6.5.6]{gbc}.}
+\label{fig:algoritmo}
+\end{figure}
+
+\begin{ejemplo}[Traza adjunta del ejemplo de Baydin \emph{et al.}]\label{ej:adjunta}
+Para el \cref{ej:baydin}, la pasada hacia atrás es~\cite[tabla~3]{baydin}:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Operación procesada & Actualizaciones & Valores \\
+\midrule
+semilla & $\bar v_5=1$ & \\
+$v_5=v_4-v_3$ & $\bar v_4\mathrel{+}=\bar v_5$; $\bar v_3\mathrel{+}=-\bar v_5$ & $\bar v_4=1$; $\bar v_3=-1$ \\
+$v_4=v_1+v_2$ & $\bar v_1\mathrel{+}=\bar v_4$; $\bar v_2\mathrel{+}=\bar v_4$ & $\bar v_1=1$; $\bar v_2=1$ \\
+$v_3=\sen v_0$ & $\bar v_0\mathrel{+}=\bar v_3\cos v_0$ & $\bar v_0=-0{,}2837$ \\
+$v_2=v_{-1}v_0$ & $\bar v_{-1}\mathrel{+}=\bar v_2v_0$; $\bar v_0\mathrel{+}=\bar v_2v_{-1}$ & $\bar v_{-1}=5$; $\bar v_0=1{,}7163$ \\
+$v_1=\ln v_{-1}$ & $\bar v_{-1}\mathrel{+}=\bar v_1/v_{-1}$ & $\bar v_{-1}=5{,}5$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Una sola pasada da las dos derivadas, $\partial f/\partial x_1=5{,}5$ y $\partial f/\partial x_2=1{,}7163$, que en el \cref{ej:tangente} requerían dos pasadas en modo directo. Las variables $v_{-1}$ y $v_0$ alimentan a dos operaciones cada una, y sus adjuntos acumulan dos contribuciones.
+\end{ejemplo}
+
+\begin{ejemplo}[Una expresión con cuatro entradas]\label{ej:abcf}
+Sea $L=(a\cdot b+c)\cdot f$ con $a=3$, $b=-2$, $c=8$, $f=-1$, y variables intermedias $e=ab$ y $d=e+c$. Hacia delante: $e=-6$, $d=2$, $L=-2$. Hacia atrás, con $\bar L=1$:
+\begin{enumerate}[label=\arabic*.]
+  \item nodo $L=d\cdot f$: $\bar d=\bar L\cdot f=-1$ y $\bar f=\bar L\cdot d=2$;
+  \item nodo $d=e+c$: la suma copia el adjunto, $\bar e=\bar c=\bar d=-1$;
+  \item nodo $e=a\cdot b$: el producto intercambia los factores, $\bar a=\bar e\cdot b=2$ y $\bar b=\bar e\cdot a=-3$.
+\end{enumerate}
+En efecto, $L=-ab-8$ y $\partial L/\partial a=-b=2$. La \cref{fig:abcf} muestra el grafo con los dos recorridos.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},
+  n/.style={draw,rounded corners=2pt,minimum height=7mm,minimum width=13mm,inner sep=2pt,font=\small,align=center},
+  g/.style={font=\scriptsize,text=enlace}]
+  \node[n] (a) at (0,1.6) {$a=3$};
+  \node[n] (b) at (0,0.4) {$b=-2$};
+  \node[n] (c) at (2.6,-0.8) {$c=8$};
+  \node[n] (e) at (2.6,1.0) {$e=-6$};
+  \node[n] (d) at (5.2,0.3) {$d=2$};
+  \node[n] (f) at (5.2,-1.3) {$f=-1$};
+  \node[n] (L) at (7.8,-0.4) {$L=-2$};
+  \draw[->] (a)--(e); \draw[->] (b)--(e); \draw[->] (e)--(d); \draw[->] (c)--(d); \draw[->] (d)--(L); \draw[->] (f)--(L);
+  \node[g,above=1pt of a] {$\bar a=2$};
+  \node[g,below=1pt of b] {$\bar b=-3$};
+  \node[g,below=1pt of c] {$\bar c=-1$};
+  \node[g,above=1pt of e] {$\bar e=-1$};
+  \node[g,above=1pt of d] {$\bar d=-1$};
+  \node[g,below=1pt of f] {$\bar f=2$};
+  \node[g,above=1pt of L] {$\bar L=1$};
+\end{tikzpicture}
+\caption{Grafo del \cref{ej:abcf}. Dentro de cada nodo, el valor de la pasada hacia delante; junto a él, en color, su adjunto, obtenido en la pasada hacia atrás.}
+\label{fig:abcf}
+\end{figure}
+
+\begin{ejemplo}[Una neurona]\label{ej:neurona}
+Sea $o=\tanh(n)$ con $n=w_1x_1+w_2x_2+b$, $x=(1,-2)$, $w=(0{,}5;\,0{,}25)$ y $b=0{,}5$. Hacia delante, $n=0{,}5-0{,}5+0{,}5=0{,}5$ y $o=\tanh 0{,}5\approx 0{,}4621$. Hacia atrás, con $\bar o=1$: el nodo $\tanh$ da $\bar n=\bar o\,(1-o^{2})=0{,}7864$; la suma lo copia en $\bar b=0{,}7864$ y en cada producto; los productos dan $\bar w_1=\bar n\,x_1=0{,}7864$, $\bar w_2=\bar n\,x_2=-1{,}5729$, $\bar x_1=\bar n\,w_1=0{,}3932$ y $\bar x_2=\bar n\,w_2=0{,}1966$.
+\end{ejemplo}
+
+Las derivadas locales usan valores de la pasada hacia delante: $o$ en el nodo $\tanh$, los factores en cada producto. Por eso el modo inverso debe \emph{guardar} esos valores hasta la pasada hacia atrás; en un LLM, las activaciones guardadas ocupan a menudo más memoria que los pesos (\cref{tema:5}).
+
+\section{El orden topológico}
+
+\begin{definicion}[Orden topológico]\label{def:topologico}
+Un \emph{orden topológico} de un grafo dirigido $G=(V,E)$ es una enumeración $u_1,\dots,u_{\abs{V}}$ de sus nodos tal que toda arista $u_r\to u_s$ cumple $r<s$.
+\end{definicion}
+
+El \cref{teo:inverso} se ha enunciado con el orden de la traza, pero la demostración solo usa que cada operación se procesa después de todas las que usan su resultado. Por tanto, el modo inverso es correcto si las operaciones se procesan en el \emph{inverso} de cualquier orden topológico del grafo.
+
+\begin{proposicion}[Construcción por búsqueda en profundidad]\label{prop:dfs}
+Sea $G$ un grafo dirigido acíclico y sea el procedimiento \textsc{visitar}$(v)$: si $v$ no está marcado, marcarlo, llamar a \textsc{visitar}$(u)$ para cada predecesor $u$ de $v$ (cada $u$ con $u\to v$) y, después, añadir $v$ al final de una lista. Si se llama a \textsc{visitar} desde la salida, la lista resultante es un orden topológico del subgrafo de los nodos de los que depende la salida, y se construye en tiempo $O(\abs{V}+\abs{E})$.
+\end{proposicion}
+
+\begin{proof}
+Sea $u\to v$ una arista con $v$ en la lista. Cuando se añade $v$, ya se ha ejecutado \textsc{visitar}$(u)$. Si esa llamada marcó $u$ por primera vez, terminó añadiendo $u$ antes de volver. Si $u$ ya estaba marcado, o bien ya estaba en la lista, o bien su llamada seguía en curso; en este último caso $v$ se habría alcanzado desde $u$ siguiendo predecesores, lo que daría un camino $v\to\dots\to u$ que, junto con $u\to v$, formaría un ciclo, imposible en un grafo acíclico. En ambos casos $u$ precede a $v$. Cada nodo se marca una vez y cada arista se examina una vez, de donde el coste.
+\end{proof}
+
+\begin{ejemplo}[Qué ocurre si el orden es incorrecto]\label{ej:orden}
+Sea $x=3$, $u=2x$, $y=u^{2}$, $z=y+u$. Entonces $z=4x^{2}+2x$ y $dz/dx=8x+2=26$.
+\begin{itemize}[leftmargin=1.4em]
+  \item Orden inverso correcto ($z,y,u$): $\bar z=1$; desde $z$, $\bar y=1$ y $\bar u=1$; desde $y$, $\bar u\mathrel{+}=2u\,\bar y=12$, luego $\bar u=13$; desde $u$, $\bar x=2\cdot 13=26$.
+  \item Orden incorrecto ($z,u,y$): $u$ se procesa cuando $\bar u=1$ y da $\bar x=2$. Después, $y$ suma~12 a $\bar u$, pero $u$ ya no vuelve a propagar. Resultado: $\bar x=2$, erróneo.
+\end{itemize}
+\end{ejemplo}
+
+\begin{observacion}[La cinta]\label{obs:cinta}
+Muchos sistemas no construyen el orden con la \cref{prop:dfs}, sino que registran las operaciones en una lista, la \emph{cinta} (\emph{tape} o lista de Wengert), en el orden en que se ejecutan. Ese orden es topológico, porque ninguna operación se ejecuta antes que sus argumentos, y basta recorrer la cinta al revés. Es el diseño de la tarea complementaria de autograd del curso 11-785 de Carnegie Mellon~\cite[§2.3]{cmu11785}, que sustituye el grafo por una lista lineal de operaciones.
+\end{observacion}
+
+\begin{observacion}[Conexión con los LLM]
+En un Transformer, cada bloque suma su salida a la entrada mediante una conexión residual, $h_{k+1}=h_k+F_k(h_k)$. La variable $h_k$ alimenta así a dos operaciones, $F_k$ y la suma, como $u$ en el \cref{ej:orden}, y su adjunto es la suma de dos contribuciones: $\bar h_k=\bar h_{k+1}+\bar h_{k+1}\,J_{F_k}(h_k)$. El primer sumando transmite el gradiente sin atenuarse a través de toda la pila de bloques (módulos~11 y~14).
+\end{observacion}
+
+\begin{lecturas}
+\item Baydin \emph{et al.}~\cite{baydin}, §3.2 «Reverse Mode», con la tabla~3.
+\item Griewank y Walther~\cite{gw}, cap.~3 «Fundamentals of Forward and Reverse».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §6.5.2 «Chain Rule of Calculus», §6.5.3 «Recursively Applying the Chain Rule to Obtain Backprop» y §6.5.6 «General Back-Propagation».
+\item Stanford CS231n~\cite{cs231n}, «Backpropagation, Intuitions», apartados «Intuitive understanding of backpropagation» y «Patterns in backward flow».
+\item Zhang \emph{et al.}~\cite{d2l}, §5.3 «Forward Propagation, Backward Propagation, and Computational Graphs».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-acumular}
+¿Por qué la actualización de la \cref{def:adjunto} usa $\mathrel{+}=$ y no una asignación? Dé un ejemplo de una sola operación en el que la asignación produzca un resultado erróneo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-producto}
+Dibuje el grafo de $f(x,y)=(x+y)\cdot(x\cdot y)$ y retropropague a mano en $(2,3)$. Dé $f$, $\partial f/\partial x$ y $\partial f/\partial y$, y compruébelos derivando la expresión.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-neurona}
+Para la neurona $o=\tanh(w_1x_1+w_2x_2+b)$ con $x=(2,0)$, $w=(-1,3)$ y $b=1$, calcule $o$ y las derivadas de $o$ respecto a $w_1$, $w_2$, $b$, $x_1$ y $x_2$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-topologico}
+Para $f=a\cdot b+a$ con $a=2$ y $b=5$, escriba todos los órdenes topológicos del grafo, retropropague y dé $\partial f/\partial a$ y $\partial f/\partial b$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-d2l}
+Sobre el grafo construido en el \cref{eje:1-d2l}, para $f(x)=\ln(x^{2})\cdot\sen x+x^{-1}$: (a) coloque en cada arista la derivada local correspondiente; (b) calcule $f'(2)$ recorriendo el grafo desde $x$ hasta $f$ (modo directo) y (c) desde $f$ hasta $x$ (modo inverso). Compruebe que coinciden con la derivada simbólica.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.5 «Automatic Differentiation», ejercicios~6 y~7.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-sesgo}
+Se añade un sesgo $b_1$, que no se regulariza, a la capa oculta de un perceptrón con decaimiento de pesos. Con vectores fila: $z=xW_1+b_1$, $h=\max(0,z)$, $o=hW_2$, $L=\tfrac12(o-y)^{2}$, $s=\tfrac{\lambda}{2}\bigl(\norm{W_1}_F^{2}+\norm{W_2}_F^{2}\bigr)$ y $J=L+s$. Sean $x=(1,2)$, $W_1=\begin{psmallmatrix}1&0\\-1&0{,}5\end{psmallmatrix}$, $b_1=(0{,}5;\,0)$, $W_2=\begin{psmallmatrix}2\\1\end{psmallmatrix}$, $y=3$ y $\lambda=0{,}1$. (a) Escriba las ecuaciones de la pasada hacia atrás del grafo. (b) Calcule $J$, $\nabla_{\!W_2}J$, $\nabla_{\!W_1}J$ y $\nabla_{\!b_1}J$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.3, ejercicio~2 (se añaden datos numéricos).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-arbol}
+Se modifica el algoritmo de la \cref{fig:algoritmo} sustituyendo la acumulación por la asignación $\bar v_j\gets\bar v_i\,\partial\varphi_i/\partial v_j$. Demuestre que el resultado sigue siendo correcto si cada variable es argumento de a lo sumo una operación (el grafo es entonces un árbol cuya raíz es la salida), y que puede ser incorrecto en caso contrario, con un ejemplo.
+\end{ejercicio}

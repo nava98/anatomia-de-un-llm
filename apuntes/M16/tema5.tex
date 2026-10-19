@@ -1,0 +1,198 @@
+% =====================================================================
+\chapter{Estimación empírica, inferencia y datos limitados}
+\label{tema:5}
+% =====================================================================
+
+El \cref{tema:4} supuso conocida la ley $L(N,D)$. Este tema estudia cómo se estima a partir de entrenamientos pequeños, por qué Kaplan \emph{et al.}\ y Hoffmann \emph{et al.}\ llegaron a conclusiones distintas y cómo cambia el reparto cuando el objetivo no es solo el cómputo de entrenamiento: cuando el modelo va a servirse durante mucho tiempo y cuando los datos únicos escasean. Se sigue~\cite[§3.1--3.3 y tabla~2]{hoffmann}, la práctica~3 de CS336~\cite[§2.1]{cs336a3}, Muennighoff \emph{et al.}~\cite[§3.1 y apéndice~A]{muennighoff}, Sardana \emph{et al.}~\cite{sardana} y la réplica de Besiroglu \emph{et al.}~\cite{besiroglu}.
+
+\section{Tres métodos de estimación}
+
+Hoffmann \emph{et al.}\ estimaron la frontera eficiente por tres caminos independientes.
+
+\begin{definicion}[Enfoque 1: envolvente de las curvas de entrenamiento]
+Se fijan varios tamaños de modelo y, para cada uno, se entrenan varias longitudes de entrenamiento con un calendario de tasa de aprendizaje ajustado a cada longitud~\cite[§3.1]{hoffmann}. Cada curva de pérdida, reexpresada en función de los FLOP consumidos, $6N\cdot(\text{tokens vistos})$, aporta puntos $(C,L)$. Para cada $C$ se toma el entrenamiento de menor pérdida, y los pares $(C,\Nopt(C))$ resultantes se ajustan con una ley de potencia.
+\end{definicion}
+
+\begin{definicion}[Enfoque 2: perfiles IsoFLOP]\label{def:isoflop}
+Se fijan varios presupuestos $C_i$ y, para cada uno, se entrenan modelos de distintos tamaños $N_{ij}$ con $D_{ij}=C_i/(6N_{ij})$ tokens. La curva $N\mapsto L$ a $C_i$ fijo es el \emph{perfil IsoFLOP} de $C_i$. Hoffmann \emph{et al.}\ ajustan una parábola en $\log N$ a cada perfil y toman su vértice como $\Nopt(C_i)$~\cite[§3.2]{hoffmann}; la práctica de CS336 recomienda tomar sin más el entrenamiento de menor pérdida~\cite[§2.1]{cs336a3}. Después se ajustan $\Nopt\propto C^{a}$ y $\Dopt\propto C^{b}$ por mínimos cuadrados en escala log-log.
+\end{definicion}
+
+La forma en U de cada perfil tiene una explicación sencilla~\cite[§2.1]{cs336a3}: un modelo muy pequeño no puede ajustar los datos por mucho que se entrene, y uno muy grande agota el presupuesto en pocos pasos de optimización. La \cref{fig:isoflop} muestra el esquema.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=1.6cm,y=2.4cm,font=\small]
+  \draw[->] (0,0)--(5.3,0) node[right] {$\log N$};
+  \draw[->] (0,0)--(0,2.2) node[left] {$L$};
+  \draw[thick,domain=0.3:2.7,samples=40] plot (\x,{1.75+0.25*(\x-1.5)^2});
+  \draw[thick,domain=1.3:3.7,samples=40] plot (\x,{1.20+0.25*(\x-2.5)^2});
+  \draw[thick,domain=2.3:4.7,samples=40] plot (\x,{0.70+0.25*(\x-3.5)^2});
+  \fill (1.5,1.75) circle (1.5pt) (2.5,1.20) circle (1.5pt) (3.5,0.70) circle (1.5pt);
+  \draw[densely dashed] (1.5,1.75)--(2.5,1.20)--(3.5,0.70);
+  \node[right] at (2.7,2.05) {$C_1$};
+  \node[right] at (3.7,1.55) {$C_2$};
+  \node[right] at (4.7,1.05) {$C_3$};
+  \draw[densely dotted] (3.5,0.70)--(3.5,0) node[below] {\footnotesize $\log\Nopt(C_3)$};
+\end{tikzpicture}
+\caption{Perfiles IsoFLOP esquemáticos para tres presupuestos $C_1<C_2<C_3$. Los vértices (puntos) dan $\Nopt(C_i)$; su ajuste en escala log-log da el exponente $a$.}
+\label{fig:isoflop}
+\end{figure}
+
+\begin{proposicion}[Vértice de un perfil]\label{prop:vertice}
+Sean tres entrenamientos de un perfil IsoFLOP con $x_j=\log_{10}N_j$ equiespaciados, $x_1=x_2-h$, $x_3=x_2+h$, y pérdidas $L_1,L_2,L_3$ con $\Delta_2=L_1-2L_2+L_3>0$. La parábola que pasa por los tres puntos tiene su vértice en
+\[
+x^{*}=x_2-\frac{h\,(L_3-L_1)}{2\Delta_2},\qquad L^{*}=L_2-\frac{(L_3-L_1)^{2}}{8\Delta_2}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Con $t=(x-x_2)/h$, se busca $p(t)=L_2+\beta_1t+\beta_2t^{2}$ con $p(-1)=L_1$ y $p(1)=L_3$. Sumando y restando ambas condiciones, $\beta_2=\Delta_2/2$ y $\beta_1=(L_3-L_1)/2$. Como $\beta_2>0$, el mínimo está en $t^{*}=-\beta_1/(2\beta_2)=-(L_3-L_1)/(2\Delta_2)$, y $p(t^{*})=L_2-\beta_1^{2}/(4\beta_2)=L_2-(L_3-L_1)^{2}/(8\Delta_2)$. Se deshace el cambio, $x^{*}=x_2+ht^{*}$.
+\end{proof}
+
+\begin{definicion}[Enfoque 3: ajuste paramétrico]
+Se ajustan directamente las cinco constantes de la \cref{def:chinchilla} a todos los entrenamientos $(N_j,D_j,L_j)$ minimizando
+\[
+\sum_j\mathrm{Huber}_\delta\Bigl(\ln\hat L(N_j,D_j)-\ln L_j\Bigr),\qquad
+\mathrm{Huber}_\delta(z)=\begin{cases}z^{2}/2,&\abs z\le\delta,\\ \delta(\abs z-\delta/2),&\abs z>\delta,\end{cases}
+\]
+con $\delta=10^{-3}$, mediante L-BFGS desde una rejilla de puntos iniciales~\cite[§3.3]{hoffmann}. La pérdida de Huber crece linealmente para residuos grandes, lo que reduce el peso de los entrenamientos anómalos.
+\end{definicion}
+
+\begin{table}[h]
+\centering\small
+\caption{Exponentes de la frontera eficiente, $\Nopt\propto C^{a}$ y $\Dopt\propto C^{b}$, según~\cite[tabla~2]{hoffmann}.}\label{tab:exponentes}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Método & $a$ & $b$ \\
+\midrule
+Enfoque 1: envolvente de las curvas & $0{,}50$ & $0{,}50$ \\
+Enfoque 2: perfiles IsoFLOP & $0{,}49$ & $0{,}51$ \\
+Enfoque 3: ajuste paramétrico & $0{,}46$ & $0{,}54$ \\
+Kaplan \emph{et al.}~\cite{kaplan} & $0{,}73$ & $0{,}27$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Por qué difieren Kaplan y Chinchilla}
+
+Hoffmann \emph{et al.}\ atribuyen la mayor parte de la discrepancia a un detalle experimental: Kaplan \emph{et al.}\ usaron el mismo número de tokens y el mismo calendario de tasa de aprendizaje para todos los modelos~\cite[§2 y apéndice~B]{hoffmann}. Con un decaimiento coseno (módulo~7) pensado para un entrenamiento largo, las pérdidas intermedias de un entrenamiento corto se miden con la tasa de aprendizaje todavía alta, y son peores de lo que serían con un calendario ajustado a esa longitud. Eso penaliza a los entrenamientos con pocos tokens de forma desigual y sesga la conclusión hacia modelos grandes con pocos datos.
+
+\begin{observacion}[Las constantes son frágiles]
+Besiroglu \emph{et al.}~\cite{besiroglu} reconstruyeron los datos del enfoque~3 a partir de las figuras del artículo y concluyeron que las constantes publicadas no ajustan bien esos datos, que los intervalos de confianza declarados son demasiado estrechos y que un nuevo ajuste da resultados compatibles con los enfoques~1 y~2. La conclusión cualitativa, $a\approx b\approx 1/2$, es robusta; las constantes exactas, no. Por eso los ejemplos numéricos de estos apuntes deben leerse como ilustración del método.
+\end{observacion}
+
+\section{El coste de la inferencia}
+
+El reparto de Chinchilla minimiza el cómputo de \emph{entrenamiento}. Pero un modelo se entrena una vez y se usa muchas veces, y cada token generado cuesta unos $2N$ FLOP (módulo~14, tema~6).
+
+\begin{definicion}[Coste total]
+Si un modelo de $N$ parámetros se entrena con $D$ tokens y se usa para procesar $T_{\mathrm{inf}}$ tokens de inferencia, su coste total es
+\[
+C_{\mathrm{tot}}=6ND+2NT_{\mathrm{inf}}.
+\]
+\end{definicion}
+
+\begin{proposicion}[Amortización del sobreentrenamiento]\label{prop:amortizacion}
+Sean dos configuraciones con la misma pérdida, $(N_1,D_1)$ y $(N_2,D_2)$, con $N_2<N_1$ y $6N_2D_2>6N_1D_1$. La configuración pequeña tiene menor coste total si y solo si
+\[
+T_{\mathrm{inf}}>T^{*}=\frac{6(N_2D_2-N_1D_1)}{2(N_1-N_2)}.
+\]
+\end{proposicion}
+
+\begin{proof}
+$6N_2D_2+2N_2T_{\mathrm{inf}}<6N_1D_1+2N_1T_{\mathrm{inf}}$ equivale a $2(N_1-N_2)T_{\mathrm{inf}}>6(N_2D_2-N_1D_1)$, y se divide por $2(N_1-N_2)>0$.
+\end{proof}
+
+Con la ley de Chinchilla, el sobrecoste relativo de entrenamiento de reducir el modelo en un factor fijo no depende del presupuesto.
+
+\begin{proposicion}[Sobrecoste de reducir el modelo]\label{prop:sobrecoste}
+Sea $(\Nopt,\Dopt)$ el óptimo del \cref{teo:chinchilla} para el presupuesto $C$ y sea $0<\kappa<1$ con $(\kappa^{-\alpha}-1)\beta/\alpha<1$. El modelo de $\kappa\Nopt$ parámetros alcanza la pérdida óptima con $D_2=\Dopt\bigl(1-(\kappa^{-\alpha}-1)\beta/\alpha\bigr)^{-1/\beta}$ tokens, y su cómputo de entrenamiento es
+\[
+\frac{C_2}{C}=\kappa\Bigl(1-\frac{\beta}{\alpha}\bigl(\kappa^{-\alpha}-1\bigr)\Bigr)^{-1/\beta},
+\]
+independiente de $C$. Si $\kappa\le(1+\alpha/\beta)^{-1/\alpha}$, ningún número de tokens iguala la pérdida óptima.
+\end{proposicion}
+
+\begin{proof}
+Sean $T_N$ y $T_D$ los términos de error en el óptimo; por el \cref{cor:equilibrio}, $T_N=(\beta/\alpha)T_D$. Con $\kappa\Nopt$ parámetros, el término de parámetros pasa a $\kappa^{-\alpha}T_N$, y para conservar la pérdida el de datos debe valer $T_D'=T_D-(\kappa^{-\alpha}-1)T_N=T_D\bigl(1-(\kappa^{-\alpha}-1)\beta/\alpha\bigr)$, positivo por hipótesis. Como $B D^{-\beta}$ es decreciente, $D_2=\Dopt(T_D/T_D')^{1/\beta}$, que es la expresión del enunciado, y $C_2/C=\kappa\Nopt D_2/(\Nopt\Dopt)$. Ningún término depende de $C$. Si $\kappa^{-\alpha}-1\ge\alpha/\beta$, haría falta $T_D'\le 0$, imposible con $D$ finito.
+\end{proof}
+
+\begin{ejemplo}\label{ej:sobreentreno}
+Con los valores de Chinchilla y $\kappa=1/2$: $2^{0{,}34}=1{,}2658$, $(1{,}2658-1)\cdot 0{,}28/0{,}34=0{,}2189$ y $C_2/C=0{,}5\cdot 0{,}7811^{-1/0{,}28}=1{,}208$. A $C=10^{21}$ FLOP, el óptimo es $\Nopt=1{,}82\cdot 10^{9}$; el modelo de $9{,}12\cdot 10^{8}$ parámetros necesita $2{,}21\cdot 10^{11}$ tokens ($242$ por parámetro), y el sobrecoste de $2{,}08\cdot 10^{20}$ FLOP se amortiza, por la \cref{prop:amortizacion}, tras $T^{*}=2{,}08\cdot 10^{20}/(2\cdot 9{,}12\cdot 10^{8})=1{,}14\cdot 10^{11}$ tokens de inferencia. El límite de la \cref{prop:sobrecoste} es $\kappa=(1+0{,}34/0{,}28)^{-1/0{,}34}=0{,}097$: por debajo de una décima parte del tamaño óptimo, la pérdida óptima es inalcanzable.
+\end{ejemplo}
+
+Esta es la lógica de los modelos abiertos recientes. LLaMA entrenó un modelo de $7\cdot 10^{9}$ parámetros con $10^{12}$ tokens, más de siete veces lo que daría la regla de los 20 tokens, y observó que su rendimiento seguía mejorando; sus autores señalan que la regla de Hoffmann \emph{et al.}\ ignora el presupuesto de inferencia~\cite[§1]{llama}. Llama~2~7B duplicó esa cifra (\cref{tab:tokens-param}). Sardana \emph{et al.}~\cite{sardana} incorporan la demanda de inferencia a la ley de escalado y concluyen que, con una demanda del orden de mil millones de peticiones, conviene entrenar modelos más pequeños y durante más tiempo que el óptimo de Chinchilla.
+
+\section{Datos limitados: el valor de repetir}
+
+Si cada modelo pide billones de tokens, el texto único de calidad se agota. Muennighoff \emph{et al.}~\cite{muennighoff} estudiaron qué vale un token visto por segunda, tercera o $k$-ésima vez.
+
+\begin{definicion}[Datos efectivos]\label{def:efectivos}
+Sea un entrenamiento que recorre $U$ tokens únicos durante $1+R$ épocas, es decir, con $R\ge 0$ repeticiones. Los \emph{datos efectivos} son~\cite[§3.1, ecuación~(5)]{muennighoff}
+\[
+D'=U+U\,R^{*}\bigl(1-e^{-R/R^{*}}\bigr),
+\]
+donde $R^{*}>0$ es una constante ajustada; Muennighoff \emph{et al.}\ obtienen $R^{*}\approx 15{,}4$~\cite[apéndice~A]{muennighoff}. Se usa $D'$ en lugar de $D$ en la ley de Chinchilla.
+\end{definicion}
+
+\begin{proposicion}\label{prop:efectivos}
+Como función de $R\ge 0$, $D'$ es creciente y cóncava, $D'(0)=U$, $D'<U(1+R)$ para todo $R>0$ y $D'\to U(1+R^{*})$ cuando $R\to\infty$.
+\end{proposicion}
+
+\begin{proof}
+$dD'/dR=Ue^{-R/R^{*}}>0$ y $d^{2}D'/dR^{2}=-(U/R^{*})e^{-R/R^{*}}<0$. En $R=0$, $1-e^{0}=0$. Por la desigualdad $1-e^{-x}<x$ para $x>0$, con $x=R/R^{*}$, $R^{*}(1-e^{-R/R^{*}})<R$. El límite se sigue de $e^{-R/R^{*}}\to 0$.
+\end{proof}
+
+El primer token repetido vale casi lo mismo que uno nuevo, pero el valor marginal decae exponencialmente con escala $R^{*}$: por muchas épocas que se hagan, un corpus de $U$ tokens nunca equivale a más de unos $16{,}4\,U$ tokens nuevos. Con cuatro épocas ($R=3$), $D'=U(1+15{,}39\cdot 0{,}1772)=3{,}73\,U$, el $93\,\%$ de los $4U$ tokens procesados. Los experimentos del artículo muestran que repetir hasta unas cuatro épocas apenas cambia la pérdida respecto de usar datos nuevos~\cite{muennighoff}.
+
+\begin{lecturas}
+\item Hoffmann \emph{et al.}~\cite{hoffmann}, §3.1 a §3.3, tabla~2 y apéndice~B.
+\item Stanford CS336~\cite{cs336a3}, práctica~3, §2.1 «Scaling Laws from IsoFLOPs profiles» y §3 «Constructing Scaling Laws».
+\item Muennighoff \emph{et al.}~\cite{muennighoff}, §3 «Method: Data-Constrained Scaling Laws» y §6.
+\item Sardana \emph{et al.}~\cite{sardana} y Besiroglu \emph{et al.}~\cite{besiroglu}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-sobreentreno}
+Explique por qué un laboratorio que va a servir un modelo a millones de usuarios elige un modelo más pequeño que el óptimo de Chinchilla y lo entrena con más tokens. ¿En qué caso sería preferible el óptimo de Chinchilla?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-isoflop}
+Para tres presupuestos se entrenan modelos con $D=C/(6N)$ y se anota la pérdida final:
+\begin{center}\small
+\begin{tabular}{@{}cccc@{}}
+\toprule
+$C$ (FLOP) & \multicolumn{3}{c}{$N$ y pérdida final} \\
+\midrule
+$10^{18}$ & $2{,}5\cdot 10^{7}$: $3{,}92$ & $5\cdot 10^{7}$: $3{,}85$ & $10^{8}$: $3{,}89$ \\
+$10^{19}$ & $8\cdot 10^{7}$: $3{,}45$ & $1{,}6\cdot 10^{8}$: $3{,}40$ & $3{,}2\cdot 10^{8}$: $3{,}43$ \\
+$10^{20}$ & $2{,}5\cdot 10^{8}$: $3{,}05$ & $5\cdot 10^{8}$: $3{,}01$ & $10^{9}$: $3{,}04$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+(a) Tome en cada presupuesto el entrenamiento de menor pérdida como $\Nopt(C)$. (b) Ajuste $\log_{10}\Nopt=b_0+a\log_{10}C$ por mínimos cuadrados. (c) Prediga $\Nopt$ y $\Dopt$ para $10^{23}$ y $10^{24}$ FLOP y compare $\Dopt/\Nopt$ con la regla de los 20 tokens.
+\fuente{adaptado de Stanford CS336~\cite{cs336a3}, práctica~3, §2.1, problema \texttt{chinchilla\_isoflops}, apartados~(a) y~(b) (datos sintéticos propios).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-vertice}
+En el perfil IsoFLOP de $C=10^{19}$ FLOP se han medido tres entrenamientos con $\log_{10}N=8{,}0$, $8{,}3$ y $8{,}6$ y pérdidas $3{,}47$, $3{,}40$ y $3{,}43$. (a) Calcule con la \cref{prop:vertice} el vértice de la parábola y el $\Nopt$ estimado. (b) Calcule $\Dopt$ y los tokens por parámetro. (c) Compare con el criterio de tomar el entrenamiento de menor pérdida.
+\fuente{adaptado de Stanford CS336~\cite{cs336a3}, práctica~3, §2.1 (ajuste cuadrático de los perfiles de Hoffmann \emph{et al.}~\cite[§3.2]{hoffmann}).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-repetir}
+Se dispone de $U=10^{11}$ tokens únicos. Con la \cref{def:efectivos} y $R^{*}=15{,}39$, calcule los datos efectivos de un entrenamiento de $4\cdot 10^{11}$ tokens y de otro de $1{,}6\cdot 10^{12}$ tokens, y la fracción que representan de los tokens procesados. ¿Cuál es el máximo de datos efectivos que puede obtenerse de este corpus?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-reto}
+Con la ley de Chinchilla y $C=10^{22}$ FLOP, se entrena un modelo con la mitad de parámetros que $\Nopt$. Calcule los tokens necesarios para igualar la pérdida óptima, el sobrecoste de entrenamiento y cuántos tokens de inferencia hacen falta para amortizarlo. Compruebe que el sobrecoste relativo coincide con el de la \cref{prop:sobrecoste}.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-cota}
+Con la notación de la \cref{def:efectivos}, demuestre que
+\[
+U(1+R)-\frac{UR^{2}}{2R^{*}}\le D'\le U(1+R)\qquad\text{para todo }R\ge 0,
+\]
+y deduzca que la fracción de valor perdida por repetir, $1-D'/\bigl(U(1+R)\bigr)$, es a lo sumo $R/(2R^{*})$. Evalúe la cota para cuatro épocas y compárela con el valor exacto.
+\end{ejercicio}

@@ -1,0 +1,201 @@
+% =====================================================================
+\chapter{El coste de la inferencia: \emph{prefill}, decodificación y caché KV}
+\label{tema:2}
+% =====================================================================
+
+Generar una respuesta tiene dos fases con perfiles de coste opuestos: el \emph{prefill}, que procesa el prompt completo en paralelo, y la \emph{decodificación}, que produce los tokens uno a uno. Este tema demuestra que la caché de claves y valores (caché KV) evita recalcular el pasado sin alterar la salida, calcula su tamaño y aplica el modelo \emph{roofline} del módulo~17 para explicar por qué la decodificación está limitada por el ancho de banda de memoria y cómo el tamaño del lote intercambia latencia por rendimiento. Se siguen la clase~10 de CS336~\cite{cs336}, la sección~2 de Pope \emph{et al.}~\cite{pope}, la sección~3 de Kwon \emph{et al.}~\cite{kwon} y el artículo de Shazeer sobre la atención multiconsulta~\cite{shazeer}.
+
+\section{Las dos fases de la generación}
+
+\begin{definicion}[\emph{Prefill} y decodificación]\label{def:fases}
+Sea un prompt $x_{1:n}$. La fase de \emph{prefill} ejecuta una pasada del Transformer sobre las $n$ posiciones a la vez, como en el entrenamiento, y obtiene la distribución del primer token nuevo. La fase de \emph{decodificación} ejecuta, para cada token nuevo, una pasada sobre una sola posición, la del último token emitido.
+\end{definicion}
+
+Por el módulo~16, una pasada hacia delante cuesta unas $2N$ operaciones por token y posición, donde $N$ es el número de parámetros (sin contar la atención sobre el contexto, que se trata en el \cref{prop:intensidad-capas}).
+
+\begin{ejemplo}[Coste del \emph{prefill}]\label{ej:prefill}
+Con $N=7\cdot 10^{9}$ y un prompt de $n=1000$ tokens, el \emph{prefill} cuesta $2Nn=1{,}4\cdot 10^{13}$ FLOP. En un acelerador hipotético de $300$~TFLOP/s utilizado al $50\,\%$, tarda $1{,}4\cdot 10^{13}/(1{,}5\cdot 10^{14})\approx 0{,}093$~s. Este tiempo es el núcleo del tiempo hasta el primer token (\cref{tema:6}).
+\end{ejemplo}
+
+\section{La caché KV}
+
+En un Transformer causal (módulos~13 y~14), sean $h^{(\ell)}_i$ el estado de la posición $i$ a la salida de la capa $\ell$, con $h^{(0)}_i$ la incrustación del token $x_i$ y su posición. Cada capa calcula, para cada posición, una consulta, una clave y un valor por cabeza, $q_i=h^{(\ell-1)}_iW_Q$, $k_i=h^{(\ell-1)}_iW_K$, $v_i=h^{(\ell-1)}_iW_V$, y la salida de la atención en $t$ es
+\[
+a_t=\softmax\Bigl(\frac{q_t\,[k_1;\dots;k_t]\T}{\sqrt{\dhd}}\Bigr)[v_1;\dots;v_t],
+\]
+seguida de las conexiones residuales, la normalización y el perceptrón multicapa, que actúan posición a posición.
+
+\begin{lema}[Causalidad de los estados]\label{lem:causal}
+Para toda capa $\ell$ y toda posición $i$, el estado $h^{(\ell)}_i$ depende solo de $x_{1:i}$.
+\end{lema}
+
+\begin{proof}
+Por inducción sobre $\ell$. Para $\ell=0$, $h^{(0)}_i$ depende solo de $x_i$ y de $i$. Supóngase cierto para $\ell-1$. La consulta, la clave y el valor de la posición $j$ en la capa $\ell$ son funciones de $h^{(\ell-1)}_j$, luego dependen solo de $x_{1:j}$. Por la máscara causal, la salida de la atención en $i$ usa $q_i$ y los pares $(k_j,v_j)$ con $j\le i$, que dependen solo de $x_{1:i}$. Las operaciones posteriores actúan sobre la posición $i$ por separado, de modo que $h^{(\ell)}_i$ depende solo de $x_{1:i}$.
+\end{proof}
+
+\begin{teorema}[Corrección de la caché KV]\label{teo:cache}
+Sea un procedimiento que, en cada paso de decodificación, calcula $q$, $k$ y $v$ únicamente para la posición nueva $t$ en cada capa, añade $(k_t,v_t)$ a una caché que contiene los pares $(k_j,v_j)$, $j<t$, calculados en pasos anteriores, y atiende sobre toda la caché. Entonces sus salidas coinciden exactamente (en aritmética exacta) con las de una pasada completa sobre $x_{1:t}$.
+\end{teorema}
+
+\begin{proof}
+Por el \cref{lem:causal}, los pares $(k_j,v_j)$ de cada capa para $j<t$ dependen solo de $x_{1:j}$; al añadir $x_t$ no cambian, y la pasada completa sobre $x_{1:t}$ recalcularía exactamente los valores guardados. La salida en la posición $t$ de la pasada completa usa $q_t$ y los pares con $j\le t$, que son los mismos que usa el procedimiento con caché. Por inducción sobre las capas, los estados $h^{(\ell)}_t$ coinciden en ambos cálculos y, por tanto, también los logits.
+\end{proof}
+
+En coma flotante pueden aparecer diferencias de redondeo, porque el orden de las operaciones cambia; la distribución que define el modelo es la misma.
+
+\begin{proposicion}[Pasadas de posición con y sin caché]\label{prop:pasadas}
+Sea un prompt de $n$ tokens del que se generan $T$ tokens. Sin caché, el número total de posiciones procesadas por las capas no atencionales es $Tn+T(T-1)/2$; con caché es $n+T-1$.
+\end{proposicion}
+
+\begin{proof}
+Sin caché, la pasada que produce el token $j$-ésimo procesa las $n+j-1$ posiciones existentes, y $\sum_{j=1}^{T}(n+j-1)=Tn+\sum_{j=0}^{T-1}j=Tn+T(T-1)/2$. Con caché, la primera pasada es el \emph{prefill} de $n$ posiciones y las $T-1$ restantes procesan una posición cada una.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,x=0.8cm,y=0.62cm]
+  \foreach \i in {1,...,5} {\draw[fill=black!8] (\i,0) rectangle (\i+1,1); \draw[fill=black!8] (\i,-1.2) rectangle (\i+1,-0.2);}
+  \foreach \i in {6,7} {\draw[fill=black!30] (\i,0) rectangle (\i+1,1); \draw[fill=black!30] (\i,-1.2) rectangle (\i+1,-0.2);}
+  \draw[thick,dashed] (8,0) rectangle (9,1); \draw[thick,dashed] (8,-1.2) rectangle (9,-0.2);
+  \node[left] at (1,0.5) {$K$}; \node[left] at (1,-0.7) {$V$};
+  \draw[decorate,decoration={brace,amplitude=4pt}] (1,1.2) -- (6,1.2) node[midway,above=4pt] {\emph{prefill}: $n$ posiciones};
+  \draw[decorate,decoration={brace,amplitude=4pt}] (6,1.2) -- (9,1.2) node[midway,above=4pt] {decodificación};
+  \node[draw,rounded corners=2pt] (q) at (8.5,-3.0) {$q_t$};
+  \draw[->] (q) -- (8.5,-1.3);
+  \draw[->,regla] (q.west) -- (3.5,-3.0) -- (3.5,-1.3);
+  \node[right,font=\footnotesize,align=left] at (9.3,-0.1) {columna\\ nueva $(k_t,v_t)$};
+  \node[below,font=\footnotesize] at (6,-3.3) {la consulta nueva lee toda la caché};
+\end{tikzpicture}
+\caption{Caché KV de una capa. El \emph{prefill} rellena las $n$ primeras columnas; cada paso de decodificación calcula solo la consulta, la clave y el valor de la posición nueva, añade una columna y atiende sobre todas.}
+\label{fig:cache}
+\end{figure}
+
+\begin{proposicion}[Tamaño de la caché KV]\label{prop:tam-cache}
+Sea un modelo con $L$ capas, $\nkv$ cabezas de clave y valor de dimensión $\dhd$, y números de $s$ bytes. La caché ocupa
+\[
+c_{\mathrm{kv}}=2\,L\,\nkv\,\dhd\,s\quad\text{bytes por token,}
+\]
+y una secuencia de $S$ tokens ocupa $S\,c_{\mathrm{kv}}$ bytes.
+\end{proposicion}
+
+\begin{proof}
+Por cada token y cada capa se guarda un vector clave y un vector valor (factor~2) por cada una de las $\nkv$ cabezas, cada uno con $\dhd$ números de $s$ bytes.
+\end{proof}
+
+\begin{ejemplo}[Arquitecturas públicas]\label{ej:llama}
+Llama~2 7B tiene $L=32$, $32$ cabezas con atención multicabeza clásica ($\nkv=32$) y $\dhd=128$. En fp16, $c_{\mathrm{kv}}=2\cdot 32\cdot 32\cdot 128\cdot 2=524\,288$~bytes $=512$~KiB por token; una secuencia de $4096$ tokens ocupa $2$~GiB, y 32 secuencias, $64$~GiB, más que los unos $13$~GB de pesos. Llama~3 8B usa GQA con $\nkv=8$ y los mismos $L$ y $\dhd$: $c_{\mathrm{kv}}=131\,072$~bytes $=128$~KiB, cuatro veces menos. Del mismo modo, OPT-13B ($L=40$, $40$ cabezas de dimensión $128$) necesita $2\cdot 40\cdot 5120\cdot 2=819\,200$~bytes, unos 800~KiB por token~\cite[§3]{kwon}.
+\end{ejemplo}
+
+\begin{observacion}[Atención multiconsulta y agrupada]
+La caché es proporcional a $\nkv$. La atención multiconsulta (MQA)~\cite{shazeer} usa $\nkv=1$ y la agrupada (GQA, módulo~18) un valor intermedio; respecto a la atención multicabeza con $n_h$ cabezas, la caché se divide por $n_h/\nkv$. Pope \emph{et al.} muestran que la atención multiconsulta permite contextos hasta 32 veces más largos con la misma memoria en PaLM 540B~\cite{pope}.
+\end{observacion}
+
+\section{Intensidad aritmética de la inferencia}
+
+Se recuerda del módulo~17 que la intensidad aritmética de una operación es $I=F/Q$ (FLOP por byte transferido) y que, en un dispositivo con rendimiento $\Ppico$ y ancho de banda $\Bmem$, la operación está limitada por la memoria si $I<\Icrit=\Ppico/\Bmem$.
+
+\begin{proposicion}[Intensidad de las capas]\label{prop:intensidad-capas}
+Sea un lote de $B$ secuencias en bf16 ($s=2$) del que se procesan $T$ posiciones nuevas por secuencia, con $S$ posiciones ya presentes en la caché.
+\begin{enumerate}[label=(\alph*)]
+  \item En un perceptrón con tres matrices de $D\times F$ (como el SwiGLU), $F_{\mathrm{op}}=6BTDF$ y $Q=4BTD+4BTF+6DF$. Si $BT\ll D,F$, la intensidad es $I\approx BT$.
+  \item En la atención, con dimensión total $D$ de consultas, claves y valores, $F_{\mathrm{op}}=4BSTD$ y $Q=4BSD+4BTD$, de modo que $I=ST/(S+T)$, independiente de $B$. En el \emph{prefill} ($T=S$), $I=S/2$; en la decodificación ($T=1$), $I=S/(S+1)<1$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(a) Cada uno de los tres productos de $(BT\times D)$ por $(D\times F)$ cuesta $2BTDF$ operaciones, en total $6BTDF$. Se leen la entrada ($BTD$ números) y los tres pesos ($3DF$), se escriben dos activaciones intermedias ($2BTF$; como en~\cite{cs336}, su relectura no se cuenta) y se escribe la salida ($BTD$); con dos bytes por número, $Q=2(2BTD+2BTF+3DF)=4BTD+4BTF+6DF$. Si $BT\ll D,F$, el término $6DF$ domina y $I\approx 6BTDF/(6DF)=BT$.
+
+(b) El producto de las consultas ($B\times T\times D$) por las claves ($B\times S\times D$) cuesta $2BSTD$ y el de los pesos de atención por los valores, otras $2BSTD$. Se leen $Q$, $K$ y $V$ ($BTD+2BSD$ números) y se escribe la salida ($BTD$), es decir, $Q=2(2BTD+2BSD)$ bytes. Así, $I=4BSTD/(4BSD+4BTD)=ST/(S+T)$. Sustituyendo $T=S$ y $T=1$ se obtienen los dos casos.
+\end{proof}
+
+La diferencia entre ambas capas es estructural: en el perceptrón todas las secuencias del lote comparten los mismos pesos, que se leen una vez; en la atención cada secuencia tiene su propia caché, de modo que agrupar secuencias no reutiliza datos~\cite{cs336}.
+
+\begin{teorema}[Cota de memoria de la decodificación]\label{teo:cota-memoria}
+Sea un modelo de $N$ parámetros de $s$ bytes y sea un paso de decodificación con un lote de $B$ secuencias de $S$ tokens de contexto cada una. Si los pesos y la caché se leen al menos una vez por paso, el tiempo del paso cumple
+\[
+t_{\mathrm{paso}}\ \ge\ \frac{sN+B\,S\,c_{\mathrm{kv}}}{\Bmem}.
+\]
+En particular, con $B=1$ y caché despreciable, la velocidad de generación cumple $\text{tokens/s}\le\Bmem/(sN)$.
+\end{teorema}
+
+\begin{proof}
+Por la cota del modelo \emph{roofline} (módulo~17), el tiempo de un cálculo que transfiere $Q$ bytes es al menos $Q/\Bmem$. En un paso se leen los $sN$ bytes de pesos y las $B$ cachés de $S\,c_{\mathrm{kv}}$ bytes. Con $B=1$, cada paso produce un token, luego la velocidad es $1/t_{\mathrm{paso}}\le\Bmem/(sN)$.
+\end{proof}
+
+\begin{ejemplo}[Cota de velocidad]\label{ej:cota}
+Un modelo de $7\cdot 10^{9}$ parámetros en fp16 ocupa $1{,}4\cdot 10^{10}$ bytes. Con $\Bmem=2$~TB/s, $t_{\mathrm{paso}}\ge 7$~ms y la velocidad no supera $2\cdot 10^{12}/(1{,}4\cdot 10^{10})\approx 143$ tokens/s, independientemente del rendimiento de cómputo. Si el dispositivo ofrece $300$~TFLOP/s, $\Icrit=150$~FLOP/byte; la decodificación con lote~1 tiene $I\approx 1$ y usa menos del $1\,\%$ de su capacidad de cálculo.
+\end{ejemplo}
+
+\section{El lote: latencia frente a rendimiento}
+
+\begin{proposicion}[Compromiso del lote]\label{prop:lote}
+En las condiciones del \cref{teo:cota-memoria}, supóngase que el tiempo de un paso es exactamente $t(B)=t_0+Bt_1$, con $t_0=sN/\Bmem$ y $t_1=S\,c_{\mathrm{kv}}/\Bmem$. Entonces la velocidad por usuario $1/t(B)$ decrece con $B$, el rendimiento total $R(B)=B/t(B)$ crece con $B$ y
+\[
+\lim_{B\to\infty}R(B)=\frac{1}{t_1}=\frac{\Bmem}{S\,c_{\mathrm{kv}}}.
+\]
+\end{proposicion}
+
+\begin{proof}
+$t(B)$ es creciente en $B$, luego $1/t(B)$ es decreciente. Además $R(B)=B/(t_0+Bt_1)=1/(t_0/B+t_1)$, y $t_0/B$ decrece con $B$, de modo que $R$ crece y tiende a $1/t_1$.
+\end{proof}
+
+El lote amortiza la lectura de los pesos, pero no la de la caché. La \cref{tab:lote} lo ilustra con Llama~2 7B en fp16 ($14$~GB de pesos), secuencias de $2000$ tokens ($1{,}05$~GB de caché cada una) y $\Bmem=2$~TB/s; el límite del rendimiento es $\Bmem/(S\,c_{\mathrm{kv}})\approx 1907$ tokens/s. Además, la memoria total limita $B$: con 64 secuencias la caché ya ocupa $67$~GB.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}rrrrr@{}}
+\toprule
+Lote $B$ & Caché total (GB) & Tiempo por paso (ms) & Tokens/s totales & Tokens/s por usuario \\
+\midrule
+1 & 1{,}05 & 7{,}52 & 133 & 133 \\
+8 & 8{,}39 & 11{,}19 & 715 & 89{,}3 \\
+32 & 33{,}55 & 23{,}78 & 1346 & 42{,}1 \\
+64 & 67{,}11 & 40{,}55 & 1578 & 24{,}7 \\
+\bottomrule
+\end{tabular}
+\caption{Cota de memoria del \cref{teo:cota-memoria} para Llama~2 7B en fp16 con contexto de $2000$ tokens y $\Bmem=2$~TB/s.}
+\label{tab:lote}
+\end{table}
+
+\begin{observacion}[Cuándo deja de mandar la memoria]
+Respecto a los pesos, la intensidad de un paso con lote $B$ es $\approx B$ FLOP/byte en bf16 (\cref{prop:intensidad-capas}), de modo que haría falta $B\approx\Icrit$ para quedar limitado por el cómputo; la caché, con intensidad menor que~1, lo impide antes. Pope \emph{et al.} cuantifican este compromiso en PaLM 540B: el \emph{prefill} de lotes grandes alcanza un $76\,\%$ de utilización de FLOP, mientras que la decodificación con lote pequeño logra una latencia de 29~ms por token con pesos en int8~\cite{pope}. Todo lo que reduzca bytes acelera la decodificación: menos cabezas de clave y valor, cuantización (\cref{tema:4,tema:5}) y más tokens por lectura de pesos (\cref{tema:3}).
+\end{observacion}
+
+\begin{lecturas}
+\item CS336~\cite{cs336}, clase~10 «Inference»: intensidad aritmética de la inferencia, latencia y rendimiento, reducción de la caché KV.
+\item Pope \emph{et al.}~\cite{pope}, sección~2 «Inference Cost Tradeoffs» y §3.3 sobre la partición de la atención multiconsulta.
+\item Kwon \emph{et al.}~\cite{kwon}, sección~3 «Memory Challenges in LLM Serving».
+\item Shazeer~\cite{shazeer}, artículo original de la atención multiconsulta.
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-fases}
+¿Por qué el \emph{prefill} está limitado por el cómputo y la decodificación por la memoria, si ejecutan el mismo modelo? Razónelo con la intensidad aritmética respecto a los pesos.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:2-vf}
+Justifique si son verdaderas o falsas: (a) la caché KV cambia los tokens que genera el modelo; (b) duplicar el tamaño del lote duplica el rendimiento total; (c) con GQA de 32 a 8 cabezas de clave y valor caben cuatro veces más secuencias en la memoria reservada a la caché.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-kv}
+Un modelo tiene $L=24$ capas y $\nkv=16$ cabezas de clave y valor de dimensión $\dhd=64$, en fp16. Calcule la caché KV por token, para una secuencia de $2048$ tokens y para un lote de 16 secuencias de $2048$ tokens.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-cota}
+Un modelo de $1{,}3\cdot 10^{10}$ parámetros se sirve en un acelerador de $1$~TB/s. Calcule la cota de tokens/s con lote~1 en fp16, en int8 y en int4 (medio byte por peso, sin contar escalas).
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-llama13}
+Se modela Llama~2 13B en bf16 con $N=1{,}3015\cdot 10^{10}$ parámetros, $L=40$, $40$ cabezas de clave y valor de dimensión $128$ y contexto $S=1024$, en una GPU H100 con $\Bmem=3{,}35$~TB/s y 80~GB de memoria. Suponga que en cada paso se leen todos los pesos y todas las cachés. (a) Calcule la caché por secuencia. (b) Para $B=1$, $64$ y $256$, calcule la memoria total, la latencia por paso y el rendimiento. (c) ¿Qué lotes caben en la GPU? Comente el resultado.
+\fuente{adaptado de CS336~\cite{cs336}, clase~10 «Inference», apartado \emph{throughput and latency} (Llama~2 13B en una H100).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-intensidad}
+Demuestre que, en un paso de decodificación con lote $B$ y pesos en fp16, la intensidad aritmética respecto a los pesos es $B$ FLOP/byte. Estime con qué lote el acelerador del \cref{ej:cota} dejaría de estar limitado por los pesos y explique por qué la caché KV impide llegar ahí.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-sincache}
+Considere solo los productos de la atención de una capa con dimensión $D$ y genere $T$ tokens a partir de un prompt vacío. (a) Demuestre que sin caché el coste total de la atención es $\sum_{t=1}^{T}4Dt^{2}=\tfrac{2}{3}DT(T+1)(2T+1)$ y, por tanto, $\Theta(T^{3})$. (b) Demuestre que con caché es $\sum_{t=1}^{T}4Dt=2DT(T+1)$, es decir, $\Theta(T^{2})$. (c) Calcule el cociente para $T=1000$.
+\end{ejercicio}

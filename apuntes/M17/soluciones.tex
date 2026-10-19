@@ -1,0 +1,547 @@
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. Salvo que se indique otra cosa, se usan los datos de la A100 SXM del \cref{tema:2}: $\Ppico=312\cdot 10^{12}$~FLOP/s en bf16, $\Bmem=2\cdot 10^{12}$~bytes/s, $\Icrit=156$~FLOP/byte y 400~W. En los pasos intermedios se redondea a cuatro cifras significativas.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-reutilizacion}
+\datos matriz sistólica de $n\times n$; $A,B\in\R^{n\times n}$.
+\planteamiento la celda $(i,j)$ acumula $c_{ij}=\sum_{k}a_{ik}b_{kj}$; cada dato entra por un borde y recorre una fila o una columna.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $c_{ij}$ tiene $n$ sumandos: cada celda realiza $n$ operaciones MAC. En total, $n^{2}\cdot n=n^{3}$ MAC, es decir, $2n^{3}$ FLOP, como en la \cref{prop:flop-matmul}.
+  \item (b) El elemento $a_{ik}$ entra por la izquierda en la fila $i$ y atraviesa las $n$ celdas $(i,1),\dots,(i,n)$; en cada una se usa en un producto. Se lee una vez de memoria y se usa $n$ veces. Lo mismo ocurre con $b_{kj}$ en la columna $j$.
+  \item (c) Pasar un dato a la celda vecina es una transferencia de muy corta distancia dentro del chip. Leerlo de la memoria cuesta mucho más energía que operar con él (\cref{tema:6}); con la rejilla, cada lectura se amortiza entre $n$ operaciones.
+\end{enumerate}
+\resultado \textbf{(a) $n$ MAC por celda; (b) cada elemento se usa $n$ veces; (c) la energía de cada lectura se reparte entre $n$ operaciones.}
+\comprobacion en la TPU v1, con $n=256$, cada operando se reutiliza 256 veces, como dice el \cref{ej:tpu}.
+\end{solucion}
+
+\begin{solucion}{eje:1-flop}
+\datos (a) $(2\times 3)(3\times 4)$. (b) $W\in\R^{4096\times 16\,384}$; $8\cdot 2048=16\,384$ tokens.
+\planteamiento \cref{prop:flop-matmul} y \cref{prop:6nd-capa} con $T=16\,384$, $a=4096$, $b=16\,384$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $2mkn=2\cdot 2\cdot 3\cdot 4=48$ FLOP.
+  \item (b) Parámetros: $ab=4096\cdot 16\,384=67\,108\,864$.
+  \item Hacia delante: $2Tab=2\cdot 16\,384\cdot 67\,108\,864=2{,}199\cdot 10^{12}$ FLOP.
+  \item Hacia atrás: $4Tab=4{,}398\cdot 10^{12}$ FLOP ($GW\T$ y $X\T G$, $2{,}199\cdot 10^{12}$ cada uno).
+  \item Paso completo: $6Tab=6{,}597\cdot 10^{12}$ FLOP.
+  \item Por parámetro y token: $6{,}597\cdot 10^{12}/(67\,108\,864\cdot 16\,384)=6{,}597\cdot 10^{12}/1{,}100\cdot 10^{12}=6{,}00$.
+\end{enumerate}
+\resultado \textbf{(a) 48 FLOP. (b) $2{,}20\cdot 10^{12}$ hacia delante, $4{,}40\cdot 10^{12}$ hacia atrás y $6{,}60\cdot 10^{12}$ en total: 6 FLOP por parámetro y token.}
+\comprobacion la pasada hacia atrás cuesta el doble que la de delante, que es la hipótesis de Kaplan \emph{et al.} y de la tarea~1 de CS336.
+\end{solucion}
+
+\begin{solucion}{eje:1-tpu}
+\datos $256\times 256$ MAC a 700~MHz; producto $4096\times 4096$; A100: 312 y 19{,}5~TFLOP/s.
+\planteamiento cada MAC son 2 operaciones por ciclo; tiempo mínimo $=$ operaciones $/$ rendimiento máximo (\cref{teo:roofline}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $256^{2}=65\,536$ celdas; $65\,536\cdot 2\cdot 7\cdot 10^{8}=9{,}175\cdot 10^{13}$ operaciones/s $\approx 92$~TOPS.
+  \item (b) Operaciones: $2\cdot 4096^{3}=2\cdot 6{,}872\cdot 10^{10}=1{,}374\cdot 10^{11}$.
+  \item Tiempo mínimo: $1{,}374\cdot 10^{11}/9{,}175\cdot 10^{13}=1{,}498\cdot 10^{-3}$~s.
+  \item (c) $312/19{,}5=16$.
+\end{enumerate}
+\resultado \textbf{(a) $9{,}18\cdot 10^{13}$ operaciones/s; (b) unos $1{,}5$~ms; (c) un factor~16.}
+\comprobacion $1{,}5\cdot 10^{-3}\cdot 9{,}175\cdot 10^{13}=1{,}38\cdot 10^{11}$ operaciones, el valor del paso~2.
+\end{solucion}
+
+\begin{solucion}{eje:1-gpt2}
+\datos $V=50\,257$; $T=1024$; $L=12$; $d=768$; $d_{\mathrm{ff}}=2048$.
+\planteamiento sumar los parámetros de cada matriz; para los FLOP, aplicar $2mkn$ a cada producto (\cref{prop:flop-matmul}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Embeddings}: $Vd=50\,257\cdot 768=38\,597\,376$. Cabeza de salida: otros $38\,597\,376$.
+  \item Por bloque: atención $4d^{2}=4\cdot 589\,824=2\,359\,296$ ($W_Q,W_K,W_V,W_O$); MLP $3dd_{\mathrm{ff}}=3\cdot 768\cdot 2048=4\,718\,592$; normas $2d=1536$. Suma: $7\,079\,424$.
+  \item Total: $38\,597\,376+12\cdot 7\,079\,424+768+38\,597\,376=38\,597\,376+84\,953\,088+768+38\,597\,376=162\,148\,608$.
+  \item Memoria fp32: $162\,148\,608\cdot 4=648\,594\,432$~bytes $\approx 649$~MB.
+  \item FLOP por bloque: proyecciones $Q,K,V$: $3\cdot 2Td^{2}=3\,623\,878\,656$; $QK\T$: $2T^{2}d=1\,610\,612\,736$; producto por $V$: $1\,610\,612\,736$; $W_O$: $2Td^{2}=1\,207\,959\,552$; MLP: $3\cdot 2Tdd_{\mathrm{ff}}=9\,663\,676\,416$.
+  \item Suma por bloque: $1{,}772\cdot 10^{10}$; por 12 bloques: $2{,}126\cdot 10^{11}$.
+  \item Cabeza: $2TdV=2\cdot 1024\cdot 768\cdot 50\,257=7{,}905\cdot 10^{10}$.
+  \item Total: $2{,}126\cdot 10^{11}+0{,}7905\cdot 10^{11}=2{,}916\cdot 10^{11}$ FLOP.
+  \item Porcentajes: proyecciones de atención $12\cdot(3{,}624+1{,}208)\cdot 10^{9}/2{,}916\cdot 10^{11}=19{,}9\,\%$; $QK\T$ y $\cdot V$: $12\cdot 3{,}221\cdot 10^{9}/2{,}916\cdot 10^{11}=13{,}3\,\%$; MLP: $12\cdot 9{,}664\cdot 10^{9}/2{,}916\cdot 10^{11}=39{,}8\,\%$; cabeza: $7{,}905/29{,}16=27{,}1\,\%$.
+\end{enumerate}
+\resultado \textbf{(a) $162{,}1$ millones de parámetros, unos 649~MB en fp32. (b) $2{,}92\cdot 10^{11}$ FLOP por secuencia: MLP 39{,}8~\%, cabeza 27{,}1~\%, proyecciones de atención 19{,}9~\%, $QK\T$ y $\cdot V$ 13{,}3~\%.}
+\comprobacion la regla $2NT$ del \cref{cor:6nd}, con $N$ sin los \emph{embeddings} de entrada ($1{,}236\cdot 10^{8}$), da $2\cdot 1{,}236\cdot 10^{8}\cdot 1024=2{,}530\cdot 10^{11}$; sumando la parte de la atención que no multiplica pesos ($12\cdot 3{,}221\cdot 10^{9}=3{,}865\cdot 10^{10}$) se obtiene $2{,}917\cdot 10^{11}$. Los porcentajes suman $100{,}1\,\%$ por redondeo.
+\end{solucion}
+
+\begin{solucion}{eje:1-sistolica}
+\datos $a_{ik}$ entra en $(i,1)$ en el ciclo $k+i-1$ y avanza a la derecha; $b_{kj}$ entra en $(1,j)$ en el ciclo $k+j-1$ y avanza hacia abajo; un salto por ciclo.
+\planteamiento calcular el ciclo de llegada de cada dato a la celda $(i,j)$ y comparar.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item De $(i,1)$ a $(i,j)$ hay $j-1$ saltos: $a_{ik}$ llega a $(i,j)$ en el ciclo $(k+i-1)+(j-1)=k+i+j-2$.
+  \item De $(1,j)$ a $(i,j)$ hay $i-1$ saltos: $b_{kj}$ llega en el ciclo $(k+j-1)+(i-1)=k+i+j-2$. Ambos coinciden.
+  \item En el ciclo $t$, la celda $(i,j)$ recibe por la izquierda el único $a_{ik}$ con $k=t-i-j+2$ y por arriba el único $b_{k'j}$ con $k'=t-i-j+2$: los índices internos coinciden, de modo que siempre multiplica un par correcto $a_{ik}b_{kj}$.
+  \item Al variar $t$, $k=t-i-j+2$ recorre $1,\dots,n$ exactamente una vez (para $t=i+j-1,\dots,i+j+n-2$): la celda recibe los $n$ pares y acumula $c_{ij}=\sum_{k=1}^{n}a_{ik}b_{kj}$.
+  \item El último producto es el de la celda $(n,n)$ con $k=n$: ciclo $n+n+n-2=3n-2$. \qedhere
+\end{enumerate}
+\resultado \textbf{los factores llegan sincronizados en el ciclo $k+i+j-2$; cada celda recibe los $n$ pares; el producto termina en el ciclo $3n-2$.}
+\comprobacion con $n=1$ se termina en el ciclo~1. Con $n=3$ (\cref{fig:sistolica}), $a_{33}$ entra en la celda $(3,1)$ en el ciclo $3+3-1=5$ y, tras 2 saltos, llega a $(3,3)$ en el ciclo~7, el mismo en que llega $b_{33}$: $3n-2=7$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-matvec}
+\datos matriz $n\times n$ con $n=4096$ en bf16 ($s=2$); 1 y 64 vectores.
+\planteamiento $I=F/Q$ con $Q$ la matriz más los vectores de entrada y salida; $P=\min(\Ppico,I\Bmem)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Un vector: $F=2n^{2}=2\cdot 16\,777\,216=3{,}355\cdot 10^{7}$; $Q=2(n^{2}+2n)=3{,}357\cdot 10^{7}$ bytes.
+  \item $I=3{,}355/3{,}357=0{,}9995\approx 1$; $P=\min(312;\ 0{,}9995\cdot 2)=2{,}0$~TFLOP/s, el $2/312=0{,}64\,\%$ del máximo.
+  \item 64 vectores: $F=2n^{2}\cdot 64=2{,}147\cdot 10^{9}$; $Q=2(n^{2}+2\cdot 64\,n)=2(16\,777\,216+524\,288)=3{,}460\cdot 10^{7}$ bytes.
+  \item $I=2{,}147\cdot 10^{9}/3{,}460\cdot 10^{7}=62{,}06$; $P=\min(312;\ 124{,}1)=124{,}1$~TFLOP/s, un $39{,}8\,\%$.
+\end{enumerate}
+\resultado \textbf{con un vector, $I\approx 1$ y solo un $0{,}6\,\%$ del máximo; con 64, $I\approx 62$ y unos 124~TFLOP/s, todavía limitado por la memoria ($62<156$).}
+\comprobacion por el \cref{cor:matvec}, $I\approx b$ para $b$ vectores en bf16; harían falta unos 160 vectores para superar $\Icrit$.
+\end{solucion}
+
+\begin{solucion}{eje:2-matmul}
+\datos $n=2048$; bf16; A100.
+\planteamiento \cref{prop:intensidad-matmul}; tiempos $F/\Ppico$ y $Q/\Bmem$ (\cref{teo:roofline}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $F=2n^{3}=2\cdot 8\,589\,934\,592=1{,}718\cdot 10^{10}$.
+  \item $Q=3n^{2}\cdot 2=3\cdot 4\,194\,304\cdot 2=25\,165\,824$~bytes ($25{,}2$~MB).
+  \item $I=1{,}718\cdot 10^{10}/2{,}517\cdot 10^{7}=682{,}7$~FLOP/byte $=2048/3$.
+  \item $t_c=1{,}718\cdot 10^{10}/3{,}12\cdot 10^{14}=5{,}506\cdot 10^{-5}$~s $=55{,}1$~$\mu$s.
+  \item $t_m=2{,}517\cdot 10^{7}/2\cdot 10^{12}=1{,}258\cdot 10^{-5}$~s $=12{,}6$~$\mu$s.
+\end{enumerate}
+\resultado \textbf{$1{,}72\cdot 10^{10}$ FLOP; 25{,}2~MB; $I\approx 683$; $t_c\approx 55$~$\mu$s frente a $t_m\approx 12{,}6$~$\mu$s: limita el cómputo.}
+\comprobacion $t_c/t_m=55{,}06/12{,}58=4{,}38=I/\Icrit=682{,}7/156$.
+\end{solucion}
+
+\begin{solucion}{eje:2-gelu}
+\datos 4 bytes por elemento (2 leídos y 2 escritos); 10 FLOP por elemento.
+\planteamiento $I=F/Q$ por elemento; $P=\min(\Ppico,I\Bmem)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $I=10/4=2{,}5$~FLOP/byte.
+  \item $I\Bmem=2{,}5\cdot 2\cdot 10^{12}=5\cdot 10^{12}$~FLOP/s.
+  \item $P=\min(312;\ 5)=5$~TFLOP/s, un $5/312=1{,}6\,\%$ del máximo.
+\end{enumerate}
+\resultado \textbf{$I=2{,}5$ y como mucho 5~TFLOP/s. Se evita fusionando la GELU con el producto de matrices anterior (\cref{prop:fusion}), de modo que el dato no vuelve a la HBM.}
+\comprobacion $\Icrit/I=156/2{,}5=62{,}4$: la operación está muy lejos del codo.
+\end{solucion}
+
+\begin{solucion}{eje:2-int8}
+\datos $X\in\R^{B\times D}$ en bf16 (2 bytes), $W\in\R^{D\times F}$ en int8 (1 byte), salida $B\times F$ en bf16; $\Icrit=156$.
+\planteamiento contar FLOP y bytes como en la \cref{prop:intensidad-matmul} con tamaños distintos por matriz; imponer $I\ge\Icrit$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $F=2BDF$; $Q=2BD+DF+2BF$ bytes.
+  \item (b) Si $B\ll D,F$, domina $DF$: $I\approx 2BDF/(DF)=2B$. Limitado por el cómputo si $2B\ge 156$, es decir, $B\ge 78$.
+  \item Con pesos en bf16, $Q\approx 2DF$ e $I\approx B$: hace falta $B\ge 156$, el doble.
+  \item (c) Con $D=F=4096$: $I=2BD^{2}/(4BD+D^{2})=2BD/(4B+D)$. La condición $2BD\ge 156(4B+D)$ da $B(2D-624)\ge 156D$, es decir, $B\ge 156\cdot 4096/7568=84{,}43$.
+  \item Para pesos en bf16: $I=BD/(2B+D)\ge 156$ da $B\ge 156\cdot 4096/(4096-312)=168{,}9$.
+\end{enumerate}
+\resultado \textbf{(a) $2BDF$ FLOP y $2BD+DF+2BF$ bytes. (b) $B\gtrsim 78$ con pesos int8 frente a $B\gtrsim 156$ con pesos bf16. (c) $B\ge 85$ (frente a $B\ge 169$).}
+\comprobacion con $B=85$: $I=2\cdot 85\cdot 4096/(340+4096)=696\,320/4436=157{,}0\ge 156$; con $B=84$: $688\,128/4432=155{,}3<156$.
+\end{solucion}
+
+\begin{solucion}{eje:2-cuadrada}
+\datos $A,B,C\in\R^{n\times n}$ en bf16 ($s=2$); $\Icrit=156$.
+\planteamiento contar FLOP y bytes mínimos; imponer $I\ge\Icrit$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item FLOP: $C$ tiene $n^{2}$ elementos y cada uno es un producto escalar de longitud $n$ ($n$ multiplicaciones y $n$ sumas): $F=2n\cdot n^{2}=2n^{3}$.
+  \item Bytes: leer $A$ y $B$ y escribir $C$ una vez cada una: $3n^{2}$ números de 2 bytes, $Q=6n^{2}$.
+  \item $I=2n^{3}/(6n^{2})=n/3$.
+  \item $n/3\ge 156\iff n\ge 468$. \qedhere
+\end{enumerate}
+\resultado \textbf{$I=n/3$; hace falta $n\ge 468$. En la práctica se usan múltiplos de 64 o 128, es decir, $n\ge 512$.}
+\comprobacion $n=256$ da $I=85{,}3<156$ (memoria) y $n=4096$ da $I=1365>156$ (cómputo), como en la \cref{fig:roofline}.
+\end{solucion}
+
+\begin{solucion}{eje:2-tiling}
+\datos bloques de $C$ de $b_m\times b_n$, trozos de $b_k$ en la dimensión interna; SRAM de 192~KiB; bf16.
+\planteamiento contar las cargas por bloque de $C$ y multiplicar por el número de bloques; minimizar con la desigualdad entre medias.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Hay $n^{2}/(b_mb_n)$ bloques de $C$. Para cada uno se recorren $n/b_k$ pasos; en cada paso se cargan un bloque de $A$ ($b_m\times b_k$) y uno de $B$ ($b_k\times b_n$): $b_k(b_m+b_n)$ números.
+  \item Por bloque de $C$: $(n/b_k)\cdot b_k(b_m+b_n)=n(b_m+b_n)$. Total: $\dfrac{n^{2}}{b_mb_n}\cdot n(b_m+b_n)=\dfrac{n^{3}(b_m+b_n)}{b_mb_n}$, que no depende de $b_k$.
+  \item (b) Con $b_mb_n=\alpha$ fijo, el tráfico es proporcional a $b_m+b_n\ge 2\sqrt{b_mb_n}=2\sqrt{\alpha}$, con igualdad si y solo si $b_m=b_n$.
+  \item (c) $3b^{2}\cdot 2\le 192\cdot 1024=196\,608$ da $b^{2}\le 32\,768$, $b\le 181$. La mayor potencia de 2 es $b=128$: $3\cdot 128^{2}\cdot 2=98\,304$~bytes $=96$~KiB. Con $b=256$ harían falta 384~KiB.
+  \item Intensidad respecto a la SRAM: $I\approx b/s=128/2=64$~FLOP/byte.
+\end{enumerate}
+\resultado \textbf{(a) $n^{3}(b_m+b_n)/(b_mb_n)$ números; (b) bloques cuadrados; (c) $b=128$, con $I\approx 64$~FLOP/byte.}
+\comprobacion con $b_m=b_n=b$, (a) da $2n^{3}/b$, el valor de la \cref{prop:tiling}. Que $64<156$ no implica que el producto esté limitado por la memoria en la GPU: la caché L2 añade otro nivel de reutilización (observación final del \cref{tema:2}).
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-jerarquia}
+\datos HBM, registros, red entre nodos, SRAM, NVLink.
+\planteamiento \cref{tab:jerarquia}: cuanto más cerca de las unidades de cálculo, más rápido y más pequeño.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Dentro de cada SM: registros y, después, SRAM (decenas de TB/s agregados).
+  \item En el encapsulado de la GPU: HBM, unos 2~TB/s.
+  \item Entre GPU de un nodo: NVLink, 600~GB/s.
+  \item Entre nodos: InfiniBand, decenas de GB/s por GPU.
+\end{enumerate}
+\resultado \textbf{registros $>$ SRAM $>$ HBM $>$ NVLink $>$ red entre nodos. FlashAttention gestiona la SRAM: decide qué bloques de $Q$, $K$ y $V$ carga en ella y el tamaño de esos bloques ($B_r$, $B_c$).}
+\comprobacion cada salto reduce el ancho de banda: decenas de TB/s, 2~TB/s, 600~GB/s, decenas de GB/s.
+\end{solucion}
+
+\begin{solucion}{eje:3-online}
+\datos $x=(2,-1,4,1)$; bloques $(2,-1)$ y $(4,1)$.
+\planteamiento estadísticos de cada bloque y \cref{lem:combinacion}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Bloque~1: $m_1=2$; $\ell_1=e^{0}+e^{-3}=1+0{,}0498=1{,}0498$.
+  \item Bloque~2: $m_2=4$; $\ell_2=e^{0}+e^{-3}=1{,}0498$.
+  \item $m=\max(2,4)=4$.
+  \item $\ell=\ell_1e^{2-4}+\ell_2e^{0}=1{,}0498\cdot 0{,}1353+1{,}0498=0{,}1421+1{,}0498=1{,}1919$.
+  \item $\softmax(x)=(e^{-2},e^{-5},e^{0},e^{-3})/1{,}1919=(0{,}1353;\ 0{,}0067;\ 1;\ 0{,}0498)/1{,}1919=(0{,}1135;\ 0{,}0057;\ 0{,}8390;\ 0{,}0418)$.
+\end{enumerate}
+\resultado \textbf{$m_1=2$, $\ell_1=1{,}0498$; $m_2=4$, $\ell_2=1{,}0498$; $\ell=1{,}1919$; $\softmax(x)=(0{,}1135;\ 0{,}0057;\ 0{,}8390;\ 0{,}0418)$.}
+\comprobacion directamente, $\ell=\sum_je^{x_j-4}=0{,}1353+0{,}0067+1+0{,}0498=1{,}1919$, y las probabilidades suman $1{,}0000$.
+\end{solucion}
+
+\begin{solucion}{eje:3-S}
+\datos $n=4096$; $d=128$; bf16 (2 bytes); $\Ppico=312$~TFLOP/s; $\Bmem=2$~TB/s.
+\planteamiento $S$ tiene $n^{2}$ elementos; tiempo de memoria $=$ bytes$/\Bmem$; tiempo de cómputo $=2n^{2}d/\Ppico$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $n^{2}\cdot 2=16\,777\,216\cdot 2=33\,554\,432$~bytes $=32$~MiB.
+  \item 32 cabezas: $32\cdot 32$~MiB $=1024$~MiB $=1$~GiB.
+  \item $n=32\,768$: $32\,768^{2}\cdot 2=2^{31}$~bytes $=2$~GiB por cabeza.
+  \item (b) Escribir y leer $S$: $2\cdot 33\,554\,432/(2\cdot 10^{12})=3{,}355\cdot 10^{-5}$~s $=33{,}6$~$\mu$s.
+  \item $QK\T$: $2n^{2}d=2\cdot 16\,777\,216\cdot 128=4{,}295\cdot 10^{9}$ FLOP; $4{,}295\cdot 10^{9}/3{,}12\cdot 10^{14}=1{,}377\cdot 10^{-5}$~s $=13{,}8$~$\mu$s.
+\end{enumerate}
+\resultado \textbf{(a) 32~MiB por cabeza, 1~GiB con 32 cabezas y 2~GiB por cabeza con $n=32\,768$. (b) Mover $S$ cuesta unos 33{,}6~$\mu$s, $2{,}4$ veces más que calcularla (13{,}8~$\mu$s).}
+\comprobacion multiplicar $n$ por 8 multiplica $S$ por 64: $32\text{ MiB}\cdot 64=2$~GiB.
+\end{solucion}
+
+\begin{solucion}{eje:3-trafico}
+\datos $n=4096$; $d=64$; $M=2^{15}=32\,768$ elementos.
+\planteamiento tamaños de bloque del algoritmo; \cref{prop:atencion-estandar} y \cref{prop:flash-trafico}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $B_c=\lceil 32\,768/256\rceil=128$; $B_r=\min(128,64)=64$; $T_c=4096/128=32$; $T_r=4096/64=64$.
+  \item (b) Estándar: $4n^{2}+4nd=4\cdot 16\,777\,216+4\cdot 262\,144=67\,108\,864+1\,048\,576=68\,157\,440$ elementos.
+  \item FlashAttention: $nd+2n=262\,144+8192=270\,336$; $2nd=524\,288$; $3nd+4n=786\,432+16\,384=802\,816$, por $T_c=32$: $25\,690\,112$.
+  \item Total FlashAttention: $270\,336+524\,288+25\,690\,112=26\,484\,736$ elementos.
+  \item Cociente: $68\,157\,440/26\,484\,736=2{,}573$.
+\end{enumerate}
+\resultado \textbf{(a) $B_c=128$, $B_r=64$, $T_c=32$, $T_r=64$. (b) $6{,}82\cdot 10^{7}$ elementos frente a $2{,}65\cdot 10^{7}$: unas $2{,}6$ veces menos tráfico, y sin la memoria de $n^{2}$ elementos.}
+\comprobacion el término dominante $12n^{2}d^{2}/M=12\cdot 16\,777\,216\cdot 4096/32\,768=2{,}517\cdot 10^{7}$ coincide con $T_c\cdot 3nd=25\,165\,824$, el 95~\% del total. Con una SRAM mayor, $T_c$ y el tráfico disminuyen en proporción.
+\end{solucion}
+
+\begin{solucion}{eje:3-pytorch}
+\datos lote 8; una cabeza; $d=64$; fp32 (4 bytes); $n=4096$ y $16\,384$.
+\planteamiento $P$ tiene $8n^{2}$ elementos; $Q$, $K$ y $V$, $3\cdot 8\cdot nd$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $n=4096$: $8\cdot 16\,777\,216\cdot 4=536\,870\,912$~bytes $=0{,}5$~GiB.
+  \item $n=16\,384$: $8\cdot 268\,435\,456\cdot 4=8\,589\,934\,592$~bytes $=8$~GiB.
+  \item (b) $n=4096$: $3\cdot 8\cdot 4096\cdot 64\cdot 4=25\,165\,824$~bytes $=24$~MiB. $n=16\,384$: 96~MiB.
+  \item (c) Cociente: $8n^{2}\cdot 4/(3\cdot 8\cdot nd\cdot 4)=n/(3d)=n/192$: $21{,}3$ para $n=4096$ y $85{,}3$ para $n=16\,384$.
+\end{enumerate}
+\resultado \textbf{(a) 0{,}5~GiB y 8~GiB. (b) 24~MiB y 96~MiB. (c) El cociente es $n/192$: crece linealmente con $n$. FlashAttention elimina $P$: guarda solo $(m,\ell)$ por fila y recalcula los bloques en la pasada hacia atrás.}
+\comprobacion multiplicar $n$ por 4 multiplica $P$ por 16 ($0{,}5\to 8$~GiB) y $Q,K,V$ por 4 ($24\to 96$~MiB).
+\end{solucion}
+
+\begin{solucion}{eje:3-asociativa}
+\datos $(m_1,\ell_1)\oplus(m_2,\ell_2)=(M,\ \ell_1e^{m_1-M}+\ell_2e^{m_2-M})$, $M=\max(m_1,m_2)$.
+\planteamiento asociar a cada par el número $\varphi(m,\ell)=\ell\,e^{m}$ (con $\varphi(-\infty,0)=0$) y traducir $\oplus$ a operaciones conocidas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El par queda determinado por su primera componente y por $\varphi$: $\ell=\varphi\,e^{-m}$ si $m>-\infty$, y $\ell=0$ si $m=-\infty$.
+  \item La primera componente de $a\oplus b$ es $\max(m_1,m_2)$, y $\varphi(a\oplus b)=e^{M}(\ell_1e^{m_1-M}+\ell_2e^{m_2-M})=\ell_1e^{m_1}+\ell_2e^{m_2}=\varphi(a)+\varphi(b)$.
+  \item Conmutatividad: $\max$ y $+$ son conmutativos, luego $a\oplus b$ y $b\oplus a$ tienen la misma primera componente y el mismo $\varphi$; por el paso~1 son iguales.
+  \item Asociatividad: $(a\oplus b)\oplus c$ y $a\oplus(b\oplus c)$ tienen primera componente $\max(m_1,m_2,m_3)$ y $\varphi=\varphi(a)+\varphi(b)+\varphi(c)$; por el paso~1 son iguales.
+  \item Neutro: $(m,\ell)\oplus(-\infty,0)$ tiene primera componente $\max(m,-\infty)=m$ y $\varphi=\varphi(m,\ell)+0$; es $(m,\ell)$.
+  \item Consecuencia: los estadísticos de $\{1,\dots,n\}$ son la $\oplus$-suma de los de los bloques (\cref{lem:combinacion}), y una operación asociativa y conmutativa da el mismo resultado con cualquier agrupación y orden. Varios hilos pueden calcular los estadísticos de trozos distintos y combinarlos en árbol, en $\lceil\log_2 k\rceil$ niveles para $k$ trozos. \qedhere
+\end{enumerate}
+\resultado \textbf{$\oplus$ es conmutativa y asociativa, con neutro $(-\infty,0)$; la softmax en línea es independiente del orden y de la agrupación y admite una reducción paralela.}
+\comprobacion con el \cref{ej:online}: $\varphi(3;\ 1{,}1353)+\varphi(2;\ 1{,}1353)=1{,}1353(e^{3}+e^{2})=31{,}192$, y $\varphi(3;\ 1{,}5530)=1{,}5530\,e^{3}=31{,}193$. Además, $\varphi$ solo se usa en la demostración: el algoritmo nunca calcula $e^{m}$, que podría desbordarse.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-receta}
+\planteamiento aplicar la receta de Micikevicius \emph{et al.} (§3.1--3.3) con bf16.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{bf16.} Los núcleos tensoriales son 16 veces más rápidos en bf16 que las unidades fp32 en la A100, y los datos ocupan la mitad.
+  \item \textbf{fp32.} Por el \cref{teo:suma}, la cota de error crece con el número de sumandos y es inútil en 16 bits para sumas largas (\cref{eje:4-acumular}).
+  \item \textbf{fp32.} Por el \cref{cor:actualizacion}, en bf16 se perderían las actualizaciones menores que $2^{-8}$ veces el peso.
+  \item \textbf{fp32.} El segundo momento acumula cuadrados de gradientes pequeños y se usa en una raíz y una división: necesita rango y precisión.
+  \item \textbf{fp32.} Es una reducción larga, como en (b).
+\end{enumerate}
+\resultado \textbf{factores en bf16; acumuladores, copia maestra, momentos y reducciones en fp32. No se escala la pérdida porque bf16 tiene el rango de fp32 (8 bits de exponente): los gradientes pequeños no se anulan.}
+\comprobacion en fp16 el menor positivo es $2^{-24}\approx 6\cdot 10^{-8}$; en bf16, el menor normal es $2^{-126}\approx 1{,}2\cdot 10^{-38}$.
+\end{solucion}
+
+\begin{solucion}{eje:4-formatos}
+\datos fp16: $p=10$, sesgo 15; bf16: $p=7$, sesgo 127; E5M2: $p=2$, sesgo 15.
+\planteamiento \cref{prop:rango} con $E_{\max}=b$ y $E_{\min}=1-b$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item fp16: máximo $(2-2^{-10})\cdot 2^{15}=1{,}99902\cdot 32\,768=65\,504$; menor normal $2^{-14}=6{,}104\cdot 10^{-5}$; $\varepsilon=2^{-10}=9{,}766\cdot 10^{-4}$.
+  \item bf16: máximo $(2-2^{-7})\cdot 2^{127}=1{,}99219\cdot 1{,}7014\cdot 10^{38}=3{,}390\cdot 10^{38}$; menor normal $2^{-126}=1{,}175\cdot 10^{-38}$; $\varepsilon=2^{-7}=7{,}813\cdot 10^{-3}$.
+  \item E5M2: máximo $(2-2^{-2})\cdot 2^{15}=1{,}75\cdot 32\,768=57\,344$; menor normal $2^{-14}=6{,}104\cdot 10^{-5}$; $\varepsilon=2^{-2}=0{,}25$.
+\end{enumerate}
+\resultado \textbf{fp16: $65\,504$, $6{,}10\cdot 10^{-5}$, $9{,}77\cdot 10^{-4}$. bf16: $3{,}39\cdot 10^{38}$, $1{,}18\cdot 10^{-38}$, $7{,}81\cdot 10^{-3}$. E5M2: $57\,344$, $6{,}10\cdot 10^{-5}$, $0{,}25$.} Coinciden con la \cref{tab:formatos}.
+\comprobacion E5M2 tiene el mismo exponente que fp16 y, por tanto, el mismo menor normal; solo cambia la mantisa.
+\end{solucion}
+
+\begin{solucion}{eje:4-maestra}
+\datos $w=1$; $\Delta w=0{,}001$ y $0{,}004$; bf16 ($p=7$), fp16 ($p=10$), fp32 ($p=23$).
+\planteamiento junto a 1 la separación es $\varepsilon=2^{-p}$; \cref{lem:estancamiento}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) bf16: $\ulp(1)/2=2^{-8}=0{,}0039>0{,}001$: $\fl(1{,}001)=1$.
+  \item fp16: $\ulp(1)=2^{-10}=0{,}000977$; $1{,}001$ está a $0{,}000023$ de $1+2^{-10}=1{,}0009766$ y a $0{,}001$ de 1: $\fl(1{,}001)=1{,}0009766$.
+  \item fp32: $\ulp(1)=1{,}19\cdot 10^{-7}$: $\fl(1{,}001)=1{,}0010000$, con error menor que $6\cdot 10^{-8}$.
+  \item (b) Por el \cref{lem:estancamiento}, se pierde si $\Delta w<2^{-8}$; si $\Delta w=2^{-8}$ hay empate y se redondea al par, que es 1. La actualización modifica el peso si y solo si $\Delta w>2^{-8}=0{,}0039$.
+  \item (c) $1{,}004$ está entre $1$ y $1+2^{-7}=1{,}0078125$, a $0{,}004$ del primero y a $0{,}0038$ del segundo: $\fl(1{,}004)=1{,}0078125$.
+  \item Error relativo de la actualización aplicada: $(0{,}0078125-0{,}004)/0{,}004=0{,}953$.
+\end{enumerate}
+\resultado \textbf{(a) 1 en bf16, $1{,}0009766$ en fp16 y $1{,}001$ en fp32. (b) Solo si $\Delta w>2^{-8}\approx 0{,}0039$. (c) $1{,}0078125$: la actualización aplicada casi duplica la deseada (error del 95~\%).}
+\comprobacion los tres casos son el mismo fenómeno: en bf16 solo hay 128 representables en $[1,2)$, y cualquier actualización se redondea a un múltiplo de $2^{-7}$.
+\end{solucion}
+
+\begin{solucion}{eje:4-acumular}
+\datos sumando fp16 $a=0{,}0100021$; acumulador $8$ tras 750 sumas; fp16 con $p=10$.
+\planteamiento en $[2^{E},2^{E+1})$ la separación es $2^{E-10}$ (\cref{prop:rango}); cada suma se redondea al más cercano.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) En $[8,16)$, $E=3$: $2^{3-10}=2^{-7}=0{,}0078125$.
+  \item (b) $8+0{,}0100021=8{,}0100021$; candidatos $8{,}0078125$ (a $0{,}0022$) y $8{,}015625$ (a $0{,}0056$): se redondea al primero, y la suma aporta $0{,}0078125$.
+  \item Lo mismo en cada suma mientras el acumulador esté en $[8,16)$. Las 250 sumas restantes aportan $250\cdot 0{,}0078125=1{,}953125$; resultado final $9{,}953125$.
+  \item (c) Con acumulador fp32, la separación cerca de 10 es $2^{3-23}\approx 9{,}5\cdot 10^{-7}$: el redondeo es despreciable y el resultado es $\approx 1000\cdot 0{,}0100021=10{,}0021$.
+\end{enumerate}
+\resultado \textbf{(a) $0{,}0078125$. (b) Cada suma aporta $0{,}0078125$; el total es $9{,}953$ (error del $0{,}47\,\%$). (c) $10{,}002$: el error se debe solo a representar $0{,}01$ en fp16.}
+\comprobacion la simulación en NumPy da $9{,}953125$ con acumulador fp16 y $10{,}002136$ con acumulador fp32.
+\end{solucion}
+
+\begin{solucion}{eje:4-cuantizacion}
+\datos $x=(-1{,}234;\ 0{,}5;\ 0{,}0123;\ 2{,}54)$; $b=8$, luego $2^{b-1}-1=127$.
+\planteamiento \cref{def:cuantizacion}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\Delta=2{,}54/127=0{,}02$.
+  \item $x/\Delta=(-61{,}7;\ 25;\ 0{,}615;\ 127)$; redondeando, $q=(-62;\ 25;\ 1;\ 127)$.
+  \item $\hat x=\Delta q=(-1{,}24;\ 0{,}5;\ 0{,}02;\ 2{,}54)$.
+  \item Errores: $\abs{\hat x-x}=(0{,}006;\ 0;\ 0{,}0077;\ 0)$.
+\end{enumerate}
+\resultado \textbf{$\Delta=0{,}02$; $q=(-62,25,1,127)$; $\hat x=(-1{,}24;\ 0{,}5;\ 0{,}02;\ 2{,}54)$; error máximo $0{,}0077\le\Delta/2=0{,}01$.}
+\comprobacion el error relativo de la componente pequeña es $0{,}0077/0{,}0123=63\,\%$: el paso lo fija el máximo, y los valores pequeños pierden casi toda su precisión, como advierte el texto.
+\end{solucion}
+
+\begin{solucion}{eje:4-estancamiento}
+\datos $a=0{,}0100021$; fp16 ($p=10$); acumulador $8$ tras 750 sumas.
+\planteamiento comparar $a$ con $\ulp$ y $\ulp/2$ en cada intervalo binario; \cref{lem:estancamiento}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $E=3$: $\ulp=2^{-7}=0{,}0078125$. Como $\ulp<a<2\,\ulp$, $s+a$ está entre $s+\ulp$ y $s+2\ulp$; $a-\ulp=0{,}0022<2\ulp-a=0{,}0056$, luego $\fl(s+a)=s+\ulp$.
+  \item $E=4$: $\ulp=2^{-6}=0{,}015625$. Ahora $0<a<\ulp$; $a=0{,}0100>\ulp-a=0{,}0056$, luego $\fl(s+a)=s+\ulp$. En ambos casos cada suma aporta exactamente un $\ulp$.
+  \item (b) En $[32,64)$, $E=5$: $\ulp/2=2^{-6}=0{,}015625>a$. Por el \cref{lem:estancamiento}, $\fl(32+a)=32$: el acumulador se estanca.
+  \item (c) De 8 a 16 con pasos de $2^{-7}$: $8/2^{-7}=1024$ sumas. De 16 a 32 con pasos de $2^{-6}$: $16/2^{-6}=1024$ sumas. Total: $750+1024+1024=2798$. \qedhere
+\end{enumerate}
+\resultado \textbf{cada suma aporta $2^{-7}$ en $[8,16)$ y $2^{-6}$ en $[16,32)$; al llegar a 32 el acumulador no cambia más; se estanca tras 2798 sumas, con valor 32 en lugar de $27{,}99$.}
+\comprobacion la simulación en NumPy alcanza 32 en la suma 2798 y no cambia después; el valor exacto sería $2798\cdot 0{,}0100021=27{,}99$, y el error se debe a que en $[16,32)$ cada suma aporta $0{,}0156$ en lugar de $0{,}0100$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-vf}
+\planteamiento contrastar cada afirmación con los temas~3 a~5.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Falsa.} Por el \cref{teo:flash-exacto}, FlashAttention calcula exactamente $\softmax(QK\T)V$; solo cambia el orden de las operaciones y los accesos a memoria.
+  \item \textbf{Verdadera.} En ZeRO-3 cada rango guarda $1/n_{\mathrm{d}}$ de los pesos (\cref{prop:zero}) y los reúne capa a capa.
+  \item \textbf{Falsa.} En $(p_{\mathrm{e}}-1)/(m+p_{\mathrm{e}}-1)$, $m$ está en el denominador: la burbuja disminuye al crecer $m$.
+  \item \textbf{Verdadera.} El rango lo fija el exponente, de 8 bits en ambos (\cref{tab:formatos}); bf16 solo tiene menos mantisa.
+\end{enumerate}
+\resultado \textbf{(a) F; (b) V; (c) F; (d) V.}
+\comprobacion en (c), cuando $m\to\infty$ la burbuja tiende a~0: el pipeline está siempre lleno.
+\end{solucion}
+
+\begin{solucion}{eje:5-burbuja}
+\datos $p_{\mathrm{e}}=4$; $m=8$, $32$ y $1$.
+\planteamiento $\beta_{\mathrm{tot}}=(p_{\mathrm{e}}-1)/(m+p_{\mathrm{e}}-1)$ y $\beta=(p_{\mathrm{e}}-1)/m$ (\cref{prop:burbuja}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $m=8$: $\beta_{\mathrm{tot}}=3/11=0{,}2727$; $\beta=3/8=0{,}375$.
+  \item $m=32$: $\beta_{\mathrm{tot}}=3/35=0{,}0857$; $\beta=3/32=0{,}0938$.
+  \item $m=1$: $\beta_{\mathrm{tot}}=3/4=0{,}75$.
+  \item GPipe recomienda $m\ge 4p_{\mathrm{e}}=16$.
+\end{enumerate}
+\resultado \textbf{$\beta_{\mathrm{tot}}=27{,}3\,\%$, $8{,}6\,\%$ y $75\,\%$; $\beta=37{,}5\,\%$ y $9{,}4\,\%$; al menos 16 microlotes.}
+\comprobacion $\beta/(1+\beta)=0{,}375/1{,}375=0{,}2727$ y $0{,}09375/1{,}09375=0{,}0857$: las dos medidas son coherentes.
+\end{solucion}
+
+\begin{solucion}{eje:5-zero}
+\datos $\Psi=7\cdot 10^{9}$; 2+2+12 bytes por parámetro; $n_{\mathrm{d}}=8$.
+\planteamiento \cref{prop:zero}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Pesos: $2\cdot 7\cdot 10^{9}=14$~GB; gradientes: 14~GB; optimizador: $12\cdot 7\cdot 10^{9}=84$~GB. Total: $112$~GB.
+  \item ZeRO-1: $4\Psi+12\Psi/8=28+10{,}5=38{,}5$~GB.
+  \item ZeRO-3: $16\Psi/8=112/8=14$~GB.
+\end{enumerate}
+\resultado \textbf{112~GB sin ZeRO (no cabe en una GPU de 80~GB); 38{,}5~GB con ZeRO-1 y 14~GB con ZeRO-3 por rango, más las activaciones.}
+\comprobacion $14\cdot 8=112$: ZeRO-3 no reduce el estado total, solo elimina las copias.
+\end{solucion}
+
+\begin{solucion}{eje:5-amdahl}
+\datos $f=0{,}05$; $n_{\mathrm{d}}=8$, $64$, $1024$.
+\planteamiento \cref{teo:amdahl}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $n_{\mathrm{d}}=8$: $A=1/(0{,}05+0{,}95/8)=1/(0{,}05+0{,}11875)=1/0{,}16875=5{,}926$.
+  \item $n_{\mathrm{d}}=64$: $A=1/(0{,}05+0{,}014844)=1/0{,}064844=15{,}42$.
+  \item $n_{\mathrm{d}}=1024$: $A=1/(0{,}05+0{,}000928)=1/0{,}050928=19{,}64$.
+  \item Límite: $1/f=20$.
+  \item (b) Eficiencia con 64 GPU: $15{,}42/64=0{,}241$.
+\end{enumerate}
+\resultado \textbf{(a) $5{,}93$, $15{,}4$ y $19{,}6$; límite~20. (b) Un 24~\%: tres cuartas partes de las GPU se desaprovechan.}
+\comprobacion $A$ es creciente en $n_{\mathrm{d}}$ y está por debajo de $1/f=20$ en los tres casos.
+\end{solucion}
+
+\begin{solucion}{eje:5-dp}
+\datos $B$, $D$, $D_{FF}$, $n_{\mathrm{d}}$, $C$, $W$; fp16 (2 bytes).
+\planteamiento contar los seis productos de la pasada hacia atrás con $B/n_{\mathrm{d}}$ filas; comunicar los gradientes de $W_1$, $W_2$ y $W_3$; comparar tiempos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Gradientes respecto a las activaciones: $dz=dy\,W_3\T$ cuesta $2(B/n_{\mathrm{d}})DD_{FF}$; $dx=dx_1W_1\T+dx_2W_2\T$, $2\cdot 2(B/n_{\mathrm{d}})DD_{FF}$.
+  \item Gradientes respecto a los pesos: $dW_3=z\T dy$, $dW_1=x\T dx_1$, $dW_2=x\T dx_2$: $3\cdot 2(B/n_{\mathrm{d}})DD_{FF}$.
+  \item (a) Total: $(2+4+6)(B/n_{\mathrm{d}})DD_{FF}=12BDD_{FF}/n_{\mathrm{d}}$ FLOP; $t_c=12BDD_{FF}/(n_{\mathrm{d}}C)$.
+  \item (b) Gradientes: $3DD_{FF}$ elementos de 2 bytes, $S=6DD_{FF}$; $t_{\mathrm{com}}=2(n_{\mathrm{d}}-1)\cdot 6DD_{FF}/(n_{\mathrm{d}}W)=12(n_{\mathrm{d}}-1)DD_{FF}/(n_{\mathrm{d}}W)$.
+  \item (c) $t_{\mathrm{com}}\le t_c\iff 12(n_{\mathrm{d}}-1)DD_{FF}/(n_{\mathrm{d}}W)\le 12BDD_{FF}/(n_{\mathrm{d}}C)\iff(n_{\mathrm{d}}-1)/W\le B/C\iff n_{\mathrm{d}}\le 1+BW/C$.
+  \item $BW/C=10^{6}\cdot 10^{11}/3{,}12\cdot 10^{14}=320{,}5$: $n_{\mathrm{d}}\le 321{,}5$.
+\end{enumerate}
+\resultado \textbf{(a) $12BDD_{FF}/n_{\mathrm{d}}$ FLOP. (b) $12(n_{\mathrm{d}}-1)DD_{FF}/(n_{\mathrm{d}}W)$~s. (c) $n_{\mathrm{d}}\le 1+BW/C$, independiente de $D$ y $D_{FF}$: con los datos, hasta 321 GPU.}
+\comprobacion con $D=4096$, $D_{FF}=16\,384$ y $n_{\mathrm{d}}=321$: $t_c=12\cdot 10^{6}\cdot 4096\cdot 16\,384/(321\cdot 3{,}12\cdot 10^{14})=8{,}04$~ms y $t_{\mathrm{com}}=12\cdot 320\cdot 4096\cdot 16\,384/(321\cdot 10^{11})=8{,}03$~ms: casi iguales en el límite.
+\end{solucion}
+
+\begin{solucion}{eje:5-anillo-malo}
+\datos $n_{\mathrm{d}}=8$; $S=2\cdot 10^{9}$~bytes; $W=10^{11}$~bytes/s.
+\planteamiento en cada paso cada rango envía $S$ bytes (no $S/n_{\mathrm{d}}$); hay $n_{\mathrm{d}}-1$ pasos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Un paso: $S/W$. Total: $(n_{\mathrm{d}}-1)S/W$.
+  \item Anillo estándar (\cref{prop:anillo}): $2(n_{\mathrm{d}}-1)S/(n_{\mathrm{d}}W)$.
+  \item Cociente: $\dfrac{(n_{\mathrm{d}}-1)S/W}{2(n_{\mathrm{d}}-1)S/(n_{\mathrm{d}}W)}=\dfrac{n_{\mathrm{d}}}{2}$.
+  \item Números: $7\cdot 2\cdot 10^{9}/10^{11}=0{,}14$~s; estándar: $2\cdot(7/8)\cdot 2\cdot 10^{9}/10^{11}=0{,}035$~s.
+\end{enumerate}
+\resultado \textbf{$(n_{\mathrm{d}}-1)S/W$, $n_{\mathrm{d}}/2$ veces más lento: 0{,}14~s frente a 0{,}035~s con 8 rangos.}
+\comprobacion con $n_{\mathrm{d}}=2$ el cociente es~1: ambos algoritmos envían $S$ bytes una vez.
+\end{solucion}
+
+\begin{solucion}{eje:5-burbuja-dem}
+\datos $p_{\mathrm{e}}$ etapas; $m$ microlotes; $\tau$ por microlote y etapa.
+\planteamiento calcular cuándo termina el último microlote y compararlo con el tiempo de trabajo de cada rango.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El microlote $j$ empieza en la etapa~1 en $(j-1)\tau$, porque esa etapa los procesa uno tras otro sin pausa.
+  \item Por inducción sobre $s$, el microlote $j$ empieza en la etapa $s$ en $(j+s-2)\tau$: la etapa $s$ necesita que la etapa $s-1$ haya terminado $j$, en $(j+s-3)\tau+\tau$, y haber terminado ella misma $j-1$, en $(j+s-3)\tau+\tau$; ambos instantes coinciden.
+  \item El último microlote ($j=m$) termina la última etapa ($s=p_{\mathrm{e}}$) en $(m+p_{\mathrm{e}}-2)\tau+\tau=(m+p_{\mathrm{e}}-1)\tau$, que es la duración total.
+  \item Cada rango procesa $m$ microlotes: trabaja $m\tau$.
+  \item Fracción ociosa: $\dfrac{(m+p_{\mathrm{e}}-1)\tau-m\tau}{(m+p_{\mathrm{e}}-1)\tau}=\dfrac{p_{\mathrm{e}}-1}{m+p_{\mathrm{e}}-1}$. \qedhere
+\end{enumerate}
+\resultado \textbf{duración $(m+p_{\mathrm{e}}-1)\tau$ y fracción ociosa $(p_{\mathrm{e}}-1)/(m+p_{\mathrm{e}}-1)$.}
+\comprobacion $p_{\mathrm{e}}=1$ da $0$ (sin pipeline no hay burbuja); $m=1$ da $(p_{\mathrm{e}}-1)/p_{\mathrm{e}}$ (solo trabaja una etapa cada vez). Con $p_{\mathrm{e}}=m=4$ da $3/7$, como en la \cref{fig:pipeline}.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-energia}
+\datos Horowitz (45~nm): suma fp32 $\approx 0{,}9$~pJ, multiplicación fp32 $\approx 3{,}7$~pJ, lectura DRAM de 32~bits $\approx 640$~pJ; Landauer a 300~K: $2{,}87\cdot 10^{-21}$~J.
+\planteamiento pasar todo a julios y comparar.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Landauer: $2{,}87\cdot 10^{-21}$~J $=2{,}87\cdot 10^{-9}$~pJ.
+  \item Suma: $0{,}9\cdot 10^{-12}$~J; multiplicación: $3{,}7\cdot 10^{-12}$~J; DRAM: $6{,}4\cdot 10^{-10}$~J.
+  \item Cociente DRAM/multiplicación: $640/3{,}7=173$.
+\end{enumerate}
+\resultado \textbf{Landauer $\ll$ suma $<$ multiplicación $\ll$ lectura de DRAM. Reutilizar un dato leído (matriz sistólica, \emph{tiling}, fusión) reparte el coste de una lectura cara entre muchas operaciones baratas.}
+\comprobacion la lectura de DRAM cuesta unas $2\cdot 10^{11}$ veces el límite de Landauer: el margen de mejora está sobre todo en el movimiento de datos.
+\end{solucion}
+
+\begin{solucion}{eje:6-chinchilla}
+\datos $N=7\cdot 10^{10}$; $D=1{,}4\cdot 10^{12}$; 312~TFLOP/s; $\MFU=0{,}4$; 1024 GPU; 400~W; $\PUE=1{,}2$; 2~\$ por GPU-hora.
+\planteamiento $C=6ND$; \cref{prop:duracion}; $E=\text{GPU-h}\cdot P\cdot\PUE$; coste $=\text{GPU-h}\cdot$ precio.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $C=6\cdot 7\cdot 10^{10}\cdot 1{,}4\cdot 10^{12}=5{,}88\cdot 10^{23}$ FLOP.
+  \item Rendimiento útil por GPU: $0{,}4\cdot 312=124{,}8$~TFLOP/s $=1{,}248\cdot 10^{14}$~FLOP/s.
+  \item GPU-segundos: $5{,}88\cdot 10^{23}/1{,}248\cdot 10^{14}=4{,}712\cdot 10^{9}$~s; GPU-hora: $4{,}712\cdot 10^{9}/3600=1{,}309\cdot 10^{6}$.
+  \item Horas de reloj: $1{,}309\cdot 10^{6}/1024=1278$~h; días: $1278/24=53{,}25$.
+  \item Energía: $1{,}309\cdot 10^{6}\cdot 0{,}4$~kW $=5{,}236\cdot 10^{5}$~kWh; por $\PUE$: $6{,}283\cdot 10^{5}$~kWh $=628$~MWh.
+  \item Coste: $1{,}309\cdot 10^{6}\cdot 2=2{,}618\cdot 10^{6}$ dólares.
+\end{enumerate}
+\resultado \textbf{$5{,}88\cdot 10^{23}$ FLOP; $1{,}31$ millones de GPU-hora; unos 53 días; unos 628~MWh; unos $2{,}6$ millones de dólares.}
+\comprobacion potencia del conjunto: $1024\cdot 0{,}4\cdot 1{,}2=491{,}5$~kW; por 1278~h, $6{,}28\cdot 10^{5}$~kWh, igual que en el paso~5.
+\end{solucion}
+
+\begin{solucion}{eje:6-landauer}
+\datos $\kB=1{,}380649\cdot 10^{-23}$~J/K; $\ln 2=0{,}6931$; $T=300$ y $77$~K; $1{,}28$~pJ por FLOP.
+\planteamiento \cref{teo:landauer}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item 300~K: $\kB T=4{,}142\cdot 10^{-21}$~J; por $\ln 2$: $2{,}871\cdot 10^{-21}$~J.
+  \item 77~K: $\kB T=1{,}063\cdot 10^{-21}$~J; por $\ln 2$: $7{,}369\cdot 10^{-22}$~J.
+  \item Cociente: $1{,}28\cdot 10^{-12}/2{,}871\cdot 10^{-21}=4{,}458\cdot 10^{8}$.
+\end{enumerate}
+\resultado \textbf{$2{,}87\cdot 10^{-21}$~J a 300~K y $7{,}37\cdot 10^{-22}$~J a 77~K; la A100 gasta unas $4{,}5\cdot 10^{8}$ veces el límite por FLOP.}
+\comprobacion el límite es proporcional a $T$: $2{,}871/0{,}7369=3{,}896=300/77$.
+\end{solucion}
+
+\begin{solucion}{eje:6-refrigeracion}
+\datos $\dot Q=1{,}2\cdot 10^{5}$~W; $\Delta T=12$~K; agua $c=4186$~J/(kg$\cdot$K); aire $c=1005$~J/(kg$\cdot$K) y $\rho=1{,}2$~kg/m$^{3}$.
+\planteamiento $\dot m=\dot Q/(c\,\Delta T)$; caudal volumétrico $=\dot m/\rho$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Agua: $\dot m=1{,}2\cdot 10^{5}/(4186\cdot 12)=1{,}2\cdot 10^{5}/50\,232=2{,}389$~kg/s, unos $2{,}39$~L/s.
+  \item (b) Aire: $\dot m=1{,}2\cdot 10^{5}/(1005\cdot 12)=1{,}2\cdot 10^{5}/12\,060=9{,}950$~kg/s.
+  \item Volumen de aire: $9{,}950/1{,}2=8{,}292$~m$^{3}$/s.
+  \item Comparación de volúmenes: $8{,}292/0{,}002389=3471$.
+\end{enumerate}
+\resultado \textbf{(a) unos $2{,}4$~kg/s de agua ($2{,}4$~L/s). (b) unos $9{,}95$~kg/s de aire, es decir, $8{,}3$~m$^{3}$/s: unas 3500 veces más volumen que el agua.}
+\comprobacion la masa de aire es $4186/1005=4{,}17$ veces la de agua, por el cociente de calores específicos: $9{,}950/2{,}389=4{,}17$.
+\end{solucion}
+
+\begin{solucion}{eje:6-gpt2}
+\datos $N=1{,}621\cdot 10^{8}$ (exactamente $162\,148\,608$); $F=2{,}916\cdot 10^{11}$ FLOP por secuencia hacia delante; fp32; H100 a 495~TFLOP/s con $\MFU=0{,}5$; $20\,000$ pasos de 128 secuencias.
+\planteamiento (a) 4 bytes por número: pesos, gradientes y dos momentos. (b) Paso $=3F$ por secuencia (1 hacia delante y 2 hacia atrás); \cref{prop:duracion}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Pesos: $4N=648\,594\,432$~bytes $=0{,}649$~GB. Gradientes: $0{,}649$~GB. Optimizador: $8N=1{,}297$~GB.
+  \item Total: $16N=2{,}594$~GB, sin contar las activaciones.
+  \item (b) FLOP por paso: $3\cdot 2{,}916\cdot 10^{11}\cdot 128=1{,}120\cdot 10^{14}$. Total: $1{,}120\cdot 10^{14}\cdot 2\cdot 10^{4}=2{,}240\cdot 10^{18}$.
+  \item Rendimiento útil: $0{,}5\cdot 495\cdot 10^{12}=2{,}475\cdot 10^{14}$~FLOP/s.
+  \item Tiempo: $2{,}240\cdot 10^{18}/2{,}475\cdot 10^{14}=9050$~s $=2{,}51$~h.
+\end{enumerate}
+\resultado \textbf{(a) 0{,}65~GB de pesos, 0{,}65~GB de gradientes y 1{,}30~GB de estado del optimizador: 2{,}59~GB. (b) Unas 2{,}5 horas.}
+\comprobacion en fp32 con AdamW son también 16 bytes por parámetro, como en la precisión mixta, pero repartidos de otro modo ($4+4+8$ frente a $2+2+12$). La regla $6ND$ con $N=1{,}236\cdot 10^{8}$ y $D=128\cdot 1024\cdot 2\cdot 10^{4}=2{,}621\cdot 10^{9}$ da $1{,}944\cdot 10^{18}$ FLOP, un 13~\% menos, porque ignora los productos $QK\T$ y por $V$ de la atención ($3\cdot 3{,}865\cdot 10^{10}\cdot 128\cdot 2\cdot 10^{4}=2{,}97\cdot 10^{17}$ FLOP), que en un modelo pequeño con contexto largo no son despreciables.
+\end{solucion}
+
+\begin{solucion}{eje:6-presupuesto}
+\datos $10^{5}$ GPU-hora; $\Ppico=3{,}12\cdot 10^{14}$; $\MFU=0{,}4$; $C=6ND$; $D=20N$.
+\planteamiento convertir el presupuesto en FLOP útiles; sustituir $D=20N$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con $D=20N$, $C=6N\cdot 20N=120N^{2}$, luego $N=\sqrt{C/120}$ (la raíz positiva).
+  \item (b) GPU-segundos: $10^{5}\cdot 3600=3{,}6\cdot 10^{8}$. FLOP útiles por GPU y segundo: $0{,}4\cdot 3{,}12\cdot 10^{14}=1{,}248\cdot 10^{14}$.
+  \item $C=3{,}6\cdot 10^{8}\cdot 1{,}248\cdot 10^{14}=4{,}493\cdot 10^{22}$.
+  \item $N=\sqrt{4{,}493\cdot 10^{22}/120}=\sqrt{3{,}744\cdot 10^{20}}=1{,}935\cdot 10^{10}$; $D=20N=3{,}870\cdot 10^{11}$.
+  \item (c) Con el mismo MFU, $C$ es proporcional al presupuesto: $C'=\lambda C$. Entonces $N'=\sqrt{\lambda C/120}=\sqrt{\lambda}\,N$ y $D'=20N'=\sqrt{\lambda}\,D$. \qedhere
+\end{enumerate}
+\resultado \textbf{$N\approx 1{,}93\cdot 10^{10}$ parámetros y $D\approx 3{,}87\cdot 10^{11}$ tokens; multiplicar el presupuesto por $\lambda$ multiplica $N$ y $D$ por $\sqrt{\lambda}$.}
+\comprobacion $6\cdot 1{,}935\cdot 10^{10}\cdot 3{,}870\cdot 10^{11}=4{,}493\cdot 10^{22}$, el $C$ del paso~3. Con $\lambda=4$, $N$ y $D$ se duplican.
+\end{solucion}

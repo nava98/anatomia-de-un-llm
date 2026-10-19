@@ -1,0 +1,563 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "a878d831",
+   "metadata": {},
+   "source": [
+    "# Módulo 13 · Práctica: atención desde cero\n",
+    "\n",
+    "En este notebook programas con NumPy el mecanismo que está dentro de Claude, Gemini o Grok: la atención por producto escalar escalado. Empiezas con una cabeza, añades la máscara causal, construyes la versión multi-cabeza y la comparas con la implementación oficial de PyTorch. Al final dibujas mapas de atención y montas a mano una cabeza de inducción.\n",
+    "\n",
+    "**Cómo trabajar:** ejecuta las celdas en orden. Las celdas `# TU CÓDIGO` son ejercicios; la celda `# Comprobación` de después te dice si están bien.\n",
+    "\n",
+    "| Parte | Qué haces |\n",
+    "| --- | --- |\n",
+    "| 0 | Preparación: softmax estable |\n",
+    "| 1 | Atención de una cabeza y el ejemplo de 3 tokens |\n",
+    "| 2 | Por qué se divide entre $\\sqrt{d_k}$: simulación |\n",
+    "| 3 | Máscara causal |\n",
+    "| 4 | Atención multi-cabeza |\n",
+    "| 5 | Verificación contra PyTorch |\n",
+    "| 6 | Mapas de atención y cabeza de inducción |\n",
+    "| 7 | El coste cuadrático, medido |"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "6541d977",
+   "metadata": {},
+   "source": [
+    "## Parte 0 · Preparación"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "e6a44ced",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import matplotlib.pyplot as plt\n",
+    "import time\n",
+    "np.set_printoptions(precision=3, suppress=True)\n",
+    "\n",
+    "def softmax(z, axis=-1):\n",
+    "    # Versión estable (módulo 11): restamos el máximo de cada fila.\n",
+    "    # Funciona con -inf siempre que cada fila tenga al menos un valor finito.\n",
+    "    z = z - np.max(z, axis=axis, keepdims=True)\n",
+    "    e = np.exp(z)\n",
+    "    return e / e.sum(axis=axis, keepdims=True)\n",
+    "\n",
+    "print(softmax(np.array([2.0, 0.0, 2.0])))\n",
+    "print(softmax(np.array([0.0, 4.0, -np.inf])))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "e3e4c4f1",
+   "metadata": {},
+   "source": [
+    "## Parte 1 · Atención de una cabeza\n",
+    "\n",
+    "$$\\mathrm{Attention}(Q, K, V) = \\operatorname{softmax}\\!\\left(\\frac{QK^\\top}{\\sqrt{d_k}}\\right)V$$\n",
+    "\n",
+    "Q y K tienen forma `(n, d_k)` y V forma `(n, d_v)`. Usa `@` para el producto matricial y `K.T` para la traspuesta.\n",
+    "\n",
+    "**Ejercicio 1.** Implementa `atencion(Q, K, V)`. Debe devolver la salida `O` (forma `(n, d_v)`) y el mapa de atención `A` (forma `(n, n)`)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "e81cfcc8",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def atencion(Q, K, V):\n",
+    "    # TU CÓDIGO\n",
+    "    A = None\n",
+    "    O = None\n",
+    "    return O, A"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "1ba3512c",
+   "metadata": {},
+   "source": [
+    "Comprobamos con el ejemplo resuelto a mano en la sección 13.2 del documento."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "b31b51ae",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "Q = np.array([[2, 0, 2, 0], [0, 2, 0, 2], [2, 2, 0, 0]], dtype=float)\n",
+    "K = np.array([[2, 0, 0, 0], [0, 2, 0, 2], [1, 1, 1, 1]], dtype=float)\n",
+    "V = np.array([[1, 0], [0, 1], [1, 1]], dtype=float)\n",
+    "O, A = atencion(Q, K, V)\n",
+    "assert A is not None and A.shape == (3, 3), \"A debe ser 3x3\"\n",
+    "assert np.allclose(A.sum(axis=1), 1), \"Cada fila de A debe sumar 1\"\n",
+    "assert np.allclose(A[1], [0.0159, 0.8668, 0.1173], atol=1e-3), \"Revisa el escalado entre sqrt(d_k)\"\n",
+    "assert np.allclose(O, [[0.9366, 0.5317], [0.1332, 0.9841], [0.6667, 0.6667]], atol=1e-3), \"Revisa O = A @ V\"\n",
+    "print(\"Correcto\\nA =\\n\", A, \"\\nO =\\n\", O)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "19becfd1",
+   "metadata": {},
+   "source": [
+    "## Parte 2 · Por qué se divide entre $\\sqrt{d_k}$\n",
+    "\n",
+    "En el documento demostraste que, si las componentes de $q$ y $k$ son independientes con media 0 y varianza 1, entonces $\\mathrm{Var}(q\\cdot k) = d_k$. Vamos a comprobarlo con Monte Carlo (módulo 5).\n",
+    "\n",
+    "**Ejercicio 2.** Escribe `varianza_producto(d_k, m, rng)`: genera `m` pares de vectores gaussianos estándar de dimensión `d_k`, calcula sus `m` productos escalares y devuelve su varianza empírica. Pista: `rng.standard_normal((m, d_k))` y `(q * k).sum(axis=1)`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "20914b1b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def varianza_producto(d_k, m, rng):\n",
+    "    # TU CÓDIGO\n",
+    "    return None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "e5c33b1b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "rng = np.random.default_rng(0)\n",
+    "dims = [1, 4, 16, 64, 256]\n",
+    "vars_ = [varianza_producto(d, 50_000, rng) for d in dims]\n",
+    "for d, v in zip(dims, vars_):\n",
+    "    print(f\"d_k = {d:>3}: Var(q·k) = {v:8.2f}   Var(q·k/√d_k) = {v / d:.3f}\")\n",
+    "assert all(abs(v / d - 1) < 0.05 for d, v in zip(dims, vars_)), \"La varianza debería ser ≈ d_k\"\n",
+    "print(\"Correcto\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "197e3840",
+   "metadata": {},
+   "source": [
+    "Ahora mira qué le pasa a la softmax si no escalamos: con $d_k$ grande la distribución se vuelve casi *one-hot* (saturada) y su gradiente se anula."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "bd6ce013",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "rng = np.random.default_rng(1)\n",
+    "n = 8\n",
+    "fig, axes = plt.subplots(1, 2, figsize=(9, 3), sharey=True)\n",
+    "for ax, d_k in zip(axes, [4, 256]):\n",
+    "    q = rng.standard_normal(d_k)\n",
+    "    Kr = rng.standard_normal((n, d_k))\n",
+    "    s = Kr @ q\n",
+    "    ax.bar(np.arange(n) - 0.2, softmax(s), width=0.4, label=\"sin escalar\")\n",
+    "    ax.bar(np.arange(n) + 0.2, softmax(s / np.sqrt(d_k)), width=0.4, label=\"÷ √d_k\")\n",
+    "    ax.set_title(f\"d_k = {d_k}\"); ax.set_xlabel(\"key j\")\n",
+    "axes[0].set_ylabel(\"peso α_j\"); axes[0].legend()\n",
+    "plt.tight_layout(); plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "37374331",
+   "metadata": {},
+   "source": [
+    "## Parte 3 · Máscara causal\n",
+    "\n",
+    "Un LLM no puede mirar al futuro. Sumamos $-\\infty$ a las posiciones $j > i$ **antes** de la softmax:\n",
+    "\n",
+    "$$M_{ij} = \\begin{cases} 0 & j \\le i \\\\ -\\infty & j > i\\end{cases}$$\n",
+    "\n",
+    "**Ejercicio 3.** (a) Escribe `mascara_causal(n)` que devuelva la matriz $M$ de forma `(n, n)`. Pista: `np.triu(..., k=1)` selecciona lo que está por encima de la diagonal. (b) Escribe `atencion_causal(Q, K, V)` que sume la máscara antes de la softmax."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "2542895b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def mascara_causal(n):\n",
+    "    # TU CÓDIGO\n",
+    "    return None\n",
+    "\n",
+    "def atencion_causal(Q, K, V):\n",
+    "    # TU CÓDIGO\n",
+    "    A = None\n",
+    "    O = None\n",
+    "    return O, A"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "f617717c",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "M = mascara_causal(3)\n",
+    "assert M is not None and M.shape == (3, 3)\n",
+    "assert np.all(M[np.tril_indices(3)] == 0) and np.all(np.isneginf(M[np.triu_indices(3, k=1)])), \"0 en y bajo la diagonal, -inf encima\"\n",
+    "O, A = atencion_causal(Q, K, V)\n",
+    "assert np.allclose(np.triu(A, k=1), 0), \"Los pesos futuros deben ser exactamente 0\"\n",
+    "assert np.allclose(A.sum(axis=1), 1), \"Las filas deben seguir sumando 1\"\n",
+    "assert np.allclose(A[1, :2], [0.018, 0.982], atol=1e-3), \"Fila 2 del ejemplo: (0,018; 0,982; 0)\"\n",
+    "# Causalidad: cambiar el último token no puede cambiar las salidas anteriores\n",
+    "rng = np.random.default_rng(2)\n",
+    "Xq, Xk, Xv = rng.standard_normal((3, 6, 4))\n",
+    "O1, _ = atencion_causal(Xq, Xk, Xv)\n",
+    "Xk2, Xv2 = Xk.copy(), Xv.copy(); Xk2[-1] += 5; Xv2[-1] -= 5\n",
+    "O2, _ = atencion_causal(Xq, Xk2, Xv2)\n",
+    "assert np.allclose(O1[:-1], O2[:-1]), \"Las salidas 0..n-2 no deben depender del último token\"\n",
+    "print(\"Correcto\\nA causal =\\n\", A)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "c84a774a",
+   "metadata": {},
+   "source": [
+    "## Parte 4 · Atención multi-cabeza\n",
+    "\n",
+    "Con $h$ cabezas y dimensión del modelo $d$, cada cabeza usa $d_k = d/h$. El truco eficiente: calcular $Q = XW_Q$ entero y **reordenar** de `(n, d)` a `(h, n, d/h)`. Así la atención de todas las cabezas se calcula de una vez gracias al *broadcasting*.\n",
+    "\n",
+    "```\n",
+    "(n, d) --reshape--> (n, h, d_k) --transpose(1, 0, 2)--> (h, n, d_k)\n",
+    "```\n",
+    "\n",
+    "**Ejercicio 4.** (a) `dividir_cabezas(X, h)`: de `(n, d)` a `(h, n, d/h)`. (b) `unir_cabezas(X)`: la operación inversa. (c) `multihead(X, WQ, WK, WV, WO, h, causal=True)`: proyecta, divide, aplica la atención (causal o no) a todas las cabezas a la vez, une y multiplica por `WO`. Devuelve la salida `(n, d)` y los mapas `(h, n, n)`.\n",
+    "\n",
+    "Tu `atencion_causal` ya funciona con un eje extra delante si usaste `np.swapaxes(K, -1, -2)` en lugar de `K.T`. Si no, corrígela."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "abcfe551",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def dividir_cabezas(X, h):\n",
+    "    # TU CÓDIGO\n",
+    "    return None\n",
+    "\n",
+    "def unir_cabezas(X):\n",
+    "    # TU CÓDIGO\n",
+    "    return None\n",
+    "\n",
+    "def multihead(X, WQ, WK, WV, WO, h, causal=True):\n",
+    "    # TU CÓDIGO\n",
+    "    Y, A = None, None\n",
+    "    return Y, A"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "4bd52f37",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "rng = np.random.default_rng(3)\n",
+    "n, d, h = 5, 8, 2\n",
+    "X = rng.standard_normal((n, d))\n",
+    "WQ, WK, WV, WO = (rng.standard_normal((d, d)) / np.sqrt(d) for _ in range(4))\n",
+    "assert dividir_cabezas(X, h).shape == (h, n, d // h), \"Forma esperada (h, n, d/h)\"\n",
+    "assert np.allclose(unir_cabezas(dividir_cabezas(X, h)), X), \"unir_cabezas debe deshacer dividir_cabezas\"\n",
+    "Y, A = multihead(X, WQ, WK, WV, WO, h)\n",
+    "assert Y.shape == (n, d) and A.shape == (h, n, n)\n",
+    "# Referencia lenta: cabeza a cabeza con un bucle\n",
+    "dk = d // h\n",
+    "cabezas = []\n",
+    "for i in range(h):\n",
+    "    sl = slice(i * dk, (i + 1) * dk)\n",
+    "    Oi, _ = atencion_causal(X @ WQ[:, sl], X @ WK[:, sl], X @ WV[:, sl])\n",
+    "    cabezas.append(Oi)\n",
+    "Y_ref = np.concatenate(cabezas, axis=1) @ WO\n",
+    "assert np.allclose(Y, Y_ref), \"La versión vectorizada debe coincidir con el bucle por cabezas\"\n",
+    "print(\"Correcto. Parámetros de la capa (4·d²):\", sum(W.size for W in (WQ, WK, WV, WO)))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "5c6e7f2b",
+   "metadata": {},
+   "source": [
+    "## Parte 5 · Verificación contra PyTorch\n",
+    "\n",
+    "`torch.nn.functional.scaled_dot_product_attention` es la versión oficial (en GPU usa núcleos como FlashAttention, módulo 17). Si PyTorch está instalado, comparamos; si no, la celda lo indica y sigue."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "cc467a9a",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "try:\n",
+    "    import torch\n",
+    "    import torch.nn.functional as F\n",
+    "    TORCH = True\n",
+    "except ImportError:\n",
+    "    TORCH = False\n",
+    "    print(\"PyTorch no está instalado: se omite esta comparación.\")\n",
+    "\n",
+    "if TORCH:\n",
+    "    rng = np.random.default_rng(4)\n",
+    "    h, n, dk = 4, 7, 16\n",
+    "    Qn, Kn, Vn = rng.standard_normal((3, h, n, dk))\n",
+    "    Qt, Kt, Vt = (torch.tensor(a, dtype=torch.float64) for a in (Qn, Kn, Vn))\n",
+    "    for causal in (False, True):\n",
+    "        ref = F.scaled_dot_product_attention(Qt, Kt, Vt, is_causal=causal).numpy()\n",
+    "        if causal:\n",
+    "            mio, _ = atencion_causal(Qn, Kn, Vn)\n",
+    "        else:\n",
+    "            mio = softmax(Qn @ np.swapaxes(Kn, -1, -2) / np.sqrt(dk)) @ Vn\n",
+    "        err = np.abs(mio - ref).max()\n",
+    "        print(f\"causal={causal}: error máximo = {err:.2e}\")\n",
+    "        assert err < 1e-10, \"Tu atención no coincide con la de PyTorch\"\n",
+    "    print(\"Correcto: coincide con PyTorch\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "60eddd0f",
+   "metadata": {},
+   "source": [
+    "## Parte 6 · Mapas de atención y cabeza de inducción\n",
+    "\n",
+    "Un mapa de atención es la matriz $A$ dibujada como imagen: fila = token que mira, columna = token mirado. Vamos a construir **a mano** las dos cabezas del circuito de inducción (sección 13.7) para la frase de abajo, con embeddings *one-hot* y un factor $\\beta = 10$ que hace la softmax casi dura.\n",
+    "\n",
+    "- **Capa 1, cabeza del token anterior.** Query = posición $i$; key = posición $j+1$. La posición $i$ encaja con $j = i-1$ y copia su token: $h_i \\approx$ token anterior.\n",
+    "- **Capa 2, cabeza de inducción.** Query = token actual; key = $h_j$ («mi anterior era…»); value = token en $j$.\n",
+    "\n",
+    "Usamos `atencion_causal` con `Q` y `K` multiplicados por $\\beta$: los parecidos crecen como $\\beta^2/\\sqrt{d_k}$ y la softmax se vuelve casi un argmax."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "d8cb8bd2",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "frase = \"<s> el gato come pescado y luego el gato duerme\".split()\n",
+    "vocab = sorted(set(frase))\n",
+    "n, Vsz = len(frase), len(vocab)\n",
+    "E = np.eye(Vsz)[[vocab.index(w) for w in frase]]   # (n, |V|) one-hot de tokens\n",
+    "Pos = np.eye(n)                                    # (n, n) one-hot de posiciones\n",
+    "beta = 10.0\n",
+    "\n",
+    "def dibujar(A, titulo, ax):\n",
+    "    ax.imshow(A, cmap=\"Blues\", vmin=0, vmax=1)\n",
+    "    ax.set_xticks(range(n)); ax.set_xticklabels(frase, rotation=90)\n",
+    "    ax.set_yticks(range(n)); ax.set_yticklabels(frase)\n",
+    "    ax.set_title(titulo); ax.set_xlabel(\"token mirado (key)\")"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "4df65fd6",
+   "metadata": {},
+   "source": [
+    "**Ejercicio 5.** (a) Capa 1: construye `Q1 = beta * Pos` y `K1` como `beta` por `Pos` con las columnas desplazadas una posición (pista: `np.roll(Pos, 1, axis=1)` hace que la fila $j$ tenga el 1 en la columna $j+1$). Aplica `atencion_causal` con values `E` para obtener `H1, A1`. (b) Capa 2: `Q2 = beta * E`, `K2 = beta * H1`, values `E`; obtén `H2, A2`. (c) `prediccion` = lista con la palabra de `vocab` de mayor valor en cada fila de `H2`."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "59e49c04",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# TU CÓDIGO\n",
+    "H1, A1 = None, None\n",
+    "H2, A2 = None, None\n",
+    "prediccion = None"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "6845b281",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Comprobación\n",
+    "assert A1 is not None and A1.shape == (n, n)\n",
+    "assert np.all(A1.argmax(axis=1)[1:] == np.arange(n - 1)), \"La capa 1 debe mirar al token anterior (subdiagonal)\"\n",
+    "i_el2, i_gato2 = 7, 8   # segunda aparición de \"el\" y de \"gato\"\n",
+    "assert prediccion[i_el2] == \"gato\", \"Tras el segundo 'el' la cabeza de inducción debe predecir 'gato'\"\n",
+    "assert prediccion[i_gato2] == \"come\", \"Tras el segundo 'gato' debe predecir 'come'\"\n",
+    "assert A2[i_el2, 2] > 0.99, \"El segundo 'el' debe mirar a la posición 2 ('gato')\"\n",
+    "print(\"Correcto:\", list(zip(frase, prediccion))[6:])\n",
+    "fig, axes = plt.subplots(1, 2, figsize=(11, 5))\n",
+    "dibujar(A1, \"Capa 1: token anterior\", axes[0])\n",
+    "dibujar(A2, \"Capa 2: inducción\", axes[1])\n",
+    "axes[0].set_ylabel(\"token que mira (query)\")\n",
+    "plt.tight_layout(); plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "a31e42d4",
+   "metadata": {},
+   "source": [
+    "**Pregunta.** En el mapa de la capa 2, la fila del segundo «el» brilla en la columna de «gato», no en la del primer «el». ¿Por qué? ¿Qué pasa en las filas de tokens que aparecen por primera vez?\n",
+    "\n",
+    "Compara con una multi-cabeza **aleatoria** (sin entrenar): mapas difusos. Entrenar convierte ese ruido en patrones como los de arriba (módulo 15)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "a1674ea1",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "rng = np.random.default_rng(5)\n",
+    "d, h = 16, 4\n",
+    "Xr = rng.standard_normal((n, d))\n",
+    "Ws = [rng.standard_normal((d, d)) for _ in range(4)]\n",
+    "_, Ar = multihead(Xr, *Ws, h=h)\n",
+    "fig, axes = plt.subplots(1, h, figsize=(14, 3.5))\n",
+    "for i in range(h):\n",
+    "    dibujar(Ar[i], f\"Cabeza aleatoria {i}\", axes[i])\n",
+    "plt.tight_layout(); plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "59d5825c",
+   "metadata": {},
+   "source": [
+    "## Parte 7 · El coste cuadrático, medido\n",
+    "\n",
+    "La matriz $QK^\\top$ tiene $n^2$ elementos. Si duplicas $n$, el tiempo tiende a multiplicarse por 4 cuando $n$ es grande (los tiempos pequeños son ruidosos)."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "8c7a9197",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "rng = np.random.default_rng(6)\n",
+    "dk = 64\n",
+    "ns = [512, 1024, 2048, 4096]\n",
+    "atencion_causal(*rng.standard_normal((3, 256, dk)))   # calentamiento\n",
+    "tiempos = []\n",
+    "for n_ in ns:\n",
+    "    Qb, Kb, Vb = rng.standard_normal((3, n_, dk))\n",
+    "    t0 = time.perf_counter()\n",
+    "    for _ in range(3):\n",
+    "        atencion_causal(Qb, Kb, Vb)\n",
+    "    tiempos.append((time.perf_counter() - t0) / 3)\n",
+    "for n_, t in zip(ns, tiempos):\n",
+    "    print(f\"n = {n_:>5}: {1000 * t:7.1f} ms   memoria de A en fp16 = {n_**2 * 2 / 1e6:6.1f} MB\")\n",
+    "print(\"Cociente de tiempos al duplicar n:\", np.round(np.array(tiempos[1:]) / np.array(tiempos[:-1]), 1))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "5cc0be05",
+   "metadata": {},
+   "source": [
+    "**Retos.**\n",
+    "\n",
+    "1. Extrapola: ¿cuánto tardaría y cuánta memoria ocuparía tu implementación con $n = 100.000$? Compáralo con la tabla de la sección 13.6.\n",
+    "2. Implementa una máscara de **ventana deslizante**: el token $i$ solo mira a $j \\in [i-w+1, i]$. ¿Cómo cambia el coste si solo calculas esas posiciones?\n",
+    "3. Cambia `beta` de la parte 6 por 1 y por 100. ¿Qué pasa con los mapas? Relaciónalo con la temperatura de la softmax.\n",
+    "4. Añade a la frase una tercera aparición de «el». ¿Qué predice la cabeza de inducción?\n",
+    "\n",
+    "---\n",
+    "### Soluciones de referencia\n",
+    "Inténtalo antes de mirar."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "6c8adca6",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Ejercicio 1\n",
+    "# def atencion(Q, K, V):\n",
+    "#     S = Q @ K.T / np.sqrt(Q.shape[-1])\n",
+    "#     A = softmax(S)\n",
+    "#     return A @ V, A\n",
+    "#\n",
+    "# Ejercicio 2\n",
+    "# def varianza_producto(d_k, m, rng):\n",
+    "#     q = rng.standard_normal((m, d_k)); k = rng.standard_normal((m, d_k))\n",
+    "#     return (q * k).sum(axis=1).var()\n",
+    "#\n",
+    "# Ejercicio 3\n",
+    "# def mascara_causal(n):\n",
+    "#     return np.triu(np.full((n, n), -np.inf), k=1)\n",
+    "# def atencion_causal(Q, K, V):\n",
+    "#     n, d_k = Q.shape[-2], Q.shape[-1]\n",
+    "#     S = Q @ np.swapaxes(K, -1, -2) / np.sqrt(d_k) + mascara_causal(n)\n",
+    "#     A = softmax(S)\n",
+    "#     return A @ V, A\n",
+    "#\n",
+    "# Ejercicio 4\n",
+    "# def dividir_cabezas(X, h):\n",
+    "#     n, d = X.shape\n",
+    "#     return X.reshape(n, h, d // h).transpose(1, 0, 2)\n",
+    "# def unir_cabezas(X):\n",
+    "#     h, n, d_k = X.shape\n",
+    "#     return X.transpose(1, 0, 2).reshape(n, h * d_k)\n",
+    "# def multihead(X, WQ, WK, WV, WO, h, causal=True):\n",
+    "#     Q, K, V = (dividir_cabezas(X @ W, h) for W in (WQ, WK, WV))\n",
+    "#     if causal:\n",
+    "#         O, A = atencion_causal(Q, K, V)\n",
+    "#     else:\n",
+    "#         A = softmax(Q @ np.swapaxes(K, -1, -2) / np.sqrt(Q.shape[-1])); O = A @ V\n",
+    "#     return unir_cabezas(O) @ WO, A\n",
+    "#\n",
+    "# Ejercicio 5\n",
+    "# H1, A1 = atencion_causal(beta * Pos, beta * np.roll(Pos, 1, axis=1), E)\n",
+    "# H2, A2 = atencion_causal(beta * E, beta * H1, E)\n",
+    "# prediccion = [vocab[k] for k in H2.argmax(axis=1)]"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}

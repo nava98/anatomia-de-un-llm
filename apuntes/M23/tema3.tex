@@ -1,0 +1,165 @@
+% =====================================================================
+\chapter{Superposición}
+\label{tema:3}
+% =====================================================================
+
+Las neuronas de los modelos de lenguaje responden a menudo a varias cosas sin relación aparente. Este tema explica el fenómeno mediante la \emph{hipótesis de superposición}: una red puede representar más características que dimensiones si las coloca en direcciones casi ortogonales y las características rara vez aparecen a la vez. Los resultados geométricos siguen el capítulo~2 de Blum, Hopcroft y Kannan~\cite{bhk}, libro del curso CS~4850 de Cornell, y el lema del casquete esférico de Ball~\cite{ball}. El modelo de juguete, la dimensión por característica y la transición de fase proceden de Elhage \emph{et al.}~\cite{elhage22}, secciones «Definitions and Motivation», «Demonstrating Superposition» y «The Geometry of Superposition».
+
+\section{Características, polisemanticidad y bases privilegiadas}
+
+\begin{definicion}[Característica y polisemanticidad]\label{def:caracteristica}
+Se llama \emph{característica} a una propiedad de la entrada que la red representa mediante una dirección $W_i\in\R^{m}$ de su espacio de activaciones: la activación es aproximadamente $h=\sum_ix_iW_i$, donde $x_i\ge 0$ es la intensidad de la característica $i$. Una neurona (una coordenada de $h$) es \emph{monosemántica} si responde a una sola característica y \emph{polisemántica} si responde a varias~\cite[«What are Features?» y «Features as Directions»]{elhage22}.
+\end{definicion}
+
+Que las coordenadas de un espacio tengan o no un significado especial depende de las operaciones que se aplican sobre él.
+
+\begin{proposicion}[El flujo residual no tiene base privilegiada]\label{prop:rotacion}
+Sea un Transformer sin normalizaciones en el que el flujo residual solo se usa mediante productos por matrices (lecturas $W_{\mathrm{in}}x$, escrituras $x\leftarrow x+W_{\mathrm{out}}h$, embedding $\WE$ y desembedding $\WU$). Sea $R\in\R^{d\times d}$ ortogonal. Si se sustituyen $\WE$ por $R\WE$, cada $W_{\mathrm{out}}$ por $RW_{\mathrm{out}}$, cada $W_{\mathrm{in}}$ por $W_{\mathrm{in}}R\T$ y $\WU$ por $\WU R\T$, la función que calcula el modelo no cambia y el nuevo flujo es $Rx_\ell$ en cada capa.
+\end{proposicion}
+
+\begin{proof}
+Por inducción sobre las operaciones del modelo. El nuevo embedding es $R\WE e_t=Rx_0$. Si el flujo nuevo es $Rx$, cada lectura da $W_{\mathrm{in}}R\T Rx=W_{\mathrm{in}}x$, porque $R\T R=I$; por tanto, todas las activaciones internas $h$ (incluidos los patrones de atención y las no linealidades del MLP, que actúan sobre $W_{\mathrm{in}}x$) son las del modelo original. Cada escritura da $Rx+RW_{\mathrm{out}}h=R(x+W_{\mathrm{out}}h)$, y la hipótesis se conserva. Al final, $\WU R\T Rx_{\mathrm{fin}}=\WU x_{\mathrm{fin}}$.
+\end{proof}
+
+Las coordenadas del flujo residual son, por tanto, arbitrarias: cualquier rotación da un modelo equivalente. En cambio, la capa oculta de un MLP aplica una no linealidad coordenada a coordenada, y $\relu(Rv)\neq R\,\relu(v)$ en general: con $R$ la rotación de $90^\circ$ en $\R^{2}$ y $v=(0,1)$, $\relu(Rv)=\relu(-1,0)=(0,0)$, mientras que $R\,\relu(v)=Rv=(-1,0)$. Esa capa tiene una \emph{base privilegiada}, y en ella tiene sentido preguntar si una neurona es monosemántica~\cite[«Privileged vs Non-privileged Bases»]{elhage22}. En el flujo residual, la unidad de análisis natural es la dirección.
+
+\section{Casi ortogonalidad en alta dimensión}
+
+En $\R^{m}$ caben a lo sumo $m$ direcciones exactamente ortogonales. Si se admite una pequeña interferencia, caben muchas más.
+
+\begin{teorema}[Coseno de un vector aleatorio]\label{teo:coseno}
+Sea $u$ un vector aleatorio con distribución uniforme en la esfera unidad $\mathbb{S}^{d-1}\subset\R^{d}$ y sea $v\in\mathbb{S}^{d-1}$ fijo. Entonces $\E[u\T v]=0$ y $\E[(u\T v)^{2}]=1/d$.
+\end{teorema}
+
+\begin{proof}
+La distribución uniforme en la esfera es invariante por transformaciones ortogonales. Sea $Q$ ortogonal con $Qv=e_1$; entonces $u\T v=(Qu)\T(Qv)=(Qu)_1$, y $Qu$ tiene la misma distribución que $u$, de modo que $u\T v$ tiene la distribución de $u_1$. La reflexión $u_1\mapsto -u_1$ conserva la distribución, luego $\E[u_1]=0$. Las permutaciones de coordenadas son ortogonales, así que $u_1^{2},\dots,u_d^{2}$ tienen la misma distribución y la misma esperanza. Como $\sum_ku_k^{2}=1$ con probabilidad~1, por la linealidad de la esperanza $\sum_k\E[u_k^{2}]=1$, y cada sumando vale $1/d$.
+\end{proof}
+
+La desviación típica del coseno es, por tanto, $1/\sqrt{d}$: con $d=4096$ vale $1/64=0{,}016$. El resultado siguiente, que se enuncia sin demostración, cuantifica la concentración.
+
+\begin{lema}[Casquete esférico]\label{lem:casquete}
+Con la notación del \cref{teo:coseno}, para $0\le\varepsilon<1$,
+\[
+P\bigl(\abs{u\T v}\ge\varepsilon\bigr)\le 2\,e^{-d\varepsilon^{2}/2}.
+\]
+\end{lema}
+
+La cota de un solo lado, $P(u\T v\ge\varepsilon)\le e^{-d\varepsilon^{2}/2}$, es la estimación del área de un casquete esférico de Ball~\cite{ball}; la de dos lados se obtiene sumando la del lado opuesto, que es igual por simetría. Blum, Hopcroft y Kannan obtienen resultados del mismo tipo para la bola unidad~\cite[cap.~2]{bhk}.
+
+\begin{corolario}[Muchas direcciones casi ortogonales]\label{cor:casi-ortogonales}
+Sean $d\ge 1$, $0<\varepsilon<1$ y $N\ge 2$ con $N<e^{d\varepsilon^{2}/4}$. Existen $N$ vectores unitarios de $\R^{d}$ con $\abs{u_i\T u_j}<\varepsilon$ para todo $i\neq j$.
+\end{corolario}
+
+\begin{proof}
+Se eligen $u_1,\dots,u_N$ independientes y uniformes en la esfera. Para un par fijo $i\neq j$, condicionando en $u_j$ y aplicando el \cref{lem:casquete}, $P(\abs{u_i\T u_j}\ge\varepsilon)\le 2e^{-d\varepsilon^{2}/2}$. Hay $\binom N2<N^{2}/2$ pares, y por la cota de la unión,
+\[
+P\bigl(\exists\, i\neq j:\ \abs{u_i\T u_j}\ge\varepsilon\bigr)<\frac{N^{2}}{2}\cdot 2e^{-d\varepsilon^{2}/2}=N^{2}e^{-d\varepsilon^{2}/2}.
+\]
+Si $N<e^{d\varepsilon^{2}/4}$, entonces $N^{2}<e^{d\varepsilon^{2}/2}$ y la probabilidad es menor que~1. Por tanto, con probabilidad positiva ningún par supera $\varepsilon$, y existe al menos una configuración con la propiedad pedida.
+\end{proof}
+
+Con $d=4096$ y $\varepsilon=0{,}1$, el corolario garantiza $e^{10{,}24}\approx 2{,}8\cdot 10^{4}$ direcciones; con $\varepsilon=0{,}2$, $e^{40{,}96}\approx 6\cdot 10^{17}$. El número de direcciones casi ortogonales crece exponencialmente con la dimensión. La cota es pesimista, pero basta para mostrar que la geometría no limita el número de características a $d$.
+
+\section{El modelo de juguete}
+
+\begin{definicion}[Modelo de juguete de superposición]\label{def:juguete}
+Sean $n>m$. Cada característica $x_i$, $i=1,\dots,n$, vale~0 con probabilidad $S$ (la \emph{dispersión}) y, en caso contrario, sigue una distribución uniforme en $[0,1]$, independientemente de las demás. Sean $W\in\R^{m\times n}$, con columnas $W_1,\dots,W_n$, y $b\in\R^{n}$. El modelo comprime y reconstruye:
+\[
+h=Wx\in\R^{m},\qquad \hat x=\relu\bigl(W\T h+b\bigr)=\relu\bigl(W\T Wx+b\bigr),
+\]
+y se entrena con la pérdida $\mathcal{L}=\E\bigl[\sum_iI_i(x_i-\hat x_i)^{2}\bigr]$, donde $I_i>0$ es la \emph{importancia} de la característica~$i$~\cite[«Experiment Setup»]{elhage22}.
+\end{definicion}
+
+La columna $W_i$ es la dirección asignada a la característica $i$, y la entrada $(W\T W)_{ij}=W_i\T W_j$ mide la \emph{interferencia} entre las características $i$ y $j$. Sin la $\relu$, el modelo es lineal, $W\T W$ tiene rango a lo sumo $m$ y, según Elhage \emph{et al.}, el modelo lineal aprende siempre las $m$ características más importantes, de forma análoga al análisis de componentes principales; la superposición no le ofrece ninguna ventaja. La $\relu$ con sesgo negativo cambia esa conclusión: anula las interferencias pequeñas y negativas.
+
+\begin{ejemplo}[El pentágono]\label{ej:pentagono}
+Sean $n=5$, $m=2$, $W_k=(\cos 72^\circ(k-1),\ \sin 72^\circ(k-1))$ y $b_i=-0{,}31$ para todo $i$. Entonces $(W\T W)_{ij}$ vale~1 en la diagonal, $\cos 72^\circ=0{,}309$ entre vecinos y $\cos 144^\circ=-0{,}809$ entre no vecinos.
+\begin{itemize}[leftmargin=1.4em]
+  \item Con $x=e_1$: $W\T Wx=(1;\allowbreak\ 0{,}309;\allowbreak\ -0{,}809;\allowbreak\ -0{,}809;\allowbreak\ 0{,}309)$; al sumar $b$ y aplicar la $\relu$, $\hat x=(0{,}69;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$. La $\relu$ elimina la interferencia; el precio es encoger la característica activa.
+  \item Con $x=e_1+e_2$ (vecinas): $\hat x\approx(0{,}999;\allowbreak\ 0{,}999;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$, casi exacto.
+  \item Con $x=e_1+e_3$ (no vecinas): $\hat x=(0;\allowbreak\ 0{,}308;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$, con error cuadrático $2{,}095$. El modelo «ve» la característica~2, cuya dirección está entre las dos activas.
+\end{itemize}
+\end{ejemplo}
+
+El ejemplo muestra el compromiso. Si las características son dispersas, casi siempre hay a lo sumo una activa, la interferencia se paga rara vez y guardar cinco características en dos dimensiones compensa. Si suelen activarse juntas, el error del tercer caso domina y conviene guardar solo dos. En la práctica del módulo, con $n=5$, $m=2$ e $I_i=0{,}9^{i}$, el modelo entrenado guarda dos características ortogonales con $S=0$, cuatro (dos pares antipodales perpendiculares) con $S=0{,}7$ y las cinco en un pentágono con $S=0{,}95$.
+
+\section{Dimensión por característica}
+
+\begin{definicion}[Dimensión por característica]\label{def:dimension}
+Para $W_i\neq 0$ y $\hat W_i=W_i/\norm{W_i}$, la \emph{dimensión de la característica $i$} es
+\[
+D_i=\frac{\norm{W_i}^{2}}{\sum_{j=1}^{n}(\hat W_i\T W_j)^{2}},
+\]
+y se toma $D_i=0$ si $W_i=0$~\cite[«Feature Dimensionality»]{elhage22}. La cantidad $m/\norm{W}_F^{2}$ se llama \emph{dimensiones por característica} del modelo.
+\end{definicion}
+
+El numerador mide cuánto se representa la característica y el denominador, cuántas características comparten su dirección. Una característica con dirección propia, ortogonal a las demás, tiene $D_i=1$; dos características antipodales ($W_2=-W_1$) tienen $D_i=1/2$; en el pentágono, $D_i=1/(1+2\cdot 0{,}309^{2}+2\cdot 0{,}809^{2})=1/2{,}5=0{,}4$. Elhage \emph{et al.} observan que, en los modelos entrenados, los valores de $D_i$ se agrupan en fracciones como $3/4$ (tetraedro), $2/3$ (triángulo), $1/2$ (par antipodal), $2/5$ (pentágono) y $3/8$ (antiprisma cuadrado).
+
+\begin{proposicion}[Las dimensiones suman a lo sumo $m$]\label{prop:suma-dim}
+Sea $W\in\R^{m\times n}$. Entonces $\sum_{i=1}^{n}D_i\le\rango W\le m$.
+\end{proposicion}
+
+\begin{proof}
+Sea $G=W\T W\in\R^{n\times n}$, simétrica y semidefinida positiva, con $\rango G=\rango W=r$. Si $W_i\neq 0$, se tiene $\norm{W_i}^{2}=G_{ii}$ y $(\hat W_i\T W_j)^{2}=G_{ij}^{2}/G_{ii}$, de modo que
+\[
+D_i=\frac{G_{ii}^{2}}{\sum_jG_{ij}^{2}}=\frac{G_{ii}^{2}}{(G^{2})_{ii}}.
+\]
+Sea $P$ la proyección ortogonal sobre el espacio columna de $G$. Como las columnas de $G$ están en ese espacio y $G$ es simétrica, $PG=G$ y $GP=G$. Entonces $G_{ii}=e_i\T GPe_i=(Ge_i)\T(Pe_i)$ y, por la desigualdad de Cauchy--Schwarz,
+\[
+G_{ii}^{2}\le\norm{Ge_i}^{2}\norm{Pe_i}^{2}=(G^{2})_{ii}\,P_{ii},
+\]
+donde se ha usado $\norm{Ge_i}^{2}=e_i\T G^{2}e_i$ y $\norm{Pe_i}^{2}=e_i\T P\T Pe_i=e_i\T Pe_i$. Por tanto, $D_i\le P_{ii}$, desigualdad que también se cumple si $W_i=0$, porque $P_{ii}\ge 0$. Sumando, $\sum_iD_i\le\tr P=r$, ya que la traza de una proyección ortogonal es la dimensión de su imagen.
+\end{proof}
+
+\begin{ejemplo}[Tres direcciones en el plano]\label{ej:tres}
+Sean $W_1=(1,0)$, $W_2=(0,1)$ y $W_3=(\tfrac{1}{\sqrt2},\tfrac{1}{\sqrt2})$. Entonces $D_1=1/(1+0+0{,}5)=2/3$, $D_2=2/3$ y $D_3=1/(0{,}5+0{,}5+1)=1/2$. La suma es $11/6<2$: la configuración no aprovecha todo el espacio, a diferencia del pentágono, en el que la suma es exactamente~2.
+\end{ejemplo}
+
+\section{Superposición como transición de fase}
+
+Elhage \emph{et al.} estudian el caso mínimo, con dos características y una sola dimensión oculta, y lo representan en un diagrama de fases en función de la dispersión y de la importancia relativa~\cite[«Superposition as a Phase Change»]{elhage22}. Con importancias iguales hay dos candidatas naturales: guardar una sola característica y aproximar la otra por su media, o guardar las dos en direcciones opuestas ($w=(1,-1)$). La pérdida de cada solución es un polinomio sencillo en $q=1-S$, y las dos curvas se cortan en un valor crítico de la dispersión (\cref{eje:3-fase}). Como el óptimo salta de una solución a otra cuando las curvas se cruzan, el cambio de geometría es abrupto, del tipo de una transición de fase de primer orden.
+
+\begin{observacion}\label{obs:superposicion-llm}
+Si los modelos de lenguaje representan en superposición muchas más características que dimensiones, las neuronas serán polisemánticas y las proyecciones sobre direcciones arbitrarias mezclarán características. Elhage \emph{et al.} señalan además una relación con la vulnerabilidad a perturbaciones adversarias: la interferencia permite que pequeñas perturbaciones en muchas direcciones se sumen~\cite[«Relationship to Adversarial Robustness»]{elhage22}. Encontrar una base sobrecompleta de características es el objetivo de los autoencoders dispersos del \cref{tema:4}.
+\end{observacion}
+
+\begin{lecturas}
+\item Elhage \emph{et al.}~\cite{elhage22}, secciones «Definitions and Motivation», «Demonstrating Superposition» y «The Geometry of Superposition».
+\item Blum, Hopcroft y Kannan~\cite{bhk}, cap.~2 «High-Dimensional Space».
+\item Ball~\cite{ball}, estimación del área de los casquetes esféricos.
+\item Olah \emph{et al.}~\cite{olah-zoom}, sobre características y neuronas polisemánticas en redes de visión.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-conceptos}
+(a) ¿Por qué la superposición solo compensa cuando las características son dispersas? (b) ¿Qué papel desempeña la $\relu$ con sesgo negativo en el modelo de juguete? (c) ¿Por qué tiene sentido preguntar si una neurona del MLP es polisemántica, pero no si lo es una coordenada del flujo residual?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-pentagono}
+En el pentágono del \cref{ej:pentagono}, escriba la matriz $W\T W$ y calcule $\hat x$ y el error cuadrático para $x=e_1+e_3$. Explique geométricamente el resultado calculando $W_1+W_3$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-bhk1}
+Sea $u$ un punto uniforme en la esfera unidad de $\R^{d}$. Sin calcular ninguna integral, halle la varianza de $u_1$. Evalúela para $d=3$ y $d=4096$ y dé la desviación típica.
+\fuente{adaptado de Blum, Hopcroft y Kannan~\cite{bhk}, cap.~2, ejercicio~2.9.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-bhk2}
+Sean $x,y\in\R^{d}$ con componentes independientes $\mathcal{N}(0,1)$. (a) Calcule $\E[x\T y]$ y $\Var(x\T y)$. (b) Use que $\norm{x}\approx\sqrt d$ para estimar la desviación típica del coseno entre $x$ e $y$. (c) Con $d=400$, estime con la aproximación normal la probabilidad de que $\abs{\cos(x,y)}>0{,}15$.
+\fuente{adaptado de Blum, Hopcroft y Kannan~\cite{bhk}, cap.~2, ejercicio~2.28.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-casi}
+Demuestre el \cref{teo:coseno} con detalle, justificando cada uso de la simetría. Después, ¿cuántas direcciones con $\abs{\cos}<0{,}25$ entre cada par garantiza el \cref{cor:casi-ortogonales} en $d=512$? ¿Cuántas veces la dimensión es esa cantidad?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-bhk3}
+Se admite el resultado siguiente: si se eligen $n$ puntos al azar en la bola unidad de $\R^{d}$, con probabilidad $1-O(1/n)$ todos tienen norma al menos $1-2\ln n/d$ y todo par cumple $\abs{x_i\T x_j}\le\sqrt{6\ln n/(d-1)}$. Demuestre que, con alta probabilidad y para $d$ suficientemente grande, todos los ángulos entre pares superan $45^\circ$, y calcule la cota del ángulo para $n=d=1000$.
+\fuente{adaptado de Blum, Hopcroft y Kannan~\cite{bhk}, cap.~2, ejercicio~2.29 (basado en su teorema~2.8).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-fase}
+Sea el modelo de juguete con $n=2$, $m=1$ e importancias iguales a~1, y sea $q=1-S$. Compare la solución~A ($W=(1,0)$, $b=(0,b_2)$ con $b_2=\E[x_2]$) con la solución antipodal~B ($W=(1,-1)$, $b=0$). (a) Calcule la pérdida de cada una en función de $q$. (b) Halle la dispersión a partir de la cual B es mejor. (c) Evalúe ambas pérdidas en $S=0{,}7$.
+\end{ejercicio}

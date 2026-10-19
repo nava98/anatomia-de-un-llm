@@ -1,0 +1,190 @@
+% =====================================================================
+\chapter{Optimización: AdamW, calendario y recorte}
+\label{tema:3}
+% =====================================================================
+
+Entrenar el mini-GPT consiste en repetir un paso muy breve: tomar un lote, calcular la pérdida, retropropagar y actualizar los parámetros. Lo que separa un entrenamiento estable de uno que diverge son tres piezas que rodean ese paso: el optimizador AdamW, el calendario de la tasa de aprendizaje y el recorte del gradiente. Este tema las define tal como las especifica la tarea~1 de CS336~\cite[§4.2--4.5]{cs336}, demuestra sus propiedades principales y estima el coste del entrenamiento. AdamW y el calendario coseno se estudiaron en el módulo~7; aquí se usan en su forma de implementación, siguiendo a Loshchilov y Hutter~\cite{adamw,sgdr} y la receta documentada por LLaMA~\cite[§2.3]{llama}.
+
+\section{El paso de entrenamiento}
+
+\begin{definicion}[Paso de entrenamiento]\label{def:paso}
+Dados los parámetros $\theta_{s}$ y el estado del optimizador en el paso $s=0,1,\dots,S-1$, un \emph{paso de entrenamiento} consiste en:
+\begin{enumerate}[label=\arabic*.]
+  \item fijar la tasa $\eta_s$ según el calendario;
+  \item extraer un lote $(X,Y)$ (\cref{def:lote});
+  \item calcular los logits y la pérdida $\mathcal{L}(\theta_s)$ (\cref{def:perdida});
+  \item poner a cero los gradientes acumulados y calcular $g=\nabla_\theta\mathcal{L}(\theta_s)$ por retropropagación;
+  \item recortar $g$ por norma global (\cref{def:recorte});
+  \item aplicar un paso de AdamW con tasa $\eta_s$ (\cref{def:adamw-impl});
+  \item cada cierto número de pasos, evaluar la pérdida de entrenamiento y de validación y guardar un punto de control si la validación mejora (\cref{tema:4}).
+\end{enumerate}
+\end{definicion}
+
+El orden importa. El recorte actúa sobre el gradiente ya calculado y antes de que el optimizador lo incorpore a sus momentos; si se aplicara después, un gradiente anómalo ya habría contaminado $m$ y $v$. En PyTorch, el paso~4 son las llamadas \texttt{zero\_grad} y \texttt{backward}, y el paso~6 es \texttt{step}~\cite[§4.2.1]{cs336}.
+
+\section{AdamW}
+
+\begin{definicion}[AdamW, forma de implementación]\label{def:adamw-impl}
+Sean $\beta_1,\beta_2\in[0,1)$, $\lambda\ge 0$ y $\varepsilon>0$, y sean $m_0=v_0=0$. En la iteración $t=1,2,\dots$, con tasa $\alpha$ y gradiente $g_t$, AdamW realiza
+\begin{align*}
+\alpha_t&=\alpha\,\frac{\sqrt{1-\beta_2^{t}}}{1-\beta_1^{t}}, &
+\theta&\leftarrow\theta-\alpha\lambda\theta,\\
+m_t&=\beta_1 m_{t-1}+(1-\beta_1)g_t, &
+v_t&=\beta_2 v_{t-1}+(1-\beta_2)g_t^{2},\\
+\theta&\leftarrow\theta-\alpha_t\,\frac{m_t}{\sqrt{v_t}+\varepsilon}, &&
+\end{align*}
+donde el cuadrado, la raíz y el cociente se aplican componente a componente.
+\end{definicion}
+
+Es el algoritmo~1 de CS336~\cite[§4.3]{cs336}, que reproduce el algoritmo~2 de Loshchilov y Hutter~\cite{adamw}. La corrección de sesgo de los momentos del módulo~7 aparece aquí agrupada en $\alpha_t$; la diferencia con la forma $\hat m_t/(\sqrt{\hat v_t}+\varepsilon)$ es solo la escala efectiva de $\varepsilon$. El término $-\alpha\lambda\theta$ es el \emph{decaimiento de pesos desacoplado}: no pasa por los momentos y encoge todos los pesos en la misma proporción.
+
+\begin{proposicion}[Encogimiento por decaimiento]\label{prop:encoge}
+Si un parámetro recibe gradiente nulo durante los pasos $s=0,\dots,S-1$, con tasas $\eta_s$ y $\lambda\eta_s<1$, su valor final es
+\[
+\theta_S=\theta_0\prod_{s=0}^{S-1}(1-\lambda\eta_s)\;\le\;\theta_0\exp\Bigl(-\lambda\sum_{s=0}^{S-1}\eta_s\Bigr)\qquad(\theta_0\ge 0).
+\]
+\end{proposicion}
+
+\begin{proof}
+Con $g=0$ se tiene $m_t=v_t=0$ en todo paso, y la actualización se reduce a $\theta\leftarrow(1-\lambda\eta_s)\theta$. Iterando se obtiene el producto. La cota se sigue de $1-u\le e^{-u}$ para todo $u\in\R$, aplicada a cada factor positivo.
+\end{proof}
+
+\begin{ejemplo}\label{ej:encoge}
+Con $\lambda=0{,}1$ y el calendario del \cref{ej:calendario}, la suma de las tasas de los 800 pasos es $\sum_s\eta_s=1{,}308$, de modo que un peso sin gradiente se multiplica por $\prod_s(1-\lambda\eta_s)=0{,}877$, prácticamente igual a $e^{-0{,}1308}=0{,}877$. Con la tasa constante $3\cdot 10^{-3}$, el factor sería $0{,}9997^{800}=0{,}787$.
+\end{ejemplo}
+
+Los momentos $m$ y $v$ forman el \emph{estado} del optimizador: dos números por parámetro, además del contador $t$. Por eso el estado ocupa el doble que el modelo y debe guardarse en los puntos de control (\cref{tema:4}). LLaMA usa $\beta_1=0{,}9$, $\beta_2=0{,}95$ y $\lambda=0{,}1$~\cite[§2.3]{llama}; CS336 señala que $(0{,}9;\allowbreak\,0{,}999)$ es la elección típica y $(0{,}9;\allowbreak\,0{,}95)$ la habitual en modelos de lenguaje grandes~\cite[§4.3]{cs336}.
+
+\section{Calentamiento lineal y decaimiento coseno}
+
+\begin{definicion}[Calendario del módulo]\label{def:calendario}
+Sean $0\le\eta_{\min}<\eta_{\max}$, $W\ge 1$ pasos de calentamiento y $S>W$ pasos totales. Para $s=0,\dots,S-1$,
+\[
+\eta_s=\begin{cases}
+\eta_{\max}\,\dfrac{s+1}{W}, & s<W,\\[3mm]
+\eta_{\min}+\tfrac12(\eta_{\max}-\eta_{\min})\Bigl(1+\cos\dfrac{\pi(s-W)}{S-W}\Bigr), & s\ge W.
+\end{cases}
+\]
+\end{definicion}
+
+El tramo coseno es la ecuación~(5) de SGDR~\cite[§3]{sgdr} con un único ciclo. La práctica usa $\eta_{\min}=\eta_{\max}/10$, como LLaMA~\cite[§2.3]{llama} y la configuración de ejemplo de nanoGPT~\cite{nanogpt}.
+
+\begin{proposicion}[Propiedades del calendario]\label{prop:calendario}
+En el calendario de la \cref{def:calendario}:
+\begin{enumerate}
+  \item $\eta_s$ crece estrictamente en $\{0,\dots,W-1\}$, con $\eta_0=\eta_{\max}/W$ y $\eta_{W-1}=\eta_W=\eta_{\max}$;
+  \item $\eta_s$ decrece estrictamente en $\{W,\dots,S-1\}$, y la expresión del tramo coseno vale $\eta_{\min}$ en $s=S$;
+  \item en el punto medio del tramo coseno, $s=W+(S-W)/2$, vale $(\eta_{\max}+\eta_{\min})/2$;
+  \item para todo $u\in[0,S-W]$, $\eta(W+u)+\eta(S-u)=\eta_{\max}+\eta_{\min}$, donde $\eta(\cdot)$ denota la expresión del tramo coseno evaluada en un real.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) En el tramo lineal, $\eta_s$ es una función afín de pendiente $\eta_{\max}/W>0$; en $s=W-1$ vale $\eta_{\max}W/W$, y en $s=W$ el coseno vale $\cos 0=1$ y $\eta_W=\eta_{\min}+(\eta_{\max}-\eta_{\min})=\eta_{\max}$. (ii) El argumento $\pi(s-W)/(S-W)$ recorre $[0,\pi)$, intervalo en el que el coseno decrece estrictamente; en $s=S$ el argumento es $\pi$ y $1+\cos\pi=0$. (iii) En el punto medio el argumento es $\pi/2$ y $\cos(\pi/2)=0$. (iv) Con $\phi=\pi u/(S-W)$, los argumentos de $\eta(W+u)$ y $\eta(S-u)$ son $\phi$ y $\pi-\phi$, y $\cos(\pi-\phi)=-\cos\phi$; al sumar, los cosenos se cancelan y queda $2\eta_{\min}+(\eta_{\max}-\eta_{\min})$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:calendario}
+Con $S=800$, $W=100$, $\eta_{\max}=3\cdot 10^{-3}$ y $\eta_{\min}=3\cdot 10^{-4}$:
+\begin{center}\small
+\begin{tabular}{@{}rlr@{}}
+\toprule
+Paso $s$ & Fase & $\eta_s$ \\
+\midrule
+0 & calentamiento & $3\cdot 10^{-5}$ \\
+49 & calentamiento & $1{,}5\cdot 10^{-3}$ \\
+100 & pico & $3\cdot 10^{-3}$ \\
+275 & un cuarto del coseno & $2{,}605\cdot 10^{-3}$ \\
+450 & mitad del coseno & $1{,}65\cdot 10^{-3}$ \\
+625 & tres cuartos del coseno & $6{,}954\cdot 10^{-4}$ \\
+799 & último paso & $3{,}000\cdot 10^{-4}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Los pasos 275 y 625 son simétricos respecto del punto medio: $2{,}605\cdot 10^{-3}+0{,}695\cdot 10^{-3}=3{,}3\cdot 10^{-3}=\eta_{\max}+\eta_{\min}$, como afirma la \cref{prop:calendario}~(iv).
+\end{ejemplo}
+
+\begin{observacion}[El convenio de CS336]\label{obs:cs336-cal}
+CS336 define el calentamiento como $\alpha_t=(t/T_w)\,\alpha_{\max}$ para $t<T_w$, el coseno entre $T_w$ y $T_c$ y una tasa constante $\alpha_{\min}$ para $t>T_c$~\cite[§4.4]{cs336}. Con ese convenio, $\alpha_0=0$ (el primer paso no mueve los pesos, salvo por el decaimiento, que también se multiplica por $\alpha$) y el pico se alcanza en $t=T_w$; con el del módulo, la tasa empieza en $\eta_{\max}/W$ y llega al pico en $s=W-1$. Ambas formas difieren en un paso y son equivalentes en la práctica.
+\end{observacion}
+
+La justificación de ambas fases se dio en el módulo~7. Durante el calentamiento, los momentos de Adam se han estimado con muy pocos gradientes, y estos son grandes e irregulares; una tasa grande desde el primer paso puede llevar a una región de la que el entrenamiento no se recupera. Al final, una tasa pequeña reduce el exceso de pérdida debido al ruido del gradiente estocástico. LLaMA documenta 2000 pasos de calentamiento y decaimiento coseno hasta el 10~\% de la tasa máxima~\cite[§2.3]{llama}.
+
+\section{Recorte del gradiente por norma global}
+
+\begin{definicion}[Recorte por norma global]\label{def:recorte}
+Sea $g=(g^{(1)},\dots,g^{(P)})$ el gradiente de todos los tensores de parámetros, considerado como un único vector, y $\norm{g}_2=\bigl(\sum_{q}\norm{g^{(q)}}_2^{2}\bigr)^{1/2}$ su \emph{norma global}. Dados $c>0$ y $\varepsilon>0$ pequeño,
+\[
+\clip_c(g)=\begin{cases} g, & \norm{g}_2<c,\\[1mm] \dfrac{c}{\norm{g}_2+\varepsilon}\,g, & \norm{g}_2\ge c.\end{cases}
+\]
+\end{definicion}
+
+Es la definición de CS336, con $\varepsilon=10^{-6}$~\cite[§4.5]{cs336}; LLaMA usa $c=1$~\cite[§2.3]{llama}, como la práctica del módulo. El recorte protege de los gradientes anómalos que aparecen cuando la superficie de pérdida tiene acantilados~\cite[§8.2.4]{gbc}, y que de otro modo dañarían durante muchos pasos las medias móviles de Adam.
+
+\begin{proposicion}[Propiedades del recorte]\label{prop:recorte}
+Para todo $g$:
+\begin{enumerate}
+  \item $\clip_c(g)$ es un múltiplo positivo de $g$, luego tiene su misma dirección y sentido;
+  \item $\norm{\clip_c(g)}_2<c$ si $\norm{g}_2\ge c$, y $\clip_c(g)=g$ en otro caso;
+  \item recortar cada tensor por separado con el mismo umbral produce, en general, un vector que no es múltiplo de $g$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) El factor $c/(\norm{g}_2+\varepsilon)$ es positivo. (ii) Si $\norm{g}_2\ge c$, entonces $\norm{\clip_c(g)}_2=c\,\norm{g}_2/(\norm{g}_2+\varepsilon)<c$. (iii) Basta un contraejemplo: con dos tensores $g^{(1)}=(3,4)$ y $g^{(2)}=(12)$ y $c=1$, el recorte por tensor (con $\varepsilon\to 0$) da $(0{,}6;\allowbreak\,0{,}8)$ y $(1)$. El vector resultante $(0{,}6;\allowbreak\,0{,}8;\allowbreak\,1)$ no es proporcional a $(3,4,12)$, porque los cocientes componente a componente son $0{,}2$, $0{,}2$ y $1/12$.
+\end{proof}
+
+El recorte global no cambia la dirección de descenso; solo limita la longitud del paso. El recorte por tensor, en cambio, altera el peso relativo de cada parte del modelo en la actualización.
+
+\section{El coste del entrenamiento}
+
+Por la regla del módulo~14, entrenar un modelo de $N$ parámetros con $D$ tokens cuesta $C\approx 6ND$ operaciones de coma flotante (FLOP): $2ND$ en la pasada hacia delante y el doble en la retropropagación. CS336 usa la misma hipótesis sobre la retropropagación~\cite[§4.3, problema \emph{adamw\_accounting}]{cs336}.
+
+\begin{ejemplo}\label{ej:coste}
+En la práctica, $N=107\,694$ y $D=800\cdot 32\cdot 32=819\,200$ tokens, luego $C\approx 6\cdot 107\,694\cdot 819\,200=5{,}29\cdot 10^{11}$ FLOP. El entrenamiento dura unos 17~s en un núcleo de CPU libre, lo que corresponde a unos $3\cdot 10^{10}$ FLOP/s efectivos. Con matrices tan pequeñas el procesador trabaja muy por debajo de su pico (módulo~17).
+\end{ejemplo}
+
+\begin{lecturas}
+\item Stanford CS336~\cite{cs336}, tarea~1, §4.2 «The SGD Optimizer», §4.3 «AdamW», §4.4 «Learning rate scheduling» y §4.5 «Gradient clipping».
+\item Loshchilov y Hutter~\cite{adamw}, algoritmo~2; y~\cite{sgdr}, §3, ecuación~(5).
+\item Touvron \emph{et al.}~\cite{llama}, §2.3 «Optimizer».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.2.4 «Cliffs and Exploding Gradients» y §8.5.3 «Adam».
+\item Zhang \emph{et al.}~\cite{d2l}, §9.5.3 «Gradient Clipping».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-orden}
+En el paso de entrenamiento de la \cref{def:paso}, explique por qué el recorte se aplica después de la retropropagación y antes del paso del optimizador, y por qué se usa la norma global y no la de cada tensor. ¿Qué problema resuelve el calentamiento y cuál el decaimiento coseno?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-calendario}
+Con el calendario de la \cref{def:calendario}, $W=200$, $S=2000$, $\eta_{\max}=10^{-3}$ y $\eta_{\min}=10^{-4}$, calcule $\eta_9$ y $\eta_{1000}$. Compruebe el segundo valor con la \cref{prop:calendario}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-cs336-cal}
+Con el convenio de la \cref{obs:cs336-cal}, $\alpha_{\max}=10^{-3}$, $\alpha_{\min}=10^{-4}$, $T_w=100$ y $T_c=1000$, calcule $\alpha_t$ en $t=0$, $50$, $100$, $325$, $550$, $775$, $1000$ y $1200$. ¿En qué se diferencia del calendario del módulo?
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §4.4, problema \emph{learning\_rate\_schedule} (se pide el cálculo a mano en puntos concretos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-clip}
+Con $c=1$ y $\varepsilon=10^{-6}$: (a) recorte $g=(3,4,0)$; (b) recorte $g=(0{,}3;\allowbreak\,0{,}4;\allowbreak\,0)$; (c) un modelo tiene dos tensores con gradientes $(3,4)$ y $(12)$. Recorte con la norma global y compare con el recorte por tensor: ¿qué fracción de la norma corresponde al primer tensor en cada caso?
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §4.5, problema \emph{gradient\_clipping} (datos numéricos añadidos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-sgd}
+El SGD con tasa decreciente de CS336 actualiza
+\[
+w\leftarrow w-\frac{\alpha}{\sqrt{t+1}}\,\nabla L(w),\qquad t=0,1,2,\dots
+\]
+Se minimiza $L(w)=\frac{1}{100}\sum_{i=1}^{100}w_i^{2}$. (a) Demuestre que cada paso multiplica todos los pesos por $f_t=1-\alpha/(50\sqrt{t+1})$. (b) Para $\alpha=1$, $10$, $100$ y $1000$, calcule $f_0$, $f_1$, $f_2$ y el cociente $L_3/L_0$. ¿Qué tasas hacen decrecer la pérdida y cuál la hace divergir?
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §4.2, problema \emph{learning\_rate\_tuning} (se sustituye la simulación por el cálculo exacto de tres pasos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-flops}
+Estime los FLOP de entrenar el mini-GPT de $107\,694$ parámetros durante 2000 pasos con $B=T=32$. Con el rendimiento efectivo del \cref{ej:coste}, ¿cuánto duraría?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-proyeccion}
+Sea $\mathcal{B}_c=\{u:\norm{u}_2\le c\}$ y sea $\Pi_c(g)$ la proyección euclídea de $g$ sobre $\mathcal{B}_c$, es decir, el punto de $\mathcal{B}_c$ más próximo a $g$. Demuestre que $\Pi_c(g)=g$ si $\norm{g}_2\le c$ y $\Pi_c(g)=c\,g/\norm{g}_2$ en otro caso, y concluya que el recorte por norma global con $\varepsilon=0$ es la proyección sobre la bola de radio $c$. ¿Es el recorte por tensor la proyección sobre algún conjunto? Descríbalo.
+\end{ejercicio}

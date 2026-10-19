@@ -1,0 +1,586 @@
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los recuentos de parámetros y de FLOPs se dan exactos. Todas las cifras se han comprobado con un programa en Python.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-formas}
+\datos $V=100$, $d=8$, $h=2$, $\dff=32$, $n=5$.
+\planteamiento seguir la \cref{def:transformer} y la \cref{prop:forma}; la dimensión por cabeza es $d_k=d/h$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) La entrada es un vector de $n=5$ enteros en $\{1,\dots,100\}$.
+  \item (b) $H^{0}=OW_E$ con $O\in\{0,1\}^{5\times 100}$ y $W_E\in\R^{100\times 8}$: forma $5\times 8$.
+  \item (c) $d_k=8/2=4$; $Q_i=ZW_Q^{(i)}$ con $W_Q^{(i)}\in\R^{8\times 4}$: forma $5\times 4$.
+  \item (d) $\softmax(Q_iK_i\T/\sqrt{d_k}+M)$: $(5\times 4)(4\times 5)$, forma $5\times 5$, con ceros por encima de la diagonal.
+  \item (e) $XW_g$ y $XW_u$ con $W_g,W_u\in\R^{8\times 32}$: forma $5\times 32$.
+  \item (f) $Z=\Norm_f(H^{L})W_U$ con $W_U\in\R^{8\times 100}$: forma $5\times 100$.
+\end{enumerate}
+\resultado \textbf{(a) 5 enteros; (b) $5\times 8$; (c) $5\times 4$; (d) $5\times 5$; (e) $5\times 32$; (f) $5\times 100$.} Una pasada produce \textbf{5 distribuciones}, una por fila de $Z$ (\cref{cor:paralelo}).
+\comprobacion todas las matrices del flujo tienen forma $5\times 8$, como exige la \cref{prop:forma}; las dos cabezas de $5\times 4$ concatenadas dan de nuevo $5\times 8$.
+\end{solucion}
+
+\begin{solucion}{eje:1-atados}
+\datos $W_E\in\R^{V\times d}$; el unembedding necesita una matriz $d\times V$; $V=50\,257$, $d=768$.
+\planteamiento aplicar la \cref{def:atados} y la \cref{prop:ahorro}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Se comparte $W_E$, de forma $V\times d$; la salida usa su traspuesta, $W_U=W_E\T$, de forma $d\times V$.
+  \item El logit del token $j$ es $z_j=h\cdot e_j$: el vector final del flujo se compara con el embedding de cada token.
+  \item Si $h$ se parece al embedding de un token, ese token recibe un logit alto. Tokens que aparecen en contextos parecidos deben tener a la vez embeddings parecidos y plantillas de salida parecidas, de modo que usar los mismos vectores es coherente.
+  \item Ahorro: $Vd=50\,257\cdot 768=38\,597\,376$ parámetros.
+\end{enumerate}
+\resultado \textbf{se comparte $W_E\in\R^{V\times d}$; en GPT-2 \emph{small} se ahorran $38\,597\,376$ parámetros.}
+\comprobacion es el $31{,}0\,\%$ del total de $124\,439\,808$ parámetros calculado en el \cref{eje:5-gpt2}: $38\,597\,376/124\,439\,808=0{,}3102$.
+\end{solucion}
+
+\begin{solucion}{eje:1-logits}
+\datos $e_1=(1,0)$, $e_2=(0,1)$, $e_3=(1,1)$; $h=(2,1)$; embeddings atados.
+\planteamiento $z_j=h\cdot e_j$ y $p=\softmax(z)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $z_1=2\cdot 1+1\cdot 0=2$; $z_2=2\cdot 0+1\cdot 1=1$; $z_3=2\cdot 1+1\cdot 1=3$.
+  \item $e^{2}=7{,}389$; $e^{1}=2{,}718$; $e^{3}=20{,}09$; suma $=30{,}19$.
+  \item $p=(7{,}389;\;2{,}718;\;20{,}09)/30{,}19=(0{,}2447;\;0{,}0900;\;0{,}6652)$.
+  \item Por la \cref{prop:ahorro}, el ganador maximiza $\norm{e_j}\cos\angle(h,e_j)=z_j/\norm{h}$. Con $\norm{h}=\sqrt5=2{,}236$: $0{,}8944$, $0{,}4472$ y $1{,}342$.
+\end{enumerate}
+\resultado \textbf{$z=(2,1,3)$ y $p=(0{,}2447;\;0{,}0900;\;0{,}6652)$.} El token~3 es el más probable: su embedding forma un ángulo pequeño con $h$ ($\cos=0{,}9487$) y además tiene la mayor norma, $\sqrt2$.
+\comprobacion $0{,}2447+0{,}0900+0{,}6652=0{,}9999\approx 1$, por redondeo; el orden de $p$ coincide con el de $z$, como exige la monotonía de la softmax (módulo~1).
+\end{solucion}
+
+\begin{solucion}{eje:1-mascara}
+\datos $n=4$ y $n=1024$; fila $t=3$ con $s_3=(1,2,0,5)$.
+\planteamiento en la fila $t$ solo son finitas las entradas $u\le t$ (\cref{prop:causal}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) La fila $t$ tiene $t$ entradas permitidas: $1+2+3+4=10$ pesos no nulos posibles.
+  \item En general, $n(n+1)/2$ de las $n^{2}$ entradas; la fracción es $(n+1)/(2n)$. Con $n=1024$: $1025/2048=0{,}5005$.
+  \item (b) Para $t=3$ se descarta $u=4$: $s_3+M_3=(1,2,0,-\infty)$.
+  \item $e^{1}=2{,}718$, $e^{2}=7{,}389$, $e^{0}=1$, $e^{-\infty}=0$; suma $=11{,}11$.
+  \item Pesos: $(2{,}718;\;7{,}389;\;1;\;0)/11{,}11=(0{,}2447;\;0{,}6652;\;0{,}0900;\;0)$.
+\end{enumerate}
+\resultado \textbf{(a) 10 pesos, y una fracción de $0{,}5005$ con $n=1024$. (b) Los pesos de la fila~3 son $(0{,}2447;\;0{,}6652;\;0{,}0900;\;0)$.}
+\comprobacion los pesos suman~1, y son los mismos números del \cref{eje:1-logits} reordenados, porque las puntuaciones finitas son de nuevo $\{0,1,2\}$.
+\end{solucion}
+
+\begin{solucion}{eje:1-infinito}
+\datos fila $s_3=(1,2,0,5)$ del \cref{eje:1-mascara}.
+\planteamiento la máscara se \emph{suma} a las puntuaciones antes de la softmax; comparar el efecto de sumar $-\infty$ y de sumar $0$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sumar $0$ no modifica las puntuaciones: la softmax se calcula sobre $(1,2,0,5)$ y la posición futura sigue presente.
+  \item $e^{5}=148{,}4$; suma $=2{,}718+7{,}389+1+148{,}4=159{,}5$.
+  \item Pesos: $(0{,}0170;\;0{,}0463;\;0{,}0063;\;0{,}9304)$.
+  \item Con $-\infty$, en cambio, $e^{-\infty}=0$ y el peso futuro es exactamente nulo (\cref{eje:1-mascara}).
+\end{enumerate}
+\resultado \textbf{con $0$, el token futuro recibe un peso de $0{,}9304$}: el modelo podría copiar la respuesta que debe predecir. La máscara debe usar $-\infty$ (en la práctica, el menor número representable) para que la softmax asigne peso nulo.
+\comprobacion la alternativa de multiplicar los pesos por una máscara de ceros y unos después de la softmax anularía la entrada, pero la fila dejaría de sumar~1; sumar $-\infty$ antes de la softmax anula y normaliza a la vez.
+\end{solucion}
+
+\begin{solucion}{eje:1-perm-mascara}
+\datos $M_{tu}=0$ si $u\le t$ y $-\infty$ si $u>t$; $(PMP\T)_{tu}=M_{\pi(t)\pi(u)}$.
+\planteamiento contar las entradas finitas de cada fila, un número que la permutación de columnas no altera.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La fila $t$ de $M$ tiene exactamente $t$ entradas finitas (las de $u\le t$).
+  \item La fila $t$ de $PMP\T$ es la fila $\pi(t)$ de $M$ con las columnas reordenadas por $\pi$; reordenar no cambia cuántas entradas son finitas. Luego tiene $\pi(t)$ entradas finitas.
+  \item Si $PMP\T=M$, las filas $t$ de ambas matrices tienen el mismo número de entradas finitas: $\pi(t)=t$ para todo $t$, es decir, $\pi$ es la identidad.
+  \item Recíprocamente, si $\pi$ es la identidad, $P=I$ y $PMP\T=M$.
+\end{enumerate}
+\resultado \textbf{$PMP\T=M$ si y solo si $\pi=\mathrm{id}$.} La máscara distingue todas las posiciones: la fila $t$ es la única que ve exactamente $t$ tokens. Por eso un decoder causal sin codificación de posición ya no es equivariante por permutaciones y puede, en principio, inferir la posición, como señala la práctica de CS336~\cite[§7.3]{cs336}.
+\comprobacion con $n=2$ y $\pi$ el intercambio, $PMP\T=\bigl(\begin{smallmatrix}0&0\\-\infty&0\end{smallmatrix}\bigr)\ne M=\bigl(\begin{smallmatrix}0&-\infty\\0&0\end{smallmatrix}\bigr)$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-prepost}
+\datos un bloque con entrada $x$, subcapas $\MHA$ y $\MLP$ y normalizaciones $\Norm_1$, $\Norm_2$.
+\planteamiento escribir las dos variantes y seguir el término $x$ hasta la salida.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Pre-norm: $a=x+\MHA(\Norm_1(x))$ y $y=a+\MLP(\Norm_2(a))$.
+  \item Sustituyendo: $y=x+\MHA(\Norm_1(x))+\MLP(\Norm_2(a))$. El término $x$ aparece sumado sin modificar.
+  \item Post-norm: $a=\Norm_1(x+\MHA(x))$ y $y=\Norm_2(a+\MLP(a))$.
+  \item Sustituyendo: $y=\Norm_2\bigl(\Norm_1(x+\MHA(x))+\MLP(\cdots)\bigr)$. La entrada $x$ pasa por $\Norm_1$, que la divide por un RMS, y el resultado vuelve a reescalarse en $\Norm_2$. Ningún sumando de $y$ es $x$ sin modificar.
+\end{enumerate}
+\resultado \textbf{en pre-norm} existe un camino identidad $x\to y$ que no atraviesa ninguna normalización; en post-norm toda la señal atraviesa las dos normalizaciones.
+\comprobacion con $L$ bloques, pre-norm da $H^{L}=H^{0}+\sum_k F_k(\cdot)$ (\cref{prop:telescopica}), mientras que en post-norm $\RMS(h^{L}_t)=1$ sea cual sea la entrada (\cref{prop:postnorm}), de modo que $H^{L}$ no puede escribirse como $H^{0}$ más algo.
+\end{solucion}
+
+\begin{solucion}{eje:2-final}
+\planteamiento comparar la escala de $h^{L}_t$ en las dos variantes (\cref{prop:postnorm,prop:crecimiento}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item En post-norm, la salida de cada bloque es la salida de una normalización: $h^{L}_t$ ya tiene RMS controlado (igual a~1 si no hay ganancia) antes del unembedding.
+  \item En pre-norm, $h^{L}_t=h^{0}_t+\sum_k F_k(\cdot)_t$ y su norma cuadrática media crece linealmente con el número de subcapas (\cref{prop:crecimiento}).
+  \item Los logits $z=h^{L}_tW_U$ escalan con $\norm{h^{L}_t}$; sin normalizar, su escala y, por tanto, la temperatura efectiva de la softmax (módulo~1) dependerían de la profundidad y cambiarían durante el entrenamiento.
+\end{enumerate}
+\resultado \textbf{pre-norm necesita $\Norm_f$ porque el flujo no está normalizado en ningún punto y su norma crece; en post-norm la última operación de la pila ya es una normalización.}
+\comprobacion es la capa adicional que señalan Jurafsky y Martin~\cite[§7.2.3]{jm3} y la que añade GPT-2 tras el último bloque~\cite[§2.3]{gpt2}.
+\end{solucion}
+
+\begin{solucion}{eje:2-rms}
+\datos $h^{0}=(1,0)$; aportaciones $(0;\;0{,}5)$ y $(-0{,}2;\;0{,}3)$; $d=2$; $\Norm(x)=x/\RMS(x)$.
+\planteamiento calcular el RMS de cada vector del flujo y dividir; proyectar cada aportación sobre $u=(0,1)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\RMS(h^{0})=\sqrt{(1^{2}+0^{2})/2}=\sqrt{0{,}5}=0{,}7071$; $\Norm(h^{0})=(1{,}414;\;0)$.
+  \item (b) $a^{1}=(1;\;0{,}5)$; $\RMS(a^{1})=\sqrt{(1+0{,}25)/2}=\sqrt{0{,}625}=0{,}7906$; $\Norm(a^{1})=(1{,}265;\;0{,}6325)$.
+  \item (c) $h^{1}=(0{,}8;\;0{,}8)$; $\RMS(h^{1})=0{,}8$; $\Norm(h^{1})=(1;\;1)$.
+  \item (d) Componentes sobre $u$: $h^{0}\cdot u=0$; atención $0{,}5$; MLP $0{,}3$.
+\end{enumerate}
+\resultado \textbf{(a) $(1{,}414;\;0)$; (b) $(1{,}265;\;0{,}6325)$; (c) $(1;\;1)$; (d) $0$, $0{,}5$ y $0{,}3$.}
+\comprobacion $0+0{,}5+0{,}3=0{,}8=h^{1}\cdot u$, como predice la \cref{prop:telescopica}; cada vector normalizado tiene RMS~1, por ejemplo $\sqrt{(1{,}265^{2}+0{,}6325^{2})/2}=\sqrt{(1{,}600+0{,}4000)/2}=1{,}000$.
+\end{solucion}
+
+\begin{solucion}{eje:2-crecimiento}
+\datos $L=32$, luego $2L=64$ subcapas; $\E\norm{h^{0}_t}^{2}=1$; $s^{2}=0{,}5$; objetivo $1{,}5$.
+\planteamiento aplicar la \cref{prop:crecimiento}; multiplicar los pesos de salida por $c$ multiplica cada aportación por $c$ y $s^{2}$ por $c^{2}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\E\norm{h^{32}_t}^{2}=1+64\cdot 0{,}5=33$; cociente $33/1=33$ (la norma típica crece en un factor $\sqrt{33}=5{,}745$).
+  \item (b) Se exige $1+64\cdot 0{,}5\,c^{2}=1{,}5$, es decir, $32c^{2}=0{,}5$.
+  \item $c^{2}=0{,}5/32=1/64$; $c=1/8=0{,}125$.
+\end{enumerate}
+\resultado \textbf{(a) $33$; (b) $c=1/8$}, que es exactamente $1/\sqrt{2L}=1/\sqrt{64}$, el factor de GPT-2 con $N=2L$ capas residuales.
+\comprobacion con $c=1/8$, cada subcapa aporta $0{,}5/64=0{,}0078$ y las $64$ suman $0{,}5$: $1+0{,}5=1{,}5$.
+\end{solucion}
+
+\begin{solucion}{eje:2-cota}
+\datos $\partial H^{L}/\partial H^{0}=\prod_{k=2L}^{1}(I+J_k)$ con $\norm{J_k}_2\le\varepsilon$.
+\planteamiento desarrollar el producto como en la \cref{prop:jac-flujo} y acotar cada término con la submultiplicatividad de la norma.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Al multiplicar los $2L$ binomios se obtiene $I+\sum_{S}J_S$, donde $S$ recorre los subconjuntos no vacíos de $\{1,\dots,2L\}$ y $J_S$ es el producto de los $J_k$ con $k\in S$ en orden decreciente.
+  \item Por la desigualdad triangular y $\norm{AB}_2\le\norm{A}_2\norm{B}_2$: $\norm{J_S}_2\le\varepsilon^{\abs{S}}$.
+  \item Hay $\binom{2L}{j}$ subconjuntos de tamaño $j$; luego $\norm{\partial H^{L}/\partial H^{0}-I}_2\le\sum_{j=1}^{2L}\binom{2L}{j}\varepsilon^{j}=(1+\varepsilon)^{2L}-1$, por el binomio de Newton.
+  \item Como $1+\varepsilon\le e^{\varepsilon}$, $(1+\varepsilon)^{2L}-1\le e^{2L\varepsilon}-1$.
+  \item La función $x\mapsto e^{x}-1$ es convexa y vale $0$ en $x=0$ y $e-1$ en $x=1$; en $[0,1]$ queda por debajo de la cuerda: $e^{x}-1\le(e-1)x$. Con $x=2L\varepsilon\le 1$ se obtiene la cota $(e-1)\,2L\varepsilon$.
+\end{enumerate}
+\resultado \textbf{$\norm{\partial H^{L}/\partial H^{0}-I}_2\le(1+\varepsilon)^{2L}-1\le(e-1)\,2L\varepsilon$ si $2L\varepsilon\le 1$.} Si cada subcapa es una perturbación pequeña del flujo, la red completa se comporta, a efectos del gradiente, como la identidad más una corrección de orden $2L\varepsilon$: el gradiente no se desvanece ni explota. La inicialización escalada de GPT-2 busca precisamente que $\varepsilon$ decrezca con la profundidad.
+\comprobacion con $L=32$ y $\varepsilon=0{,}01$: $(1{,}01)^{64}-1=0{,}8905$ y $(e-1)\cdot 0{,}64=1{,}100$; la primera cota es menor que la segunda, como debe ser.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-base}
+\datos $d=512$, $\dff=2048$, con sesgos $b_1\in\R^{2048}$ y $b_2\in\R^{512}$.
+\planteamiento aplicar la \cref{def:ffn} y el \cref{lem:filas}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El MLP calcula $\phi(xW_1+b_1)W_2+b_2$ para cada fila $x$ por separado y con los mismos parámetros: la fila $t$ de la salida solo depende de la fila $t$ de la entrada, de modo que no hay intercambio de información entre tokens.
+  \item Matrices: $2\cdot 512\cdot 2048=2\,097\,152$.
+  \item Sesgos: $2048+512=2560$.
+  \item Total: $2\,097\,152+2560=2\,099\,712$.
+  \item Fracción de sesgos: $2560/2\,099\,712=0{,}001219$.
+\end{enumerate}
+\resultado \textbf{$2\,099\,712$ parámetros; los sesgos son el $0{,}12\,\%$.} Por eso LLaMA y la práctica de CS336 los omiten sin pérdida apreciable de capacidad.
+\comprobacion $8d^{2}=8\cdot 262\,144=2\,097\,152$ coincide con la parte matricial (\cref{prop:presupuesto}).
+\end{solucion}
+
+\begin{solucion}{eje:3-llama}
+\datos MLP clásico con $\dff=4d$; SwiGLU con tres matrices; $d=4096$.
+\planteamiento igualar parámetros (\cref{prop:presupuesto}) y redondear hacia arriba a múltiplo de $256$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item MLP clásico: $d\cdot 4d+4d\cdot d=8d^{2}$. SwiGLU: $3d\,\dff$. Igualdad: $\dff=8d/3$.
+  \item $8\cdot 4096/3=32\,768/3=10\,922{,}67$.
+  \item $10\,922{,}67/256=42{,}67$; el entero siguiente es $43$ y $43\cdot 256=11\,008$.
+  \item SwiGLU de LLaMA-2: $3\cdot 4096\cdot 11\,008=135\,266\,304$. Referencia: $8\cdot 4096^{2}=8\cdot 16\,777\,216=134\,217\,728$.
+  \item Exceso: $135\,266\,304-134\,217\,728=1\,048\,576$.
+\end{enumerate}
+\resultado \textbf{$\dff=11\,008$; el MLP tiene $1\,048\,576=2^{20}$ parámetros más por bloque que $8d^{2}$, un $0{,}78\,\%$.}
+\comprobacion $3\cdot 4096\cdot(11\,008-32\,768/3)=12\,288\cdot 11\,008-4096\cdot 32\,768=135\,266\,304-134\,217\,728=1\,048\,576$.
+\end{solucion}
+
+\begin{solucion}{eje:3-swiglu}
+\datos $x=(1,-1)$; $W_g$, $W_u$, $\Wdown$ del enunciado; $\sigma(1)=0{,}7311$, luego $\sigma(-1)=1-0{,}7311=0{,}2689$.
+\planteamiento calcular la puerta $xW_g$, la rama lineal $xW_u$, la capa intermedia $\SiLU(xW_g)\odot xW_u$ y multiplicar por $\Wdown$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Puerta: $xW_g=(1\cdot 2+(-1)\cdot 1;\;1\cdot 0+(-1)\cdot 1)=(1;\;-1)$.
+  \item $\SiLU(1)=1\cdot 0{,}7311=0{,}7311$; $\SiLU(-1)=-1\cdot 0{,}2689=-0{,}2689$.
+  \item Rama lineal: $xW_u=(1\cdot 1+(-1)\cdot 0;\;1\cdot 1+(-1)\cdot 2)=(1;\;-1)$.
+  \item Capa intermedia: $(0{,}7311\cdot 1;\;(-0{,}2689)\cdot(-1))=(0{,}7311;\;0{,}2689)$.
+  \item Salida: $(0{,}7311\cdot 1+0{,}2689\cdot 2;\;0{,}7311\cdot(-1)+0{,}2689\cdot 0)=(1{,}269;\;-0{,}7311)$.
+\end{enumerate}
+\resultado \textbf{$\SwiGLU(x)=(1{,}269;\;-0{,}7311)$}, con puerta $(1;-1)$, rama lineal $(1;-1)$ y capa intermedia $(0{,}7311;\;0{,}2689)$.
+\comprobacion las dos componentes de la capa intermedia suman $1$ porque, con estos datos, valen $\sigma(1)$ y $\sigma(-1)$, y $\sigma(x)+\sigma(-x)=1$. La segunda componente es positiva aunque la puerta sea negativa: el producto de dos ramas negativas da un valor positivo, algo imposible con ReLU.
+\end{solucion}
+
+\begin{solucion}{eje:3-cs336}
+\datos $d=1600$ y $d=768$; SwiGLU con $3d\,\dff$ parámetros; $\FFN_{\SiLU}$ con $2d\cdot 4d$.
+\planteamiento dividir $\frac83 d$ por $64$, redondear al entero más próximo y contar con la \cref{prop:presupuesto}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\frac83\cdot 1600=4266{,}67$; $4266{,}67/64=66{,}67$; el entero más cercano es $67$ y $67\cdot 64=4288$. Los candidatos vecinos distan $4266{,}67-4224=42{,}67$ y $4288-4266{,}67=21{,}33$.
+  \item (b) SwiGLU: $3\cdot 1600\cdot 4288=4800\cdot 4288=20\,582\,400$.
+  \item $\FFN_{\SiLU}$ con $\dff=6400$: $2\cdot 1600\cdot 6400=20\,480\,000$.
+  \item (c) Cociente: $20\,582\,400/20\,480\,000=1{,}005$.
+  \item (d) $\frac83\cdot 768=2048=32\cdot 64$, múltiplo exacto. SwiGLU: $3\cdot 768\cdot 2048=4\,718\,592$; $\FFN_{\SiLU}$ con $\dff=3072$: $2\cdot 768\cdot 3072=4\,718\,592$.
+\end{enumerate}
+\resultado \textbf{(a) $\dff=4288$; (b) $20\,582\,400$ frente a $20\,480\,000$; (c) $1{,}005$; (d) $\dff=2048$ y ambos MLP tienen exactamente $4\,718\,592$ parámetros.} La comparación del problema \texttt{swiglu\_ablation} es, por tanto, justa: difiere en menos de un $0{,}5\,\%$ de parámetros.
+\comprobacion con $d=768$ se recupera la proporción de Shazeer: $\dff=2048$ para la variante con puerta y $3072=4\cdot 768$ para la de dos matrices~\cite[§3.1]{shazeer}.
+\end{solucion}
+
+\begin{solucion}{eje:3-silu}
+\datos $\SiLU(x)=x\sigma(x)$; $\sigma'=\sigma(1-\sigma)$; $\sigma(-x)=1-\sigma(x)$.
+\planteamiento (ii) y (iii) como en la \cref{prop:silu}; para la identidad, expresar $\sigma$ con la tangente hiperbólica.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (ii) Regla del producto: $\SiLU'(x)=\sigma(x)+x\sigma(x)(1-\sigma(x))=\sigma(x)\bigl(1+x(1-\sigma(x))\bigr)$; en $0$, $\sigma(0)=\tfrac12$ y $\SiLU'(0)=\tfrac12$.
+  \item (iii) Los puntos críticos son los ceros de $g(x)=1+x(1-\sigma(x))$. Si $x\ge 0$, $g(x)\ge 1$. Si $x<0$, $g'(x)=(1-\sigma(x))(1-x\sigma(x))>0$, $g(0)=1$ y $g(x)\to-\infty$ cuando $x\to-\infty$; hay una única raíz $x^{*}<0$, que es mínimo porque $\SiLU'$ pasa de negativa a positiva. De $g(x^{*})=0$: $\sigma(x^{*})=1+1/x^{*}$ y $\SiLU(x^{*})=x^{*}+1$.
+  \item $\tanh\frac{x}{2}=\dfrac{1-e^{-x}}{1+e^{-x}}$, luego $1+\tanh\frac x2=\dfrac{2}{1+e^{-x}}=2\sigma(x)$ y $\SiLU(x)=\frac{x}{2}\bigl(1+\tanh\frac x2\bigr)$.
+  \item $\SiLU(x)-\SiLU(-x)=x\sigma(x)+x\sigma(-x)=x\bigl(\sigma(x)+1-\sigma(x)\bigr)=x$.
+  \item $\SiLU(x)+\SiLU(-x)=x\bigl(\sigma(x)-\sigma(-x)\bigr)=x\bigl(2\sigma(x)-1\bigr)=x\tanh\frac x2$.
+  \item La parte impar de una función es $\frac12\bigl(f(x)-f(-x)\bigr)$; para SiLU vale $x/2$.
+\end{enumerate}
+\resultado \textbf{$\SiLU'(0)=\tfrac12$; mínimo único en $x^{*}\approx-1{,}2785$ con valor $x^{*}+1\approx-0{,}2785$; $\SiLU(x)=\frac x2(1+\tanh\frac x2)$; $\SiLU(x)-\SiLU(-x)=x$.} SiLU es la recta $x/2$ más la función par $\frac x2\tanh\frac x2\ge 0$.
+\comprobacion con $x=1$: $\SiLU(1)-\SiLU(-1)=0{,}7311-(-0{,}2689)=1$ y $\SiLU(1)+\SiLU(-1)=0{,}4622\approx\tanh(0{,}5)=0{,}4621$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-v}
+\planteamiento separar los dos papeles de la atención: decidir a quién se atiende ($q\cdot k$) y qué se copia ($v$).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La puntuación $(R_mq)\T(R_nk)=q\T R_{n-m}k$ solo depende de la distancia $n-m$ (\cref{teo:rope}); para ello basta girar $q$ y $k$.
+  \item El valor $v_n$ es el contenido que se suma al flujo residual. Si se girase según la posición $n$, el mismo token aportaría vectores distintos según dónde estuviera, y la suma ponderada mezclaría contenidos girados con ángulos diferentes.
+  \item Las capas siguientes tendrían que deshacer esas rotaciones para reconocer el contenido, un trabajo adicional sin ventaja.
+\end{enumerate}
+\resultado \textbf{girar $q$ y $k$ basta para que los pesos dependan de la distancia; girar $v$ mezclaría la posición absoluta en el contenido copiado.}
+\comprobacion el artículo original~\cite{roformer}, el código de LLaMA~\cite{llamacode} y la práctica de CS336~\cite[§3.4.3]{cs336} aplican RoPE solo a consultas y claves.
+\end{solucion}
+
+\begin{solucion}{eje:4-pe}
+\datos $d=4$; $\omega_0=1$, $\omega_1=10000^{-2/4}$; ángulos en radianes.
+\planteamiento aplicar la \cref{def:sinusoidal} y redondear a cuatro decimales.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\omega_0=10000^{0}=1$; $\omega_1=10000^{-1/2}=1/100=0{,}01$.
+  \item $p=1$: $\sin 1=0{,}8415$; $\cos 1=0{,}5403$; $\sin 0{,}01=0{,}0100$; $\cos 0{,}01=0{,}99995\approx 1{,}0000$.
+  \item $p=2$: $\sin 2=0{,}9093$; $\cos 2=-0{,}4161$; $\sin 0{,}02=0{,}0200$; $\cos 0{,}02=0{,}9998$.
+\end{enumerate}
+\resultado
+\[
+\PE(1)=(0{,}8415;\;0{,}5403;\;0{,}0100;\;1{,}0000),\qquad \PE(2)=(0{,}9093;\;-0{,}4161;\;0{,}0200;\;0{,}9998).
+\]
+\comprobacion $0{,}8415^{2}+0{,}5403^{2}=0{,}7081+0{,}2919=1{,}0000$ y $0{,}9093^{2}+0{,}4161^{2}=0{,}8268+0{,}1731=0{,}9999\approx 1$; el par lento casi no cambia entre $p=1$ y $p=2$.
+\end{solucion}
+
+\begin{solucion}{eje:4-mk}
+\datos $d=2$, $\omega_0=1$; $\PE(p)=(\sin p,\cos p)$; $k=1$.
+\planteamiento por el \cref{teo:desplazamiento}, $M_1=\bigl(\begin{smallmatrix}\cos 1&\sin 1\\-\sin 1&\cos 1\end{smallmatrix}\bigr)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $M_1=\begin{pmatrix}0{,}5403&0{,}8415\\-0{,}8415&0{,}5403\end{pmatrix}$.
+  \item Primera componente de $M_1\PE(1)$: $0{,}5403\cdot 0{,}8415+0{,}8415\cdot 0{,}5403=2\cdot 0{,}4547=0{,}9093$.
+  \item Segunda: $-0{,}8415\cdot 0{,}8415+0{,}5403\cdot 0{,}5403=-0{,}7081+0{,}2919=-0{,}4162$.
+\end{enumerate}
+\resultado \textbf{$M_1\PE(1)=(0{,}9093;\;-0{,}4162)$, que coincide con $\PE(2)=(0{,}9093;\;-0{,}4161)$} salvo una unidad en el cuarto decimal, debida a operar con datos redondeados.
+\comprobacion la primera componente es $2\sin 1\cos 1=\sin 2$ y la segunda $\cos^{2}1-\sin^{2}1=\cos 2$: las fórmulas del ángulo doble.
+\end{solucion}
+
+\begin{solucion}{eje:4-rope}
+\datos $\theta=\pi/6$; $q=(1,2)$; $k=(3,1)$; $m=3$, $n=1$; $\cos(\pi/6)=0{,}8660$, $\sin(\pi/6)=0{,}5$.
+\planteamiento girar cada vector, hacer el producto escalar y comparar con~\eqref{eq:rope2d}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $3\theta=\pi/2$ y $R(\pi/2)=\bigl(\begin{smallmatrix}0&-1\\1&0\end{smallmatrix}\bigr)$; $R(3\theta)q=(0\cdot 1-1\cdot 2;\;1\cdot 1+0\cdot 2)=(-2;\;1)$.
+  \item $R(\theta)k=(0{,}8660\cdot 3-0{,}5\cdot 1;\;0{,}5\cdot 3+0{,}8660\cdot 1)=(2{,}098;\;2{,}366)$.
+  \item Producto escalar: $(-2)\cdot 2{,}098+1\cdot 2{,}366=-4{,}196+2{,}366=-1{,}830$.
+  \item Fórmula relativa con $\varphi=(n-m)\theta=-\pi/3$: $q\cdot k=5$ y $q_1k_2-q_2k_1=1-6=-5$; $q\T R(\varphi)k=5\cdot 0{,}5-(-5)\cdot(-0{,}8660)=2{,}5-4{,}330=-1{,}830$.
+  \item Normas: $\norm{R(\theta)k}^{2}=2{,}098^{2}+2{,}366^{2}=4{,}402+5{,}598=10{,}00=3^{2}+1^{2}$.
+\end{enumerate}
+\resultado \textbf{$R(3\theta)q=(-2;1)$, $R(\theta)k=(2{,}098;\;2{,}366)$; ambos caminos dan $-1{,}830$} y la norma de $k$ se conserva.
+\comprobacion coincide con la fila $(m,n)=(3,1)$ de la \cref{tab:rope}.
+\end{solucion}
+
+\begin{solucion}{eje:4-rope-dem}
+\datos $R_m=\diag(R(m\theta_0),\dots,R(m\theta_{d_k/2-1}))$.
+\planteamiento probar el caso de un bloque y extenderlo a la matriz por bloques.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Para un bloque, $R(a)\T R(b)=R(b-a)$ por el \cref{lem:rotaciones}: la traspuesta es la rotación de ángulo opuesto (paridad del seno y del coseno) y las rotaciones se componen sumando ángulos (fórmulas de la suma).
+  \item Si $A=\diag(A_1,\dots,A_r)$, entonces $A\T=\diag(A_1\T,\dots,A_r\T)$: la entrada $(i,j)$ de $A\T$ es la $(j,i)$ de $A$, que es nula fuera de los bloques diagonales.
+  \item Si $B=\diag(B_1,\dots,B_r)$ con bloques del mismo tamaño, $AB=\diag(A_1B_1,\dots,A_rB_r)$: en el producto por bloques, los términos $A_{ij}B_{jk}$ con $i\ne j$ o $j\ne k$ son nulos.
+  \item Por los pasos 1 a 3, $R_m\T R_n=\diag\bigl(R((n-m)\theta_i)\bigr)_i=R_{n-m}$.
+  \item Por $(AB)\T=B\T A\T$: $(R_mq)\T(R_nk)=q\T R_m\T R_nk=q\T R_{n-m}k$.
+  \item Caso $m=n$: $R_0=\diag(R(0))=I$ y se recupera $q\cdot k$, la puntuación sin posición.
+\end{enumerate}
+\resultado \textbf{$(R_mq)\T(R_nk)=q\T R_{n-m}k$:} la puntuación solo depende de $n-m$.
+\comprobacion el \cref{eje:4-rope} lo verifica numéricamente: $-1{,}830$ por ambos caminos.
+\end{solucion}
+
+\begin{solucion}{eje:4-perm}
+\datos $X'=PX$ con $P$ de permutación, de modo que $P\T P=I$ y $P\uno=\uno$; identidades dadas para softmax y ReLU.
+\planteamiento seguir la permutación a través de cada operación de la capa.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $Q'=X'W_Q=PXW_Q=PQ$; del mismo modo $K'=PK$ y $V'=PV$.
+  \item $Q'(K')\T=PQ(PK)\T=PQK\T P\T$, porque $(PK)\T=K\T P\T$.
+  \item $\softmax(PQK\T P\T/\sqrt d)=P\softmax(QK\T/\sqrt d)P\T$; dividir por $\sqrt d$ no afecta a la permutación.
+  \item $H'=P\softmax(\cdot)P\T PV=P\softmax(\cdot)V=PH$.
+  \item $H'W_1+\uno b_1=PHW_1+P\uno b_1=P(HW_1+\uno b_1)$, porque $P\uno=\uno$.
+  \item $\ReLU(P(\cdot))=P\ReLU(\cdot)$; al multiplicar por $W_2$ y sumar $\uno b_2=P\uno b_2$, la $P$ queda delante: $Z'=PZ$.
+  \item (b) Barajar las palabras solo baraja las filas de la salida: el vector de cada palabra no depende del orden, y frases como «el perro muerde al hombre» y «el hombre muerde al perro» no se distinguen.
+  \item (c) Basta considerar el par $i=0$, $(\sin t,\cos t)$. Si coincide para dos enteros $t\ne t'$, entonces $t-t'=2\pi k$ con $k$ entero no nulo, luego $\pi=(t-t')/(2k)$ sería racional, lo que es falso.
+\end{enumerate}
+\resultado \textbf{$Z'=PZ$; sin posiciones el modelo ignora el orden; dos posiciones enteras distintas nunca reciben la misma codificación sinusoidal.}
+\comprobacion numéricamente, con $T=3$, $d=2$, pesos aleatorios y $P$ la permutación cíclica, $f(PX)$ y $Pf(X)$ coinciden hasta la precisión de la máquina. Un caso casi repetido: $t-t'=710$ desfasa el par~0 solo $710-113\cdot 2\pi=6{,}0\cdot 10^{-5}$~rad, pero los pares lentos sí distinguen las dos posiciones.
+\end{solucion}
+
+\begin{solucion}{eje:4-compleja}
+\datos $\RoPE(z,t)=ze^{it\theta}$; $\langle u,v\rangle=\Real(u\bar v)$; $z_1=1+2i$, $z_2=3+i$, $\theta=\pi/6$, $t_1=3$, $t_2=1$.
+\planteamiento el conjugado de $e^{i\alpha}$ es $e^{-i\alpha}$ y los exponentes se suman (\cref{prop:rope-compleja}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Miembro izquierdo: $\Real\bigl(z_1e^{it_1\theta}\,\bar z_2e^{-it_2\theta}\bigr)=\Real\bigl(z_1\bar z_2e^{i(t_1-t_2)\theta}\bigr)$.
+  \item Miembro derecho: $\Real\bigl(z_1e^{i(t_1-t_2)\theta}\,\bar z_2e^{-i\cdot 0}\bigr)=\Real\bigl(z_1\bar z_2e^{i(t_1-t_2)\theta}\bigr)$. Son la misma expresión.
+  \item (b) Izquierdo: $e^{3i\theta}=e^{i\pi/2}=i$ y $z_1i=-2+i$; $e^{i\theta}=0{,}8660+0{,}5i$ y $z_2e^{i\theta}=(2{,}598-0{,}5)+i(1{,}5+0{,}8660)=2{,}098+2{,}366i$.
+  \item Producto escalar: $(-2)\cdot 2{,}098+1\cdot 2{,}366=-1{,}830$.
+  \item Derecho: $e^{2i\theta}=e^{i\pi/3}=0{,}5+0{,}8660i$ y $z_1e^{i\pi/3}=(0{,}5-1{,}732)+i(0{,}8660+1)=-1{,}232+1{,}866i$; con $z_2=3+i$: $(-1{,}232)\cdot 3+1{,}866\cdot 1=-3{,}696+1{,}866=-1{,}830$.
+\end{enumerate}
+\resultado \textbf{ambos miembros valen $\Real(z_1\bar z_2e^{i(t_1-t_2)\theta})$; con los datos, $-1{,}830$.}
+\comprobacion es el valor del \cref{eje:4-rope}: multiplicar por $e^{it\theta}$ es la rotación $R(t\theta)$ escrita en complejos.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-slp}
+\datos $L$ capas, dimensión $d$, $A$ cabezas con $d_k=d_v=d/A$, $\dff=4d$; en (d), $d=512$ y $L=6$.
+\planteamiento aplicar la \cref{prop:cabezas} y la \cref{prop:bloque}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Cada cabeza: $W_Q^{(i)},W_K^{(i)},W_V^{(i)}\in\R^{d\times d/A}$, con $3d^{2}/A$ parámetros; las $A$ cabezas: $3d^{2}$. Más $W_O\in\R^{d\times d}$: $4d^{2}$. No depende de $A$.
+  \item (b) $W_1\in\R^{d\times 4d}$ y $W_2\in\R^{4d\times d}$: $8d^{2}$.
+  \item (c) Por bloque, $4d^{2}+8d^{2}=12d^{2}$; con $L$ bloques, $12Ld^{2}$. Los sesgos ($13d$) y las normalizaciones son $O(d)$ por bloque, despreciables frente a $d^{2}$.
+  \item (d) $512^{2}=262\,144$; $12\cdot 6\cdot 262\,144=18\,874\,368$.
+\end{enumerate}
+\resultado \textbf{(a) $4d^{2}$, independiente de $A$; (b) $8d^{2}$; (c) $12Ld^{2}$; (d) $18\,874\,368\approx 1{,}89\cdot 10^{7}$.}
+\comprobacion la fracción despreciada en (c) es $13d/(12d^{2})=13/(12d)$, que con $d=512$ vale $0{,}0021$.
+\end{solucion}
+
+\begin{solucion}{eje:5-gpt2}
+\datos $d=768$, $L=12$, $V=50\,257$, $\nctx=1024$; atados; posiciones aprendidas; una LayerNorm final.
+\planteamiento bloque por la \cref{prop:bloque}(ii); fuera de los bloques, embeddings (una sola vez), posiciones y normalización final.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $d^{2}=589\,824$; $12d^{2}=7\,077\,888$; $13d=9984$; bloque $=7\,087\,872$.
+  \item $12$ bloques: $12\cdot 7\,087\,872=85\,054\,464$.
+  \item Embedding de tokens: $50\,257\cdot 768=38\,597\,376$. Posiciones: $1024\cdot 768=786\,432$. LayerNorm final: $2\cdot 768=1536$.
+  \item Total: $85\,054\,464+38\,597\,376+786\,432+1536=124\,439\,808$.
+  \item $12Ld^{2}=12\cdot 12\cdot 589\,824=84\,934\,656$; fracción $84\,934\,656/124\,439\,808=0{,}6825$.
+\end{enumerate}
+\resultado \textbf{bloque $=7\,087\,872$; $N=124\,439\,808$; $12Ld^{2}$ cubre solo el $68{,}3\,\%$.}
+\comprobacion es el «GPT-2 de 124~M» de las implementaciones abiertas; en un modelo pequeño los embeddings pesan mucho ($31\,\%$, \cref{eje:1-atados}).
+\end{solucion}
+
+\begin{solucion}{eje:5-13b}
+\datos $d=5120$, $L=40$, $\dff=13\,824$, $V=32\,000$; sin atar; RMSNorm sin sesgo.
+\planteamiento aplicar el \cref{teo:recuento}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $d^{2}=26\,214\,400$; atención $4d^{2}=104\,857\,600$.
+  \item SwiGLU: $5120\cdot 13\,824=70\,778\,880$; por $3$: $212\,336\,640$.
+  \item Normalizaciones: $2d=10\,240$. Bloque: $104\,857\,600+212\,336\,640+10\,240=317\,204\,480$.
+  \item $40$ bloques: $12\,688\,179\,200$.
+  \item Embeddings: $2\cdot 32\,000\cdot 5120=327\,680\,000$. Normalización final: $5120$.
+  \item $N=12\,688\,179\,200+327\,680\,000+5120=13\,015\,864\,320$.
+  \item $12Ld^{2}=12\cdot 40\cdot 26\,214\,400=12\,582\,912\,000$; cociente $0{,}9667$.
+\end{enumerate}
+\resultado \textbf{$N=13\,015\,864\,320\approx 1{,}302\cdot 10^{10}$; $12Ld^{2}$ cubre el $96{,}7\,\%$.}
+\comprobacion el $3{,}3\,\%$ restante son los embeddings ($2{,}5\,\%$) y el exceso del redondeo de $\dff$ hacia arriba ($13\,824>\frac83\cdot 5120=13\,653{,}3$).
+\end{solucion}
+
+\begin{solucion}{eje:5-mem13b}
+\datos $N=13\,015\,864\,320$; $2$ y $16$ bytes por parámetro (\cref{prop:16bytes}); $1~\mathrm{GB}=10^{9}$~bytes.
+\planteamiento memoria $=N\cdot$ bytes por parámetro.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Pesos en bf16: $13\,015\,864\,320\cdot 2=26\,031\,728\,640$~bytes $=26{,}03$~GB.
+  \item Entrenamiento: $13\,015\,864\,320\cdot 16=208\,253\,829\,120$~bytes $=208{,}3$~GB.
+  \item GPU de $80$~GB: $208{,}3/80=2{,}603$, luego al menos $3$.
+\end{enumerate}
+\resultado \textbf{$26{,}03$~GB para la inferencia; $208{,}3$~GB para el entrenamiento sin activaciones; al menos 3 GPU de 80~GB}, repartiendo el estado como en ZeRO (módulo~17).
+\comprobacion $208{,}3/26{,}03=8{,}00=16/2$.
+\end{solucion}
+
+\begin{solucion}{eje:5-xl}
+\datos $V=50\,257$, $L=48$, $d=1600$, $\dff=4288$; sin atar; sin sesgos; dos RMSNorm por bloque y una final; fp32 $=4$~bytes.
+\planteamiento aplicar el \cref{teo:recuento}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Atención: $d^{2}=2\,560\,000$; $4d^{2}=10\,240\,000$.
+  \item SwiGLU: $3\cdot 1600\cdot 4288=20\,582\,400$ (\cref{eje:3-cs336}).
+  \item Normalizaciones: $3200$. Bloque: $10\,240\,000+20\,582\,400+3200=30\,825\,600$.
+  \item $48$ bloques: $1\,479\,628\,800$.
+  \item Embeddings: $2\cdot 50\,257\cdot 1600=160\,822\,400$. Normalización final: $1600$.
+  \item $N=1\,479\,628\,800+160\,822\,400+1600=1\,640\,452\,800$.
+  \item Memoria en fp32: $1\,640\,452\,800\cdot 4=6\,561\,811\,200$~bytes $=6{,}562$~GB ($6{,}111$~GiB).
+\end{enumerate}
+\resultado \textbf{$N=1\,640\,452\,800\approx 1{,}64\cdot 10^{9}$ parámetros; $6{,}56$~GB en fp32.}
+\comprobacion $12Ld^{2}=1\,474\,560\,000$ es el $89{,}9\,\%$ de $N$; la diferencia son casi exclusivamente los dos embeddings.
+\end{solucion}
+
+\begin{solucion}{eje:5-24gb}
+\datos $24$~GB $=2{,}4\cdot 10^{10}$~bytes; $2$, $0{,}5$ y $16$ bytes por parámetro.
+\planteamiento $N_{\max}=\text{memoria}/\text{bytes por parámetro}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) bf16: $2{,}4\cdot 10^{10}/2=1{,}2\cdot 10^{10}$ parámetros.
+  \item (b) int4: $2{,}4\cdot 10^{10}/0{,}5=4{,}8\cdot 10^{10}$ parámetros.
+  \item (c) Entrenamiento: $2{,}4\cdot 10^{10}/16=1{,}5\cdot 10^{9}$ parámetros.
+  \item Para la inferencia sobran el gradiente ($2$~bytes), la copia maestra en fp32 ($4$) y los momentos $m$ y $v$ ($8$): $14$ de los $16$ bytes.
+\end{enumerate}
+\resultado \textbf{(a) $1{,}2\cdot 10^{10}$; (b) $4{,}8\cdot 10^{10}$; (c) $1{,}5\cdot 10^{9}$ parámetros.} El estado de entrenamiento ocupa $8$ veces más que los pesos en bf16.
+\comprobacion LLaMA-2~7B cabe en (a) ($13{,}5$~GB, \cref{tab:memoria}) pero no en (c), que exigiría $107{,}8$~GB.
+\end{solucion}
+
+\begin{solucion}{eje:5-fraccion}
+\datos $N=12Ld^{2}+2Ld+2Vd+d$ (\cref{cor:kaplan}); $L=\alpha d$; $V$ y $\alpha$ fijos.
+\planteamiento sustituir $L=\alpha d$ y quedarse con el término dominante del denominador.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $N=12\alpha d^{3}+2\alpha d^{2}+2Vd+d$.
+  \item $f=\dfrac{2Vd}{12\alpha d^{3}+2\alpha d^{2}+2Vd+d}=\dfrac{2V}{12\alpha d^{2}}\cdot\dfrac{1}{1+\frac{1}{6d}+\frac{V}{6\alpha d^{2}}+\frac{1}{12\alpha d^{2}}}$.
+  \item El segundo factor tiende a~1 cuando $d\to\infty$; luego $f\sim V/(6\alpha d^{2})$.
+  \item (b) Valores exactos con los $N$ del \cref{ej:llama7b} y del \cref{eje:5-xl}. Para LLaMA-2~7B, $f=262\,144\,000/6\,738\,415\,616=0{,}0389$.
+  \item Para el modelo del \cref{eje:5-xl}, $f=160\,822\,400/1\,640\,452\,800=0{,}0980$.
+  \item Aproximación asintótica: $32\,000/(6\cdot 32\cdot 4096)=0{,}0407$ y $50\,257/(6\cdot 48\cdot 1600)=0{,}1091$.
+\end{enumerate}
+\resultado \textbf{$f\sim V/(6\alpha d^{2})$}: con un vocabulario fijo, los embeddings son una fracción despreciable de los modelos grandes ($3{,}9\,\%$ en LLaMA-2~7B frente a $9{,}8\,\%$ en el modelo de $1{,}6\cdot 10^{9}$ y $31\,\%$ en GPT-2 \emph{small}). Atar ahorra poco en un modelo grande y renuncia a la flexibilidad de dos matrices distintas.
+\comprobacion la aproximación sobreestima ligeramente $f$, porque desprecia en el denominador el propio término $2Vd$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-2n}
+\datos $y=xW$ con $x\in\R^{2}$ y $W\in\R^{2\times 3}$.
+\planteamiento contar las operaciones que intervienen por cada peso.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Cada salida es $y_j=\sum_i x_iW_{ij}$: cada peso $W_{ij}$ interviene en una multiplicación $x_iW_{ij}$.
+  \item Cada producto se acumula en $y_j$ con una suma.
+  \item Por token, $2$ FLOPs por peso; como cada token pasa una vez por cada peso de las capas lineales, la pasada hacia delante cuesta unos $2N$ FLOPs por token (\cref{prop:forward}).
+  \item Con $W\in\R^{2\times 3}$: $3$ salidas, cada una con $2$ productos y $2$ sumas (contando la acumulación inicial), $3\cdot 4=12$ FLOPs.
+\end{enumerate}
+\resultado \textbf{$2$ FLOPs por parámetro y por token: una multiplicación y una suma.}
+\comprobacion $12=2\cdot 6$, con $6$ pesos; coincide con el \cref{lem:2mkp} con $m=1$, $k=2$ y $p=3$.
+\end{solucion}
+
+\begin{solucion}{eje:6-horas}
+\datos $N=6{,}738\cdot 10^{9}$; $D=2\cdot 10^{12}$; $312\cdot 10^{12}$~FLOP/s; aprovechamiento del $40\,\%$; $184\,320$~h declaradas.
+\planteamiento $C\approx 6ND$ (\cref{cor:6nd}); tiempo $=C/(\text{aprovechamiento}\cdot\text{máximo})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $6\cdot 6{,}738\cdot 10^{9}=4{,}043\cdot 10^{10}$; $C=4{,}043\cdot 10^{10}\cdot 2\cdot 10^{12}=8{,}086\cdot 10^{22}$~FLOPs.
+  \item Velocidad efectiva: $0{,}4\cdot 312\cdot 10^{12}=1{,}248\cdot 10^{14}$~FLOP/s.
+  \item Tiempo: $8{,}086\cdot 10^{22}/1{,}248\cdot 10^{14}=6{,}479\cdot 10^{8}$~s; en horas, $6{,}479\cdot 10^{8}/3600=1{,}800\cdot 10^{5}$~h.
+  \item Aprovechamiento real: $8{,}086\cdot 10^{22}/(184\,320\cdot 3600\cdot 312\cdot 10^{12})=8{,}086\cdot 10^{22}/2{,}070\cdot 10^{23}=0{,}3906$.
+\end{enumerate}
+\resultado \textbf{$C\approx 8{,}09\cdot 10^{22}$~FLOPs; unas $180\,000$ horas de A100; aprovechamiento real del $39\,\%$.}
+\comprobacion $180\,000/184\,320=0{,}977$, y $0{,}3906/0{,}4=0{,}977$: las dos estimaciones son coherentes.
+\end{solucion}
+
+\begin{solucion}{eje:6-small}
+\datos $L=12$, $d=768$, $\dff=2048$, $V=50\,257$, $n=1024$; regla $2mkp$.
+\planteamiento enumerar los productos con sus formas; las operaciones elemento a elemento se desprecian (\cref{prop:forward}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Proyecciones $Q,K,V$: $(n\times d)(d\times 3d)$: $2\cdot 1024\cdot 768\cdot 2304=3\,623\,878\,656$.
+  \item $QK\T$ en todas las cabezas: $2n^{2}d=2\cdot 1024^{2}\cdot 768=1\,610\,612\,736$.
+  \item Pesos por $V$: $2n^{2}d=1\,610\,612\,736$.
+  \item Salida $W_O$: $2\cdot 1024\cdot 768^{2}=1\,207\,959\,552$.
+  \item SwiGLU, tres productos $(n\times d)(d\times\dff)$: $3\cdot 2\cdot 1024\cdot 768\cdot 2048=9\,663\,676\,416$.
+  \item Bloque: suma de 1 a 5, $17\,716\,740\,096$. Doce bloques: $212\,600\,881\,152$.
+  \item Unembedding: $2\cdot 1024\cdot 768\cdot 50\,257=79\,047\,426\,048$.
+  \item Total: $212\,600\,881\,152+79\,047\,426\,048=291\,648\,307\,200\approx 2{,}916\cdot 10^{11}$.
+  \item Proporciones: proyecciones de atención $19{,}9\,\%$; $QK\T$ y $AV$ $13{,}3\,\%$; MLP $39{,}8\,\%$; unembedding $27{,}1\,\%$.
+\end{enumerate}
+\resultado \textbf{pasada hacia delante $\approx 2{,}916\cdot 10^{11}$~FLOPs por secuencia; domina el MLP ($39{,}8\,\%$), seguido del unembedding ($27{,}1\,\%$).} La comparación con el modelo con forma de GPT-2 XL ($n=1024$) es:
+\begin{center}\small
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Componente & GPT-2 \emph{small} & GPT-2 XL \\
+\midrule
+Proyecciones $Q,K,V,O$ & $19{,}9\,\%$ & $28{,}6\,\%$ \\
+$QK\T$ y $AV$ & $13{,}3\,\%$ & $9{,}2\,\%$ \\
+MLP SwiGLU & $39{,}8\,\%$ & $57{,}5\,\%$ \\
+Unembedding & $27{,}1\,\%$ & $4{,}7\,\%$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Al crecer el modelo, el MLP y las proyecciones, que escalan con $d^{2}$, ganan peso; el unembedding, que escala con $d$, y la parte cuadrática, $n^{2}d$ con $n$ fijo, lo pierden.
+\comprobacion sin la parte cuadrática, el coste debe ser $2nN_{\mathrm{mat}}$ con $N_{\mathrm{mat}}=12\cdot 7\,077\,888+38\,597\,376=123\,532\,032$: $2\cdot 1024\cdot 123\,532\,032=252\,993\,601\,536$, y sumando $12\cdot 3\,221\,225\,472=38\,654\,705\,664$ se recupera $291\,648\,307\,200$.
+\end{solucion}
+
+\begin{solucion}{eje:6-16k}
+\datos modelo del \cref{eje:5-xl}; $n$ pasa de $1024$ a $16\,384$, un factor $16$.
+\planteamiento los productos con pesos escalan con $n$; $QK\T$ y $AV$ escalan con $n^{2}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Con $n=1024$ (como en el \cref{eje:6-small}): bloque $=6{,}984\cdot 10^{10}$; unembedding $=1{,}647\cdot 10^{11}$; total $=48\cdot 6{,}984\cdot 10^{10}+1{,}647\cdot 10^{11}=3{,}517\cdot 10^{12}$.
+  \item Parte cuadrática: $48\cdot 4\cdot 1024^{2}\cdot 1600=3{,}221\cdot 10^{11}$; parte lineal: $3{,}517\cdot 10^{12}-3{,}221\cdot 10^{11}=3{,}195\cdot 10^{12}$.
+  \item Con $n=16\,384$: lineal $16\cdot 3{,}195\cdot 10^{12}=5{,}111\cdot 10^{13}$; cuadrática $256\cdot 3{,}221\cdot 10^{11}=8{,}246\cdot 10^{13}$.
+  \item Total: $1{,}336\cdot 10^{14}$; factor $1{,}336\cdot 10^{14}/3{,}517\cdot 10^{12}=37{,}98$.
+  \item Fracción de atención: $8{,}246\cdot 10^{13}/1{,}336\cdot 10^{14}=0{,}617$; MLP: $0{,}242$.
+\end{enumerate}
+\resultado \textbf{el coste se multiplica por $\approx 38$ (no por $16$) y $QK\T$ y $AV$ pasan del $9{,}2\,\%$ al $61{,}7\,\%$}; el MLP baja al $24{,}2\,\%$.
+\comprobacion el factor está entre $16$ (todo lineal) y $256$ (todo cuadrático): $16\cdot 0{,}9084+256\cdot 0{,}0916=37{,}98$.
+\end{solucion}
+
+\begin{solucion}{eje:6-h100}
+\datos pasada hacia delante por secuencia $F=3{,}517\cdot 10^{12}$ (\cref{eje:6-16k}); lotes de $B=1024$; $400\,000$ pasos; retroceso $=2F$; $495\cdot 10^{12}$~FLOP/s al $50\,\%$; $N=1{,}640\cdot 10^{9}$.
+\planteamiento coste por paso $=3F\cdot B$; tiempo $=$ coste total $/$ velocidad efectiva.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Por secuencia: $3F=1{,}055\cdot 10^{13}$~FLOPs.
+  \item Por paso: $1{,}055\cdot 10^{13}\cdot 1024=1{,}080\cdot 10^{16}$.
+  \item Total: $1{,}080\cdot 10^{16}\cdot 4\cdot 10^{5}=4{,}321\cdot 10^{21}$.
+  \item Velocidad efectiva: $0{,}5\cdot 495\cdot 10^{12}=2{,}475\cdot 10^{14}$~FLOP/s.
+  \item Tiempo: $4{,}321\cdot 10^{21}/2{,}475\cdot 10^{14}=1{,}746\cdot 10^{7}$~s $=4850$~h.
+  \item Regla $6ND$: $D=4\cdot 10^{5}\cdot 1024\cdot 1024=4{,}194\cdot 10^{11}$ tokens; $6\cdot 1{,}640\cdot 10^{9}\cdot 4{,}194\cdot 10^{11}=4{,}128\cdot 10^{21}$ FLOPs, es decir, $4633$~h.
+\end{enumerate}
+\resultado \textbf{unas $4850$~h, es decir, unos $202$ días en una sola H100.}
+\comprobacion $6ND$ da un $4{,}5\,\%$ menos: ignora $QK\T$ y $AV$ y, en cambio, cuenta como multiplicados los $8{,}04\cdot 10^{7}$ parámetros del embedding de entrada, que solo se indexan. Las dos cifras son del mismo orden.
+\end{solucion}
+
+\begin{solucion}{eje:6-6nd}
+\datos $Y=XW+\uno c\T$, $X\in\R^{n\times a}$, $W\in\R^{a\times b}$, $c\in\R^{b}$, $G=\partial\Loss/\partial Y$.
+\planteamiento obtener los gradientes con la regla de la cadena (módulo~10) y contar con el \cref{lem:2mkp}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Pasada hacia delante: $XW$ cuesta $2nab$; sumar el sesgo a las $nb$ entradas, $nb$.
+  \item $Y_{tj}=\sum_rX_{tr}W_{rj}+c_j$, luego $\partial\Loss/\partial X_{tr}=\sum_jG_{tj}W_{rj}$, es decir, $\partial\Loss/\partial X=GW\T$: $2nba$ FLOPs.
+  \item $\partial\Loss/\partial W_{rj}=\sum_tX_{tr}G_{tj}$, es decir, $\partial\Loss/\partial W=X\T G$: $2anb$ FLOPs.
+  \item $\partial\Loss/\partial c_j=\sum_tG_{tj}$, es decir, $\partial\Loss/\partial c=G\T\uno$: unas $nb$ sumas.
+  \item Total: $6nab+2nb$. El cociente entre el coste del sesgo y el de $W$ es $2nb/(6nab)=1/(3a)\to 0$ cuando $a$ crece.
+  \item Sin sesgo, con $n=1$ y $a=b=2$: pasada hacia delante $2\cdot 1\cdot 2\cdot 2=8$; retroceso $16$; total $24=6\cdot 1\cdot 4$.
+\end{enumerate}
+\resultado \textbf{pasada hacia delante $2nab$, retroceso $4nab$, más $O(nb)$ por el sesgo}; por peso y por token, $6$ FLOPs, de donde $C\approx 6ND$.
+\comprobacion con $a=768$, el sesgo supone $1/(3\cdot 768)=0{,}043\,\%$ del coste de la capa.
+\end{solucion}
+
+\begin{solucion}{eje:6-atencion}
+\datos $L=32$, $d=4096$, $n=4096$, $N=6\,738\,415\,616$.
+\planteamiento comparar $4Lnd$ con $2N$ (\cref{prop:forward,cor:nstar}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $4\cdot 32\cdot 4096\cdot 4096=128\cdot 16\,777\,216=2\,147\,483\,648$; $2N=13\,476\,831\,232$; fracción $=0{,}1593$.
+  \item (b) $n^{*}=N/(2Ld)=6\,738\,415\,616/262\,144=25\,705$.
+  \item (c) La fracción es $4Lnd/(2N)=n/n^{*}$, lineal en $n$; con $n=4096$, $4096/25\,705=0{,}1593$.
+\end{enumerate}
+\resultado \textbf{con $n=4096$ la atención añade un $15{,}9\,\%$ al coste $2N$; lo iguala con $n^{*}\approx 25\,705$ tokens.}
+\comprobacion (a) y (c) dan el mismo valor; con contextos de $10^{5}$ tokens la atención cuadruplicaría el coste de los pesos ($10^{5}/25\,705=3{,}9$).
+\end{solucion}

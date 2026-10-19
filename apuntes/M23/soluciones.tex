@@ -1,0 +1,587 @@
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los resultados exactos se dan como fracción cuando existe. Todas las cifras se han comprobado con un cálculo independiente.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-canal}
+\datos flujo $x_{\mathrm{fin}}=x_0+\sum_\ell(a_\ell+m_\ell)$ y logits $z=\WU x_{\mathrm{fin}}$.
+\planteamiento describir cómo leen y escriben los componentes (\cref{def:flujo}) e identificar la propiedad que permite repartir los logits (\cref{prop:descomposicion}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Cada componente lee el flujo con proyecciones lineales ($W_Q$, $W_K$, $W_V$, entrada del MLP) y escribe sumando su salida, sin borrar lo anterior.
+  \item Lo que escribe la capa~2 sigue en el flujo en la capa~20: componentes lejanos se comunican a través de él, cada uno en su subespacio, como mensajes en un bus compartido (pesos virtuales, \cref{def:virtuales}).
+  \item La propiedad es la linealidad de $\WU$: $\WU(x_0+\sum_kc_k)=\WU x_0+\sum_k\WU c_k$, y cada término es la aportación de una pieza.
+  \item La atribución directa no recoge el efecto \emph{indirecto}: una salida $a_1$ modifica también la entrada de las capas posteriores y, con ello, sus salidas.
+\end{enumerate}
+\resultado \textbf{el flujo es un canal aditivo compartido; la linealidad de $\WU$ permite la atribución directa, que omite los efectos a través de capas posteriores.}
+\comprobacion en el \cref{ej:atribucion}, $(1,0,-1)+(0{,}5;\allowbreak\ 1;\allowbreak\ 0{,}5)+(-0{,}5;\allowbreak\ 0{,}5;\allowbreak\ 1)=(1;\allowbreak\ 1{,}5;\allowbreak\ 0{,}5)=\WU(1;\allowbreak\ 1{,}5)$.
+\end{solucion}
+
+\begin{solucion}{eje:1-lens}
+\datos $\WU=\begin{pmatrix}1&0\\0&1\\-1&1\end{pmatrix}$, $x_0=(0,1)$, $a_1=(1,0)$, $m_1=(1,-1)$.
+\planteamiento aportaciones $\WU c$ para cada pieza; \emph{logit lens} $=\softmax(\WU\cdot\text{flujo parcial})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\WU x_0=(0;\allowbreak\ 1;\allowbreak\ -0+1)=(0,1,1)$; $\WU a_1=(1;\allowbreak\ 0;\allowbreak\ -1)$; $\WU m_1=(1;\allowbreak\ -1;\allowbreak\ -1-1)=(1,-1,-2)$. Suma: $(2,0,-2)$.
+  \item Embedding: logits $(0,1,1)$; $e^{0}=1$, $e^{1}=2{,}7183$; suma $1+2\cdot 2{,}7183=6{,}4366$; $P=(0{,}1554;\allowbreak\ 0{,}4223;\allowbreak\ 0{,}4223)$.
+  \item Tras la atención: flujo $(1,1)$, logits $(1,1,0)$; misma suma $6{,}4366$; $P=(0{,}4223;\allowbreak\ 0{,}4223;\allowbreak\ 0{,}1554)$.
+  \item Final: flujo $(2,0)$, logits $(2,0,-2)$; $e^{2}=7{,}389$, $e^{0}=1$, $e^{-2}=0{,}1353$; suma $8{,}5244$; $P=(0{,}8668;\allowbreak\ 0{,}1173;\allowbreak\ 0{,}0159)$.
+\end{enumerate}
+\resultado \textbf{aportaciones $(0,1,1)$, $(1,0,-1)$ y $(1,-1,-2)$; la predicción final es $t_0$ con probabilidad $0{,}867$.}
+\comprobacion $\WU(2,0)=(2,0,-2)$ coincide con la suma de aportaciones, y $0{,}8668+0{,}1173+0{,}0159=1{,}000$.
+\end{solucion}
+
+\begin{solucion}{eje:1-ov}
+\datos $d=768$, $d_h=64$, 12 cabezas.
+\planteamiento $\WOV=W_OW_V$ con $W_O\in\R^{d\times d_h}$ y $W_V\in\R^{d_h\times d}$ (\cref{prop:qkov}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Entradas: $768^{2}=589\,824$. Parámetros: $768\cdot 64+64\cdot 768=98\,304$, seis veces menos.
+  \item (b) $\rango\WOV\le\min(\rango W_O,\rango W_V)\le d_h=64$.
+  \item (c) $12\cdot 98\,304=1\,179\,648$. Como $12\cdot 64=768=d$, el total es $2\cdot d_h\cdot d\cdot 12=2d^{2}$.
+\end{enumerate}
+\resultado \textbf{(a) $589\,824$ entradas determinadas por $98\,304$ parámetros; (b) rango a lo sumo~64; (c) $1\,179\,648=2d^{2}$.}
+\comprobacion $2\cdot 768^{2}=2\cdot 589\,824=1\,179\,648$.
+\end{solucion}
+
+\begin{solucion}{eje:1-cero}
+\datos $\WU$ del \cref{ej:atribucion}, $\WE=\begin{pmatrix}1&0&1\\0&1&1\end{pmatrix}$.
+\planteamiento por la \cref{prop:cero}, la columna $t$ de $\WU\WE$ da los logits tras el token $t$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\WU\WE=\begin{pmatrix}1&0&1\\0&1&1\\-1&1&0\end{pmatrix}$ (fila $i$, columna $t$: logit de $t_i$ tras $t$).
+  \item (b) Tras $t_0$: logits $(1,0,-1)$, $P=(0{,}665;\allowbreak\ 0{,}245;\allowbreak\ 0{,}090)$, más probable $t_0$. Tras $t_1$: $(0,1,1)$, $P=(0{,}155;\allowbreak\ 0{,}422;\allowbreak\ 0{,}422)$, empate entre $t_1$ y $t_2$. Tras $t_2$: $(1,1,0)$, $P=(0{,}422;\allowbreak\ 0{,}422;\allowbreak\ 0{,}155)$, empate entre $t_0$ y $t_1$.
+  \item (c) Solo empatado: tras $t_1$, $t_2$ comparte la probabilidad máxima con $t_1$. La fila de $t_2$ es la de $t_1$ menos la de $t_0$, de modo que $z_2=z_1-z_0$; para que $t_2$ fuera el único máximo haría falta $z_0<0$ (para superar a $t_1$) y $z_1>2z_0$, y ninguna de las tres columnas tiene $z_0<0$. El modelo solo puede predecir lo que permiten las tres columnas de $\WU\WE$, una por token actual.
+\end{enumerate}
+\resultado \textbf{$t_2$ alcanza la máxima probabilidad, empatada con $t_1$, solo tras $t_1$}; el modelo es un modelo de bigramas cuya matriz de logits tiene rango a lo sumo $d=2$.
+\comprobacion $\det(\WU\WE)=1\cdot(0-1)-0+1\cdot(0+1)=0$, coherente con $\rango\le d=2$.
+\end{solucion}
+
+\begin{solucion}{eje:1-dos-cabezas}
+\datos dos capas con una cabeza cada una, patrones $A^{1},A^{2}$, sin normalización ni posiciones.
+\planteamiento aplicar la \cref{prop:qkov}(ii) a cada cabeza y la linealidad de $\WU$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Tras la capa~1: $x_{1,j}=\WE e_{t_j}+\sum_kA^{1}_{jk}\WOV^{1}\WE e_{t_k}$.
+  \item La cabeza~2 da
+  \[
+  h^{2}_i=\sum_jA^{2}_{ij}\WOV^{2}x_{1,j}=\sum_jA^{2}_{ij}\WOV^{2}\WE e_{t_j}+\sum_{j,k}A^{2}_{ij}A^{1}_{jk}\WOV^{2}\WOV^{1}\WE e_{t_k}.
+  \]
+  \item El flujo final es $x_{1,i}+h^{2}_i$; aplicando $\WU$ se obtienen los cuatro términos del enunciado.
+  \item El último término actúa como una cabeza con patrón $(A^{2}A^{1})_{ik}=\sum_jA^{2}_{ij}A^{1}_{jk}$ y circuito OV $\WOV^{2}\WOV^{1}$: es la composición~V o \emph{cabeza virtual}.
+  \item $\rango(\WOV^{2}\WOV^{1})\le\min(\rango\WOV^{2},\rango\WOV^{1})\le d_h$.
+\end{enumerate}
+\resultado \textbf{se obtiene la expansión pedida; el término final es una cabeza virtual de rango a lo sumo $d_h$.}
+\comprobacion si $\WOV^{1}=0$, desaparecen los términos segundo y cuarto y se recupera el \cref{teo:caminos} para la cabeza~2.
+\end{solucion}
+
+\begin{solucion}{eje:1-rms}
+\datos $\RMSNorm(v)=v/\RMS(v)$, $x_0=(1,0)$, $a_1=(0{,}5;\allowbreak\ 1)$, $\WU$ del \cref{ej:atribucion}.
+\planteamiento comparar $\RMSNorm(x_0)+\RMSNorm(a_1)$ con $\RMSNorm(x_0+a_1)$ y aplicar la \cref{prop:rmsnorm}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\RMS(x_0)=\sqrt{1/2}=0{,}7071$, $\RMSNorm(x_0)=(1{,}414;\allowbreak\ 0)$. $\RMS(a_1)=\sqrt{1{,}25/2}=0{,}7906$, $\RMSNorm(a_1)=(0{,}6325;\allowbreak\ 1{,}2649)$. Suma: $(2{,}047;\allowbreak\ 1{,}265)$.
+  \item $x_0+a_1=(1{,}5;\allowbreak\ 1)$, $\RMS=\sqrt{3{,}25/2}=1{,}2748$, $\RMSNorm=(1{,}1767;\allowbreak\ 0{,}7845)\neq(2{,}047;\allowbreak\ 1{,}265)$.
+  \item (b) Con $s=1{,}2748$ fija: $\WU x_0/s=(0{,}7845;\allowbreak\ 0;\allowbreak\ -0{,}7845)$ y $\WU a_1/s=(0{,}3922;\allowbreak\ 0{,}7845;\allowbreak\ 0{,}3922)$. Suma: $(1{,}1767;\allowbreak\ 0{,}7845;\allowbreak\ -0{,}3922)$.
+  \item (c) Para $c>0$, $\RMS(cv)=c\RMS(v)$ y $\RMSNorm(cv)=\RMSNorm(v)$. Si $\RMSNorm$ fuera aditiva, sería también homogénea de grado~1 sobre los racionales positivos ($\RMSNorm(2v)=2\RMSNorm(v)$), lo que contradice la invariancia salvo para $v=0$. Cualquier reparto aditivo exige, por tanto, fijar la escala.
+\end{enumerate}
+\resultado \textbf{normalizar por separado da $(2{,}047;\allowbreak\ 1{,}265)$ y no $(1{,}177;\allowbreak\ 0{,}785)$; con la escala congelada $s=1{,}275$ las atribuciones suman exactamente los logits.}
+\comprobacion $\WU(1{,}1767;\allowbreak\ 0{,}7845)=(1{,}1767;\allowbreak\ 0{,}7845;\allowbreak\ -0{,}3922)$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-selectividad}
+\datos sonda lineal: $97{,}2\,\%$ (tarea) y $71{,}2\,\%$ (control); perceptrón: $97{,}3\,\%$ y $92{,}8\,\%$.
+\planteamiento selectividad $=$ exactitud en la tarea $-$ exactitud en el control (\cref{def:control}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Lineal: $97{,}2-71{,}2=26{,}0$ puntos. Perceptrón: $97{,}3-92{,}8=4{,}5$ puntos.
+  \item El perceptrón resuelve casi igual de bien una tarea que solo se aprende memorizando: su exactitud dice poco de la representación.
+  \item La conclusión errónea sería preferir el perceptrón por su $0{,}1$ de exactitud adicional y atribuir esa mejora a la representación, cuando puede deberse a la capacidad de memorizar de la sonda.
+\end{enumerate}
+\resultado \textbf{selectividades de 26{,}0 y 4{,}5 puntos; la sonda lineal es la que informa sobre la representación.}
+\comprobacion las dos sondas casi empatan en la tarea ($97{,}2$ frente a $97{,}3$), de modo que toda la diferencia de selectividad procede del control.
+\end{solucion}
+
+\begin{solucion}{eje:2-sonda}
+\datos $w=(1,1)$, $w_0=-1$; flujos del \cref{eje:1-lens}: $(0,1)$, $(1,1)$, $(2,0)$; $a_1=(1,0)$, $m_1=(1,-1)$.
+\planteamiento $z=w\T x+w_0$, $p=\sigma(z)$; la aportación de cada pieza a $z$ es $w\T c$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Embedding: $z=0+1-1=0$, $\sigma(0)=0{,}5$.
+  \item Tras la atención: $z=1+1-1=1$, $\sigma(1)=1/(1+e^{-1})=1/1{,}3679=0{,}7311$.
+  \item Final: $z=2+0-1=1$, $\sigma=0{,}7311$.
+  \item Aportaciones: $w\T a_1=1$ y $w\T m_1=1-1=0$.
+\end{enumerate}
+\resultado \textbf{$p=0{,}5\to 0{,}731\to 0{,}731$: la atención escribe la propiedad y el MLP la deja igual.}
+\comprobacion $m_1=(1,-1)$ es ortogonal a $w=(1,1)$: el MLP cambia mucho los logits (\cref{eje:1-lens}), pero en una dirección que la sonda no ve.
+\end{solucion}
+
+\begin{solucion}{eje:2-ig}
+\datos $F(x)=x_1x_2$, $x'=(0,0)$, $x=(2,3)$.
+\planteamiento \cref{def:ig} con el camino $\gamma(\alpha)=\alpha x$; $\partial F/\partial x_1=x_2$ y $\partial F/\partial x_2=x_1$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sobre el camino, $\partial_1F(\alpha x)=3\alpha$ y $\partial_2F(\alpha x)=2\alpha$.
+  \item $\IG_1=2\int_0^13\alpha\,d\alpha=2\cdot\tfrac32=3$; $\IG_2=3\int_0^12\alpha\,d\alpha=3\cdot 1=3$.
+  \item Completitud: $3+3=6=F(2,3)-F(0,0)$.
+  \item Gradiente por entrada: $x_1\partial_1F(x)=2\cdot 3=6$ y $x_2\partial_2F(x)=3\cdot 2=6$; suma $12\neq 6$.
+\end{enumerate}
+\resultado \textbf{$\IG=(3,3)$, completo; gradiente por entrada $(6,6)$, que suma el doble de $F(x)$.}
+\comprobacion para $F$ homogénea de grado~2, el teorema de Euler da $\sum_ix_i\partial_iF=2F$, lo que explica el factor~2.
+\end{solucion}
+
+\begin{solucion}{eje:2-shap}
+\datos $f(x)=x_1x_2+x_3$, $x=(1,2,3)$, referencia nula.
+\planteamiento evaluar $v(S)$, aplicar la \cref{def:shapley} con pesos $\tfrac13$ ($\abs S=0$ o $2$) y $\tfrac16$ ($\abs S=1$), y la \cref{def:ig}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $v(\varnothing)=0$, $v(\{1\})=0$, $v(\{2\})=0$, $v(\{3\})=3$, $v(\{1,2\})=2$, $v(\{1,3\})=3$, $v(\{2,3\})=3$, $v(\{1,2,3\})=5$.
+  \item (b) $\phi_1=\tfrac13(0-0)+\tfrac16(2-0)+\tfrac16(3-3)+\tfrac13(5-3)=\tfrac13+\tfrac23=1$. Por simetría entre 1 y 2, $\phi_2=1$.
+  \item $\phi_3=\tfrac13(3-0)+\tfrac16(3-0)+\tfrac16(3-0)+\tfrac13(5-2)=1+\tfrac12+\tfrac12+1=3$.
+  \item Eficiencia: $1+1+3=5=v(N)$.
+  \item (c) $\IG_1=1\int_0^1(2\alpha)\,d\alpha=1$, $\IG_2=2\int_0^1(1\cdot\alpha)\,d\alpha=1$, $\IG_3=3\int_0^11\,d\alpha=3$.
+\end{enumerate}
+\resultado \textbf{$\phi=(1,1,3)$ y $\IG=(1,1,3)$: coinciden.} El término aditivo se atribuye entero a $x_3$ y la interacción $x_1x_2=2$ se reparte a partes iguales.
+\comprobacion es un caso particular del \cref{eje:2-cuadratica}, con $w=(0,0,1)$ y $b_{12}=1$: $\IG_1=\tfrac12\cdot 1\cdot 1\cdot 2=1$.
+\end{solucion}
+
+\begin{solucion}{eje:2-cuadratica}
+\datos $F(x)=\sum_iw_ix_i+\sum_{i<j}b_{ij}x_ix_j$, base~0.
+\planteamiento (a) integrar la derivada parcial a lo largo de $\alpha x$; (b) usar la forma por permutaciones de la \cref{prop:shapley}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\partial_iF(x)=w_i+\sum_{j\neq i}b_{ij}x_j$. En $\alpha x$: $w_i+\alpha\sum_{j\neq i}b_{ij}x_j$.
+  \item $\IG_i=x_i\int_0^1\bigl(w_i+\alpha\sum_{j\neq i}b_{ij}x_j\bigr)d\alpha=x_i\bigl(w_i+\tfrac12\sum_{j\neq i}b_{ij}x_j\bigr)$.
+  \item (b) Para $S\not\ni i$: $v(S\cup\{i\})-v(S)=w_ix_i+\sum_{j\in S}b_{ij}x_ix_j$, porque los términos que no contienen $i$ se cancelan.
+  \item En una ordenación aleatoria uniforme, cada $j\neq i$ precede a $i$ con probabilidad $\tfrac12$. Por la linealidad de la esperanza, $\phi_i=\E\bigl[w_ix_i+\sum_{j\neq i}[j\prec i]\,b_{ij}x_ix_j\bigr]=w_ix_i+\tfrac12\sum_{j\neq i}b_{ij}x_ix_j$.
+  \item (c) Cada interacción $b_{ij}x_ix_j$ se reparte a partes iguales entre sus dos variables: ambos métodos tratan de forma simétrica a los dos factores de un producto.
+\end{enumerate}
+\resultado \textbf{$\IG_i=\phi_i=w_ix_i+\tfrac12\sum_{j\neq i}b_{ij}x_ix_j$.}
+\comprobacion completitud:
+\[
+\sum_i\IG_i=\sum_iw_ix_i+\tfrac12\sum_i\sum_{j\neq i}b_{ij}x_ix_j=\sum_iw_ix_i+\sum_{i<j}b_{ij}x_ix_j=F(x),
+\]
+porque cada par aparece dos veces en la doble suma.
+\end{solucion}
+
+\begin{solucion}{eje:2-cs229}
+\datos $\tilde h_1=(1,2)$, $y_1=1$; $\tilde h_2=(1,0)$, $y_2=0$; $\theta_0=0$.
+\planteamiento $\nabla J=\frac1n\sum_i(\sigma_i-y_i)\tilde h_i$ y $H=\frac1n\sum_i\sigma_i(1-\sigma_i)\tilde h_i\tilde h_i\T$, con $\sigma_i=\sigma(\theta\T\tilde h_i)$; paso de Newton $\theta_1=\theta_0-H^{-1}\nabla J$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con $J_i=-y_i\ln\sigma_i-(1-y_i)\ln(1-\sigma_i)$ y $\sigma'=\sigma(1-\sigma)$, se obtiene $\nabla J_i=(\sigma_i-y_i)\tilde h_i$. Derivando otra vez, $\nabla^{2}J_i=\sigma_i(1-\sigma_i)\tilde h_i\tilde h_i\T$. Para todo $z$, $z\T Hz=\frac1n\sum_i\sigma_i(1-\sigma_i)(z\T\tilde h_i)^{2}\ge 0$, porque $\sigma_i(1-\sigma_i)>0$.
+  \item (b) En $\theta_0=0$, $\sigma_1=\sigma_2=0{,}5$. Gradiente: $\tfrac12[(0{,}5-1)(1,2)+(0{,}5-0)(1,0)]=\tfrac12(0,-1)=(0;\allowbreak\ -0{,}5)$.
+  \item Hessiano: $\tfrac12\cdot 0{,}25\,[(1,2)(1,2)\T+(1,0)(1,0)\T]=0{,}125\begin{pmatrix}2&2\\2&4\end{pmatrix}=\begin{pmatrix}0{,}25&0{,}25\\0{,}25&0{,}5\end{pmatrix}$.
+  \item $\det H=0{,}125-0{,}0625=0{,}0625$; $H^{-1}=16\begin{pmatrix}0{,}5&-0{,}25\\-0{,}25&0{,}25\end{pmatrix}=\begin{pmatrix}8&-4\\-4&4\end{pmatrix}$.
+  \item $H^{-1}\nabla J=(8\cdot 0-4\cdot(-0{,}5);\allowbreak\ -4\cdot 0+4\cdot(-0{,}5))=(2,-2)$; $\theta_1=(-2,2)$.
+  \item (c) $J(\theta_0)=\ln 2=0{,}6931$. Con $\theta_1$: $\theta_1\T\tilde h_1=2$, $\sigma=0{,}8808$; $\theta_1\T\tilde h_2=-2$, $\sigma=0{,}1192$. $J(\theta_1)=-\tfrac12[\ln 0{,}8808+\ln(1-0{,}1192)]=-\ln 0{,}8808=0{,}1269$.
+\end{enumerate}
+\resultado \textbf{$\nabla J=(0;\allowbreak\ -0{,}5)$, $H=\begin{pmatrix}0{,}25&0{,}25\\0{,}25&0{,}5\end{pmatrix}$, $\theta_1=(-2,2)$; la pérdida baja de $0{,}693$ a $0{,}127$.}
+\comprobacion $H\,(2,-2)=(0{,}5-0{,}5;\allowbreak\ 0{,}5-1)=(0;\allowbreak\ -0{,}5)=\nabla J$. Los datos son separables, de modo que la pérdida puede seguir bajando hacia~0 en pasos posteriores.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-conceptos}
+\planteamiento contrastar con el \cref{ej:pentagono} y la \cref{prop:rotacion}.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item La superposición tiene un coste, la interferencia, que solo se paga cuando varias características están activas a la vez. Con dispersión $S$ alta, la probabilidad de que dos lo estén es del orden de $(1-S)^{2}$, mucho menor que la de que lo esté una, $(1-S)$: el beneficio de representar más características supera el coste.
+  \item La $\relu$ con sesgo negativo anula las interferencias pequeñas: si solo está activa la característica~$i$, las salidas de las demás son $\relu(W_j\T W_i+b_j)$, que valen~0 cuando $W_j\T W_i<-b_j$. Sin ella, el modelo es lineal y la superposición no aporta nada.
+  \item La $\relu$ del MLP actúa coordenada a coordenada y privilegia la base de las neuronas. El flujo residual solo se usa mediante productos por matrices, y cualquier rotación da un modelo equivalente (\cref{prop:rotacion}): sus coordenadas no tienen significado propio.
+\end{enumerate}
+\resultado \textbf{(a) la interferencia es rara si las características son dispersas; (b) la $\relu$ filtra la interferencia; (c) solo las capas con no linealidades coordenada a coordenada tienen base privilegiada.}
+\comprobacion en el pentágono con $x=e_1$, las interferencias $0{,}309$ y $-0{,}809$ quedan por debajo de $0{,}31$ y la $\relu$ las anula.
+\end{solucion}
+
+\begin{solucion}{eje:3-pentagono}
+\datos $W_k$ a $72^\circ(k-1)$, $b=-0{,}31$, $x=e_1+e_3$.
+\planteamiento $(W\T W)_{ij}=\cos(\text{ángulo entre }W_i\text{ y }W_j)$; $\hat x=\relu(W\T Wx+b)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\cos 72^\circ=0{,}309$ (vecinos, $\abs{i-j}\in\{1,4\}$) y $\cos 144^\circ=-0{,}809$ (no vecinos):
+  \[
+  W\T W=\begin{pmatrix}1&0{,}309&-0{,}809&-0{,}809&0{,}309\\0{,}309&1&0{,}309&-0{,}809&-0{,}809\\-0{,}809&0{,}309&1&0{,}309&-0{,}809\\-0{,}809&-0{,}809&0{,}309&1&0{,}309\\0{,}309&-0{,}809&-0{,}809&0{,}309&1\end{pmatrix}.
+  \]
+  \item $W\T Wx=$ columna~1 $+$ columna~3 $=(0{,}191;\allowbreak\ 0{,}618;\allowbreak\ 0{,}191;\allowbreak\ -0{,}5;\allowbreak\ -0{,}5)$.
+  \item Sumando $b$: $(-0{,}119;\allowbreak\ 0{,}308;\allowbreak\ -0{,}119;\allowbreak\ -0{,}81;\allowbreak\ -0{,}81)$; tras la $\relu$: $\hat x=(0;\allowbreak\ 0{,}308;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$.
+  \item Error: $(1-0)^{2}+(0-0{,}308)^{2}+(1-0)^{2}=2{,}095$.
+  \item $W_1+W_3=(1+\cos 144^\circ;\allowbreak\ \sin 144^\circ)=(0{,}191;\allowbreak\ 0{,}588)$, de norma $0{,}618$ y ángulo $72^\circ$: apunta en la dirección de $W_2$.
+\end{enumerate}
+\resultado \textbf{$\hat x=(0;\allowbreak\ 0{,}308;\allowbreak\ 0;\allowbreak\ 0;\allowbreak\ 0)$ con error $2{,}095$: el modelo ve la característica intermedia y pierde las dos activas.}
+\comprobacion $\hat x_2=0{,}618-0{,}31=0{,}308$ y $0{,}618=2\cos 72^\circ$.
+\end{solucion}
+
+\begin{solucion}{eje:3-bhk1}
+\datos $u$ uniforme en $\mathbb{S}^{d-1}$; $d=3$ y $d=4096$.
+\planteamiento por el \cref{teo:coseno} con $v=e_1$, $\E[u_1]=0$ y $\E[u_1^{2}]=1/d$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\Var(u_1)=\E[u_1^{2}]-\E[u_1]^{2}=1/d$.
+  \item $d=3$: $\Var=1/3=0{,}3333$; desviación $\sqrt{1/3}=0{,}5774$.
+  \item $d=4096$: $\Var=1/4096=2{,}441\cdot 10^{-4}$; desviación $1/64=0{,}01563$.
+\end{enumerate}
+\resultado \textbf{$\Var(u_1)=1/d$: $1/3$ en $d=3$ y $1/4096$, con desviación $0{,}0156$, en $d=4096$.}
+\comprobacion en $d=1$ la esfera es $\{-1,1\}$ y $\Var(u_1)=1=1/d$.
+\end{solucion}
+
+\begin{solucion}{eje:3-bhk2}
+\datos $x,y\in\R^{d}$ con componentes $\mathcal{N}(0,1)$ independientes; $d=400$; umbral $0{,}15$.
+\planteamiento $x\T y=\sum_kx_ky_k$ es suma de $d$ términos independientes; se aplica el teorema central del límite.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\E[x_ky_k]=\E[x_k]\E[y_k]=0$; luego $\E[x\T y]=0$.
+  \item $\Var(x_ky_k)=\E[x_k^{2}]\E[y_k^{2}]-0=1$; por independencia, $\Var(x\T y)=d$.
+  \item (b) $\cos=x\T y/(\norm x\norm y)\approx x\T y/d$, con desviación $\sqrt d/d=1/\sqrt d$.
+  \item (c) $1/\sqrt{400}=0{,}05$; $0{,}15/0{,}05=3$ desviaciones; $P(\abs Z>3)=0{,}0027$.
+\end{enumerate}
+\resultado \textbf{$\E[x\T y]=0$, $\Var(x\T y)=d$, desviación del coseno $\approx 1/\sqrt d=0{,}05$ y $P(\abs{\cos}>0{,}15)\approx 0{,}003$.}
+\comprobacion coincide con el \cref{teo:coseno}: la dirección de un vector gaussiano es uniforme en la esfera.
+\end{solucion}
+
+\begin{solucion}{eje:3-casi}
+\datos $u$ uniforme en $\mathbb{S}^{d-1}$, $v$ unitario fijo; $d=512$, $\varepsilon=0{,}25$.
+\planteamiento simetría por transformaciones ortogonales más $\sum_ku_k^{2}=1$; después, sustituir en $N<e^{d\varepsilon^{2}/4}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La medida uniforme en la esfera es invariante por transformaciones ortogonales, porque estas conservan las distancias y llevan la esfera en sí misma. Sea $Q$ ortogonal con $Qv=e_1$ (existe: se completa $v$ a una base ortonormal y $Q\T$ es la matriz que la tiene por columnas). Entonces $u\T v=(Qu)\T e_1$ y $Qu\sim u$, luego $u\T v\sim u_1$.
+  \item Una permutación de coordenadas es una matriz ortogonal, de modo que $(u_1,\dots,u_d)$ y $(u_{\sigma(1)},\dots,u_{\sigma(d)})$ tienen la misma distribución: $\E[u_1^{2}]=\dots=\E[u_d^{2}]$.
+  \item $\sum_ku_k^{2}=1$; tomando esperanzas, $\sum_k\E[u_k^{2}]=1$, y cada término vale $1/d$.
+  \item Cota: $d\varepsilon^{2}/4=512\cdot 0{,}0625/4=8$; $N<e^{8}=2981$.
+  \item $2981/512=5{,}82$.
+\end{enumerate}
+\resultado \textbf{$\E[(u\T v)^{2}]=1/d$; en $d=512$ la cota garantiza unas 2981 direcciones, $5{,}8$ veces la dimensión.}
+\comprobacion la desviación del coseno en $d=512$ es $1/\sqrt{512}=0{,}044$, y $0{,}25$ son $5{,}7$ desviaciones: la cota es pesimista.
+\end{solucion}
+
+\begin{solucion}{eje:3-bhk3}
+\datos con probabilidad $1-O(1/n)$, $\norm{x_i}\ge 1-2\ln n/d$ y $\abs{x_i\T x_j}\le\sqrt{6\ln n/(d-1)}$; $n=d=1000$.
+\planteamiento $\cos\theta_{ij}=x_i\T x_j/(\norm{x_i}\norm{x_j})$; se acota el numerador por arriba y el denominador por abajo.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item En el suceso del enunciado, $\abs{\cos\theta_{ij}}\le\sqrt{6\ln n/(d-1)}\,/\,(1-2\ln n/d)^{2}$.
+  \item Si $\ln n=o(d)$, el numerador tiende a~0 y el denominador a~1; para $d$ grande, la cota es menor que $\cos 45^\circ=0{,}7071$, y entonces $45^\circ<\theta_{ij}<135^\circ$ para todo par, con probabilidad $1-O(1/n)$.
+  \item $\ln 1000=6{,}908$; numerador $\sqrt{6\cdot 6{,}908/999}=\sqrt{0{,}04149}=0{,}2037$.
+  \item Norma mínima $1-2\cdot 6{,}908/1000=0{,}9862$; al cuadrado, $0{,}9726$.
+  \item Cota: $0{,}2037/0{,}9726=0{,}2094$; ángulo $\ge\arccos 0{,}2094=77{,}9^\circ$.
+\end{enumerate}
+\resultado \textbf{con alta probabilidad todos los ángulos superan $45^\circ$; con $n=d=1000$, superan $77{,}9^\circ$.}
+\comprobacion la desviación del coseno es $\approx 1/\sqrt{1000}=0{,}032$ (\cref{eje:3-bhk2}), y $0{,}21$ son unas $6{,}6$ desviaciones, margen holgado para mil puntos.
+\end{solucion}
+
+\begin{solucion}{eje:3-fase}
+\datos $n=2$, $m=1$, $I_i=1$; $x_i=0$ con probabilidad $S$ y uniforme en $[0,1]$ si no; $q=1-S$.
+\planteamiento calcular la pérdida esperada de cada solución por casos según el número de características activas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Momentos: $\E[x_i]=q/2$ y $\E[x_i^{2}]=q/3$, porque $\E[U^{2}]=1/3$ para $U$ uniforme en $[0,1]$.
+  \item A: $\hat x_1=\relu(x_1)=x_1$ (error nulo) y $\hat x_2=\relu(b_2)=q/2$. $L_A=\Var(x_2)=q/3-q^{2}/4$.
+  \item B: $h=x_1-x_2$ y $\hat x=(\relu(x_1-x_2),\relu(x_2-x_1))$. Con a lo sumo una activa, $\hat x=x$ y el error es nulo.
+  \item B con las dos activas (probabilidad $q^{2}$): si $x_1>x_2$, $\hat x=(x_1-x_2,0)$ y el error es $x_2^{2}+x_2^{2}=2\min(x_1,x_2)^{2}$; por simetría, lo mismo si $x_2>x_1$.
+  \item El mínimo de dos uniformes independientes tiene densidad $2(1-t)$ en $[0,1]$: $\E[\min^{2}]=\int_0^12t^{2}(1-t)\,dt=2(\tfrac13-\tfrac14)=\tfrac16$. Error condicionado: $\tfrac13$. $L_B=q^{2}/3$.
+  \item B mejor $\iff q^{2}/3<q/3-q^{2}/4\iff\tfrac{7q}{12}<\tfrac13\iff q<\tfrac47\iff S>\tfrac37=0{,}4286$.
+  \item (c) $S=0{,}7$, $q=0{,}3$: $L_A=0{,}1-0{,}0225=0{,}0775$ y $L_B=0{,}09/3=0{,}03$.
+\end{enumerate}
+\resultado \textbf{$L_A=q/3-q^{2}/4$ y $L_B=q^{2}/3$; la solución antipodal es mejor si $S>3/7\approx 0{,}43$; en $S=0{,}7$, $L_A=0{,}0775$ y $L_B=0{,}03$.}
+\comprobacion en $S=3/7$ ($q=4/7$), $L_A=0{,}1905-0{,}0816=0{,}1088$ y $L_B=0{,}3265/3=0{,}1088$: las curvas se cortan.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-vf}
+\planteamiento contrastar cada afirmación con los temas~1 a~4.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Verdadera.} Sin $\relu$, $\hat x=W\T Wx+b$ es afín con $\rango W\T W\le m$, y el óptimo guarda las $m$ características más importantes, como el análisis de componentes principales (\cref{tema:3}).
+  \item \textbf{Falsa.} La penalización empuja hacia la monosemanticidad, pero no la garantiza: hay latentes polisemánticos, latentes muertos y características que se dividen al aumentar $F$ (\cref{obs:limites-sae}).
+  \item \textbf{Falsa.} Decodificable no es usado; hace falta intervenir (\cref{obs:usado}).
+  \item \textbf{Verdadera.} En las últimas capas el flujo está casi en la base que lee $\WU$; en las primeras, no (\cref{sec:1-norm}).
+\end{enumerate}
+\resultado \textbf{(a) V; (b) F; (c) F; (d) V.}
+\comprobacion en la práctica, con $S=0$ (sin ventaja para la superposición) el modelo de juguete guarda solo dos características, como predice~(a).
+\end{solucion}
+
+\begin{solucion}{eje:4-sae}
+\datos $d_1=(1,0)$, $d_2=(0,1)$, $d_3=(1/\sqrt2,1/\sqrt2)$, $x=(1,1)$, $\lambda=0{,}2$.
+\planteamiento pérdida $=\norm{x-\sum_jf_jd_j}^{2}+\lambda\sum_jf_j\norm{d_j}$, con $\norm{d_j}=1$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $f=(1,1,0)$: reconstrucción $(1,1)$, error~0; $\norm f_1=2$; pérdida $0{,}2\cdot 2=0{,}4$.
+  \item $f=(0,0,\sqrt2)$: reconstrucción $\sqrt2(1/\sqrt2,1/\sqrt2)=(1,1)$, error~0; $\norm f_1=\sqrt2=1{,}414$; pérdida $0{,}2828$.
+\end{enumerate}
+\resultado \textbf{$0{,}4$ frente a $0{,}283$: gana el código de un solo latente.}
+\comprobacion es la desigualdad $\abs a+\abs b\ge\sqrt{a^{2}+b^{2}}$ con $a=b=1$: $2\ge 1{,}414$.
+\end{solucion}
+
+\begin{solucion}{eje:4-umbral}
+\datos $g(f)=(a-f)^{2}+\lambda f$, $f\ge 0$, $\lambda=0{,}6$; $a=0{,}8$ y $a=0{,}2$.
+\planteamiento \cref{prop:umbral}: $f^{*}=\max(a-\lambda/2,0)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\lambda/2=0{,}3$. Con $a=0{,}8$: $f^{*}=0{,}5$. Con $a=0{,}2$: $0{,}2-0{,}3<0$, luego $f^{*}=0$.
+  \item $g(0{,}5)=0{,}09+0{,}30=0{,}39$; $g(0{,}8)=0+0{,}48=0{,}48$; $g(0)=0{,}64$.
+\end{enumerate}
+\resultado \textbf{$f^{*}=0{,}5$ y $f^{*}=0$.} La penalización anula las activaciones menores que $\lambda/2$ (dispersión) y encoge en $\lambda/2$ las demás (sesgo).
+\comprobacion $g'(0{,}5)=-2(0{,}3)+0{,}6=0$.
+\end{solucion}
+
+\begin{solucion}{eje:4-metricas}
+\datos tres activaciones, sus reconstrucciones y sus códigos con $F=4$.
+\planteamiento \cref{def:metricas}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Errores: $\norm{(0{,}1;\allowbreak\ 0)}^{2}=0{,}01$; $\norm{(0;\allowbreak\ 0{,}2)}^{2}=0{,}04$; $\norm{(0{,}2;\allowbreak\ 0{,}2)}^{2}=0{,}08$. Suma: $0{,}13$.
+  \item Media $\bar x=(2/3,\ 1)$. Desviaciones: $(1/3,-1)$, $(-2/3,1)$, $(1/3,0)$, con normas al cuadrado $10/9$, $13/9$ y $1/9$. Suma: $24/9=2{,}667$.
+  \item $\FVU=0{,}13/2{,}667=0{,}0488$.
+  \item L0: $1$, $1$ y $2$ latentes activos; media $4/3=1{,}333$.
+  \item El latente~4 no se activa nunca: 1 de 4, el $25\,\%$, está muerto en esta muestra.
+\end{enumerate}
+\resultado \textbf{FVU $=0{,}049$, L0 medio $=1{,}33$ y un $25\,\%$ de latentes muertos.}
+\comprobacion $1-\FVU=0{,}951$: el diccionario explica el $95\,\%$ de la varianza.
+\end{solucion}
+
+\begin{solucion}{eje:4-d2l}
+\datos pérdida $\mathcal{L}(w)+\lambda\abs w$; $\eta=0{,}1$, $\lambda=0{,}5$; casos $(w,g)=(0{,}3;\allowbreak\ 0{,}2)$ y $(0{,}02;\allowbreak\ -0{,}1)$.
+\planteamiento el subgradiente de $\abs w$ es $\signo(w)$ si $w\neq 0$; la regla proximal aplica el umbral suave.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $w\leftarrow w-\eta\bigl(g+\lambda\,\signo(w)\bigr)$.
+  \item (b) Caso~1: $0{,}3-0{,}1\cdot(0{,}2+0{,}5)=0{,}3-0{,}07=0{,}23$.
+  \item Caso~2: $0{,}02-0{,}1\cdot(-0{,}1+0{,}5)=0{,}02-0{,}04=-0{,}02$. El peso cruza el cero y, en el paso siguiente, el signo cambia: oscila sin llegar a~0.
+  \item (c) Proximal, caso~2: $z=0{,}02+0{,}01=0{,}03$; $\eta\lambda=0{,}05$; $\abs z-0{,}05<0$, luego $w=0$ exactamente.
+  \item Proximal, caso~1: $z=0{,}3-0{,}02=0{,}28$; $0{,}28-0{,}05=0{,}23$, igual que con el subgradiente.
+\end{enumerate}
+\resultado \textbf{subgradiente: $0{,}23$ y $-0{,}02$ (oscila); proximal: $0{,}23$ y $0$.}
+\comprobacion la regla proximal es la \cref{prop:umbral} con otra escala: anula de verdad los pesos pequeños, como pretende un SAE.
+\end{solucion}
+
+\begin{solucion}{eje:4-ortonormal}
+\datos $F=d$, $b_d=0$, $W_dW_d\T=I$.
+\planteamiento usar que una matriz cuadrada con filas ortonormales es ortogonal y conserva la norma; después, aplicar la \cref{prop:umbral} coordenada a coordenada.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Si $W_d$ es cuadrada y $W_dW_d\T=I$, entonces $W_d\T W_d=I$. Por tanto, $\norm{x-W_d\T f}^{2}=\norm{W_d(x-W_d\T f)}^{2}=\norm{W_dx-f}^{2}$.
+  \item (b) $\norm{W_dx-f}^{2}+\lambda\sum_jf_j=\sum_j\bigl[(d_j\T x-f_j)^{2}+\lambda f_j\bigr]$: cada sumando depende de una sola $f_j$ y las restricciones $f_j\ge 0$ son independientes. Por la \cref{prop:umbral} con $a=d_j\T x$, $f_j^{*}=\max(d_j\T x-\lambda/2,0)=\relu(d_j\T x-\lambda/2)$.
+  \item (c) Con $W_e=W_d\T$, $W_e\T x=W_dx=(d_j\T x)_j$, y con $b_e=-\tfrac\lambda2\mathbf{1}$ el codificador da $\relu(d_j\T x-\lambda/2)=f_j^{*}$.
+  \item (d) Si $F>d$, $W_d\T W_d$ tiene rango $d<F$ y no es la identidad: el paso~1 falla y los latentes quedan acoplados. En el \cref{eje:4-sae} con $\lambda=0{,}2$, el umbral coordenada a coordenada daría $f=(0{,}9;\allowbreak\ 0{,}9;\allowbreak\ 1{,}314)$, que reconstruye $(1{,}829;\allowbreak\ 1{,}829)$, lejos de $x=(1,1)$.
+\end{enumerate}
+\resultado \textbf{con un diccionario ortonormal, el código óptimo es $\relu(W_dx-\lambda/2)$, exactamente un codificador de SAE con pesos atados; con $F>d$ el codificador solo puede aproximarlo.}
+\comprobacion con $x=(0{,}8;\allowbreak\ 0{,}2)$, la base canónica y $\lambda=0{,}6$ se obtiene $f^{*}=(0{,}5;\allowbreak\ 0)$, como en el \cref{eje:4-umbral}.
+\end{solucion}
+
+\begin{solucion}{eje:4-map}
+\datos $y^{(i)}=\theta\T x^{(i)}+\varepsilon_i$, $\varepsilon_i\sim\mathcal{N}(0,\sigma^{2})$; $\theta_j\sim$ Laplace$(0,b)$; $\sigma=0{,}5$, $b=0{,}1$.
+\planteamiento $\theta_{\mathrm{MAP}}=\arg\min\bigl[-\ln p(y\mid X,\theta)-\ln p(\theta)\bigr]$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $-\ln p(y\mid X,\theta)=\frac{1}{2\sigma^{2}}\norm{X\theta-y}^{2}+\text{cte}$.
+  \item $-\ln p(\theta)=\frac1b\sum_j\abs{\theta_j}+\text{cte}=\frac1b\norm\theta_1+\text{cte}$.
+  \item Las constantes no cambian el $\arg\min$, y multiplicar por $2\sigma^{2}>0$ tampoco: $\theta_{\mathrm{MAP}}=\arg\min\bigl[\norm{X\theta-y}^{2}+\frac{2\sigma^{2}}{b}\norm\theta_1\bigr]$.
+  \item (b) $\gamma=2\sigma^{2}/b=2\cdot 0{,}25/0{,}1=5$.
+  \item (c) La pérdida de un SAE, $\norm{x-\hat x}^{2}+\lambda\sum_jf_j$, es del mismo modo el MAP con ruido gaussiano en la reconstrucción y una distribución \emph{a priori} exponencial (Laplace restringida a $f\ge 0$) para cada latente.
+\end{enumerate}
+\resultado \textbf{$\gamma=2\sigma^{2}/b=5$.}
+\comprobacion si $b\to\infty$ (\emph{a priori} plana) o $\sigma\to 0$ (datos sin ruido), $\gamma\to 0$ y se recuperan los mínimos cuadrados.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-induccion}
+\datos contexto «\ldots{} Harry Potter \ldots{} Harry».
+\planteamiento seguir el circuito de la \cref{prop:induccion}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Capa~1, cabeza de token previo: cada posición atiende a la anterior y copia su identidad; en la posición de «Potter» escribe «el token anterior era Harry».
+  \item Capa~2, cabeza de inducción: en el último «Harry», su consulta busca claves que digan «el anterior era Harry». La clave de «Potter» la contiene, porque se forma con lo que escribió la capa~1: composición~K.
+  \item La cabeza atiende sobre todo a «Potter» y su circuito OV copia ese token a los logits.
+  \item Una cabeza que buscara el mismo token que el actual atendería al primer «Harry» y copiaría «Harry».
+\end{enumerate}
+\resultado \textbf{token previo (capa~1) más composición~K más copia OV (capa~2) predicen «Potter».}
+\comprobacion es la regla $[A][B]\ldots[A]\to[B]$ de la \cref{def:induccion} con $A=$ «Harry» y $B=$ «Potter».
+\end{solucion}
+
+\begin{solucion}{eje:5-perdida}
+\datos $K=32\,000$; secuencia de $T$ tokens repetida; probabilidad de copia $0{,}8$.
+\planteamiento pérdida uniforme $\ln K$; pérdida al copiar $-\ln 0{,}8$; media sobre las dos mitades.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\ln 32\,000=10{,}373$ nats por token en ambas mitades.
+  \item (b) Segunda mitad: $-\ln 0{,}8=0{,}223$. Media: $(10{,}373+0{,}223)/2=5{,}298$ nats.
+  \item (c) Si $250\le T<500$, el token~50 está en la primera mitad y el~500 en la segunda: puntuación $0{,}223-10{,}373=-10{,}15<0$.
+\end{enumerate}
+\resultado \textbf{(a) $10{,}37$; (b) $5{,}30$ nats por token; (c) negativa, $-10{,}15$: el modelo mejora con el contexto.}
+\comprobacion sin inducción, la puntuación del modelo uniforme es $10{,}373-10{,}373=0$.
+\end{solucion}
+
+\begin{solucion}{eje:5-parcheo}
+\datos $M=\begin{pmatrix}1&0\\0&0\end{pmatrix}$, $u=(1,1)$, $a=(2,1)$, $a'=(0,1)$, $\mu=u\T(a+m)$, $m=Ma$.
+\planteamiento evaluar $\mu$ en cada ejecución y aplicar la \cref{def:parcheo}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Limpia: $m=(2,0)$, $a+m=(4,1)$, $\mu=5$. Corrupta: $m'=(0,0)$, $a'+m'=(0,1)$, $\mu=1$.
+  \item (b) Parchear $a$ y recalcular $m$: se reproduce la ejecución limpia, $\mu=5$; fracción $(5-1)/(5-1)=1$.
+  \item Parchear solo $m$: $a'+Ma=(0,1)+(2,0)=(2,1)$, $\mu=3$; fracción $(3-1)/4=0{,}5$.
+  \item Parchear $a$ solo en su camino directo: $a+Ma'=(2,1)+(0,0)=(2,1)$, $\mu=3$; fracción $0{,}5$.
+  \item (c) $0{,}5+0{,}5=1$. Como $\mu=u\T a+u\T Ma$ es lineal, el efecto total $u\T(a-a')+u\T M(a-a')=2+2=4$ se descompone exactamente en efecto directo y efecto a través de $m$.
+\end{enumerate}
+\resultado \textbf{$\mu$ limpia $5$ y corrupta $1$; fracciones recuperadas $1$, $0{,}5$ y $0{,}5$.}
+\comprobacion en un modelo no lineal la suma de efectos directo e indirecto puede no coincidir con el total; aquí coincide por la linealidad.
+\end{solucion}
+
+\begin{solucion}{eje:5-ablacion}
+\datos $x=(2,1)$, $\hat v=(0{,}6;\allowbreak\ 0{,}8)$, $\WU$ del \cref{ej:atribucion}.
+\planteamiento $x\leftarrow x-(\hat v\T x)\hat v$; logits $\WU x$ y softmax.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\hat v\T x=1{,}2+0{,}8=2$; $x'=(2,1)-2(0{,}6;\allowbreak\ 0{,}8)=(0{,}8;\allowbreak\ -0{,}6)$.
+  \item (b) $\hat v\T x'=0{,}48-0{,}48=0$.
+  \item (c) Antes: logits $(2,1,-1)$; $e^{2}=7{,}389$, $e^{1}=2{,}718$, $e^{-1}=0{,}368$; suma $10{,}475$; $P=(0{,}705;\allowbreak\ 0{,}259;\allowbreak\ 0{,}035)$.
+  \item Después: logits $(0{,}8;\allowbreak\ -0{,}6;\allowbreak\ -1{,}4)$; $e^{0{,}8}=2{,}226$, $e^{-0{,}6}=0{,}549$, $e^{-1{,}4}=0{,}247$; suma $3{,}021$; $P=(0{,}737;\allowbreak\ 0{,}182;\allowbreak\ 0{,}082)$.
+  \item (d) $x+\alpha\hat v=x'$ exige $\alpha=-\hat v\T x=-2$. El valor depende de $x$: la ablación es una proyección, no una traslación fija.
+\end{enumerate}
+\resultado \textbf{$x'=(0{,}8;\allowbreak\ -0{,}6)$; probabilidades de $(0{,}705;\allowbreak\ 0{,}259;\allowbreak\ 0{,}035)$ a $(0{,}737;\allowbreak\ 0{,}182;\allowbreak\ 0{,}082)$; $\alpha=-2$, solo para este flujo.}
+\comprobacion $\norm{x'}^{2}=0{,}64+0{,}36=1=\norm x^{2}-(\hat v\T x)^{2}=5-4$.
+\end{solucion}
+
+\begin{solucion}{eje:5-rome}
+\datos $W=I_2$, $C=\diag(1,4)$, $k_*=(2,1)$, $v_*=(1,1)$; clave de prueba $k=(1,-8)$.
+\planteamiento (a)--(b) particularizar la solución de norma mínima; (c)--(d) aplicar el \cref{teo:rome}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con $A=k\T$ (una fila), $AA\T=\norm k^{2}$ y $\hat\delta=k\,r/\norm k^{2}$.
+  \item (b) Con $\eta=C^{1/2}\delta$, $\delta\T C\delta=\norm\eta^{2}$ y la restricción es $(C^{-1/2}k)\T\eta=r$. Por~(a), $\eta=r\,C^{-1/2}k/(k\T C^{-1}k)$ y $\delta=C^{-1/2}\eta=r\,C^{-1}k/(k\T C^{-1}k)$. Es la fila $\delta_i$ de la demostración del \cref{teo:rome}.
+  \item (c) $C^{-1}k_*=(2;\allowbreak\ 0{,}25)$; $(C^{-1}k_*)\T k_*=4+0{,}25=4{,}25$; $r=v_*-Wk_*=(-1,0)$; $\Lambda=(-4/17,\ 0)$.
+  \item $\hat W=I_2+\begin{pmatrix}-4/17\\0\end{pmatrix}(2\ \ 1/4)=\begin{pmatrix}9/17&-1/17\\0&1\end{pmatrix}$; $\hat Wk_*=(18/17-1/17;\allowbreak\ 1)=(1,1)$.
+  \item (d) $\hat Wk=Wk+\Lambda\,(C^{-1}k_*)\T k=Wk+\Lambda\,(k\T C^{-1}k_*)$, por la simetría de $C^{-1}$; si $k\T C^{-1}k_*=0$, $\hat Wk=Wk$.
+  \item Con $k=(1,-8)$: $k\T C^{-1}k_*=2-2=0$ y $\hat Wk=(9/17+8/17;\allowbreak\ -8)=(1,-8)=Wk$.
+\end{enumerate}
+\resultado \textbf{$\hat W=\begin{pmatrix}9/17&-1/17\\0&1\end{pmatrix}$; las claves $C^{-1}$-ortogonales a $k_*$ no cambian.}
+\comprobacion $\hat W-W$ tiene rango~1: su segunda fila es nula.
+\end{solucion}
+
+\begin{solucion}{eje:5-fourier}
+\datos $p=5$, $a=2$, $b=4$, $a+b=6\equiv 1$.
+\planteamiento evaluar $\ell(c)$ y usar la suma de una progresión geométrica de raíces de la unidad.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $s=6-c$: $\ell(0)=\cos 432^\circ=0{,}309$, $\ell(1)=\cos 360^\circ=1$, $\ell(2)=\cos 288^\circ=0{,}309$, $\ell(3)=\cos 216^\circ=-0{,}809$, $\ell(4)=\cos 144^\circ=-0{,}809$. Máximo único en $c=1$.
+  \item (b) Con $k=2$ se añade $\cos(144^\circ s)$: $\ell(1)=2$ y $\ell(c)=0{,}309-0{,}809=-0{,}5$ para $c\neq 1$.
+  \item (c) Sea $\omega=e^{2\pi\mathrm{i}s/p}$. Si $p\mid s$, $\omega=1$ y $\sum_{k=0}^{p-1}\omega^{k}=p$. Si $p\nmid s$, $\omega\neq 1$ y $\sum_{k=0}^{p-1}\omega^{k}=(\omega^{p}-1)/(\omega-1)=0$. Tomando partes reales y restando el término $k=0$, $\sum_{k=1}^{p-1}\cos(2\pi ks/p)$ vale $p-1$ si $c\equiv a+b$ y $-1$ en otro caso.
+\end{enumerate}
+\resultado \textbf{(a) máximo $1$ en $c=1$; (b) $2$ frente a $-0{,}5$; (c) $p-1$ frente a $-1$.} Cuantas más frecuencias, mayor el margen.
+\comprobacion con $p=5$ y todas las frecuencias, $\ell(1)=4$ y $\ell(c)=-1$ en los demás; la suma sobre $c$ es $4-4=0$, como la de cualquier coseno no constante sobre un periodo completo.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-binaria}
+\datos puntuación 1 por acierto y 0 por error o abstención; probabilidad de acierto $p$.
+\planteamiento comparar la puntuación esperada de responder y de abstenerse.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Responder: $p\cdot 1+(1-p)\cdot 0=p$. Abstenerse: $0$.
+  \item Para todo $p>0$ responder domina: es la \cref{prop:umbral-t} con $t=0$.
+  \item Un modelo optimizado para esta puntuación aprende a no abstenerse nunca: adivinar con seguridad es la estrategia óptima.
+  \item Con $p=0{,}1$: $0{,}1$ de media frente a $0$.
+\end{enumerate}
+\resultado \textbf{la puntuación binaria nunca penaliza adivinar y premia al modelo que inventa.}
+\comprobacion con la penalización de $t=0{,}5$ (un punto por error), adivinar con $p=0{,}1$ daría $0{,}1-0{,}9=-0{,}8<0$.
+\end{solucion}
+
+\begin{solucion}{eje:6-ece}
+\datos (a) grupos $(n_b,\mathrm{conf}_b,\mathrm{acc}_b)=(40;\allowbreak\ 0{,}95;\allowbreak\ 0{,}8)$, $(40;\allowbreak\ 0{,}75;\allowbreak\ 0{,}7)$, $(20;\allowbreak\ 0{,}55;\allowbreak\ 0{,}6)$; (b) $p=0{,}6$, $t=0{,}5$ y $t=0{,}75$.
+\planteamiento \cref{def:ece}; \cref{prop:umbral-t}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\ECE=0{,}4\cdot 0{,}15+0{,}4\cdot 0{,}05+0{,}2\cdot 0{,}05=0{,}06+0{,}02+0{,}01=0{,}09$.
+  \item Confianza media $0{,}38+0{,}30+0{,}11=0{,}79$; exactitud media $0{,}32+0{,}28+0{,}12=0{,}72$: sobreconfiado.
+  \item (b) $t=0{,}5$: penalización $1$; $E=0{,}6-0{,}4=0{,}2>0$: responde.
+  \item $t=0{,}75$: penalización $3$; $E=0{,}6-1{,}2=-0{,}6<0$: se abstiene.
+\end{enumerate}
+\resultado \textbf{$\ECE=0{,}09$; con $t=0{,}5$ responde ($+0{,}2$) y con $t=0{,}75$ se abstiene ($-0{,}6$).}
+\comprobacion la regla $p>t$ da lo mismo: $0{,}6>0{,}5$ y $0{,}6<0{,}75$.
+\end{solucion}
+
+\begin{solucion}{eje:6-intentos}
+\datos $p=0{,}02$; 10 y 100 intentos; 0 éxitos en 300 pruebas.
+\planteamiento \cref{prop:intentos} y \cref{prop:regla3}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $0{,}98^{10}=0{,}8171$, probabilidad $0{,}1829$ (aproximación lineal $0{,}2$).
+  \item $0{,}98^{100}=e^{100\ln 0{,}98}=e^{-2{,}020}=0{,}1326$, probabilidad $0{,}8674$ (aproximación lineal $2$, absurda).
+  \item (b) $(1-p_u)^{300}=0{,}05$: $\ln(1-p_u)=\ln 0{,}05/300=-0{,}009986$, $p_u=1-e^{-0{,}009986}=0{,}00994$.
+  \item Regla del~3: $3/300=0{,}01$.
+\end{enumerate}
+\resultado \textbf{(a) $0{,}183$ y $0{,}867$; (b) $p_u=0{,}99\,\%$, frente al $1\,\%$ de la regla del~3.}
+\comprobacion $p_u\le\ln 20/300=0{,}00999$, como garantiza la \cref{prop:regla3}.
+\end{solucion}
+
+\begin{solucion}{eje:6-passk}
+\datos $n=20$, $c=4$; $k=1,5,10$.
+\planteamiento \cref{prop:passk}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $k=1$: $1-\binom{16}{1}/\binom{20}{1}=1-16/20=0{,}2$.
+  \item $k=5$: $\binom{16}{5}=4368$, $\binom{20}{5}=15\,504$; $1-4368/15\,504=1-0{,}2817=0{,}7183$.
+  \item $k=10$: $\binom{16}{10}=8008$, $\binom{20}{10}=184\,756$; $1-0{,}04334=0{,}9567$.
+  \item (b) $\prod_{i=17}^{20}(1-5/i)=\tfrac{12}{17}\cdot\tfrac{13}{18}\cdot\tfrac{14}{19}\cdot\tfrac{15}{20}=0{,}7059\cdot 0{,}7222\cdot 0{,}7368\cdot 0{,}75=0{,}2817$.
+  \item (c) Ingenuo, con $\hat p=0{,}2$: $1-0{,}8^{k}$ da $0{,}2$, $0{,}6723$ y $0{,}8926$.
+\end{enumerate}
+\resultado \textbf{$\widehat{\mathrm{pass}}_k=0{,}200$; $0{,}718$; $0{,}957$, frente a $0{,}200$; $0{,}672$; $0{,}893$ del estimador ingenuo.}
+\comprobacion para $k=1$ ambos coinciden con $c/n$; para $k>1$ el ingenuo queda por debajo, como predice el \cref{eje:6-sesgo}.
+\end{solucion}
+
+\begin{solucion}{eje:6-mit}
+\datos margen $z_{\alpha/2}/(2\sqrt n)$; $z_{0{,}025}=1{,}96$ (o $2$) y $z_{0{,}1}=1{,}2816$.
+\planteamiento despejar $n$ del margen (\cref{prop:ic}); para la diferencia de dos exactitudes independientes, sumar varianzas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con $z=2$: $1/\sqrt n=0{,}01$, $n=10\,000$. Con $z=1{,}96$: $\sqrt n=1{,}96/0{,}02=98$, $n=9604$.
+  \item (b) $\sqrt n=1{,}2816/0{,}02=64{,}08$, $n=4105{,}9$; hacen falta $4106$ preguntas.
+  \item (c) $\sqrt{900}=30$. Al $95\,\%$: $0{,}70\pm 1{,}96/60=0{,}70\pm 0{,}0327$, es decir, $[0{,}667;\allowbreak\ 0{,}733]$. Al $80\,\%$: $0{,}70\pm 1{,}2816/60=0{,}70\pm 0{,}0214$, es decir, $[0{,}679;\allowbreak\ 0{,}721]$.
+  \item (d) $\sqrt{0{,}7\cdot 0{,}3/1000+0{,}72\cdot 0{,}28/1000}=\sqrt{0{,}0004116}=0{,}0203$. $z=0{,}02/0{,}0203=0{,}99<1{,}96$: no significativa.
+\end{enumerate}
+\resultado \textbf{(a) $10\,000$ (o $9604$); (b) $4106$; (c) $[0{,}667;\allowbreak\ 0{,}733]$ y $[0{,}679;\allowbreak\ 0{,}721]$; (d) desviación $0{,}020$, diferencia no significativa.}
+\comprobacion la versión conservadora de~(d) da $\sqrt{2/(4\cdot 1000)}=0{,}0224$, algo mayor, como corresponde a usar $\theta(1-\theta)\le 1/4$.
+\end{solucion}
+
+\begin{solucion}{eje:6-sesgo}
+\datos $c\sim\Bin(n,p)$, $\hat p=c/n$.
+\planteamiento $\E[\hat p]=p$ y $\Var(\hat p)=p(1-p)/n$; desarrollar el cuadrado.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\E[(1-\hat p)^{2}]=1-2\E[\hat p]+\E[\hat p^{2}]=1-2p+p^{2}+\Var(\hat p)=(1-p)^{2}+p(1-p)/n$.
+  \item Por tanto, $\E[1-(1-\hat p)^{2}]=\bigl(1-(1-p)^{2}\bigr)-p(1-p)/n$, menor que pass@2 si $0<p<1$.
+  \item (b) Con $n=k=2$: $\binom{2-c}{2}/\binom22$ vale~1 si $c=0$ y~0 si no. El estimador es $1-[c=0]$ y su esperanza, $1-P(c=0)=1-(1-p)^{2}$.
+  \item (c) $p=0{,}5$: pass@2 $=1-0{,}25=0{,}75$; esperanza del ingenuo $0{,}75-0{,}25/2=0{,}625$.
+\end{enumerate}
+\resultado \textbf{el estimador ingenuo subestima pass@2 en $p(1-p)/n$; con $p=0{,}5$ y $n=2$, $0{,}625$ frente a $0{,}75$.}
+\comprobacion directa: con $c=0,1,2$ y probabilidades $\tfrac14,\tfrac12,\tfrac14$, el ingenuo vale $0$, $0{,}75$ y $1$; esperanza $0{,}375+0{,}25=0{,}625$.
+\end{solucion}
+
+\begin{solucion}{eje:6-cota-ece}
+\datos pesos $w_b=\abs{B_b}/n$, que suman~1.
+\planteamiento escribir las medias globales como medias ponderadas de las de cada intervalo y aplicar la desigualdad triangular.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Cada predicción está en un único intervalo, luego $\overline{\mathrm{conf}}=\sum_bw_b\mathrm{conf}_b$ y $\overline{\mathrm{acc}}=\sum_bw_b\mathrm{acc}_b$.
+  \item $\abs{\overline{\mathrm{conf}}-\overline{\mathrm{acc}}}=\bigl\lvert\sum_bw_b(\mathrm{conf}_b-\mathrm{acc}_b)\bigr\rvert\le\sum_bw_b\abs{\mathrm{conf}_b-\mathrm{acc}_b}=\ECE$.
+  \item Hay igualdad si y solo si todas las diferencias $\mathrm{conf}_b-\mathrm{acc}_b$ de los intervalos con $w_b>0$ tienen el mismo signo (o son nulas).
+  \item (b) \cref{ej:ece}: $0{,}12\ge\abs{0{,}69-0{,}61}=0{,}08$. \cref{eje:6-ece}: $0{,}09\ge\abs{0{,}79-0{,}72}=0{,}07$. En ambos la desigualdad es estricta porque hay intervalos sobreconfiados e infraconfiados.
+  \item (c) 50 predicciones con confianza $0{,}9$ y exactitud $0{,}7$, y 50 con confianza $0{,}5$ y exactitud $0{,}7$: $\overline{\mathrm{conf}}=0{,}7=\overline{\mathrm{acc}}$, pero $\ECE=0{,}5\cdot 0{,}2+0{,}5\cdot 0{,}2=0{,}2$.
+\end{enumerate}
+\resultado \textbf{$\ECE\ge\abs{\overline{\mathrm{conf}}-\overline{\mathrm{acc}}}$, con igualdad si todos los desajustes tienen el mismo signo; el ejemplo de~(c) tiene medias iguales y $\ECE=0{,}2$.}
+\comprobacion en~(c) los dos desajustes, $+0{,}2$ y $-0{,}2$, se cancelan en la media pero no en el ECE.
+\end{solucion}

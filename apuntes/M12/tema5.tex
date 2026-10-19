@@ -1,0 +1,233 @@
+% =====================================================================
+\chapter{Modelos secuenciales: \texorpdfstring{$n$}{n}-gramas, RNN y LSTM}
+\label{tema:5}
+% =====================================================================
+
+Con tokens y embeddings ya definidos, queda modelar la dependencia entre posiciones. Este tema repasa los tres modelos que precedieron al Transformer y demuestra por qué ninguno escala: los $n$-gramas no generalizan, las redes recurrentes sufren el desvanecimiento del gradiente y todas las arquitecturas recurrentes son secuenciales en el tiempo. Se sigue~\cite[cap.~14]{jm3}, la clase~4 de CS224N~\cite{cs224n}, \cite[cap.~10]{gbc} y \cite[§9.7 y §10.1]{d2l}; los resultados sobre el gradiente proceden de Bengio, Simard y Frasconi~\cite{bengio94} y de Pascanu, Mikolov y Bengio~\cite[§2--3]{pascanu}, y la LSTM, de Hochreiter y Schmidhuber~\cite{lstm}.
+
+\section{\texorpdfstring{$N$}{N}-gramas y dispersión}
+
+Un modelo de $n$-gramas (módulo~1) estima $P(x_t\mid x_{t-n+1:t-1})$ por frecuencias relativas y necesita una tabla de $K^{n}$ entradas.
+
+\begin{proposicion}\label{prop:dispersion}
+En un corpus de $N\ge n$ tokens aparecen a lo sumo $N-n+1$ $n$-gramas distintos. Por tanto, la fracción de casillas de la tabla con recuento positivo es a lo sumo $(N-n+1)/K^{n}$.
+\end{proposicion}
+
+\begin{proof}
+Un corpus de $N$ tokens tiene $N-n+1$ posiciones de comienzo para un $n$-grama, y cada posición aporta un solo $n$-grama. El número de $n$-gramas distintos no supera el de posiciones.
+\end{proof}
+
+\begin{ejemplo}
+El fragmento de \emph{El Quijote} de la práctica tiene $440$ palabras y $243$ distintas. Hay $243^{2}=59\,049$ bigramas posibles, pero solo aparecen $416$ distintos, el $0{,}70\,\%$, y $398$ de ellos una sola vez. Con un vocabulario de $5\cdot 10^{4}$ tokens, los trigramas posibles son $1{,}25\cdot 10^{14}$, muchos más que los tokens de cualquier corpus.
+\end{ejemplo}
+
+El defecto de fondo no es solo el tamaño: cada contexto es una casilla aislada y el modelo no sabe que «el gato come» y «el perro come» se parecen. El modelo neuronal de Bengio \emph{et al.}~\cite{bengio03}, estudiado en el módulo~9, resuelve la generalización con embeddings, pero conserva un contexto de longitud fija.
+
+\section{Redes recurrentes}
+
+\begin{definicion}[Red recurrente]\label{def:rnn}
+Sean $x_1,\dots,x_T\in\R^{d}$ los embeddings de una secuencia. Una \emph{red recurrente} (RNN) simple con estado de dimensión $h$ calcula
+\[
+h_t=\tanh(W h_{t-1}+U x_t+b),\qquad z_t=W_{\mathrm{s}}\,h_t+b_{\mathrm{s}},
+\]
+con $h_0=0$, $W\in\R^{h\times h}$, $U\in\R^{h\times d}$, $b\in\R^{h}$ y una capa de salida $W_{\mathrm{s}}\in\R^{K\times h}$ que produce los logits $z_t$ del token siguiente~\cite[§14.1--14.2]{jm3}.
+\end{definicion}
+
+Los mismos parámetros se usan en todas las posiciones. El estado $h_t$ resume todo el prefijo $x_{1:t}$, de modo que el contexto no tiene, en principio, longitud fija.
+
+\begin{proposicion}\label{prop:param-rnn}
+La parte recurrente de una RNN simple tiene $h(h+d)+h$ parámetros, independientemente de $T$.
+\end{proposicion}
+
+\begin{proof}
+$W$ tiene $h^{2}$ entradas, $U$ tiene $hd$ y $b$ tiene $h$; la suma es $h^{2}+hd+h=h(h+d)+h$. Ninguna depende de la longitud de la secuencia porque los parámetros se comparten entre posiciones.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,->,>={Stealth[length=2mm]},
+  st/.style={draw,circle,minimum size=8mm,inner sep=0pt},
+  io/.style={draw,rectangle,minimum size=6mm,inner sep=1pt}]
+  \node[st] (h0) at (0,0) {$h_0$};
+  \foreach \t/\x in {1/2.1,2/4.2,3/6.3}{
+    \node[st] (h\t) at (\x,0) {$h_{\t}$};
+    \node[io] (x\t) at (\x,-1.4) {$x_{\t}$};
+    \node[io] (z\t) at (\x,1.4) {$z_{\t}$};
+    \draw (x\t) -- node[right] {$U$} (h\t);
+    \draw (h\t) -- node[right] {$W_{\mathrm{s}}$} (z\t);}
+  \node (dots) at (8.2,0) {$\cdots$};
+  \node[st] (hT) at (10,0) {$h_{T}$};
+  \node[io] (xT) at (10,-1.4) {$x_{T}$};
+  \node[io] (zT) at (10,1.4) {$z_{T}$};
+  \draw (xT) -- node[right] {$U$} (hT);
+  \draw (hT) -- node[right] {$W_{\mathrm{s}}$} (zT);
+  \draw (h0) -- node[above] {$W$} (h1);
+  \draw (h1) -- node[above] {$W$} (h2);
+  \draw (h2) -- node[above] {$W$} (h3);
+  \draw (h3) -- (dots);
+  \draw (dots) -- node[above] {$W$} (hT);
+\end{tikzpicture}
+\caption{RNN desplegada en el tiempo. Los arcos horizontales forman una cadena de $T$ dependencias: para calcular $h_T$ hay que calcular antes $h_1,\dots,h_{T-1}$, y el gradiente recorre la misma cadena en sentido inverso.}
+\label{fig:rnn}
+\end{figure}
+
+\section{Retropropagación en el tiempo y desvanecimiento del gradiente}
+
+El gradiente de una RNN se calcula aplicando la retropropagación al grafo desplegado de la \cref{fig:rnn}; el procedimiento se llama \emph{retropropagación en el tiempo}~\cite[§9.7]{d2l}.
+
+\begin{lema}\label{lem:jacobiano}
+Sea $a_t=W h_{t-1}+U x_t+b$. El jacobiano de un paso es $\dfrac{\partial h_t}{\partial h_{t-1}}=D_t W$, con $D_t=\diag\bigl(1-\tanh^{2}(a_t)\bigr)$, y
+\[
+\frac{\partial h_T}{\partial h_0}=D_T W\,D_{T-1}W\cdots D_1 W.
+\]
+\end{lema}
+
+\begin{proof}
+Por la regla de la cadena (módulo~4), $\partial h_t/\partial h_{t-1}=\tanh'(a_t)\cdot\partial a_t/\partial h_{t-1}$, donde $\tanh'$ se aplica componente a componente y forma la matriz diagonal $D_t$, ya que $\tanh'(u)=1-\tanh^{2}(u)$, y $\partial a_t/\partial h_{t-1}=W$. El jacobiano de una composición es el producto de los jacobianos.
+\end{proof}
+
+\begin{teorema}[Cota exponencial del gradiente]\label{teo:desvanece}
+Sea $\norm{\cdot}$ la norma espectral. En la RNN de la \cref{def:rnn},
+\[
+\Bigl\lVert\frac{\partial h_T}{\partial h_0}\Bigr\rVert\le\norm{W}^{T}.
+\]
+En particular, si $\norm{W}\le\gamma<1$, el gradiente que llega a $h_0$ desde la pérdida en la posición $T$ decae al menos como $\gamma^{T}$.
+\end{teorema}
+
+\begin{proof}
+Las entradas de $D_t$ son $1-\tanh^{2}(\cdot)\in(0,1]$, y la norma espectral de una matriz diagonal es el máximo valor absoluto de su diagonal, luego $\norm{D_t}\le 1$. La norma espectral es submultiplicativa (módulo~3), de modo que, por el \cref{lem:jacobiano},
+$\norm{\partial h_T/\partial h_0}\le\prod_{t=1}^{T}\norm{D_t}\,\norm{W}\le\norm{W}^{T}$. Finalmente, si $L$ depende de $h_T$, $\partial L/\partial h_0=(\partial h_T/\partial h_0)^{\top}\partial L/\partial h_T$ y $\norm{\partial L/\partial h_0}\le\gamma^{T}\norm{\partial L/\partial h_T}$.
+\end{proof}
+
+\begin{corolario}\label{cor:explota}
+Para que el gradiente pueda crecer exponencialmente (\emph{explotar}) es necesario que $\norm{W}>1$. Con una activación de derivada acotada por $\gamma_{\phi}$ (por ejemplo, $\gamma_{\phi}=1/4$ para la sigmoide), la condición necesaria es $\norm{W}>1/\gamma_{\phi}$~\cite[§2.1]{pascanu}.
+\end{corolario}
+
+\begin{proof}
+Con una activación $\phi$ cualquiera, $\norm{D_t}\le\gamma_{\phi}$, y el argumento del \cref{teo:desvanece} da $\norm{\partial h_T/\partial h_0}\le(\gamma_{\phi}\norm{W})^{T}$. Si $\gamma_{\phi}\norm{W}\le 1$, la cota no crece con $T$; por contraposición, el crecimiento exponencial exige $\gamma_{\phi}\norm{W}>1$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\caption{Factor $w^{T}$ en la RNN escalar lineal $h_t=w\,h_{t-1}$.}\label{tab:wT}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+$w$ & $T=10$ & $T=50$ & $T=100$ \\
+\midrule
+$0{,}9$ & $0{,}3487$ & $5{,}154\cdot 10^{-3}$ & $2{,}656\cdot 10^{-5}$ \\
+$0{,}99$ & $0{,}9044$ & $0{,}6050$ & $0{,}3660$ \\
+$1{,}1$ & $2{,}594$ & $117{,}4$ & $13\,781$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El caso escalar lineal del \cref{tab:wT} muestra el fenómeno: con $w=0{,}9$, la señal de un token situado 100 posiciones atrás llega multiplicada por $2{,}7\cdot 10^{-5}$, y la red no aprende dependencias largas. Bengio, Simard y Frasconi demostraron que, para que una red recurrente almacene información de forma robusta frente al ruido, debe operar en una región en la que el gradiente se desvanece, de modo que aprender dependencias largas por descenso de gradiente es intrínsecamente difícil~\cite{bengio94}.
+
+\begin{definicion}[Recorte del gradiente]
+Dado un umbral $\tau>0$, el \emph{recorte por norma} sustituye el gradiente $g$ por
+\[
+\clip_{\tau}(g)=\begin{cases} g & \text{si } \norm{g}<\tau,\\ \tau\,g/\norm{g} & \text{si } \norm{g}\ge\tau.\end{cases}
+\]
+Pascanu \emph{et al.} proponen esta regla contra la explosión del gradiente y sugieren un umbral entre la mitad y diez veces la norma media del gradiente~\cite[§3.2]{pascanu}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:clip}
+$\norm{\clip_{\tau}(g)}\le\tau$, y $\clip_{\tau}(g)$ es un múltiplo positivo de $g$; en particular, $g\cdot\clip_{\tau}(g)\ge 0$ y el paso recortado sigue siendo de descenso.
+\end{proposicion}
+
+\begin{proof}
+Si $\norm{g}<\tau$, la conclusión es inmediata. Si no, $\clip_{\tau}(g)=\lambda g$ con $\lambda=\tau/\norm{g}\in(0,1]$, luego $\norm{\clip_{\tau}(g)}=\lambda\norm{g}=\tau$ y $g\cdot\clip_{\tau}(g)=\lambda\norm{g}^{2}\ge 0$.
+\end{proof}
+
+El recorte resuelve la explosión, pero no el desvanecimiento: un gradiente pequeño no se agranda.
+
+\section{La LSTM}
+
+\begin{definicion}[LSTM]\label{def:lstm}
+Una LSTM añade al estado oculto $h_t$ una \emph{celda de memoria} $c_t\in\R^{h}$ y tres \emph{puertas} con valores en $(0,1)^{h}$:
+\[
+\begin{aligned}
+f_t&=\sigma(W_f h_{t-1}+U_f x_t+b_f), & i_t&=\sigma(W_i h_{t-1}+U_i x_t+b_i),\\
+o_t&=\sigma(W_o h_{t-1}+U_o x_t+b_o), & \tilde c_t&=\tanh(W_c h_{t-1}+U_c x_t+b_c),\\
+c_t&=f_t\odot c_{t-1}+i_t\odot\tilde c_t, & h_t&=o_t\odot\tanh(c_t).
+\end{aligned}
+\]
+La puerta de \emph{olvido} $f_t$ decide qué parte de la memoria se conserva; la de \emph{entrada} $i_t$, qué parte del candidato $\tilde c_t$ se añade, y la de \emph{salida} $o_t$, qué parte de la memoria pasa al estado oculto~\cite{lstm}, \cite[§14.5]{jm3}, \cite[§10.1]{d2l}.
+\end{definicion}
+
+La puerta de olvido no figuraba en el artículo original de 1997; la introdujeron Gers, Schmidhuber y Cummins~\cite{gers}, y es la forma que usan los libros de texto actuales.
+
+\begin{proposicion}\label{prop:lstm-grad}
+El jacobiano de $c_t$ respecto a $c_{t-1}$ a través del camino directo, es decir, manteniendo fijas las puertas y el candidato, es $\diag(f_t)$. A lo largo de $T$ pasos, el producto de estos jacobianos es $\diag\bigl(\prod_{t=1}^{T}f_t\bigr)$, con el producto componente a componente.
+\end{proposicion}
+
+\begin{proof}
+Con $f_t$, $i_t$ y $\tilde c_t$ fijos, $c_t$ es una función afín de $c_{t-1}$ cuya parte lineal es $c_{t-1}\mapsto f_t\odot c_{t-1}$, de jacobiano $\diag(f_t)$. Un producto de matrices diagonales es la matriz diagonal del producto de las diagonales.
+\end{proof}
+
+La celda se actualiza \emph{sumando} y no multiplicando por una matriz $W$: si la red aprende $f_t\approx 1$, el gradiente recorre muchos pasos casi sin atenuarse. Con $f_t=0{,}98$ constante, el factor a 100 pasos es $0{,}98^{100}=0{,}1326$, frente a $2{,}7\cdot 10^{-5}$ en la RNN con $w=0{,}9$. Es la misma idea que la conexión residual del módulo~11. En la práctica, las LSTM aprovechan contextos de cientos de tokens.
+
+\begin{corolario}\label{cor:param-lstm}
+Una LSTM con estado de dimensión $h$ y entrada de dimensión $d$ tiene $4\bigl(h(h+d)+h\bigr)$ parámetros recurrentes, cuatro veces los de una RNN simple.
+\end{corolario}
+
+\begin{proof}
+Cada una de las cuatro transformaciones ($f_t$, $i_t$, $o_t$ y $\tilde c_t$) tiene una matriz $h\times h$, una $h\times d$ y un sesgo de dimensión $h$, como la RNN de la \cref{prop:param-rnn}.
+\end{proof}
+
+\section{Secuencialidad y el paso al Transformer}
+
+El segundo límite no tiene que ver con el gradiente. En una red recurrente, $h_t$ depende de $h_{t-1}$, de modo que calcular $h_T$ exige $T$ pasos que no pueden ejecutarse a la vez dentro de una secuencia (\cref{fig:rnn}). Una GPU tiene miles de núcleos que quedan ociosos durante esa cadena. El Transformer del módulo~13 calcula las representaciones de todas las posiciones de una capa a la vez, con productos de matrices, y conecta cualquier par de posiciones en un solo paso de atención, a cambio de un coste $O(n^{2})$ en la longitud.
+
+\begin{table}[h]
+\centering\small
+\caption{Modelos de secuencias y sus limitaciones.}\label{tab:modelos-seq}
+\begin{tabularx}{\textwidth}{@{}lll>{\raggedright\arraybackslash}X@{}}
+\toprule
+Modelo & Contexto & Paralelo & Problema principal \\
+\midrule
+$N$-grama & $n-1$ fijo & sí (contar) & tabla de $K^{n}$ casillas; no generaliza \\
+MLP (módulo~9) & fijo & sí & contexto corto y fijo \\
+RNN & ilimitado en teoría & no & desvanecimiento del gradiente; secuencial \\
+LSTM & cientos de tokens & no & secuencial; aprovecha mal la GPU \\
+Transformer & ventana de contexto & sí & atención $O(n^{2})$ (módulo~13) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, cap.~14 «RNNs and LSTMs»: §14.1--14.2 (RNN y modelos de lenguaje recurrentes) y §14.5 «The LSTM».
+\item Stanford CS224N~\cite{cs224n}, clase~4 «Language Models and RNNs».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, cap.~10 «Sequence Modeling: Recurrent and Recursive Nets», en particular las secciones sobre dependencias largas y LSTM.
+\item Zhang \emph{et al.}~\cite{d2l}, §9.7 «Backpropagation Through Time» y §10.1 «Long Short-Term Memory (LSTM)».
+\item Pascanu, Mikolov y Bengio~\cite{pascanu}, §2.1 «The mechanics» y §3.2 «Scaling down the gradients».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-dispersion}
+El fragmento de \emph{El Quijote} tiene $440$ palabras y $243$ distintas, y en él aparecen $416$ bigramas distintos, $398$ de ellos una sola vez. (a) Compruebe la \cref{prop:dispersion} con $n=2$. (b) ¿Qué porcentaje de los bigramas observados es único? (c) ¿Qué estimaría el EMV para un bigrama no observado y qué consecuencia tiene sobre la perplejidad?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-clip}
+Un gradiente vale $g=(3,-4,12)$ y el umbral de recorte es $\tau=5$. Calcule $\clip_{\tau}(g)$, compruebe su norma y verifique que tiene la misma dirección que $g$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-olvido}
+En una LSTM, supóngase que la puerta de olvido vale $f$ en todas las componentes y en todos los pasos. (a) Calcule el factor del camino directo a 100 pasos para $f=0{,}98$ y compárelo con el de una RNN escalar con $w=0{,}9$. (b) ¿Qué valor mínimo de $f$ garantiza que el factor sea al menos $0{,}5$ a 100 pasos?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-param}
+Para un estado de dimensión $h=256$ y una entrada de dimensión $d=256$, compare el número de parámetros recurrentes de una RNN simple, de una LSTM y de una GRU (que tiene tres transformaciones del mismo tamaño). Si el coste de un paso es proporcional al número de parámetros, ¿cuántas veces más cuesta un paso de LSTM que uno de RNN?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §10.1, ejercicio~3 (se fijan las dimensiones y se pide el cálculo explícito).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-wmin}
+En la RNN escalar lineal $h_t=w\,h_{t-1}$ con $0<w<1$, ¿qué valor mínimo de $w$ garantiza que el factor del gradiente a 100 pasos sea al menos $0{,}1$? Interprete el resultado.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-autovalores}
+Sea $M\in\R^{n\times n}$ simétrica, con valores propios $\lambda_1,\dots,\lambda_n$ y vectores propios ortonormales $v_1,\dots,v_n$, ordenados de modo que $\abs{\lambda_1}>\abs{\lambda_2}\ge\dots\ge\abs{\lambda_n}$. (a) Demuestre que $M^{k}$ tiene valores propios $\lambda_i^{k}$. (b) Sea $x=\sum_i a_i v_i$ con $a_1\neq 0$. Demuestre que la tangente del ángulo entre $M^{k}x$ y $v_1$ es a lo sumo $(\abs{\lambda_2}/\abs{\lambda_1})^{k}\,\norm{x-a_1v_1}/\abs{a_1}$. (c) Explique qué implica para el gradiente de una RNN lineal $h_t=Mh_{t-1}$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §9.7, ejercicio~1 (se precisa la cota del apartado b).}
+\end{ejercicio}

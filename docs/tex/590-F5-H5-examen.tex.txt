@@ -1,0 +1,1157 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase V — Hito 5
+%  Examen de hito: Alineamiento, RL, agentes e interpretabilidad (M20 a M23)
+%  Compilar: latexmk -r ../latexmkrc H5-examen.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Hito 5}
+
+\hypersetup{pdftitle={Hito 5. Examen de la Fase V: Alineamiento, RL, agentes e interpretabilidad},pdfauthor={Anatomía de un LLM}}
+
+% --- Notación local (la misma que en los apuntes de M20--M23) ----------
+\newcommand{\T}{^{\top}}
+\newcommand{\Lsft}{\mathcal{L}_{\mathrm{SFT}}}
+\newcommand{\LDPO}{\mathcal{L}_{\mathrm{DPO}}}
+\newcommand{\KL}{D_{\mathrm{KL}}}
+\newcommand{\piref}{\pi_{\mathrm{ref}}}
+\newcommand{\pref}{\succ}
+\DeclareMathOperator{\clip}{clip}
+\DeclareMathOperator{\rango}{rango}
+\DeclareMathOperator{\relu}{ReLU}
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\idf}{idf}
+\DeclareMathOperator{\df}{df}
+\DeclareMathOperator{\BM}{BM25}
+\DeclareMathOperator{\AP}{AP}
+\DeclareMathOperator{\RR}{RR}
+\DeclareMathOperator{\SE}{SE}
+\DeclareMathOperator{\ECE}{ECE}
+\DeclareMathOperator{\MCE}{MCE}
+\newcommand{\Pk}[1]{\operatorname{P@}#1}
+\newcommand{\Rk}[1]{\operatorname{R@}#1}
+\newcommand{\Rel}{\mathcal{R}}
+\newcommand{\tok}[1]{\texttt{#1}}
+
+% --- Partes del examen: capítulos «Parte A», «Parte B», «Parte C» --------
+\renewcommand{\thechapter}{\Alph{chapter}}
+\setlocalecaption{spanish}{chapter}{Parte}
+\crefname{chapter}{parte}{partes}
+
+% --- Preguntas del test -------------------------------------------------
+\newcounter{pregunta}
+\newcommand{\pregunta}[5]{%
+  \par\refstepcounter{pregunta}\noindent
+  \begin{minipage}{\linewidth}
+  \textbf{\thepregunta.}\ #1\enspace{\small(1{,}5 puntos)}
+  \begin{enumerate}[label=(\alph*),itemsep=0pt,topsep=2pt,leftmargin=2.4em]
+    \item #2
+    \item #3
+    \item #4
+    \item #5
+  \end{enumerate}
+  \end{minipage}\par\medskip}
+
+% --- Apartados de los problemas y criterios de corrección ----------------
+\newcommand{\pts}[1]{\textbf{[#1]}\ }
+\newcommand{\apartado}[1]{\par\smallskip\noindent\textbf{Apartado #1}\par\nopagebreak}
+\newcommand{\criterio}{\par\noindent\textit{Criterio de corrección.}\ }
+\newcommand{\repasar}[1]{\par\smallskip\noindent\textbf{Repasar:} #1}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase V \textperiodcentered\ Hito 5 \textperiodcentered\ Examen de hito}\par\vspace{0.3cm}
+{\Huge\bfseries Hito 5\par}\vspace{0.3cm}
+{\LARGE Alineamiento, RL, agentes\\[2pt] e interpretabilidad\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.0cm}
+{\normalsize Módulos 20 (ajuste fino), 21 (RL y preferencias),\\ 22 (agentes y RAG) y 23 (interpretabilidad y seguridad)\par}
+\vspace{1.4cm}
+{\large Examen, proyecto de fase y soluciones}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% =====================================================================
+\chapter*{Instrucciones}
+\addcontentsline{toc}{chapter}{Instrucciones}
+\markboth{Instrucciones}{}
+% =====================================================================
+
+Este examen cierra la Fase~V y el curso. Evalúa cómo un modelo de lenguaje preentrenado se convierte en un asistente: el ajuste supervisado y eficiente en parámetros, el aprendizaje por refuerzo y las preferencias, la recuperación de información y los agentes, y las herramientas con las que se estudia por dentro y se evalúa su seguridad. Las técnicas de las fases anteriores (entropía cruzada, SVD, softmax, intervalos de confianza) se dan por sabidas y se usan sin repetir su desarrollo.
+
+\section*{Condiciones del examen}
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+Duración & 3 horas. Reparto orientativo: 45 minutos para la parte~A y 135 minutos para la parte~B. \\
+Material permitido & Calculadora científica y una hoja A4 de fórmulas escrita a mano por el estudiante. No se permiten apuntes, libros ni dispositivos con conexión. \\
+Puntuación total & 100 puntos: parte~A, 30 puntos; parte~B, 70 puntos. \\
+Aprobado & 70 puntos o más (70\,\%). \\
+Módulos evaluados & M20 a M23 (véase la tabla siguiente). \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section*{Normas}
+\begin{enumerate}[label=\arabic*.]
+  \item \textbf{Parte A. Cuestiones} (30 puntos): 20 preguntas de opción múltiple, de 1,5 puntos cada una. Cada pregunta tiene una sola respuesta correcta. Las respuestas en blanco y las erróneas valen 0 puntos; las erróneas no restan.
+  \item \textbf{Parte B. Problemas} (70 puntos): 7 ejercicios de desarrollo, de 10 puntos cada uno: dos por cada uno de los módulos M20, M21 y M22 y uno del M23. La puntuación de cada apartado figura entre corchetes.
+  \item En la parte~B debe escribirse el razonamiento completo. Un resultado correcto sin justificación se puntúa con la mitad de los puntos del apartado.
+  \item Los resultados se dan con 3 cifras significativas salvo que se indique otra cosa; en los pasos intermedios conviene conservar 4 o más. Se escribe $\ln$ (o $\log$) para el logaritmo natural, de modo que las pérdidas y las divergencias se miden en nats.
+  \item Notación: $\pi_\theta$ es la política (el modelo que se entrena), $\piref$ el modelo de referencia, $\sigma$ la función sigmoide, $\beta$ el coeficiente de la penalización KL, $r$ el rango de LoRA y $s=\alpha/r$ su escala; $1\,\mathrm{GB}=10^{9}$ bytes.
+  \item La \emph{Parte C. Proyecto de fase} se entrega aparte, en el plazo de tres semanas, y cuenta en la nota de la fase, no en la de este examen.
+\end{enumerate}
+
+\section*{Módulos evaluados}
+\begin{center}
+\begin{tabular}{@{}cllc@{}}
+\toprule
+Módulo & Título & Cuestiones & Ejercicios \\
+\midrule
+M20 & Ajuste fino & 1--5 & B.1 y B.2 \\
+M21 & Aprendizaje por refuerzo y preferencias & 6--11 & B.3 y B.4 \\
+M22 & Agentes, recuperación y RAG & 12--16 & B.5 y B.6 \\
+M23 & Interpretabilidad y seguridad & 17--20 & B.7 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section*{Procedencia de los ejercicios}
+Los ejercicios B.1, B.3, B.4, B.5 y B.6 están adaptados, total o parcialmente, de tareas y exámenes de cursos universitarios: la tarea~5 de Stanford CS336 y su suplemento (primavera de 2026), el examen parcial de Stanford CS234 (invierno de 2018), los ejercicios del capítulo~8 de \emph{Introduction to Information Retrieval}, texto del curso CS276 de Stanford, y los problemas de clase de MIT 18.05 (primavera de 2022). La fuente se indica al pie de cada enunciado y en la bibliografía. Los enunciados son de redacción propia y los datos se han cambiado para que puedan resolverse a mano. Las soluciones completas están en el \cref{ap:soluciones}, y la tabla de autoevaluación, en el \cref{ap:autoevaluacion}.
+
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Cuestiones}
+\label{cap:test}
+% =====================================================================
+
+Veinte preguntas de opción múltiple, de 1,5 puntos cada una (30 puntos en total). Cada pregunta tiene una sola respuesta correcta; las respuestas erróneas no restan. Tiempo orientativo: 45 minutos.
+
+\subsection*{Módulo 20. Ajuste fino}
+
+\pregunta{En el ajuste supervisado (SFT) de un modelo de chat, la entropía cruzada se calcula normalmente:}
+{sobre todos los tokens de la secuencia, incluidos los de la instrucción.}
+{solo sobre los tokens de la respuesta del asistente, incluido el token de fin de turno que la cierra.}
+{solo sobre el último token de la respuesta.}
+{solo sobre los tokens de la instrucción, que son los que escribe el usuario.}
+
+\pregunta{LoRA de rango $r=8$ aplicado a una matriz $W\in\R^{4096\times 1024}$ entrena:}
+{$20\,480$ parámetros.}
+{$32\,768$ parámetros.}
+{$40\,960$ parámetros.}
+{$4\,194\,304$ parámetros.}
+
+\pregunta{En LoRA se inicializa $B=0$ y $A$ con entradas aleatorias porque:}
+{así la matriz $BA$ es invertible desde el primer paso.}
+{se reduce a la mitad la memoria del estado del optimizador.}
+{así $A$ no recibe gradiente durante todo el entrenamiento.}
+{el modelo ajustado empieza siendo exactamente el preentrenado y, aun así, $B$ recibe un gradiente no nulo en el primer paso.}
+
+\pregunta{En el modelo cuadrático del olvido, $\mathcal{L}(\theta)=(\theta-a)^{2}+\lambda(\theta-\theta_0)^{2}$, con $\theta_0=0$, $a=4$ y $\lambda=3$, el minimizador $\theta^{\ast}$ vale:}
+{$1$}
+{$4/3\approx 1{,}33$}
+{$3$}
+{$4$}
+
+\pregunta{Una cuantización por bloques usa índices de $b=4$ bits y una constante de escala en coma flotante de 32 bits por cada bloque de $32$ pesos. ¿Cuántos bits ocupa cada parámetro?}
+{$4{,}5$}
+{$5$}
+{$8$}
+{$36$}
+
+\subsection*{Módulo 21. Aprendizaje por refuerzo y preferencias}
+
+\pregunta{Un episodio produce las recompensas $R_1=1$, $R_2=0$ y $R_3=2$ y termina. Con factor de descuento $\gamma=0{,}5$, el retorno $G_0$ vale:}
+{$0{,}5$}
+{$1$}
+{$1{,}25$}
+{$1{,}5$}
+
+\pregunta{Restar una línea base $b(s)$, que no depende de la acción, al retorno en el estimador del gradiente de política:}
+{introduce un sesgo que hay que corregir con muestreo de importancia.}
+{no cambia la esperanza del estimador y puede reducir su varianza.}
+{anula el gradiente cuando $b(s)$ es la recompensa media.}
+{solo es válido si $b(s)=0$ para todos los estados.}
+
+\pregunta{En el objetivo recortado de PPO con $\varepsilon=0{,}2$, un término con cociente $\rho=0{,}7$ y ventaja $A=-1$ vale:}
+{$0{,}7$}
+{$-0{,}7$}
+{$-0{,}8$}
+{$-1{,}2$}
+
+\pregunta{En 10 comparaciones entre dos respuestas, la respuesta~$a$ se prefiere 8 veces. Bajo el modelo de Bradley--Terry, la estimación de máxima verosimilitud de $r_a-r_b$ es:}
+{$0{,}8$}
+{$\ln 1{,}25\approx 0{,}223$}
+{$4$}
+{$\ln 4\approx 1{,}386$}
+
+\pregunta{Al comenzar el entrenamiento con DPO, con $\pi_\theta=\piref$, la pérdida de cada par de preferencias vale:}
+{$0$}
+{$1$}
+{$\beta$}
+{$\ln 2\approx 0{,}693$}
+
+\pregunta{En GRPO, si las $G$ respuestas a una misma instrucción obtienen exactamente la misma recompensa:}
+{todas sus ventajas son nulas y el grupo no aporta gradiente al término recortado.}
+{todas sus ventajas valen~1 y el grupo se refuerza por igual.}
+{la división por la desviación típica produce ventajas infinitas, sea cual sea $\varepsilon_0$.}
+{desaparece la penalización KL del objetivo.}
+
+\subsection*{Módulo 22. Agentes, recuperación y RAG}
+
+\pregunta{Una colección tiene $N=1000$ documentos y el término $t$ aparece en $10$ de ellos. Con el logaritmo natural, como en los apuntes, $\idf_t$ vale:}
+{$2$}
+{$4{,}61$}
+{$6{,}91$}
+{$100$}
+
+\pregunta{En BM25 con $k_1=1{,}5$, cuando la frecuencia $f$ del término en el documento tiende a infinito, el factor de saturación $g(f,\ell)$ tiende a:}
+{$1$}
+{$1{,}5$}
+{$2{,}5$}
+{$+\infty$}
+
+\pregunta{Un ranking tiene las relevancias (N, R, N, R, R), donde R indica relevante, y hay $\abs{\Rel}=4$ documentos relevantes en la colección. Su precisión media (AP) es:}
+{$0{,}4$}
+{$0{,}5$}
+{$0{,}533$}
+{$0{,}6$}
+
+\pregunta{Se dice que un \emph{benchmark} está contaminado cuando:}
+{sus preguntas o sus respuestas aparecen en los datos de entrenamiento del modelo evaluado.}
+{contiene preguntas ambiguas o con varias respuestas válidas.}
+{se evalúa con un sistema RAG en lugar de con el modelo solo.}
+{mide la latencia en lugar de la exactitud.}
+
+\pregunta{Un agente encadena 20 pasos y cada uno sale bien, de forma independiente, con probabilidad $0{,}98$. La probabilidad de completar la tarea es, aproximadamente:}
+{$0{,}400$}
+{$0{,}600$}
+{$0{,}668$}
+{$0{,}980$}
+
+\subsection*{Módulo 23. Interpretabilidad y seguridad}
+
+\pregunta{La hipótesis de superposición afirma que una red neuronal:}
+{dedica exactamente una neurona a cada concepto.}
+{no tiene flujo residual en las capas intermedias.}
+{solo puede aprender funciones lineales de su entrada.}
+{representa más características que dimensiones, como direcciones casi ortogonales, lo que es rentable cuando las características son dispersas.}
+
+\pregunta{En un autoencoder disperso con penalización $L^{1}$, el código óptimo de un latente aislado es $f^{\ast}=\max(a-\lambda/2,\,0)$. Con preactivación $a=0{,}3$ y $\lambda=0{,}8$, $f^{\ast}$ vale:}
+{$0$}
+{$-0{,}1$}
+{$0{,}3$}
+{$0{,}7$}
+
+\pregunta{El escalado de temperatura de un clasificador, $\softmax(z/T)$ con $T>0$ ajustado en validación:}
+{cambia su exactitud, porque puede alterar la clase de mayor probabilidad.}
+{cambia solo las confianzas y deja intacta la clase predicha.}
+{cambia el número de clases efectivas del modelo.}
+{invierte el orden de los logits cuando $T>1$.}
+
+\pregunta{En 600 intentos de \emph{red teaming} independientes no se observa ningún éxito del ataque. Una cota superior aproximada, con confianza del $95\,\%$, para su probabilidad de éxito por intento es:}
+{$0\,\%$}
+{$0{,}05\,\%$}
+{$0{,}5\,\%$}
+{$3\,\%$}
+
+% =====================================================================
+\chapter{Problemas}
+\label{cap:problemas}
+% =====================================================================
+
+Siete ejercicios de desarrollo, de 10 puntos cada uno (70 puntos en total). La puntuación de cada apartado figura entre corchetes. Tiempo orientativo: 135 minutos.
+
+% ---------------------------------------------------------------------
+\begin{ejercicio}{2}{eje:p1}
+\textbf{Ajuste supervisado: máscara, normalización y empaquetado (M20). 10 puntos.}
+
+En un SFT, cada ejemplo consta de una instrucción y una respuesta ya tokenizadas. Se concatenan sin insertar tokens especiales; el índice~$0$ es el token de fin y el índice~$1$, el de relleno. Hay dos ejemplos:
+\begin{center}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Ejemplo & Instrucción & Respuesta \\
+\midrule
+1 & $[12,7,3,9]$ & $[4,0]$ \\
+2 & $[6,2]$ & $[8,5,0]$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{3} Rellene las secuencias concatenadas hasta la longitud máxima y construya, para cada ejemplo, \texttt{input\_\allowbreak ids} (la secuencia sin su último token), \texttt{labels} (la secuencia sin su primer token) y \texttt{response\_\allowbreak mask}, que vale~1 exactamente donde la etiqueta procede de la respuesta y~0 en la instrucción y en el relleno. ¿Cuántas posiciones puntúan en cada ejemplo?
+  \item \pts{3} Las pérdidas por posición, $\ell_t=-\ln p_\theta(\text{etiqueta}_t\mid\text{prefijo})$, alineadas con \texttt{labels}, son $(2{,}4;\ 1{,}9;\ 0{,}7;\ 0{,}8;\ 0{,}2)$ en el ejemplo~1 y $(1{,}6;\ 0{,}9;\ 0{,}6;\ 0{,}3;\ 3{,}0)$ en el ejemplo~2. Calcule: (i) la media por token de respuesta del lote, $J_{\mathrm{tok}}$; (ii) la media de las medias por secuencia, $J_{\mathrm{mm}}$ (media dentro de cada secuencia y después media entre secuencias); (iii) la normalización por una constante, $J_{\mathrm{c}}$ (suma enmascarada dividida entre el tamaño del lote, $2$, y una constante $c=5$, la longitud máxima); (iv) la pérdida sin máscara, excluyendo solo el relleno. A continuación, el lote se divide en dos microlotes de una secuencia y se acumulan los gradientes, retropropagando en cada microlote su pérdida dividida entre el número de microlotes. ¿Con cuál de las normalizaciones (i) o (iii) coincide la pérdida acumulada con la del lote completo? Justifíquelo.
+  \item \pts{2} En otro conjunto, cuatro ejemplos tienen 11, 6, 14 y 8 tokens. Se añade un token de fin tras cada uno, se concatenan y la cadena se corta en trozos consecutivos de $m=8$ tokens, descartando el último si está incompleto. ¿Cuántas secuencias se obtienen y cuántos tokens se pierden? Compárelo con rellenar cada ejemplo, con su token de fin, hasta 16 tokens: ¿qué fracción de las posiciones es útil? Indique un inconveniente del empaquetado.
+  \item \pts{2} \emph{Derivación.} Sea $x_{1:T}=(u_{1:n},y_{1:m})$ y sea la máscara $m_t=1$ si $t>n$ y $m_t=0$ en otro caso. Demuestre que $\Lsft=-\frac{1}{m}\ln p_\theta(y\mid u)$ y que el gradiente de $\Lsft$ respecto a los logits de una posición de la instrucción es nulo. ¿Significa esto que la instrucción no influye en los gradientes de los parámetros?
+\end{enumerate}
+\fuente{apartado (a) adaptado de Stanford CS336, primavera de 2026, tarea~5~\cite[§4.2.1]{cs336a5}, problema \texttt{tokenize\_\allowbreak prompt\_\allowbreak and\_\allowbreak output}; apartado (b), del mismo documento, §4.2.3--4.2.4, problema \texttt{aggregate\_\allowbreak loss\_\allowbreak across\_\allowbreak microbatch} y acumulación de gradientes; apartado (c), del suplemento de la tarea~5~\cite[§4.2.1]{cs336a5s}, problema \texttt{data\_\allowbreak loading}. Datos cambiados.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\begin{ejercicio}{2}{eje:p2}
+\textbf{LoRA, QLoRA y olvido (M20). 10 puntos.}
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{3} Una capa LoRA de rango $r=1$ tiene $W_0=\begin{pmatrix}2&0\\0&1\end{pmatrix}$, $B=(1,2)\T$, $A=(2,\,-1)$ y $\alpha=0{,}5$. Calcule $h=W_0x+s\,B(Ax)$ para $x=(1,3)\T$, la matriz fusionada $W'=W_0+s\,BA$ y compruebe que $W'x=h$. Si el gradiente que llega a la salida es $G=\partial\mathcal{L}/\partial h=(1,0)\T$, calcule $\partial\mathcal{L}/\partial B$ y $\partial\mathcal{L}/\partial A$. ¿Qué valdría $\partial\mathcal{L}/\partial A$ si $B$ estuviera en su valor inicial?
+  \item \pts{2} La actualización ideal $\Delta W^{\star}$ de una matriz tiene valores singulares $(4;\ 2;\ 1;\ 0{,}5)$. Calcule el menor error de Frobenius que puede alcanzar LoRA con $r=1$ y con $r=2$, y la fracción de energía $\sum_{i\le r}\sigma_i^{2}/\sum_i\sigma_i^{2}$ que conserva cada uno. ¿Cuál es el menor rango que conserva al menos el $90\,\%$?
+  \item \pts{3} \emph{Estimación.} Un modelo de $N=7\cdot 10^{9}$ parámetros tiene 32 capas, cada una con cuatro matrices de atención $W_Q$, $W_K$, $W_V$ y $W_O$ de $4096\times 4096$. Se aplica LoRA con $r=16$ a esas cuatro matrices. (i) ¿Cuántos parámetros se entrenan y qué fracción representan de esas matrices? (ii) Con QLoRA, la base se guarda en NF4 con bloques de $B_1=64$ pesos, cuyas constantes se cuantizan a 8 bits en bloques de $B_2=256$ con una constante de segundo nivel de 32 bits. Calcule los bits efectivos por parámetro, $b_{\mathrm{ef}}$. (iii) Calcule la memoria de pesos y estado del optimizador de QLoRA (16 bytes por parámetro de LoRA) y compárela con la del ajuste completo con Adam en precisión mixta (16 bytes por parámetro).
+  \item \pts{2} En el modelo cuadrático $\mathcal{L}(\theta)=(\theta-a)^{2}+\lambda(\theta-\theta_0)^{2}$, con $\theta_0=2$ (modelo preentrenado) y $a=5$ (óptimo de la tarea nueva), calcule $\theta^{\ast}$, el olvido $(\theta^{\ast}-\theta_0)^{2}$ y el error en la tarea nueva $(\theta^{\ast}-a)^{2}$ para $\lambda=2$. ¿Qué valor mínimo de $\lambda$ garantiza un olvido no mayor que $0{,}25$, y cuál es entonces el error en la tarea nueva?
+\end{enumerate}
+\fuente{elaboración propia, con la formulación de LoRA de Hu \emph{et al.}~\cite[§4.1]{hu-lora} y la de QLoRA de Dettmers \emph{et al.}~\cite[§3]{dettmers}.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\begin{ejercicio}{3}{eje:p3}
+\textbf{Funciones de valor, gradiente de política y línea base (M21). 10 puntos.}
+
+\emph{Primera parte.} Un MDP determinista tiene dos estados, $S_1$ y $S_2$, y dos acciones en cada uno, \emph{quedarse} y \emph{cambiar}. En $S_1$, quedarse da recompensa $-1$ y deja el estado en $S_1$; cambiar da $-2$ y lleva a $S_2$. En $S_2$, quedarse da $+3$ y deja el estado en $S_2$; cambiar da $-1$ y lleva a $S_1$. El factor de descuento es $\gamma=0{,}5$. Sea $\pi$ la política determinista que cambia en $S_1$ y se queda en $S_2$.
+
+\emph{Segunda parte.} Una política sobre dos acciones, $\mathcal{A}=\{0,1\}$, tiene $\pi_\theta(1)=p=\sigma(\theta)$, y la recompensa es $r(a)=\mathbb{1}\{a=1\}$. Con $n$ muestras independientes $a_1,\dots,a_n\sim\pi_\theta$ se estima el gradiente con
+\[
+\hat g_b=\frac1n\sum_{i=1}^{n}\bigl(r(a_i)-b\bigr)\,\frac{d}{d\theta}\ln\pi_\theta(a_i),
+\]
+donde $b$ es una constante.
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{4} (i) Resuelva la ecuación de Bellman para $V^{\pi}(S_1)$ y $V^{\pi}(S_2)$. (ii) Aplique la evaluación iterativa $V_{k+1}=T^{\pi}V_k$ desde $V_0=(0,0)$ hasta $V_3$ y tabule el error $\abs{V^{\pi}(s)-V_k(s)}$ en cada estado y su máximo. Muestre que el error en $S_1$ \emph{aumenta} de $k=0$ a $k=1$ y explique por qué ello no contradice que $T^{\pi}$ sea una contracción. (iii) Calcule $Q^{\pi}(S_1,\text{quedarse})$, la ventaja $A^{\pi}(S_1,\text{quedarse})$ y razone si $\pi$ es óptima.
+  \item \pts{4} \emph{Derivación.} (i) Calcule $\frac{d}{d\theta}\ln\pi_\theta(a)$ para $a=0$ y $a=1$, y compruebe que $\E[\hat g_b]=p(1-p)$ para todo $b$. (ii) Demuestre que $\Var(\hat g_b)=p(1-p)(1-p-b)^{2}/n$. (iii) Particularice para $b=0$ y para la línea base «media poblacional» $b=p$. ¿Es la segunda siempre mejor? Determine para qué valores de $p$ reduce la varianza. (iv) Obtenga la línea base constante de varianza mínima y la varianza que alcanza.
+  \item \pts{2} Con $p=0{,}8$ y $n=16$, calcule la varianza de $\hat g_b$ para $b=0$, $b=p$ y la línea base óptima. Compruebe que esta coincide con la fórmula general $b^{*}=\E[r\,g^{2}]/\E[g^{2}]$, con $g=\frac{d}{d\theta}\ln\pi_\theta(a)$, y comente el resultado.
+\end{enumerate}
+\fuente{apartado (a) adaptado de Stanford CS234, invierno de 2018, examen parcial, pregunta~3~\cite{cs234mid} (MDP de dos estados y dos acciones con recompensas $-2$, $-1$ y $3$ cuya iteración converge de forma no monótona; aquí, con descuento y para la evaluación de una política); apartados (b) y (c), de Stanford CS336, primavera de 2026, tarea~5~\cite[§4.1.5]{cs336a5}, problema \texttt{baseline\_\allowbreak calcs}, ampliado con la línea base óptima.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\begin{ejercicio}{3}{eje:p4}
+\textbf{Preferencias, política óptima con KL y DPO (M21). 10 puntos.}
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{2} En 20 comparaciones independientes entre las respuestas $y_a$ e $y_b$ a una instrucción, $y_a$ se prefiere 15 veces. Con el modelo de Bradley--Terry, estime $r(y_a)-r(y_b)$ por máxima verosimilitud y calcule la pérdida media del modelo de recompensa en el estimador. Si además $y_b$ gana a $y_c$ con razón de probabilidades $2{:}1$, ¿qué probabilidad predice el modelo para $y_a\pref y_c$?
+  \item \pts{3} Para una instrucción con tres respuestas posibles, $\piref=(0{,}4;\ 0{,}4;\ 0{,}2)$ y $r=(1,\,0,\,2)$. Con $\beta=1$, calcule la política óptima del objetivo $\E_\pi[r]-\beta\,\KL(\pi\,\|\,\piref)$, la constante $Z$, $\E_{\pi^{*}}[r]$, $\KL(\pi^{*}\,\|\,\piref)$ y el valor del objetivo, y compruebe que vale $\beta\ln Z$. Repita el cálculo con $\beta=0{,}5$ e interprete el efecto de $\beta$.
+  \item \pts{2} \emph{Derivación.} A partir de la política óptima $\pi^{*}(y\mid x)=\piref(y\mid x)\,e^{r(x,y)/\beta}/Z(x)$ y del modelo de Bradley--Terry, deduzca la pérdida DPO y explique por qué desaparece $Z(x)$. Justifique también que, para calcular $\ln\pi_\theta(y_w\mid x)-\ln\pi_\theta(y_l\mid x)$, puede usarse la diferencia de log-probabilidades de las cadenas concatenadas $x\oplus y_w$ y $x\oplus y_l$.
+  \item \pts{2} Un par tiene $\ln\pi_\theta(y_w\mid x)=-20$, $\ln\piref(y_w\mid x)=-21{,}5$, $\ln\pi_\theta(y_l\mid x)=-24$ y $\ln\piref(y_l\mid x)=-23$, con $\beta=0{,}1$. Calcule las recompensas implícitas, el margen, la pérdida DPO y el factor $\beta\,\sigma(-\text{margen})$ que pondera su gradiente.
+  \item \pts{1} En RL con recompensas verificables, $G=5$ respuestas a un problema obtienen $(1,0,0,1,0)$. Calcule las ventajas de GRPO con la desviación típica poblacional y con la muestral (la que usa por defecto \texttt{torch.std}). Si la probabilidad de acierto es $0{,}4$, ¿con qué probabilidad un grupo de 5 respuestas no aporta señal?
+\end{enumerate}
+\fuente{apartados (c) y (d) adaptados de Stanford CS336, primavera de 2026, suplemento de la tarea~5~\cite[§6.1 y~§6.3]{cs336a5s}, problema \texttt{dpo\_\allowbreak loss} (reparametrización de la recompensa, cancelación de $Z(x)$ y de la probabilidad de la instrucción); apartado (e), de la tarea~5~\cite[§4.1.6 y~§4.2.3]{cs336a5}, problema \texttt{compute\_\allowbreak group\_\allowbreak normalized\_\allowbreak rewards\_\allowbreak grpo}; apartados (a) y (b), de elaboración propia según Rafailov \emph{et al.}~\cite{dpo}.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\begin{ejercicio}{2}{eje:p5}
+\textbf{Recuperación léxica y evaluación de rankings (M22). 10 puntos.}
+
+Una colección tiene cuatro documentos, ya sin palabras vacías:
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Documento & Texto \\
+\midrule
+$D_1$ & gato negro duerme \\
+$D_2$ & perro negro corre negro \\
+$D_3$ & gato come pescado \\
+$D_4$ & pájaro canta \\
+\bottomrule
+\end{tabular}
+\end{center}
+La consulta es $q=$ «gato negro».
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{3} Con $\idf_t=\ln(N/\df_t)$ y pesos $w_{t,d}=f_{t,d}\,\idf_t$ (también para la consulta), calcule la similitud coseno entre $q$ y cada documento y ordénelos.
+  \item \pts{2} Calcule la puntuación BM25 de cada documento con $k_1=1{,}2$ y $b=0{,}75$, usando $\idf^{\mathrm{BM}}_t=\ln\bigl(1+(N-n_t+0{,}5)/(n_t+0{,}5)\bigr)$. ¿Cuánto aporta la segunda aparición de «negro» en $D_2$? ¿Coincide el orden con el de (a)?
+  \item \pts{3} Una necesidad de información tiene 4 documentos relevantes en la colección. Dos sistemas devuelven estos diez primeros resultados (R: relevante; N: no relevante):
+  \begin{center}
+  \begin{tabular}{@{}l*{10}{c}@{}}
+  \toprule
+  Posición & 1 & 2 & 3 & 4 & 5 & 6 & 7 & 8 & 9 & 10 \\
+  \midrule
+  Sistema 1 & R & N & N & R & N & N & N & N & R & N \\
+  Sistema 2 & N & R & R & N & N & R & N & N & N & N \\
+  \bottomrule
+  \end{tabular}
+  \end{center}
+  Calcule para cada sistema la precisión media (AP), la R-precisión, $\Pk{10}$, $\Rk{10}$ y el rango recíproco. ¿Ordenan los sistemas de la misma manera AP y la R-precisión? ¿Qué premia la AP?
+  \item \pts{2} Suponga que el sistema~1 ordena en realidad los $10\,000$ documentos de la colección y que los diez anteriores son los primeros. ¿Cuáles son la mayor y la menor AP posibles? ¿Qué error máximo se comete al calcular la AP considerando solo los diez primeros, como en (c)?
+\end{enumerate}
+\fuente{apartados (c) y (d) adaptados de Manning, Raghavan y Schütze, \emph{Introduction to Information Retrieval}~\cite{iir}, ejercicio~8.8 (MAP y R-precisión de dos sistemas con 4 relevantes) y ejercicio~8.9, partes (f)--(h) (cotas de la AP cuando solo se juzgan los primeros resultados), con otros rankings; apartados (a) y (b), de elaboración propia con las definiciones de~\cite[§6.2 y~§11.4.3]{iir}.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\begin{ejercicio}{2}{eje:p6}
+\textbf{RAG, agentes y evaluación con incertidumbre (M22). 10 puntos.}
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{2} Un codificador dual da a la consulta el embedding $q=(1,2,2)$ y a tres fragmentos $c_1=(2,1,2)$, $c_2=(0,3,4)$ y $c_3=(10,5,0)$. Ordene los fragmentos por producto escalar y por coseno. ¿Por qué difieren los órdenes y cómo se consigue que un índice de producto escalar devuelva el orden del coseno?
+  \item \pts{2} Un documento de $L=5000$ tokens se trocea en fragmentos de $\tau=512$ tokens con un solape de $s=64$. ¿Cuántos fragmentos salen, dónde empieza el último y cuántos tokens se indexan en total? Si el \emph{prompt} incluye $k=4$ fragmentos y 300 tokens de instrucciones y pregunta, ¿cuántos tokens tiene?
+  \item \pts{2} Un agente debe completar 8 llamadas a herramientas y cada una sale bien, de forma independiente, con probabilidad $p=0{,}9$. Calcule la probabilidad de completar la tarea y el número medio de pasos hasta el primer fallo. Si tras cada paso se verifica el resultado y se permite un reintento independiente, ¿cuál es la nueva probabilidad? ¿Qué fiabilidad por paso, sin reintentos, haría falta para completar la tarea con probabilidad $0{,}95$?
+  \item \pts{4} Un sistema RAG~A acierta 640 de 800 preguntas. (i) Calcule el intervalo de confianza del $95\,\%$ para su exactitud con el error estándar estimado y con la regla conservadora $\bar x\pm 1/\sqrt n$. (ii) ¿Cuántas preguntas harían falta para que la semianchura conservadora fuese de 1 punto porcentual al $95\,\%$? ¿Y al $80\,\%$ ($z_{0{,}1}=1{,}2816$)? (iii) Un sistema~B acierta el $76\,\%$ de otras 800 preguntas independientes. Calcule el error estándar de la diferencia, el intervalo del $95\,\%$ y decida si la diferencia es significativa. ¿Qué diseño de la evaluación reduciría el error?
+\end{enumerate}
+\fuente{apartado (d)(i)--(ii) adaptado de MIT 18.05, primavera de 2022, problemas de la clase~23~\cite{mit1805}, problema~1 (tamaño de muestra para un margen dado con el intervalo conservador de una proporción, al $95\,\%$ y al $80\,\%$); el resto, de elaboración propia.}
+\end{ejercicio}
+
+% ---------------------------------------------------------------------
+\begin{ejercicio}{3}{eje:p7}
+\textbf{Superposición, autoencoders dispersos y evaluación de seguridad (M23). 10 puntos.}
+\begin{enumerate}[label=(\alph*)]
+  \item \pts{3} En el modelo de juguete $\hat x=\relu(W\T Wx)$, sin sesgo, cuatro características se guardan en $m=2$ dimensiones con columnas $W_1=(1,0)$, $W_2=(-1,0)$, $W_3=(0,1)$ y $W_4=(0,-1)$. Calcule $W\T W$ y la reconstrucción y el error cuadrático para $x=e_1$, $x=e_1+e_2$ y $x=e_1+e_3$. Calcule la dimensión por característica $D_i$ y su suma. Si cada característica está activa, de forma independiente, con probabilidad $0{,}1$, ¿con qué probabilidad hay algún par antipodal con sus dos características activas?
+  \item \pts{3} Un autoencoder disperso tiene direcciones de decodificación unitarias $d_1=(1,0)$, $d_2=(0,1)$ y $d_3=(0{,}8;\ 0{,}6)$, sin sesgos, y pérdida $\norm{x-\hat x}^{2}+\lambda\sum_jf_j\norm{d_j}$ con $\lambda=0{,}2$. Para $x=(1{,}6;\ 1{,}2)$, compare las pérdidas de los códigos $f=(1{,}6;\ 1{,}2;\ 0)$ y $f=(0,0,2)$. Después, fijado que solo se usa el latente~3, halle el valor óptimo $f_3\ge 0$, su reconstrucción y su pérdida. ¿Qué sesgo sistemático muestra el resultado?
+  \item \pts{2} De 200 respuestas de un modelo, 80 tienen confianza $0{,}95$ y aciertan 60; 70 tienen confianza $0{,}7$ y aciertan 49, y 50 tienen confianza $0{,}4$ y aciertan 25. Calcule el ECE y el MCE con esos tres grupos, la confianza media y la exactitud. Con la regla de puntuación de umbral $t=0{,}75$ (1 por acierto, 0 por abstención y $-t/(1-t)$ por error), ¿le conviene responder en el grupo de confianza $0{,}7$?
+  \item \pts{2} Un ataque tiene éxito en cada intento, de forma independiente, con probabilidad $0{,}01$. ¿Con qué probabilidad triunfa al menos una vez en 200 intentos? Compárelo con la cota $1-e^{-kp}$. En otra prueba, 500 intentos no producen ningún éxito: dé la cota superior del $95\,\%$ por la regla del 3 y la exacta.
+\end{enumerate}
+\fuente{elaboración propia, con el modelo de juguete de Elhage \emph{et al.}~\cite{elhage22}, los autoencoders dispersos de Bricken \emph{et al.}~\cite{bricken}, el ECE de Guo \emph{et al.}~\cite{guo} y la regla de puntuación de Kalai \emph{et al.}~\cite{kalai25}.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Proyecto de fase}
+\label{cap:proyecto}
+% =====================================================================
+
+\section*{Un mini-GPT en español con preentrenamiento, SFT y DPO}
+
+\paragraph{Objetivo.} Entrenar de principio a fin un modelo de lenguaje pequeño en español que siga instrucciones y prefiera respuestas útiles, recorriendo las tres etapas del curso: preentrenamiento con entropía cruzada, ajuste supervisado con LoRA y pérdida enmascarada, y optimización directa de preferencias frente a un modelo de referencia. El proyecto integra la tokenización BPE (M12), el Transformer y su recuento de parámetros (M14 y M15), las leyes de escalado (M16), el ajuste fino (M20, §2.2, §3.1 y §5.1), DPO (M21, §3.4 y §5.3) y la evaluación con incertidumbre (M22, §3.3; M23, §6.1). Debe poder ejecutarse en CPU o en una GPU modesta en pocas horas.
+
+\paragraph{Datos.} Todo el material lo escribe el estudiante o se genera con plantillas propias; no se usan textos literarios existentes ni conjuntos descargados. Se necesitan: un corpus de preentrenamiento (del orden de $10^{6}$ caracteres), unas 300 parejas instrucción--respuesta y unos 300 pares de preferencias $(x,y_w,y_l)$, con particiones separadas de validación y de prueba en cada etapa.
+
+\paragraph{Plazo.} Tres semanas desde la realización del examen. El proyecto cuenta en la nota de la fase, no en la del examen.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=4mm and 5mm,
+  caja/.style={draw,rounded corners=2pt,align=center,font=\small,minimum height=10mm,inner sep=3pt},
+  flecha/.style={-{Stealth[length=2mm]}}]
+\node[caja] (c) {Corpus\\propio};
+\node[caja,right=of c] (t) {BPE\\(M12)};
+\node[caja,right=of t] (p) {Preentre-\\namiento\\(M15, M16)};
+\node[caja,right=of p] (s) {SFT con\\LoRA\\(M20)};
+\node[caja,right=of s] (d) {DPO con\\$\piref=$ SFT\\(M21)};
+\node[caja,right=of d] (e) {Evaluación\\e informe\\(M22, M23)};
+\draw[flecha] (c)--(t); \draw[flecha] (t)--(p); \draw[flecha] (p)--(s); \draw[flecha] (s)--(d); \draw[flecha] (d)--(e);
+\end{tikzpicture}
+\par\smallskip{\small Flujo de trabajo del proyecto de fase.}
+\end{figure}
+
+\paragraph{Entregables.}
+\begin{enumerate}[label=\arabic*.]
+  \item Código en PyTorch (tokenizador, modelo, los tres bucles de entrenamiento y la evaluación) que se ejecute de principio a fin con una sola orden, con semillas fijas y el tiempo de ejecución indicado.
+  \item El corpus propio y los conjuntos de instrucciones y de preferencias, con sus particiones.
+  \item Los puntos de control de las tres etapas y una tabla con las respuestas de cada etapa a los mismos 10 \emph{prompts}.
+  \item Un informe de 8 a 12 páginas que justifique cada decisión con las matemáticas del curso y con números propios.
+\end{enumerate}
+
+\paragraph{Pasos.}
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Tokenizador.} Entrene un BPE de 512 tokens, con los tokens especiales de la plantilla de chat (M20, §2.4), y mida los bytes por token en validación (M12; M06).
+  \item \emph{Tamaño y presupuesto.} Elija el número de capas $L$, la dimensión $d$ y la de la red de alimentación; cuente los parámetros y estime el cómputo con $C\approx 6ND$. Fije el número de tokens con una regla de tipo Chinchilla, $D\approx 20N$~\cite{hoffmann}, y justifique cualquier desviación (M14; M16).
+  \item \emph{Preentrenamiento.} AdamW con calentamiento y decaimiento coseno, recorte de la norma del gradiente y log-suma-exp estable. Represente las pérdidas de entrenamiento y de validación e informe de la perplejidad y de los bits por byte (M07; M11; M15).
+  \item \emph{SFT con LoRA.} Rango $r\in\{4,8,16\}$, pérdida solo en la respuesta y en el token de fin de turno. Mida el olvido como la perplejidad sobre la validación del preentrenamiento antes y después del ajuste, y compare con un ajuste completo si el presupuesto lo permite (M20, §2.2, §3.1 y §5.5).
+  \item \emph{DPO.} Con $\piref$ igual al modelo SFT, pruebe al menos dos valores de $\beta$ e informe de la pérdida, la precisión de preferencias en validación, el margen implícito medio y una estimación de $\KL(\pi_\theta\,\|\,\piref)$ (M21, §3.3, §3.4 y §5.3).
+  \item \emph{Evaluación.} Use un conjunto de preferencias separado y dé intervalos del $95\,\%$ para la tasa de victoria y la precisión de preferencias, con un análisis emparejado cuando las comparaciones compartan instrucciones (M22, §3.3; M23, §6.1). Analice al menos diez errores.
+  \item \emph{Mejora opcional} (necesaria para la calificación de excelente en el informe). Busque con la diferencia de medias una dirección del flujo residual asociada a un rasgo de las respuestas preferidas, por ejemplo su longitud o su cortesía, y mida el efecto de sumarla o eliminarla (M23, §5.5).
+\end{enumerate}
+
+\section*{Criterios de evaluación}
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.7cm}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Criterio & Peso & Excelente & Suficiente & Insuficiente \\
+\midrule
+Preentrenamiento & 20\,\% & Curvas de entrenamiento y validación, perplejidad y bits por byte; tamaño justificado con $6ND$ y la regla de Chinchilla. & El modelo converge y genera texto plausible; métricas básicas. & No converge o faltan las métricas. \\
+\addlinespace
+SFT con LoRA & 20\,\% & Pérdida enmascarada comprobada, rango justificado con la SVD de la actualización, olvido medido y discutido. & SFT funcional con mejora visible en las respuestas. & Sin máscara o sin comparación con el modelo base. \\
+\addlinespace
+DPO & 20\,\% & Dos o más valores de $\beta$, con KL y margen; relación con $\pi^{*}\propto\piref\,e^{r/\beta}$ explicada. & DPO que mejora la precisión de preferencias en validación. & La pérdida no baja o falta el modelo de referencia. \\
+\addlinespace
+Evaluación & 15\,\% & Conjuntos separados, intervalos del $95\,\%$, análisis emparejado y de errores. & Métricas en validación sin incertidumbre. & Solo se evalúa en entrenamiento. \\
+\addlinespace
+Informe matemático & 20\,\% & Cada decisión se deriva de una fórmula del curso aplicada a números propios. & Explica las decisiones principales. & Descriptivo, sin matemáticas. \\
+\addlinespace
+Código y reproducibilidad & 5\,\% & Una sola orden, semillas fijas, tiempo de ejecución indicado. & Se ejecuta con ajustes menores. & No se ejecuta. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+\appendix
+\renewcommand{\thechapter}{\Roman{chapter}}
+% =====================================================================
+\chapter{Soluciones}
+\label{ap:soluciones}
+% =====================================================================
+
+Las referencias a los apuntes siguen el formato «M21, §3.4»: módulo, y número de tema y sección tal como aparecen en el PDF de cada módulo. En los pasos intermedios se conservan al menos 4 cifras significativas y los resultados se dan con 3, como piden las instrucciones; cuando existe, se da también el valor exacto.
+
+% ---------------------------------------------------------------------
+\section{Parte A: clave de respuestas}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.12}
+\begin{tabularx}{\textwidth}{@{}c c >{\raggedright\arraybackslash}X >{\raggedright\arraybackslash}p{2.5cm}@{}}
+\toprule
+Pregunta & Resp. & Justificación & Apuntes \\
+\midrule
+1 & (b) & La pérdida enmascarada solo puntúa la respuesta y su token de fin, imprescindible para que el modelo aprenda a terminar el turno. & M20, §2.2 y §2.4 \\
+2 & (c) & $r(d+k)=8\cdot(4096+1024)=40\,960$. & M20, §5.1 \\
+3 & (d) & Con $B=0$, $BA=0$; $\partial\mathcal{L}/\partial B=s\,G(Ax)\T\ne 0$ y $A$ recibe gradiente desde el segundo paso. & M20, §5.3 \\
+4 & (a) & $\theta^{\ast}=(a+\lambda\theta_0)/(1+\lambda)=4/4=1$. & M20, §3.2 \\
+5 & (b) & $b+32/B=4+32/32=5$ bits. & M20, §6.1 \\
+6 & (d) & $G_0=R_1+\gamma R_2+\gamma^{2}R_3=1+0+0{,}25\cdot 2=1{,}5$. & M21, §1.2 \\
+7 & (b) & La puntuación tiene media nula, de modo que $\E[\nabla\ln\pi\cdot b(s)]=0$. & M21, §2.5 \\
+8 & (c) & Con $A<0$, el término es $\max(\rho,1-\varepsilon)A=0{,}8\cdot(-1)=-0{,}8$. & M21, §3.2 \\
+9 & (d) & $\widehat{r_a-r_b}=\ln\bigl(n_a/(n-n_a)\bigr)=\ln(8/2)=\ln 4$. & M21, §4.2 \\
+10 & (d) & Los dos log-cocientes son nulos y $-\ln\sigma(0)=\ln 2$. & M21, §5.3 \\
+11 & (a) & Todos los numeradores $r_i-\bar r$ son nulos; con $\varepsilon_0>0$ las ventajas son~0. & M21, §6.3 \\
+12 & (b) & $\idf_t=\ln(1000/10)=\ln 100=4{,}605$; el valor~2 corresponde al logaritmo decimal. & M22, §2.2 \\
+13 & (c) & $g(f,\ell)\to k_1+1=2{,}5$: la frecuencia se satura. & M22, §2.6 \\
+14 & (a) & $\AP=\frac14\bigl(\frac12+\frac24+\frac35\bigr)=1{,}6/4=0{,}4$; (c) divide entre 3, no entre $\abs{\Rel}$. & M22, §3.2 \\
+15 & (a) & Si el modelo ha visto el examen, la puntuación mide memoria y no capacidad. & M22, §3.4 \\
+16 & (c) & $0{,}98^{20}=0{,}668$; (b) es la aproximación lineal $1-20\cdot 0{,}02$. & M22, §6.4 \\
+17 & (d) & Las características dispersas casi nunca coinciden y la interferencia se paga rara vez. & M23, §3.1--3.3 \\
+18 & (a) & $a-\lambda/2=0{,}3-0{,}4<0$, luego $f^{\ast}=0$: la $L^{1}$ anula las activaciones pequeñas. & M23, §4.3 \\
+19 & (b) & Dividir por $T>0$ conserva el orden de los logits y, por tanto, el argmax. & M23, §6.3 \\
+20 & (c) & Regla del 3: $3/600=0{,}5\,\%$ (la cota exacta es $0{,}498\,\%$). & M23, §6.6 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+% ---------------------------------------------------------------------
+\section{Parte B: soluciones de los ejercicios}
+
+% =====================================================================  B.1
+\begin{solucion}{eje:p1}
+\apartado{(a)}
+\datos instrucciones $[12,7,3,9]$ y $[6,2]$; respuestas $[4,0]$ y $[8,5,0]$; relleno~$1$.
+\planteamiento se concatena, se rellena a la longitud máxima y se desplaza una posición: la etiqueta de la posición $t$ es el token $t+1$. La máscara vale~1 cuando esa etiqueta es un token de la respuesta (M20, §2.2 y~§2.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Secuencias: $[12,7,3,9,4,0]$ (6 tokens) y $[6,2,8,5,0]$ (5 tokens), que se rellena a $[6,2,8,5,0,1]$.
+  \item Ejemplo~1: \texttt{input\_ids} $=[12,7,3,9,4]$, \texttt{labels} $=[7,3,9,4,0]$. Las etiquetas $4$ y $0$ son de la respuesta: máscara $[0,0,0,1,1]$.
+  \item Ejemplo~2: \texttt{input\_ids} $=[6,2,8,5,0]$, \texttt{labels} $=[2,8,5,0,1]$. Las etiquetas $8$, $5$ y $0$ son de la respuesta y la última es relleno: máscara $[0,1,1,1,0]$.
+\end{enumerate}
+\resultado \textbf{puntúan 2 posiciones en el ejemplo~1 y 3 en el ejemplo~2}, tantas como tokens tiene cada respuesta.
+\comprobacion la última etiqueta de la instrucción ($9$ en el ejemplo~1) no puntúa, y la primera posición que puntúa es la que tiene como entrada el último token de la instrucción ($9\to 4$).
+\criterio 1 punto por las secuencias desplazadas; 1,5 por las máscaras; 0,5 por el recuento.
+
+\apartado{(b)}
+\datos pérdidas $(2{,}4;\ 1{,}9;\ 0{,}7;\ 0{,}8;\ 0{,}2)$ y $(1{,}6;\ 0{,}9;\ 0{,}6;\ 0{,}3;\ 3{,}0)$; máscaras de (a); $B=2$; $c=5$.
+\planteamiento sumas enmascaradas $S_i=\sum_tm^{(i)}_t\ell^{(i)}_t$ y los cuatro cocientes del enunciado; la acumulación es exacta si la pérdida del lote es una suma de términos por secuencia con denominadores fijos (M20, §2.3, proposición de acumulación de gradientes).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $S_1=0{,}8+0{,}2=1{,}0$ (2 posiciones) y $S_2=0{,}9+0{,}6+0{,}3=1{,}8$ (3 posiciones).
+  \item (i) $J_{\mathrm{tok}}=(1{,}0+1{,}8)/(2+3)=2{,}8/5=0{,}56$.
+  \item (ii) $J_{\mathrm{mm}}=\frac12\bigl(1{,}0/2+1{,}8/3\bigr)=\frac12(0{,}5+0{,}6)=0{,}55$.
+  \item (iii) $J_{\mathrm{c}}=(1{,}0+1{,}8)/(2\cdot 5)=0{,}28$; es la normalización $J_{\mathrm{sec}}$ de los apuntes.
+  \item (iv) Sin máscara, excluyendo el relleno: $(2{,}4+1{,}9+0{,}7+0{,}8+0{,}2)+(1{,}6+0{,}9+0{,}6+0{,}3)=6{,}0+3{,}4=9{,}4$ sobre 9 posiciones, $9{,}4/9=1{,}044$.
+  \item Acumulación con (i): cada microlote divide entre sus propios tokens, $1{,}0/2=0{,}5$ y $1{,}8/3=0{,}6$; la suma de $J_g/2$ es $0{,}55\neq 0{,}56$.
+  \item Acumulación con (iii): cada microlote calcula $S_g/(1\cdot 5)$ y retropropaga la mitad, $0{,}1+0{,}18=0{,}28=J_{\mathrm{c}}$.
+\end{enumerate}
+\resultado \textbf{$J_{\mathrm{tok}}=0{,}56$; $J_{\mathrm{mm}}=0{,}55$; $J_{\mathrm{c}}=0{,}28$; sin máscara, $1{,}04$. La acumulación reproduce $J_{\mathrm{c}}$, no $J_{\mathrm{tok}}$}: la suma de cocientes no es el cociente de las sumas cuando los microlotes tienen distinto número de tokens que puntúan; con un denominador constante, la pérdida es lineal en las secuencias y el gradiente también.
+\comprobacion la pérdida sin máscara es mucho mayor porque la instrucción, que el modelo no tiene por qué predecir, domina la suma ($6{,}6$ de $9{,}4$).
+\criterio 0,5 puntos por cada pérdida (i)--(iv); 1 punto por la acumulación y su justificación.
+
+\apartado{(c)}
+\datos longitudes $11$, $6$, $14$ y $8$; un token de fin por ejemplo; $m=8$; relleno hasta 16.
+\planteamiento con empaquetado se obtienen $\lfloor T/m\rfloor$ secuencias de los $T$ tokens totales; con relleno, la fracción útil es $T/(4\cdot 16)$ (M20, §2.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Con el token de fin: $12+7+15+9=43$ tokens.
+  \item $\lfloor 43/8\rfloor=5$ secuencias, con $40$ tokens; se pierden $43-40=3$ tokens, el $7{,}0\,\%$.
+  \item Con relleno: $4\cdot 16=64$ posiciones, de las que son útiles $43$: $43/64=67{,}2\,\%$.
+\end{enumerate}
+\resultado \textbf{5 secuencias y 3 tokens perdidos; con relleno solo el $67{,}2\,\%$ de las posiciones es útil.} Inconveniente: una secuencia empaquetada mezcla el final de un ejemplo con el principio de otro, y la máscara causal permite que un ejemplo atienda al anterior; además, los ejemplos quedan cortados.
+\comprobacion los límites entre ejemplos están en las posiciones $12$, $19$, $34$ y $43$; la segunda secuencia ($8$ a $15$) contiene el final del primer ejemplo y el principio del segundo.
+\criterio 1 punto por el empaquetado; 0,5 por el relleno; 0,5 por el inconveniente.
+
+\apartado{(d)}
+\datos $x_{1:T}=(u_{1:n},y_{1:m})$; $m_t=\mathbb{1}\{t>n\}$.
+\planteamiento regla de la cadena condicionada a $u$ y gradiente de $\LSE$ (M20, §2.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\sum_tm_t=m$ y $\sum_tm_t\ln p_\theta(x_t\mid x_{1:t-1})=\sum_{j=1}^{m}\ln p_\theta(y_j\mid u,y_{1:j-1})=\ln p_\theta(y\mid u)$, por la regla de la cadena.
+  \item Dividiendo por $m$ y cambiando el signo, $\Lsft=-\frac1m\ln p_\theta(y\mid u)$: el SFT es máxima verosimilitud de la respuesta dada la instrucción.
+  \item Solo el sumando $t$ depende de los logits $z_t$, y $\partial(-\ln p_t)/\partial z_t=p_t-e_{x_t}$; por tanto $\partial\Lsft/\partial z_t=\frac{m_t}{m}(p_t-e_{x_t})$, que es nulo si $t\le n$.
+  \item La instrucción sí influye: las posiciones de la respuesta atienden a las de la instrucción, y el gradiente llega a sus estados ocultos y a los parámetros a través de la atención. Lo que se suprime es la señal que obligaría a \emph{predecir} los tokens de la instrucción.
+\end{enumerate}
+\resultado \textbf{$\Lsft=-\frac1m\ln p_\theta(y\mid u)$; gradiente nulo en los logits de la instrucción, pero no en sus representaciones.}
+\comprobacion con $m_t=1$ para todo $t$ se recupera la pérdida del preentrenamiento, $-\frac1T\ln p_\theta(u,y)$.
+\criterio 1 punto por la identidad; 0,5 por el gradiente; 0,5 por la discusión.
+\repasar{M20, §2.2, §2.3 y §2.4.}
+\end{solucion}
+
+% =====================================================================  B.2
+\begin{solucion}{eje:p2}
+\apartado{(a)}
+\datos $W_0=\begin{pmatrix}2&0\\0&1\end{pmatrix}$, $B=(1,2)\T$, $A=(2,-1)$, $r=1$, $\alpha=0{,}5$, $x=(1,3)\T$, $G=(1,0)\T$.
+\planteamiento $s=\alpha/r$; $h=W_0x+s\,B(Ax)$; $W'=W_0+s\,BA$; $\partial\mathcal{L}/\partial B=s\,G(Ax)\T$ y $\partial\mathcal{L}/\partial A=s\,B\T G\,x\T$ (M20, §5.1 y~§5.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $s=0{,}5/1=0{,}5$; $Ax=2\cdot 1-1\cdot 3=-1$; $B(Ax)=(-1,-2)\T$.
+  \item $h=(2,3)\T+0{,}5\cdot(-1,-2)\T=(1{,}5;\ 2)\T$.
+  \item $BA=\begin{pmatrix}2&-1\\4&-2\end{pmatrix}$, de rango~1; $W'=\begin{pmatrix}2+1&-0{,}5\\0+2&1-1\end{pmatrix}=\begin{pmatrix}3&-0{,}5\\2&0\end{pmatrix}$.
+  \item $W'x=(3-1{,}5;\ 2+0)\T=(1{,}5;\ 2)\T=h$.
+  \item $\partial\mathcal{L}/\partial B=0{,}5\cdot(1,0)\T\cdot(-1)=(-0{,}5;\ 0)\T$.
+  \item $B\T G=1\cdot 1+2\cdot 0=1$, luego $\partial\mathcal{L}/\partial A=0{,}5\cdot 1\cdot(1,3)=(0{,}5;\ 1{,}5)$.
+  \item Con $B=0$, $B\T G=0$ y $\partial\mathcal{L}/\partial A=(0,0)$.
+\end{enumerate}
+\resultado \textbf{$h=W'x=(1{,}5;\ 2)$; $W'=\begin{pmatrix}3&-0{,}5\\2&0\end{pmatrix}$; $\partial\mathcal{L}/\partial B=(-0{,}5;\ 0)\T$, $\partial\mathcal{L}/\partial A=(0{,}5;\ 1{,}5)$; con $B=0$, $\partial\mathcal{L}/\partial A=0$.}
+\comprobacion las formas son las de los parámetros: $\partial\mathcal{L}/\partial B$ es $2\times 1$ y $\partial\mathcal{L}/\partial A$ es $1\times 2$. La fusión no añade coste de inferencia.
+\criterio 1 punto por $h$ y la fusión; 1,5 por los gradientes; 0,5 por el caso $B=0$.
+
+\apartado{(b)}
+\datos $\sigma=(4;\ 2;\ 1;\ 0{,}5)$.
+\planteamiento por Eckart--Young, el menor error de rango $r$ es $\bigl(\sum_{i>r}\sigma_i^{2}\bigr)^{1/2}$ (M20, §5.5).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Energía total: $16+4+1+0{,}25=21{,}25$.
+  \item $r=1$: error $\sqrt{4+1+0{,}25}=\sqrt{5{,}25}=2{,}291$; energía $16/21{,}25=75{,}3\,\%$.
+  \item $r=2$: error $\sqrt{1{,}25}=1{,}118$; energía $20/21{,}25=94{,}1\,\%$.
+\end{enumerate}
+\resultado \textbf{errores $2{,}29$ y $1{,}12$; energías $75{,}3\,\%$ y $94{,}1\,\%$; el menor rango con al menos el $90\,\%$ es $r=2$.}
+\comprobacion error$^{2}$ + energía conservada $=5{,}25+16=1{,}25+20=21{,}25$.
+
+\apartado{(c)}
+\datos 32 capas; 4 matrices $4096\times 4096$ por capa; $r=16$; $N=7\cdot 10^{9}$; $B_1=64$, $B_2=256$.
+\planteamiento $r(d+k)$ por matriz; $b_{\mathrm{ef}}=4+8/B_1+32/(B_1B_2)$; memoria $(b_{\mathrm{ef}}/8)N+16N_{\mathrm{LoRA}}$ frente a $16N$ (M20, §5.1, §6.3 y~§6.4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Por matriz: $16\cdot 8192=131\,072$. Total: $131\,072\cdot 4\cdot 32=16\,777\,216\approx 1{,}68\cdot 10^{7}$.
+  \item Fracción: $2r/d=32/4096=0{,}781\,\%$ de las $2{,}15\cdot 10^{9}$ entradas de esas matrices.
+  \item $b_{\mathrm{ef}}=4+0{,}125+0{,}00195=4{,}127$ bits.
+  \item Base: $7\cdot 10^{9}\cdot 4{,}127/8=3{,}611\cdot 10^{9}$ B $=3{,}61$~GB. LoRA: $16\,777\,216\cdot 16=2{,}684\cdot 10^{8}$ B $=0{,}268$~GB. Total: $3{,}88$~GB.
+  \item Ajuste completo: $16\cdot 7\cdot 10^{9}=112$~GB; cociente $112/3{,}88=28{,}9$.
+\end{enumerate}
+\resultado \textbf{$1{,}68\cdot 10^{7}$ parámetros ($0{,}781\,\%$); $b_{\mathrm{ef}}=4{,}127$ bits; QLoRA $\approx 3{,}88$~GB frente a $112$~GB, unas 29 veces menos.}
+\comprobacion sin doble cuantización ($4{,}5$ bits) la base ocuparía $3{,}94$~GB; el ahorro de $0{,}373$ bits por parámetro son unos $0{,}33$~GB.
+\criterio 1 punto por el recuento; 1 por $b_{\mathrm{ef}}$; 1 por la memoria y la comparación.
+
+\apartado{(d)}
+\datos $\theta_0=2$, $a=5$.
+\planteamiento $\theta^{\ast}=(a+\lambda\theta_0)/(1+\lambda)$; olvido $(a-\theta_0)^{2}/(1+\lambda)^{2}$; error $\lambda^{2}(a-\theta_0)^{2}/(1+\lambda)^{2}$ (M20, §3.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\lambda=2$: $\theta^{\ast}=(5+4)/3=3$; olvido $(3-2)^{2}=1$; error $(3-5)^{2}=4$.
+  \item $9/(1+\lambda)^{2}\le 0{,}25\iff(1+\lambda)^{2}\ge 36\iff\lambda\ge 5$.
+  \item $\lambda=5$: $\theta^{\ast}=15/6=2{,}5$; error $(2{,}5-5)^{2}=6{,}25$.
+\end{enumerate}
+\resultado \textbf{$\lambda=2$: $\theta^{\ast}=3$, olvido~1, error~4. Hace falta $\lambda\ge 5$, y el error en la tarea nueva sube a $6{,}25$.}
+\comprobacion las distancias suman $\abs{a-\theta_0}=3$ en ambos casos: $1+2$ y $0{,}5+2{,}5$.
+\repasar{M20, §3.2, §5.1, §5.3, §5.5, §6.1, §6.3 y §6.4.}
+\end{solucion}
+
+% =====================================================================  B.3
+\begin{solucion}{eje:p3}
+\apartado{(a)}
+\datos MDP determinista de dos estados; $\gamma=0{,}5$; $\pi(S_1)=$ cambiar, $\pi(S_2)=$ quedarse.
+\planteamiento ecuación de Bellman $V^{\pi}(s)=r(s,\pi(s))+\gamma V^{\pi}(s')$ y su versión iterativa $V_{k+1}=T^{\pi}V_k$ (M21, §1.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $V^{\pi}(S_2)=3+0{,}5\,V^{\pi}(S_2)\Rightarrow V^{\pi}(S_2)=6$; $V^{\pi}(S_1)=-2+0{,}5\cdot 6=1$.
+  \item Iteración: $V_{k+1}(S_1)=-2+0{,}5\,V_k(S_2)$ y $V_{k+1}(S_2)=3+0{,}5\,V_k(S_2)$.
+\end{enumerate}
+\begin{center}
+\small
+\begin{tabular}{@{}ccccc@{}}
+\toprule
+$k$ & $V_k$ & error en $S_1$ & error en $S_2$ & máximo \\
+\midrule
+0 & $(0;\ 0)$ & $1$ & $6$ & $6$ \\
+1 & $(-2;\ 3)$ & $3$ & $3$ & $3$ \\
+2 & $(-0{,}5;\ 4{,}5)$ & $1{,}5$ & $1{,}5$ & $1{,}5$ \\
+3 & $(0{,}25;\ 5{,}25)$ & $0{,}75$ & $0{,}75$ & $0{,}75$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{enumerate}[label=\arabic*.,resume]
+  \item El error en $S_1$ pasa de $1$ a $3$. No hay contradicción: la contracción afirma $\norm{T^{\pi}V-T^{\pi}V'}_\infty\le\gamma\norm{V-V'}_\infty$, una cota sobre el \emph{máximo}, que sí se divide por~2 en cada paso ($6\to 3\to 1{,}5\to 0{,}75$). En un estado concreto, $V_{k+1}(S_1)-V^{\pi}(S_1)=\gamma\bigl(V_k(S_2)-V^{\pi}(S_2)\bigr)$: el error de $S_1$ hereda el de $S_2$, que al principio era grande.
+  \item $Q^{\pi}(S_1,\text{quedarse})=-1+0{,}5\,V^{\pi}(S_1)=-0{,}5$; $A^{\pi}(S_1,\text{quedarse})=-0{,}5-1=-1{,}5$.
+  \item En $S_2$, $Q^{\pi}(S_2,\text{cambiar})=-1+0{,}5\cdot 1=-0{,}5<Q^{\pi}(S_2,\text{quedarse})=6$. La política voraz respecto de $Q^{\pi}$ coincide con $\pi$ en ambos estados; por el teorema de mejora de la política, $\pi$ es óptima (Sutton y Barto, §4.2~\cite{sb}; ampliación respecto de los apuntes).
+\end{enumerate}
+\resultado \textbf{$V^{\pi}=(1;\ 6)$; el error en $S_1$ sube de 1 a 3 mientras el máximo se divide por~2; $A^{\pi}(S_1,\text{quedarse})=-1{,}5$; $\pi$ es óptima.}
+\comprobacion la iteración de valores óptima desde $V_0=0$ converge al mismo $V^{\ast}=(1;\ 6)$, y $\sum_a\pi(a\mid S_1)A^{\pi}(S_1,a)=A^{\pi}(S_1,\text{cambiar})=0$.
+\criterio 1 punto por $V^{\pi}$; 1,5 por la tabla y la explicación de la contracción; 1,5 por la ventaja y la optimalidad.
+
+\apartado{(b)}
+\datos $\pi_\theta(1)=p=\sigma(\theta)$; $r(a)=\mathbb{1}\{a=1\}$; $b$ constante.
+\planteamiento cada sumando $Z=(r(a)-b)\,g(a)$, con $g(a)=\frac{d}{d\theta}\ln\pi_\theta(a)$, toma dos valores; $\Var(\hat g_b)=\Var(Z)/n$ por independencia (M21, §2.5).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $g(1)=\frac{d}{d\theta}\ln\sigma(\theta)=1-p$ y $g(0)=\frac{d}{d\theta}\ln(1-\sigma(\theta))=-\sigma(\theta)(1-\sigma(\theta))/(1-\sigma(\theta))=-p$.
+  \item $Z=(1-b)(1-p)$ con probabilidad $p$ y $Z=(-b)(-p)=bp$ con probabilidad $1-p$. Entonces $\E[Z]=p(1-p)(1-b)+(1-p)\,bp=p(1-p)$, que es $dJ/d\theta$ con $J=p$.
+  \item $\E[Z^{2}]=p(1-p)^{2}(1-b)^{2}+(1-p)p^{2}b^{2}$, y
+  \[
+  \Var(Z)=p(1-p)\bigl[(1-p)(1-b)^{2}+pb^{2}-p(1-p)\bigr]=p(1-p)(1-p-b)^{2},
+  \]
+  porque el corchete vale $(1-p)-2b(1-p)+b^{2}-p+p^{2}=(1-p)^{2}-2b(1-p)+b^{2}$.
+  \item $b=0$: $\Var=p(1-p)^{3}/n$. $b=p$: $\Var=p(1-p)(1-2p)^{2}/n$.
+  \item El cociente es $(1-2p)^{2}/(1-p)^{2}<1\iff\abs{1-2p}<1-p$. Si $p\le\frac12$ se cumple siempre; si $p>\frac12$ equivale a $2p-1<1-p$, es decir, $p<\frac23$.
+  \item $\Var(b)$ es una parábola en $b$ con mínimo en $b^{*}=1-p$, donde vale~0: $Z=p(1-p)$ para las dos acciones.
+\end{enumerate}
+\resultado \textbf{$\Var(\hat g_b)=p(1-p)(1-p-b)^{2}/n$; la línea base $b=p$ reduce la varianza solo si $p<2/3$ (la iguala en $p=2/3$ y la aumenta si $p>2/3$); la óptima es $b^{*}=1-p$, con varianza nula.}
+\comprobacion con $p=0{,}25$ y $n=16$: $6{,}59\cdot 10^{-3}$ con $b=0$ y $2{,}93\cdot 10^{-3}$ con $b=p$, de acuerdo con $p<2/3$.
+\criterio 1 punto por (i); 1,5 por (ii); 1 por (iii); 0,5 por (iv).
+
+\apartado{(c)}
+\datos $p=0{,}8$; $n=16$.
+\planteamiento se sustituye en la fórmula de (b) y en $b^{*}=\E[rg^{2}]/\E[g^{2}]$ (M21, §2.5, proposición de la línea base de varianza mínima).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $b=0$: $0{,}8\cdot 0{,}2^{3}/16=0{,}0064/16=4{,}0\cdot 10^{-4}$.
+  \item $b=0{,}8$: $0{,}8\cdot 0{,}2\cdot 0{,}6^{2}/16=0{,}0576/16=3{,}6\cdot 10^{-3}$, nueve veces más.
+  \item $b^{*}=0{,}2$: varianza~0.
+  \item $\E[rg^{2}]=p(1-p)^{2}=0{,}032$; $\E[g^{2}]=p(1-p)^{2}+(1-p)p^{2}=0{,}032+0{,}128=0{,}16$; $b^{*}=0{,}032/0{,}16=0{,}2=1-p$.
+\end{enumerate}
+\resultado \textbf{$4{,}0\cdot 10^{-4}$, $3{,}6\cdot 10^{-3}$ y $0$.} La recompensa media suele ser una buena línea base, pero no la óptima: aquí la acción rara ($a=0$) tiene una puntuación grande, $\abs{g(0)}=0{,}8$, y $b=p$ amplifica su contribución.
+\comprobacion la esperanza no depende de $b$: $\E[\hat g_b]=0{,}8\cdot 0{,}2=0{,}16$ en los tres casos.
+\repasar{M21, §1.3, §2.3 y §2.5.}
+\end{solucion}
+
+% =====================================================================  B.4
+\begin{solucion}{eje:p4}
+\apartado{(a)}
+\datos $n=20$ comparaciones, $n_a=15$; razón $2{:}1$ entre $y_b$ e $y_c$.
+\planteamiento estimador con dos objetos $\widehat{r_a-r_b}=\ln\bigl(n_a/(n-n_a)\bigr)$; las razones de probabilidades se multiplican (M21, §4.1 y~§4.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\widehat{r_a-r_b}=\ln(15/5)=\ln 3=1{,}099$, y $\sigma(\ln 3)=3/4$.
+  \item Pérdida media: $-\bigl(0{,}75\ln 0{,}75+0{,}25\ln 0{,}25\bigr)=0{,}2158+0{,}3466=0{,}5623$ nats.
+  \item Razón $a{:}c=3\cdot 2=6$, luego $P(y_a\pref y_c)=6/7=0{,}857$.
+\end{enumerate}
+\resultado \textbf{$r_a-r_b=\ln 3\approx 1{,}10$; pérdida $0{,}562$ nats; $P(y_a\pref y_c)=6/7\approx 0{,}857$.}
+\comprobacion la pérdida en el óptimo es la entropía binaria de la frecuencia observada, menor que $\ln 2=0{,}693$.
+
+\apartado{(b)}
+\datos $\piref=(0{,}4;\ 0{,}4;\ 0{,}2)$, $r=(1,0,2)$, $\beta\in\{1;\ 0{,}5\}$.
+\planteamiento $\pi^{*}=\piref e^{r/\beta}/Z$; $\ln(\pi^{*}/\piref)=r/\beta-\ln Z$; el objetivo vale $\beta\ln Z$ (M21, §3.4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\beta=1$: pesos $(0{,}4e;\ 0{,}4;\ 0{,}2e^{2})=(1{,}0873;\ 0{,}4;\ 1{,}4778)$; $Z=2{,}9651$.
+  \item $\pi^{*}=(0{,}3667;\ 0{,}1349;\ 0{,}4984)$; $\E_{\pi^{*}}[r]=0{,}3667+2\cdot 0{,}4984=1{,}3635$, frente a $0{,}8$ con $\piref$.
+  \item $\ln(\pi^{*}/\piref)=(-0{,}0869;\ -1{,}0869;\ 0{,}9131)$; $\KL=-0{,}0319-0{,}1466+0{,}4551=0{,}2766$ nats.
+  \item Objetivo: $1{,}3635-0{,}2766=1{,}0869=\ln 2{,}9651$.
+  \item $\beta=0{,}5$: pesos $(2{,}9556;\ 0{,}4;\ 10{,}9196)$; $Z=14{,}275$; $\pi^{*}=(0{,}2070;\ 0{,}0280;\ 0{,}7649)$; $\E[r]=1{,}7369$; $\KL=0{,}8153$; objetivo $1{,}7369-0{,}5\cdot 0{,}8153=1{,}3293=0{,}5\ln 14{,}275$.
+\end{enumerate}
+\resultado \textbf{$\beta=1$: $\pi^{*}=(0{,}367;\ 0{,}135;\ 0{,}498)$, $Z=2{,}97$, objetivo $1{,}087=\ln Z$. $\beta=0{,}5$: $\pi^{*}=(0{,}207;\ 0{,}028;\ 0{,}765)$, objetivo $1{,}329=0{,}5\ln Z$.} Un $\beta$ menor permite alejarse más de la referencia (KL de $0{,}277$ a $0{,}815$) a cambio de más recompensa.
+\comprobacion $\KL=\E_{\pi^{*}}[r]/\beta-\ln Z$: $1{,}3635-1{,}0869=0{,}2766$ y $1{,}7369/0{,}5-2{,}6585=0{,}8153$.
+\criterio 2 puntos por el caso $\beta=1$ con la comprobación; 1 por el caso $\beta=0{,}5$ y la interpretación.
+
+\apartado{(c)}
+\datos $\pi^{*}$ en forma cerrada; $P(y_w\pref y_l\mid x)=\sigma\bigl(r(x,y_w)-r(x,y_l)\bigr)$.
+\planteamiento despejar $r$, sustituir en Bradley--Terry, reemplazar $\pi^{*}$ por $\pi_\theta$ y maximizar la verosimilitud (M21, §5.1 y~§5.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Tomando logaritmos, $r(x,y)=\beta\ln\dfrac{\pi^{*}(y\mid x)}{\piref(y\mid x)}+\beta\ln Z(x)$.
+  \item En $r(x,y_w)-r(x,y_l)$ el término $\beta\ln Z(x)$ aparece con los dos signos y se cancela, porque solo depende de $x$, común a las dos respuestas.
+  \item Con $\pi_\theta$ en lugar de $\pi^{*}$ y la log-verosimilitud negativa de las preferencias:
+  \[
+  \LDPO(\theta)=-\E\Bigl[\ln\sigma\Bigl(\beta\ln\frac{\pi_\theta(y_w\mid x)}{\piref(y_w\mid x)}-\beta\ln\frac{\pi_\theta(y_l\mid x)}{\piref(y_l\mid x)}\Bigr)\Bigr].
+  \]
+  \item Por la regla de la cadena, $\ln\pi(x\oplus y)=\ln\pi(x)+\ln\pi(y\mid x)$; en la diferencia entre $x\oplus y_w$ y $x\oplus y_l$ se cancela $\ln\pi(x)$, para $\pi_\theta$ y para $\piref$.
+\end{enumerate}
+\resultado \textbf{la pérdida DPO anterior}: $Z(x)$ desaparece porque Bradley--Terry solo usa diferencias de recompensa para la misma instrucción. No hace falta un modelo de recompensa ni muestrear durante el entrenamiento.
+\comprobacion con $\pi_\theta=\piref$ el argumento de $\sigma$ es~0 y la pérdida vale $\ln 2$, como en la cuestión~10.
+
+\apartado{(d)}
+\datos log-probabilidades $-20$, $-21{,}5$, $-24$ y $-23$; $\beta=0{,}1$.
+\planteamiento $\hat r=\beta\ln(\pi_\theta/\piref)$; margen $h=\hat r_w-\hat r_l$; pérdida $-\ln\sigma(h)$; peso $\beta\,\sigma(-h)$ (M21, §5.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Log-cocientes: $-20+21{,}5=1{,}5$ y $-24+23=-1$; $\hat r_w=0{,}15$ y $\hat r_l=-0{,}10$.
+  \item $h=0{,}25$; $\sigma(0{,}25)=0{,}5622$; pérdida $-\ln 0{,}5622=0{,}5759$.
+  \item Peso: $0{,}1\cdot\sigma(-0{,}25)=0{,}1\cdot 0{,}4378=0{,}0438$.
+\end{enumerate}
+\resultado \textbf{$\hat r_w=0{,}15$, $\hat r_l=-0{,}10$, margen $0{,}25$, pérdida $0{,}576$ y peso $0{,}0438$.}
+\comprobacion la pérdida es menor que $\ln 2$ porque el par ya está bien ordenado; el peso disminuiría si el margen creciera.
+
+\apartado{(e)}
+\datos $(1,0,0,1,0)$; probabilidad de acierto $0{,}4$.
+\planteamiento $\widehat A_i=(r_i-\bar r)/\mathrm{desv}$; un grupo no aporta señal si todas las recompensas coinciden (M21, §6.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\bar r=0{,}4$; desviación poblacional $\sqrt{0{,}24}=0{,}4899$; ventajas $0{,}6/0{,}4899=1{,}225$ y $-0{,}4/0{,}4899=-0{,}816$.
+  \item Desviación muestral $\sqrt{1{,}2/4}=0{,}5477$; ventajas $1{,}095$ y $-0{,}730$.
+  \item $0{,}4^{5}+0{,}6^{5}=0{,}0102+0{,}0778=0{,}0880$.
+\end{enumerate}
+\resultado \textbf{con la desviación poblacional, $1{,}225$ para las respuestas correctas y $-0{,}816$ para las incorrectas; con la muestral, $1{,}095$ y $-0{,}730$; un $8{,}8\,\%$ de los grupos no aporta señal.}
+\comprobacion las ventajas suman cero: $2\cdot 1{,}225-3\cdot 0{,}816=0$.
+\repasar{M21, §3.4, §4.1, §4.2, §5.1, §5.3 y §6.3.}
+\end{solucion}
+
+% =====================================================================  B.5
+\begin{solucion}{eje:p5}
+\apartado{(a)}
+\datos $N=4$; $\df$: «gato»~2, «negro»~2, el resto~1.
+\planteamiento $\idf_t=\ln(N/\df_t)$, pesos $f_{t,d}\idf_t$ y coseno entre los vectores de la consulta y de cada documento (M22, §2.2 y~§2.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\idf=\ln 2=0{,}6931$ para «gato» y «negro»; $\ln 4=1{,}3863$ para los demás términos.
+  \item $q=(0{,}6931;\ 0{,}6931)$ en (gato, negro), con $\norm q=0{,}9803$.
+  \item $D_1$: $\norm{D_1}=\sqrt{2\cdot 0{,}4805+1{,}9218}=1{,}6979$; $q\cdot D_1=0{,}9609$; $\cos=0{,}5774$.
+  \item $D_2$: «negro» pesa $2\cdot 0{,}6931=1{,}3863$, como «perro» y «corre»; $\norm{D_2}=2{,}4011$; $q\cdot D_2=0{,}9609$; $\cos=0{,}4082$.
+  \item $D_3$: $\norm{D_3}=\sqrt{0{,}4805+2\cdot 1{,}9218}=2{,}0794$; $q\cdot D_3=0{,}4805$; $\cos=0{,}2357$.
+  \item $D_4$ no comparte términos: $\cos=0$.
+\end{enumerate}
+\resultado \textbf{$D_1$ ($0{,}577$), $D_2$ ($0{,}408$), $D_3$ ($0{,}236$), $D_4$ ($0$).}
+\comprobacion los valores exactos son $1/\sqrt3$, $1/\sqrt6$ y $1/(3\sqrt2)$: el factor $\ln 2$ se cancela.
+
+\apartado{(b)}
+\datos longitudes $3$, $4$, $3$ y $2$; $\bar\ell=3$; $k_1=1{,}2$; $b=0{,}75$.
+\planteamiento $\BM(q,d)=\sum_t\idf^{\mathrm{BM}}_t\,g(f_{t,d},\ell)$ con $g(f,\ell)=f(k_1+1)/\bigl(f+k_1(1-b+b\ell)\bigr)$ (M22, §2.6).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Para $n_t=2$: $\idf^{\mathrm{BM}}=\ln(1+2{,}5/2{,}5)=\ln 2=0{,}6931$.
+  \item $D_1$ ($\ell=1$): $g(1,1)=1$ para cada término; $\BM=1{,}3863$.
+  \item $D_2$ ($\ell=4/3$): $1-b+b\ell=1{,}25$; $g(2,4/3)=4{,}4/(2+1{,}5)=1{,}2571$; $\BM=0{,}8714$.
+  \item $D_3$: $\BM=0{,}6931$. $D_4$: $0$.
+  \item Con una sola aparición, $g(1,4/3)=2{,}2/2{,}5=0{,}88$ y la puntuación sería $0{,}6100$: la segunda aparición añade $0{,}2614$, menos que la primera ($0{,}6100$). En tf-idf, en cambio, duplica el peso.
+\end{enumerate}
+\resultado \textbf{$1{,}386$; $0{,}871$; $0{,}693$; $0$: el mismo orden que en (a).}
+\comprobacion $g(2,4/3)<k_1+1=2{,}2$, de acuerdo con la saturación.
+\criterio 1 punto por las puntuaciones; 1 por el efecto de la saturación y la comparación.
+
+\apartado{(c)}
+\datos posiciones relevantes: sistema~1, $\{1,4,9\}$; sistema~2, $\{2,3,6\}$; $\abs{\Rel}=4$.
+\planteamiento $\AP=\frac{1}{\abs{\Rel}}\sum_i\Pk{k_i}$; R-precisión $=\Pk{\abs{\Rel}}$; $\RR=1/k_1$ (M22, §3.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sistema~1: $\Pk{1}=1$, $\Pk{4}=2/4$, $\Pk{9}=3/9$; $\AP=(1+0{,}5+0{,}3333)/4=0{,}4583$.
+  \item Sistema~2: $\Pk{2}=1/2$, $\Pk{3}=2/3$, $\Pk{6}=3/6$; $\AP=(0{,}5+0{,}6667+0{,}5)/4=0{,}4167$.
+  \item R-precisión ($\Pk{4}$): $2/4=0{,}5$ en ambos. $\Pk{10}=0{,}3$ y $\Rk{10}=0{,}75$ en ambos.
+  \item Rango recíproco: $1$ y $1/2$.
+\end{enumerate}
+\resultado \textbf{AP $0{,}458$ frente a $0{,}417$; R-precisión $0{,}5$, $\Pk{10}=0{,}3$ y $\Rk{10}=0{,}75$ iguales; RR $1$ frente a $0{,}5$.} La AP prefiere el sistema~1 y la R-precisión empata: la AP premia colocar relevantes en las primeras posiciones, y un acierto en la posición~1 pesa mucho.
+\comprobacion el cuarto relevante no se recupera y aporta~0 a la AP; por eso ninguna AP supera $3/4$.
+
+\apartado{(d)}
+\datos sistema~1; $10\,000$ documentos; el cuarto relevante en una posición entre $11$ y $10\,000$.
+\planteamiento la AP crece cuanto antes aparezca el cuarto relevante, que añade $\frac14\cdot\frac{4}{k}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Mejor caso, $k=11$: $\AP=(1{,}8333+4/11)/4=(1{,}8333+0{,}3636)/4=0{,}5492$.
+  \item Peor caso, $k=10\,000$: $\AP=(1{,}8333+0{,}0004)/4=0{,}4584$.
+  \item El valor de (c), $0{,}4583$, puede diferir del real hasta en $0{,}5492-0{,}4583=0{,}0909=1/11$.
+\end{enumerate}
+\resultado \textbf{AP entre $0{,}458$ y $0{,}549$; error máximo $0{,}0909$.}
+\comprobacion el error máximo coincide con la aportación máxima del relevante que falta, $\frac14\cdot\frac{4}{11}=\frac{1}{11}$.
+\repasar{M22, §2.2, §2.3, §2.6 y §3.2.}
+\end{solucion}
+
+% =====================================================================  B.6
+\begin{solucion}{eje:p6}
+\apartado{(a)}
+\datos $q=(1,2,2)$; $c_1=(2,1,2)$, $c_2=(0,3,4)$, $c_3=(10,5,0)$.
+\planteamiento producto escalar $q\cdot c$ y coseno $q\cdot c/(\norm q\norm c)$ (M22, §4.2).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\norm q=3$; $\norm{c_1}=3$, $\norm{c_2}=5$, $\norm{c_3}=\sqrt{125}=11{,}18$.
+  \item Productos: $8$, $14$ y $20$. Cosenos: $8/9=0{,}889$, $14/15=0{,}933$ y $20/33{,}54=0{,}596$.
+\end{enumerate}
+\resultado \textbf{por producto escalar, $c_3$, $c_2$, $c_1$; por coseno, $c_2$, $c_1$, $c_3$.} El producto escalar incluye la norma del fragmento y favorece los vectores largos. Si se normalizan todos los embeddings (y la consulta) a norma~1 antes de indexarlos, el producto escalar coincide con el coseno.
+\comprobacion los tres cosenos están en $[-1,1]$ y el de $c_3$ es el menor, aunque su producto escalar sea el mayor.
+
+\apartado{(b)}
+\datos $L=5000$, $\tau=512$, $s=64$, $k=4$.
+\planteamiento $n=\lceil(L-\tau)/(\tau-s)\rceil+1$; el trozo $j$ empieza en $j(\tau-s)$ (M22, §5.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Paso: $448$. $n=\lceil 4488/448\rceil+1=\lceil 10{,}02\rceil+1=12$.
+  \item El último empieza en $11\cdot 448=4928$ y tiene $5000-4928=72$ tokens.
+  \item Tokens indexados: $11\cdot 512+72=5704$ (la aproximación $L\tau/(\tau-s)$ da $5714$).
+  \item \emph{Prompt}: $4\cdot 512+300=2348$ tokens.
+\end{enumerate}
+\resultado \textbf{12 fragmentos; el último empieza en la posición 4928; unos 5700 tokens indexados; \emph{prompt} de 2348 tokens.}
+\comprobacion el trozo~10 termina en $4480+511=4991<4999$, de modo que el duodécimo es necesario.
+
+\apartado{(c)}
+\datos $n=8$; $p=0{,}9$; objetivo $0{,}95$.
+\planteamiento éxito $p^{n}$; primer fallo geométrico de media $1/(1-p)$; con reintento, $1-(1-p)^{2}$ por paso (M22, §6.4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $0{,}9^{8}=0{,}4305$; primer fallo, en media, en el paso $1/0{,}1=10$.
+  \item Con reintento: $1-0{,}1^{2}=0{,}99$ por paso y $0{,}99^{8}=0{,}9227$.
+  \item $p^{8}=0{,}95\Rightarrow p=0{,}95^{1/8}=e^{\ln 0{,}95/8}=0{,}99361$.
+\end{enumerate}
+\resultado \textbf{$0{,}430$; 10 pasos; $0{,}923$ con verificación y reintento; hace falta $p\ge 0{,}9936$.}
+\comprobacion $1-8\cdot(1-0{,}99361)=0{,}9489\approx 0{,}95$.
+
+\apartado{(d)}
+\datos $\hat p_A=640/800=0{,}8$; $\hat p_B=0{,}76$; $n=800$ cada uno.
+\planteamiento $\SE=\sqrt{\hat p(1-\hat p)/n}$; intervalo conservador $\bar x\pm z_{\alpha/2}/(2\sqrt n)$, que al $95\,\%$ es $\bar x\pm 1/\sqrt n$; varianzas que se suman para muestras independientes (M22, §3.3; M23, §6.1).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\SE_A=\sqrt{0{,}16/800}=0{,}01414$; $1{,}96\cdot 0{,}01414=0{,}0277$; intervalo $[0{,}772;\ 0{,}828]$.
+  \item Conservador: $1/\sqrt{800}=0{,}0354$; intervalo $[0{,}765;\ 0{,}835]$.
+  \item $1/\sqrt n=0{,}01\Rightarrow n=10\,000$ (con $1{,}96$ en lugar de~2, $9604$). Al $80\,\%$: $1{,}2816/(2\sqrt n)=0{,}01\Rightarrow n=(64{,}08)^{2}=4106{,}2$, es decir, $4107$ preguntas.
+  \item $\SE_{A-B}=\sqrt{0{,}16/800+0{,}1824/800}=\sqrt{4{,}28\cdot 10^{-4}}=0{,}02069$.
+  \item Intervalo: $0{,}04\pm 1{,}96\cdot 0{,}02069=0{,}04\pm 0{,}0405=[-0{,}0005;\ 0{,}0805]$; $z=0{,}04/0{,}02069=1{,}93<1{,}96$.
+\end{enumerate}
+\resultado \textbf{A: $[0{,}772;\ 0{,}828]$ (conservador $[0{,}765;\ 0{,}835]$); $10\,000$ y $4107$ preguntas; la diferencia de 4 puntos no es significativa al $5\,\%$, por muy poco.} Evaluar ambos sistemas sobre las mismas preguntas y analizar la diferencia pregunta a pregunta reduce el error, porque la covarianza positiva entre los aciertos se resta.
+\comprobacion el intervalo contiene el~0 por $0{,}0005$, coherente con $z=1{,}93$, apenas por debajo de $1{,}96$.
+\criterio 1 punto por (i); 1 por (ii); 2 por (iii), de los que 0,5 son por la propuesta de diseño emparejado.
+\repasar{M22, §3.3, §4.2, §5.3 y §6.4; M23, §6.1.}
+\end{solucion}
+
+% =====================================================================  B.7
+\begin{solucion}{eje:p7}
+\apartado{(a)}
+\datos $W_1=(1,0)$, $W_2=(-1,0)$, $W_3=(0,1)$, $W_4=(0,-1)$; sin sesgo; probabilidad de activación $0{,}1$.
+\planteamiento $(W\T W)_{ij}=W_i\cdot W_j$; $\hat x=\relu(W\T Wx)$; $D_i=\norm{W_i}^{2}/\sum_j(\hat W_i\T W_j)^{2}$ (M23, §3.3 y~§3.4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $W\T W=\begin{pmatrix}1&-1&0&0\\-1&1&0&0\\0&0&1&-1\\0&0&-1&1\end{pmatrix}$: los pares antipodales interfieren con $-1$ y los perpendiculares no interfieren.
+  \item $x=e_1$: $W\T Wx=(1,-1,0,0)$; $\hat x=(1,0,0,0)$; error~0.
+  \item $x=e_1+e_2$: $Wx=0$, luego $\hat x=0$ y el error es $1+1=2$.
+  \item $x=e_1+e_3$: $W\T Wx=(1,-1,1,-1)$; $\hat x=(1,0,1,0)$; error~0.
+  \item $D_i=1/(1+1+0+0)=1/2$ para cada $i$; $\sum_iD_i=2=m$.
+  \item Un par tiene sus dos características activas con probabilidad $0{,}01$; alguno de los dos pares, $1-0{,}99^{2}=0{,}0199$.
+\end{enumerate}
+\resultado \textbf{errores $0$, $2$ y $0$; $D_i=1/2$ con suma $2$; probabilidad de interferencia $0{,}0199$.} La $\relu$ elimina la interferencia negativa de una característica aislada; el modelo solo falla cuando se activan a la vez las dos de un par antipodal, lo que es raro si las características son dispersas.
+\comprobacion la suma de las dimensiones alcanza la cota $\rango W=2$: la configuración aprovecha todo el espacio.
+\criterio 1,5 puntos por las reconstrucciones; 1 por $D_i$; 0,5 por la probabilidad.
+
+\apartado{(b)}
+\datos $d_1=(1,0)$, $d_2=(0,1)$, $d_3=(0{,}8;\ 0{,}6)$; $x=(1{,}6;\ 1{,}2)=2d_3$; $\lambda=0{,}2$.
+\planteamiento pérdida $\norm{x-\hat x}^{2}+\lambda\sum_jf_j\norm{d_j}$; con un solo latente, $\norm{x-f_3d_3}^{2}=(2-f_3)^{2}$ y se aplica el umbral suave (M23, §4.2 y~§4.3).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $f=(1{,}6;\ 1{,}2;\ 0)$: $\hat x=x$, penalización $0{,}2\cdot 2{,}8=0{,}56$.
+  \item $f=(0,0,2)$: $\hat x=2d_3=x$, penalización $0{,}2\cdot 2=0{,}40$.
+  \item $\min_{f_3\ge 0}(2-f_3)^{2}+0{,}2f_3$: $f_3^{\ast}=\max(2-0{,}1,\,0)=1{,}9$.
+  \item $\hat x=1{,}9\,d_3=(1{,}52;\ 1{,}14)$; error $0{,}08^{2}+0{,}06^{2}=0{,}01$; pérdida $0{,}01+0{,}38=0{,}39$.
+\end{enumerate}
+\resultado \textbf{$0{,}56$ frente a $0{,}40$: la penalización prefiere el código de un solo latente; el óptimo es $f_3=1{,}9$, con pérdida $0{,}39$.} El sesgo es el \emph{encogimiento}: el autoencoder subestima en $\lambda/2=0{,}1$ la intensidad de la característica activa.
+\comprobacion $0{,}39<0{,}40$: aceptar un pequeño error de reconstrucción compensa la reducción de la penalización.
+
+\apartado{(c)}
+\datos grupos de 80, 70 y 50 respuestas con confianzas $0{,}95$, $0{,}7$ y $0{,}4$ y aciertos 60, 49 y 25; $t=0{,}75$.
+\planteamiento $\ECE=\sum_b\frac{\abs{B_b}}{n}\abs{\mathrm{acc}_b-\mathrm{conf}_b}$; $\MCE=\max_b\abs{\mathrm{acc}_b-\mathrm{conf}_b}$; responder conviene si $p>t$ (M23, §6.3 y~§6.4).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Exactitudes: $0{,}75$, $0{,}70$ y $0{,}50$; diferencias $0{,}20$, $0$ y $0{,}10$.
+  \item $\ECE=0{,}4\cdot 0{,}20+0{,}35\cdot 0+0{,}25\cdot 0{,}10=0{,}105$; $\MCE=0{,}20$.
+  \item Confianza media $(76+49+20)/200=0{,}725$; exactitud $134/200=0{,}67$.
+  \item Con $t=0{,}75$ el error cuesta $-3$; en el grupo de $0{,}7$, responder vale $0{,}7-0{,}3\cdot 3=-0{,}2<0$.
+\end{enumerate}
+\resultado \textbf{$\ECE=0{,}105$, $\MCE=0{,}20$; el modelo está sobreconfiado ($0{,}725$ frente a $0{,}67$). En el grupo de $0{,}7$ le conviene abstenerse.}
+\comprobacion el criterio general $p>t$ da lo mismo: $0{,}7<0{,}75$.
+
+\apartado{(d)}
+\datos $p=0{,}01$, $k=200$; 500 intentos sin éxito.
+\planteamiento $1-(1-p)^{k}\ge 1-e^{-kp}$; regla del 3, $p_u\le 3/n$, y cota exacta $1-0{,}05^{1/n}$ (M23, §6.6).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $1-0{,}99^{200}=0{,}8660$; cota $1-e^{-2}=0{,}8647$.
+  \item $3/500=0{,}6\,\%$; exacta $1-0{,}05^{1/500}=0{,}597\,\%$.
+\end{enumerate}
+\resultado \textbf{$0{,}866$ (cota $0{,}865$); tasa de éxito menor que $0{,}6\,\%$ con confianza del $95\,\%$ (exacta $0{,}597\,\%$).} Un ataque raro en una prueba es casi seguro para un atacante persistente, y cero éxitos no significa tasa nula.
+\comprobacion la cota exacta queda por debajo de la de la regla del 3, como garantiza $1-p\le e^{-p}$.
+\repasar{M23, §3.3, §3.4, §4.2, §4.3, §6.3, §6.4 y §6.6.}
+\end{solucion}
+
+% =====================================================================
+\chapter{Autoevaluación}
+\label{ap:autoevaluacion}
+% =====================================================================
+
+\section{Cálculo de la nota}
+
+La nota del examen es la suma de los puntos de la parte~A (máximo 30) y de la parte~B (máximo 70). El examen se aprueba con \textbf{70 puntos o más}. Si se obtienen menos de 18 puntos en la parte~A o menos de 45 en la parte~B, conviene repasar esa parte aunque el examen esté aprobado: el proyecto de fase usa todo este material.
+
+\begin{center}
+\begin{tabular}{@{}llcc@{}}
+\toprule
+Parte & Elemento & Puntos & Obtenidos \\
+\midrule
+A & Cuestiones 1--20 (1,5 cada una) & 30 & \\
+\midrule
+B & B.1 SFT: máscara, normalización y empaquetado & 10 & \\
+B & B.2 LoRA, QLoRA y olvido & 10 & \\
+B & B.3 Valor, gradiente de política y línea base & 10 & \\
+B & B.4 Preferencias, política óptima y DPO & 10 & \\
+B & B.5 Recuperación léxica y evaluación de rankings & 10 & \\
+B & B.6 RAG, agentes y evaluación con incertidumbre & 10 & \\
+B & B.7 Superposición, SAE y seguridad & 10 & \\
+\midrule
+ & \textbf{Total} & \textbf{100} & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Puntuación por módulo}
+
+La tabla siguiente agrupa los puntos por módulo. Un módulo en el que se obtenga menos del $70\,\%$ de sus puntos debe repasarse aunque el examen esté aprobado.
+
+\begin{center}
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Módulo & Cuestiones & Puntos A & Ejercicios & Puntos B & Total \\
+\midrule
+M20 & 1--5 & 7,5 & B.1, B.2 & 20 & 27,5 \\
+M21 & 6--11 & 9 & B.3, B.4 & 20 & 29 \\
+M22 & 12--16 & 7,5 & B.5, B.6 & 20 & 27,5 \\
+M23 & 17--20 & 6 & B.7 & 10 & 16 \\
+\midrule
+\textbf{Total} & 20 & \textbf{30} & 7 & \textbf{70} & \textbf{100} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+El apartado B.6(d) usa también el intervalo conservador del M23, §6.1, y se computa en el M22.
+
+\section{Puerta de salida de la Fase V}
+
+Para dar por superada la Fase~V, y con ella el curso, deben cumplirse las tres condiciones siguientes:
+\begin{enumerate}[label=\arabic*.]
+  \item un resultado de al menos 9 sobre 12 en el test de cada módulo, M20 a M23;
+  \item una autoevaluación del laboratorio interactivo de la fase de al menos el $70\,\%$;
+  \item una nota de este examen de hito de al menos el $70\,\%$ (70 puntos sobre 100).
+\end{enumerate}
+El proyecto de fase se califica con la rúbrica de la \cref{cap:proyecto} y cuenta en la nota de la fase.
+
+\section{Qué repasar según los fallos}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.1}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.6cm}X@{}}
+\toprule
+Fallo & Secciones de los apuntes \\
+\midrule
+Cuestión 1 y B.1 & M20, §2.2 (pérdida enmascarada), §2.3 (lotes, empaquetado y acumulación) y §2.4 (plantilla de chat) \\
+Cuestión 4 y B.2 (d) & M20, §3.2 (modelo cuadrático del olvido) \\
+Cuestiones 2 y 3 y B.2 (a) & M20, §5.1 (parámetros y fusión) y §5.3 (gradientes e inicialización) \\
+B.2 (b) & M20, §5.5 (relación con la SVD); M03 (Eckart--Young) \\
+Cuestión 5 y B.2 (c) & M20, §6.1, §6.3 y §6.4 (cuantización por bloques, doble cuantización y QLoRA) \\
+Cuestión 6 y B.3 (a) & M21, §1.2 (retorno) y §1.3 (funciones de valor y ecuación de Bellman) \\
+Cuestión 7 y B.3 (b) y (c) & M21, §2.3 (REINFORCE) y §2.5 (línea base y varianza) \\
+Cuestión 8 & M21, §3.2 (objetivo recortado de PPO) \\
+B.4 (b) & M21, §3.3 y §3.4 (penalización KL y política óptima) \\
+Cuestión 9 y B.4 (a) & M21, §4.1 y §4.2 (Bradley--Terry y máxima verosimilitud) \\
+Cuestión 10 y B.4 (c) y (d) & M21, §5.1 y §5.3 (reparametrización y pérdida DPO) \\
+Cuestión 11 y B.4 (e) & M21, §6.3 (GRPO) \\
+Cuestión 12 y B.5 (a) & M22, §2.2 y §2.3 (tf-idf y espacio vectorial) \\
+Cuestión 13 y B.5 (b) & M22, §2.6 (BM25) \\
+Cuestión 14 y B.5 (c) y (d) & M22, §3.2 (métricas de un ranking) \\
+Cuestión 15 y B.6 (d) & M22, §3.3 y §3.4 (error estándar y contaminación); M23, §6.1 \\
+B.6 (a) y (b) & M22, §4.2 (coseno y producto escalar) y §5.3 (troceo) \\
+Cuestión 16 y B.6 (c) & M22, §6.4 (fiabilidad de una cadena de pasos) \\
+Cuestión 17 y B.7 (a) & M23, §3.1, §3.3 y §3.4 (superposición, modelo de juguete y dimensión por característica) \\
+Cuestión 18 y B.7 (b) & M23, §4.2 y §4.3 (autoencoder disperso y umbral suave) \\
+Cuestión 19 y B.7 (c) & M23, §6.3 y §6.4 (calibración y reglas de puntuación) \\
+Cuestión 20 y B.7 (d) & M23, §6.6 (estadística de los sucesos raros) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Qué hacer si no se alcanza el umbral}
+
+\begin{enumerate}[label=\arabic*.]
+  \item Anotar cada fallo en el registro de errores, clasificado como error de \emph{concepto}, de \emph{cálculo} o \emph{despiste}.
+  \item Para cada módulo por debajo del $70\,\%$, repetir el ciclo de estudio del método del curso con las secciones indicadas en la tabla anterior: teoría, laboratorio, práctica, ejercicios $\star\star\star$ del tema, test y tarjetas de repaso.
+  \item Rehacer los ejercicios fallados sin mirar la solución y, a continuación, los ejercicios del mismo tema en los apuntes del módulo y las tareas universitarias citadas en la bibliografía.
+  \item Repetir el examen pasada al menos una semana, preferiblemente con datos cambiados, y no dar por cerrada la fase hasta superar las tres condiciones de la puerta de salida.
+\end{enumerate}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{bricken}
+T.~Bricken \emph{et al.}
+\newblock Towards monosemanticity: Decomposing language models with dictionary learning.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 2023.
+\newblock \url{https://transformer-circuits.pub/2023/monosemantic-features/index.html}
+
+\bibitem{cs234mid}
+E.~Brunskill y equipo docente de CS234.
+\newblock CS234: Reinforcement Learning. Examen parcial (\emph{midterm}) del invierno de 2018, con soluciones, pregunta~3 «Value Iteration».
+\newblock Stanford University; publicado como examen de práctica en la edición del invierno de 2019.
+\newblock \url{https://web.stanford.edu/class/archive/cs/cs234/cs234.1224/CS234Win2019/practice_midterm/2018/midterm_2018.pdf}
+
+\bibitem{cs336a5}
+Equipo docente de CS336.
+\newblock CS336: Language Modeling from Scratch. Tarea~5 (\emph{alignment}): \emph{Reasoning RL}, versión~26.0.0.
+\newblock Stanford University, primavera de 2026. §4.1.5, problema \texttt{baseline\_\allowbreak calcs}; §4.1.6 y §4.2.3, problemas \texttt{compute\_\allowbreak group\_\allowbreak normalized\_\allowbreak rewards\_\allowbreak grpo} y \texttt{aggregate\_\allowbreak loss\_\allowbreak across\_\allowbreak microbatch}; §4.2.1, problema \texttt{tokenize\_\allowbreak prompt\_\allowbreak and\_\allowbreak output}.
+\newblock \url{https://github.com/stanford-cs336/assignment5-alignment}
+
+\bibitem{cs336a5s}
+Equipo docente de CS336.
+\newblock CS336: Language Modeling from Scratch. Suplemento de la tarea~5: \emph{Instruction Tuning and RLHF}, versión~26.0.0.
+\newblock Stanford University, primavera de 2026. §4.2.1, problema \texttt{data\_\allowbreak loading}; §6.1 y §6.3, problema \texttt{dpo\_\allowbreak loss}.
+\newblock \url{https://github.com/stanford-cs336/assignment5-alignment}
+
+\bibitem{dettmers}
+T.~Dettmers, A.~Pagnoni, A.~Holtzman y L.~Zettlemoyer.
+\newblock QLoRA: Efficient finetuning of quantized LLMs.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2023.
+\newblock \url{https://arxiv.org/abs/2305.14314}
+
+\bibitem{elhage22}
+N.~Elhage \emph{et al.}
+\newblock Toy models of superposition.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 2022.
+\newblock \url{https://transformer-circuits.pub/2022/toy_model/index.html}
+
+\bibitem{guo}
+C.~Guo, G.~Pleiss, Y.~Sun y K.~Q. Weinberger.
+\newblock On calibration of modern neural networks.
+\newblock En \emph{Proceedings of ICML}, 2017.
+\newblock \url{https://arxiv.org/abs/1706.04599}
+
+\bibitem{hoffmann}
+J.~Hoffmann \emph{et al.}
+\newblock Training compute-optimal large language models.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2022.
+\newblock \url{https://arxiv.org/abs/2203.15556}
+
+\bibitem{hu-lora}
+E.~J. Hu, Y.~Shen, P.~Wallis, Z.~Allen-Zhu, Y.~Li, S.~Wang, L.~Wang y W.~Chen.
+\newblock LoRA: Low-rank adaptation of large language models.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2022.
+\newblock \url{https://arxiv.org/abs/2106.09685}
+
+\bibitem{kalai25}
+A.~T. Kalai, O.~Nachum, S.~S. Vempala y E.~Zhang.
+\newblock Why language models hallucinate.
+\newblock 2025.
+\newblock \url{https://arxiv.org/abs/2509.04664}
+
+\bibitem{iir}
+C.~D. Manning, P.~Raghavan y H.~Schütze.
+\newblock \emph{Introduction to Information Retrieval}.
+\newblock Cambridge University Press, 2008; texto del curso CS276 de Stanford. Cap.~6, cap.~8 (ejercicios~8.8 y~8.9) y §11.4.3.
+\newblock \url{https://nlp.stanford.edu/IR-book/}
+
+\bibitem{mit1805}
+J.~Orloff y J.~Bloom.
+\newblock 18.05: Introduction to Probability and Statistics.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, primavera de 2022. Problemas de la clase~23 (\emph{in-class problems}), pregunta conceptual~1 y problema~1, con soluciones.
+\newblock \url{https://ocw.mit.edu/courses/18-05-introduction-to-probability-and-statistics-spring-2022/mit18_05_s22_class23_pset_sol.pdf}
+
+\bibitem{dpo}
+R.~Rafailov, A.~Sharma, E.~Mitchell, S.~Ermon, C.~D. Manning y C.~Finn.
+\newblock Direct preference optimization: Your language model is secretly a reward model.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2023.
+\newblock \url{https://arxiv.org/abs/2305.18290}
+
+\bibitem{sb}
+R.~S. Sutton y A.~G. Barto.
+\newblock \emph{Reinforcement Learning: An Introduction}, 2.ª ed.
+\newblock MIT Press, 2018. Cap.~4, «Dynamic Programming».
+\newblock \url{http://incompleteideas.net/book/the-book-2nd.html}
+
+\end{thebibliography}
+
+
+\end{document}

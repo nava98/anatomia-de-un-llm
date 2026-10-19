@@ -1,0 +1,196 @@
+% =====================================================================
+\chapter{Componentes de consenso del Transformer moderno}
+\label{tema:1}
+% =====================================================================
+
+Entre el Transformer original de 2017 y los modelos abiertos actuales hay decenas de variantes publicadas, pero la mayoría converge en un mismo bloque: normalización antes de cada subcapa, RMSNorm, MLP con puerta, codificación rotatoria de la posición y ausencia de sesgos. Este tema define ese bloque de consenso, demuestra las propiedades de RMSNorm que lo justifican y estudia los hiperparámetros de forma que comparten casi todos los modelos. Se sigue la clase~3 del curso CS336~\cite{cs336}, el artículo de Zhang y Sennrich~\cite[§3--4]{rmsnorm}, el de Shazeer~\cite[§2--3]{shazeerglu} y la tabla de hiperparámetros de Llama~3~\cite[§3.2]{llama3}. El bloque decoder-only, SwiGLU y RoPE ya se han estudiado en el módulo~14; aquí se recuerdan solo en la medida en que se necesitan.
+
+\section{El bloque de consenso}
+
+La clase~3 de CS336 compara las arquitecturas densas publicadas entre 2019 y 2025 y observa que hay poco consenso en los detalles, con una excepción casi universal: la normalización se coloca a la entrada de cada subcapa, fuera del camino residual~\cite{cs336}. Las demás elecciones convergen hacia lo que el curso llama arquitecturas «de tipo LLaMA».
+
+\begin{definicion}[Bloque de consenso]\label{def:consenso}
+Sean $h\in\R^{1\times d}$ la fila de un token en el flujo residual, $\Attn$ una atención multicabeza causal con RoPE y $\FFN$ un MLP SwiGLU sin sesgos. El \emph{bloque de consenso} es
+\[
+a=h+\Attn\bigl(\RMSNorm_1(h)\bigr),\qquad h'=a+\FFN\bigl(\RMSNorm_2(a)\bigr),
+\]
+donde las capas lineales no tienen sesgo y la posición se introduce solo mediante la rotación de consultas y claves en cada capa. El modelo completo añade un $\RMSNorm$ final antes de la matriz de salida.
+\end{definicion}
+
+\begin{table}[ht]
+\centering\small
+\caption{Elecciones de arquitectura del Transformer original y de Llama~3. Fuentes: \cite[§3]{vaswani}, \cite[§3.2 y tabla~3]{llama3} y \cite{cs336}.}\label{tab:consenso}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Elección & Transformer (2017) & Llama~3 (2024) \\
+\midrule
+Posición de la normalización & tras la subcapa (post-norm) & antes de la subcapa (pre-norm) \\
+Normalización & LayerNorm & RMSNorm \\
+Activación del MLP & ReLU, $\dff=4d$ & SwiGLU, $\dff\approx 3{,}5d$ \\
+Posición & sinusoidal sumada a la entrada & RoPE en cada capa, base $5\cdot 10^{5}$ \\
+Sesgos & sí & no \\
+Atención & multicabeza (MHA) & agrupada (GQA, 8 cabezas K/V) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}
+Las justificaciones de cada elección son mayoritariamente empíricas. Shazeer termina su artículo sobre las unidades con puerta sin ofrecer explicación de por qué funcionan mejor~\cite[§4]{shazeerglu}, y la clase~3 de CS336 insiste en que las diferencias entre variantes son pequeñas y en que el argumento a favor de RMSNorm es sobre todo de coste~\cite{cs336}. Lo que sí admite demostración son las propiedades algebraicas que diferencian unas variantes de otras, y a ellas se dedica la sección siguiente.
+\end{observacion}
+
+\section{RMSNorm}
+
+\begin{definicion}[LayerNorm y RMSNorm]\label{def:rmsnorm}
+Sean $x\in\R^{d}$, $\gamma\in\R^{d}$ un vector de ganancias y $\varepsilon\ge 0$. Con $\mu(x)=\frac1d\sum_i x_i$ y $\RMS_\varepsilon(x)=\sqrt{\frac1d\sum_i x_i^{2}+\varepsilon}$, se definen
+\[
+\RMSNorm(x)=\frac{x}{\RMS_\varepsilon(x)}\odot\gamma,\qquad
+\LN(x)=\frac{x-\mu(x)\uno}{\sqrt{\frac1d\sum_i(x_i-\mu(x))^{2}+\varepsilon}}\odot\gamma+\beta,
+\]
+donde $\odot$ es el producto componente a componente y $\beta\in\R^{d}$ es el sesgo de LayerNorm. RMSNorm no resta la media ni tiene sesgo~\cite[§4, ec.~4]{rmsnorm}.
+\end{definicion}
+
+La práctica~1 de CS336 usa exactamente esta forma, con $\varepsilon=10^{-5}$ y cálculo en fp32 aunque la entrada esté en bf16, para evitar desbordamientos al elevar al cuadrado~\cite[§3.4.1]{cs336a1}.
+
+\begin{proposicion}[Propiedades de RMSNorm]\label{prop:rmsnorm}
+Sea $\varepsilon=0$ y sea $x\ne 0$.
+\begin{enumerate}
+  \item \emph{Norma fija.} Con $\gamma=\uno$, $\norm{\RMSNorm(x)}=\sqrt d$.
+  \item \emph{Invariancia de escala.} Para todo $\alpha>0$, $\RMSNorm(\alpha x)=\RMSNorm(x)$; para $\alpha<0$, $\RMSNorm(\alpha x)=-\RMSNorm(x)$.
+  \item \emph{Invariancia ante la escala de los pesos.} Si $x=uW$ es la salida de una capa lineal y $W$ se sustituye por $\alpha W$ con $\alpha>0$, la salida normalizada no cambia.
+  \item \emph{Relación con LayerNorm.} Con $\beta=0$, $\LN(x)=\RMSNorm\bigl(x-\mu(x)\uno\bigr)$ siempre que $x$ no sea constante.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\norm{x/\RMS(x)}^{2}=\sum_i x_i^{2}\big/\bigl(\frac1d\sum_i x_i^{2}\bigr)=d$.
+
+(ii) $\RMS(\alpha x)=\sqrt{\frac1d\sum_i\alpha^{2}x_i^{2}}=\abs{\alpha}\RMS(x)$, luego $\alpha x/\RMS(\alpha x)=(\alpha/\abs{\alpha})\,x/\RMS(x)$, y $\alpha/\abs{\alpha}=\pm1$ según el signo de $\alpha$.
+
+(iii) $u(\alpha W)=\alpha\,(uW)=\alpha x$, y basta aplicar (ii).
+
+(iv) Sea $c=x-\mu(x)\uno$, que no es nulo porque $x$ no es constante. Como $\mu(c)=0$, el denominador de LayerNorm es $\sqrt{\frac1d\sum_i c_i^{2}}=\RMS(c)$, y $\LN(x)=c/\RMS(c)\odot\gamma=\RMSNorm(c)$.
+\end{proof}
+
+La \cref{prop:rmsnorm}(iv) dice que LayerNorm es RMSNorm precedida de un centrado. Lo que RMSNorm pierde es, por tanto, la invariancia ante traslaciones: $\LN(x+t\uno)=\LN(x)$ para todo $t\in\R$, mientras que $\RMSNorm(x+t\uno)\ne\RMSNorm(x)$ en general. Zhang y Sennrich conjeturan que la invariancia ante la escala es la propiedad que importa para la estabilidad, y no la de centrado, y la tabla~1 de su artículo compara ambas normalizaciones en estos términos~\cite[§4.1]{rmsnorm}.
+
+\begin{ejemplo}[RMSNorm frente a LayerNorm]\label{ej:rmsnorm}
+Sea $x=(1,2,3,-2)$ con $\gamma=\uno$, $\beta=0$ y $\varepsilon=0$. Entonces $\sum_i x_i^{2}=18$, $\RMS(x)=\sqrt{18/4}=2{,}121$ y
+\[
+\RMSNorm(x)=(0{,}4714;\ 0{,}9428;\ 1{,}414;\ -0{,}9428),
+\]
+cuya norma es $2=\sqrt 4$. Para LayerNorm, $\mu(x)=1$, el vector centrado es $c=(0,1,2,-3)$, con $\sum_i c_i^{2}=14$ y $\RMS(c)=\sqrt{3{,}5}=1{,}871$, y
+\[
+\LN(x)=(0;\ 0{,}5345;\ 1{,}069;\ -1{,}604).
+\]
+Las dos salidas difieren porque la media de $x$ no es nula; si se duplica $x$, ninguna de las dos cambia.
+\end{ejemplo}
+
+\begin{observacion}[Coste]
+Las normalizaciones suponen una fracción despreciable de los FLOPs de un bloque, pero no de su tiempo: son operaciones limitadas por la memoria, con intensidad aritmética baja (módulo~17, tema~2). Por eso la clase~3 de CS336 atribuye a RMSNorm una ganancia de tiempo real apreciable a pesar de ahorrar muy pocas operaciones~\cite{cs336}, y Zhang y Sennrich informan de reducciones del tiempo de ejecución de entre el 7 y el 64\,\% según el modelo~\cite{rmsnorm}.
+\end{observacion}
+
+\section{El presupuesto del MLP con puerta}
+
+\begin{definicion}[MLP SwiGLU]\label{def:swiglu}
+Sean $W_1,W_3\in\R^{d\times\dff}$ y $W_2\in\R^{\dff\times d}$. El MLP SwiGLU es
+\[
+\FFN_{\SwiGLU}(x)=\bigl(\SiLU(xW_1)\odot xW_3\bigr)W_2,\qquad \SiLU(t)=t\,\sigma(t),
+\]
+sin sesgos~\cite[ec.~6]{shazeerglu}.
+\end{definicion}
+
+\begin{proposicion}[Presupuesto de parámetros]\label{prop:presupuesto}
+Un MLP SwiGLU con dimensión intermedia $\dff$ tiene $3d\,\dff$ parámetros y cuesta $6d\,\dff$ FLOPs por token en la pasada hacia delante. Tiene los mismos parámetros y FLOPs que un MLP de dos matrices con dimensión intermedia $4d$ si y solo si $\dff=\frac83 d$.
+\end{proposicion}
+
+\begin{proof}
+Cada una de las tres matrices tiene $d\,\dff$ entradas, y cada producto de una fila por una matriz $d\times\dff$ (o $\dff\times d$) cuesta $2d\,\dff$ FLOPs (módulo~14, tema~6). El MLP de dos matrices con $4d$ tiene $2\cdot d\cdot 4d=8d^{2}$ parámetros. La igualdad $3d\,\dff=8d^{2}$ equivale a $\dff=8d/3$; el argumento para los FLOPs es idéntico, con un factor~2 en ambos miembros.
+\end{proof}
+
+Shazeer aplica esta regla en sus experimentos: compara un MLP con $\dff=3072$ y dos matrices con variantes con puerta de $\dff=2048=\frac23\cdot 3072$~\cite[§3.1]{shazeerglu}. La clase~3 de CS336 recoge que la mayoría de los modelos con puerta usan cocientes $\dff/d$ entre $2{,}5$ y $3{,}5$, y que fuera de ese intervalo hay excepciones como T5, con un cociente de~64~\cite{cs336}. La \cref{tab:hiper} muestra los valores de Llama~3, Mixtral y Grok-1.
+
+\begin{table}[ht]
+\centering\small
+\caption{Hiperparámetros de forma de modelos con publicación de su configuración. Fuentes: \cite[tabla~3]{llama3}, \cite[tabla~1]{mixtral} y el archivo \texttt{run.py} de~\cite{grok1}.}\label{tab:hiper}
+\begin{tabular}{@{}lrrrrrrr@{}}
+\toprule
+Modelo & $L$ & $d$ & $\dff$ & $H$ & $\nkv$ & $\dff/d$ & $d/L$ \\
+\midrule
+Llama~3 8B & 32 & 4096 & 14\,336 & 32 & 8 & $3{,}5$ & 128 \\
+Llama~3 70B & 80 & 8192 & 28\,672 & 64 & 8 & $3{,}5$ & $102{,}4$ \\
+Llama~3 405B & 126 & 16\,384 & 53\,248 & 128 & 8 & $3{,}25$ & $130{,}0$ \\
+Mixtral 8x7B & 32 & 4096 & 14\,336 & 32 & 8 & $3{,}5$ & 128 \\
+Grok-1 & 64 & 6144 & 32\,768 & 48 & 8 & $5{,}333$ & 96 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Hiperparámetros de forma}
+
+La clase~3 de CS336 identifica tres regularidades más, todas ellas con excepciones documentadas~\cite{cs336}.
+
+\begin{definicion}[Hiperparámetros de forma]\label{def:forma}
+En un Transformer con $L$ bloques, dimensión $d$ y $H$ cabezas de dimensión $\dhd$:
+\begin{enumerate}
+  \item la \emph{regla de las cabezas} es $H\dhd=d$;
+  \item la \emph{relación de aspecto} es $r=d/L$;
+  \item el \emph{tamaño del vocabulario} es $\abs{\V}$.
+\end{enumerate}
+\end{definicion}
+
+Los modelos de la \cref{tab:hiper} cumplen la regla de las cabezas con $\dhd=128$, salvo Grok-1, en el que $48\cdot 128=6144=d$ también la cumple. La clase de CS336 sitúa la relación de aspecto de la mayoría de los modelos entre 100 y 200, y los vocabularios entre $3\cdot 10^{4}$ y $5\cdot 10^{4}$ tokens para modelos monolingües y entre $10^{5}$ y $2{,}5\cdot 10^{5}$ para los multilingües: Llama~2 usa $32\,000$ y Llama~3, unos $128\,000$~\cite{cs336,llama3}.
+
+\begin{proposicion}[Dimensión a partir del tamaño y la relación de aspecto]\label{prop:aspecto}
+Sea un Transformer de consenso con $\dff=\frac83 d$ y atención multicabeza, cuyos bloques contienen $N_{\mathrm{b}}$ parámetros en total, y sea $r=d/L$ su relación de aspecto. Despreciando las normalizaciones, $N_{\mathrm{b}}=12Ld^{2}$ y, por tanto,
+\[
+d=\Bigl(\frac{rN_{\mathrm{b}}}{12}\Bigr)^{1/3},\qquad L=\frac dr .
+\]
+\end{proposicion}
+
+\begin{proof}
+La atención tiene cuatro matrices $d\times d$, es decir, $4d^{2}$ parámetros; el MLP, $3d\,\dff=8d^{2}$ por la \cref{prop:presupuesto}. Cada bloque tiene $12d^{2}$ parámetros y $L$ bloques, $12Ld^{2}$. Sustituyendo $L=d/r$, $N_{\mathrm{b}}=12d^{3}/r$, y se despeja $d$.
+\end{proof}
+
+\begin{ejemplo}[Forma de un modelo de $4\cdot 10^{11}$ parámetros]\label{ej:aspecto}
+Con $N_{\mathrm{b}}=4{,}05\cdot 10^{11}$ y $r=130$, la \cref{prop:aspecto} da $d=(130\cdot 4{,}05\cdot 10^{11}/12)^{1/3}=(4{,}388\cdot 10^{12})^{1/3}=16\,371$ y $L=16\,371/130=125{,}9$. Llama~3 405B tiene $d=16\,384$ y $L=126$ (\cref{tab:hiper}). La coincidencia es en parte casual, porque Llama~3 usa GQA y $\dff=3{,}25d$, pero muestra que dos números bastan para fijar la forma de un modelo.
+\end{ejemplo}
+
+\begin{observacion}[Estabilidad]
+La clase~3 de CS336 recoge tres recursos de estabilidad frecuentes en modelos recientes, todos dirigidos a las funciones softmax: la pérdida auxiliar $z$ sobre el logaritmo del denominador de la softmax de salida, la normalización de consultas y claves antes del producto escalar (\emph{QK-norm}) y el recorte suave de los logits mediante una tangente hiperbólica~\cite{cs336}. Las tres limitan el crecimiento de los logits, cuyo exceso satura la softmax y desestabiliza el entrenamiento.
+\end{observacion}
+
+\begin{lecturas}
+\item Stanford CS336~\cite{cs336}, clase~3, «Architectures, hyperparameters»: comparación de arquitecturas y tablas de hiperparámetros.
+\item Zhang y Sennrich~\cite{rmsnorm}, §4 «RMSNorm» y §4.1 «Invariance Analysis».
+\item Shazeer~\cite{shazeerglu}, §2 «Gated Linear Units (GLU) and Variants» y §3.1.
+\item Grattafiori \emph{et al.}~\cite{llama3}, §3.2 «Model Architecture» y tabla~3.
+\item Tarea~1 de CS336~\cite{cs336a1}, §3.4.1 (RMSNorm) y §7.3 (ablaciones de arquitectura).
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-vf}
+Justifique si son verdaderas o falsas: (a) RMSNorm es invariante ante la suma de una constante a todas las componentes; (b) un MLP SwiGLU con $\dff=4d$ tiene un 50\,\% más de parámetros que un MLP ReLU con $\dff=4d$; (c) en todos los modelos de la \cref{tab:hiper} se cumple $H\dhd=d$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-norm}
+Sea $x=(2,-1,0,3)$, con $\gamma=\uno$, $\beta=0$ y $\varepsilon=0$. Calcule $\RMSNorm(x)$, $\LN(x)$ y $\RMSNorm(3x)$, y compruebe la \cref{prop:rmsnorm}(i).
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-llama3}
+Con los datos de la \cref{tab:hiper}, calcule para los tres modelos de Llama~3 la dimensión por cabeza, el número de cabezas de consulta que comparten cada cabeza de clave y valor, y los parámetros de un bloque (atención con GQA, SwiGLU y dos RMSNorm). ¿Qué fracción del bloque corresponde al MLP en el modelo 8B?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-swiglu}
+En la ablación de la tarea~1 de CS336 se compara un MLP SwiGLU con $\dff\approx\frac83 d$, redondeado a un múltiplo de~64, con un MLP de dos matrices con activación SiLU y $\dff=4d$. Con $d=512$: (a) calcule el $\dff$ del SwiGLU redondeando $\frac83 d$ al múltiplo de~64 más próximo; (b) cuente los parámetros de ambos MLP; (c) calcule la diferencia relativa y explique por qué la comparación es justa.
+\fuente{adaptado de la tarea~1 de CS336~\cite{cs336a1}, §7.3, problema \texttt{swiglu\_ablation}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-inv}
+Demuestre que $\LN(x+t\uno)=\LN(x)$ para todo $t\in\R$ y toda $x$ no constante, y que RMSNorm no tiene esta propiedad: encuentre $x\in\R^{2}$ y $t$ con $\RMSNorm(x+t\uno)\ne\RMSNorm(x)$. Demuestre también que, si $\gamma=\uno$, la salida de RMSNorm determina $x$ salvo un factor positivo.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-aspecto}
+(a) Generalice la \cref{prop:aspecto} a un MLP con $\dff=\rho d$ y atención con $\nkv$ cabezas de clave y valor de dimensión $\dhd=d/H$. (b) Aplique la fórmula de la \cref{prop:aspecto} a $N_{\mathrm{b}}=7\cdot 10^{10}$ y $r=102$, y compare con Llama~3 70B. (c) Recalcule los parámetros de los bloques de Llama~3 70B con la fórmula de (a) y explique la diferencia con (b).
+\end{ejercicio}

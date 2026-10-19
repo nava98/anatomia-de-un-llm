@@ -1,0 +1,2047 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase II — Módulo 7
+%  Optimización
+%  Compilar: latexmk -r ../latexmkrc M07-optimizacion.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 7}
+
+\hypersetup{pdftitle={Módulo 7. Optimización},pdfauthor={Anatomía de un LLM}}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\uno}{\mathbf{1}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\sign}{\operatorname{signo}}
+\newcommand{\argmin}{\operatorname*{arg\,min}}
+\newcommand{\gb}{\hat g}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase II \textperiodcentered\ Aprendizaje automático y redes neuronales}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 7\par}\vspace{0.3cm}
+{\LARGE Optimización\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Entrenar un modelo de lenguaje es resolver un problema de optimización: hallar parámetros $\theta\in\R^{n}$, con $n$ del orden de $10^{9}$ a $10^{12}$, que hagan pequeña la entropía cruzada media sobre un corpus de billones de tokens. El módulo~4 proporcionó el gradiente; este módulo estudia cómo usarlo para dar pasos. Se analiza primero el descenso de gradiente en el caso en que todo puede calcularse, las funciones cuadráticas y fuertemente convexas, y se identifica el número de condición como la magnitud que gobierna la velocidad de convergencia. Después se introducen las tres ideas que separan ese algoritmo de los que se usan en la práctica: el gradiente estocástico de minibatch, el momentum y la normalización adaptativa por coordenadas. El módulo termina con los ingredientes de la receta estándar de preentrenamiento: AdamW, el calendario de calentamiento lineal seguido de decaimiento coseno y el decaimiento de pesos.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item definir convexidad, convexidad fuerte y suavidad de Lipschitz, y usar las condiciones de optimalidad de primer y segundo orden para clasificar puntos críticos;
+  \item demostrar la convergencia lineal del descenso de gradiente en funciones fuertemente convexas y suaves, y obtener el paso óptimo y el factor $(\kappa-1)/(\kappa+1)$ en cuadráticas;
+  \item demostrar que el gradiente de minibatch es un estimador insesgado, calcular su varianza con y sin reemplazamiento, y explicar por qué el ruido obliga a reducir la tasa de aprendizaje;
+  \item formular el método de momentum como discretización de un sistema mecánico con rozamiento y demostrar que acelera la convergencia en cuadráticas hasta el factor $(\sqrt\kappa-1)/(\sqrt\kappa+1)$;
+  \item escribir y aplicar a mano AdaGrad, RMSProp y Adam, y demostrar las propiedades de la corrección de sesgo de Adam;
+  \item distinguir la regularización $L^{2}$ del decaimiento de pesos desacoplado de AdamW y calcular calendarios de calentamiento y decaimiento coseno como los del preentrenamiento de modelos de lenguaje.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1, la entropía cruzada como pérdida de entrenamiento (tema~5). Del módulo~3, los autovalores de una matriz simétrica y el teorema espectral, que se usan en los temas~1, 2 y~4. Del módulo~4, el gradiente, el hessiano, el desarrollo de Taylor y la caracterización de la convexidad (temas~4 y~5). Del módulo~5, la esperanza, la varianza y la independencia de variables aleatorias, que se usan en los temas~3 y~5.
+
+\section*{Organización}
+\begin{center}
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Problemas de optimización y convexidad & \cite{bv}, \cite{gbc}, \cite{d2l} \\
+2 & Descenso de gradiente & \cite{bv}, \cite{d2l}, \cite{mit18065} \\
+3 & Descenso de gradiente estocástico & \cite{d2l}, \cite{gbc}, \cite{bottou} \\
+4 & Momentum & \cite{polyak}, \cite{d2l}, \cite{goh} \\
+5 & Métodos adaptativos: AdaGrad, RMSProp y Adam & \cite{adam}, \cite{d2l}, \cite{gbc} \\
+6 & Regularización y calendarios de la tasa de aprendizaje & \cite{adamw}, \cite{sgdr}, \cite{d2l} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La convexidad y el análisis del descenso de gradiente siguen los capítulos~3 y~9 de Boyd y Vandenberghe~\cite{bv}, texto del curso EE364a de Stanford~\cite{ee364a}, y las clases~22, 23 y~25 del curso 18.065 del MIT~\cite{mit18065}. La parte de aprendizaje profundo sigue el capítulo~8 de Goodfellow, Bengio y Courville~\cite{gbc} y el capítulo~12 de Zhang \emph{et al.}~\cite{d2l}, que es también la fuente de la mayoría de los ejercicios adaptados; el análisis del gradiente estocástico se apoya en la revisión de Bottou, Curtis y Nocedal~\cite{bottou}. Cada método se presenta además según su artículo original: Polyak~\cite{polyak} para el momentum, Duchi, Hazan y Singer~\cite{adagrad} para AdaGrad, Kingma y Ba~\cite{adam} para Adam, y Loshchilov y Hutter~\cite{adamw,sgdr} para AdamW y el decaimiento coseno. Los hiperparámetros de modelos concretos se toman de sus artículos publicados; Anthropic, Google y xAI no han hecho públicos los optimizadores de Claude, Gemini y Grok.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\theta\in\R^{n}$, $\theta_k$ & vector de parámetros e iterado $k$-ésimo \\
+$f$, $f^{\ast}=\inf f$, $\theta^{\ast}$ & función objetivo, valor óptimo y minimizador \\
+$J(\theta)=\frac1N\sum_{i=1}^{N}\ell_i(\theta)$ & riesgo empírico: pérdida media sobre $N$ ejemplos \\
+$\nabla f$, $\nabla^{2}f$ & gradiente (vector columna) y hessiano \\
+$\mu$, $L$ & constantes de convexidad fuerte y de suavidad \\
+$\lambda_{\min}$, $\lambda_{\max}$, $\lambda_i$ & autovalores de una matriz simétrica \\
+$\kappa=L/\mu$ & número de condición \\
+$\eta$, $\eta_k$ & tasa de aprendizaje (constante o en el paso $k$) \\
+$B$, $\gb$ & tamaño del minibatch y gradiente estocástico \\
+$\beta$; $\beta_1$, $\beta_2$ & coeficiente de momentum; coeficientes de Adam \\
+$m_t$, $v_t$; $\hat m_t$, $\hat v_t$ & momentos de Adam y sus versiones corregidas \\
+$\varepsilon$ & constante de estabilidad numérica de los métodos adaptativos \\
+$\lambda$ & coeficiente de regularización o de decaimiento de pesos (tema~6) \\
+$A\succeq 0$, $A\succ 0$ & $A$ simétrica semidefinida o definida positiva \\
+$u\odot w$, $u^{2}$, $\sqrt{u}$ & operaciones elemento a elemento sobre vectores \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Problemas de optimización y convexidad}
+\label{tema:1}
+% =====================================================================
+
+Este tema plantea el entrenamiento de un modelo como un problema de minimización sin restricciones y reúne las herramientas de análisis que se usan en el resto del módulo: convexidad, convexidad fuerte, suavidad de Lipschitz y condiciones de optimalidad. Las definiciones y los resultados siguen los capítulos~2, 3 y~9 de~\cite{bv}; la discusión sobre redes profundas sigue~\cite[§8.1 y §8.2]{gbc} y~\cite[§12.1 y §12.2]{d2l}. Parte de la materia de convexidad se introdujo en el módulo~4 (tema~5); aquí se completa con las constantes $\mu$ y $L$, que determinan la velocidad de los algoritmos.
+
+\section{Minimización del riesgo empírico}
+
+\begin{definicion}[Problema de optimización sin restricciones]
+Sea $f\colon\R^{n}\to\R$. El problema \emph{minimizar $f(\theta)$, $\theta\in\R^{n}$}, consiste en hallar el \emph{valor óptimo} $f^{\ast}=\inf_{\theta}f(\theta)$ y, si existe, un \emph{minimizador global} $\theta^{\ast}$ con $f(\theta^{\ast})=f^{\ast}$. Un punto $\bar\theta$ es un \emph{minimizador local} si existe $r>0$ tal que $f(\bar\theta)\le f(\theta)$ para todo $\theta$ con $\norm{\theta-\bar\theta}<r$.
+\end{definicion}
+
+\begin{definicion}[Riesgo empírico]\label{def:riesgo}
+Sean $N$ ejemplos de entrenamiento y $\ell_i(\theta)$ la pérdida del modelo de parámetros $\theta$ sobre el ejemplo $i$. El \emph{riesgo empírico} es
+\[
+J(\theta)=\frac1N\sum_{i=1}^{N}\ell_i(\theta).
+\]
+\end{definicion}
+
+En un modelo de lenguaje, cada ejemplo es una posición de un texto y $\ell_i(\theta)=-\ln p_\theta(x_t\mid x_{1:t-1})$ es la log-verosimilitud negativa del token observado; $J$ es la pérdida $\mathcal{J}$ del módulo~1 (tema~5). El objetivo real no es minimizar $J$, sino el riesgo esperado sobre la distribución de los datos, al que $J$ solo aproxima; por eso el aprendizaje se diferencia de la optimización pura~\cite[§8.1]{gbc}. Este módulo trata, sin embargo, del problema de optimización.
+
+\section{Convexidad, convexidad fuerte y suavidad}
+
+\begin{definicion}[Conjunto y función convexos]
+Un conjunto $C\subseteq\R^{n}$ es \emph{convexo} si $t x+(1-t)y\in C$ para todo $x,y\in C$ y $t\in[0,1]$. Una función $f\colon\R^{n}\to\R$ es \emph{convexa} si
+\[
+f\bigl(tx+(1-t)y\bigr)\le t f(x)+(1-t)f(y)\qquad\text{para todo } x,y\in\R^{n},\ t\in[0,1],
+\]
+y \emph{estrictamente convexa} si la desigualdad es estricta cuando $x\ne y$ y $t\in(0,1)$~\cite[cap.~2 y §3.1]{bv}.
+\end{definicion}
+
+\begin{teorema}[Caracterización de primer orden]\label{teo:primer-orden}
+Sea $f$ diferenciable. Entonces $f$ es convexa si y solo si
+\[
+f(y)\ge f(x)+\nabla f(x)\T(y-x)\qquad\text{para todo } x,y\in\R^{n}.
+\]
+\end{teorema}
+
+\begin{proof}
+($\Rightarrow$) Sean $x,y$ y $t\in(0,1]$. Por convexidad, $f(x+t(y-x))\le f(x)+t\bigl(f(y)-f(x)\bigr)$, es decir,
+\[
+\frac{f(x+t(y-x))-f(x)}{t}\le f(y)-f(x).
+\]
+Cuando $t\to 0^{+}$, el primer miembro tiende a la derivada direccional $\nabla f(x)\T(y-x)$, lo que da la desigualdad.
+
+($\Leftarrow$) Sean $x,y$, $t\in[0,1]$ y $z=tx+(1-t)y$. Aplicando la hipótesis en el punto $z$ a $x$ y a $y$,
+$f(x)\ge f(z)+\nabla f(z)\T(x-z)$ y $f(y)\ge f(z)+\nabla f(z)\T(y-z)$. Multiplicando por $t$ y por $1-t$ y sumando, el término lineal es $\nabla f(z)\T\bigl(tx+(1-t)y-z\bigr)=0$, y queda $tf(x)+(1-t)f(y)\ge f(z)$.
+\end{proof}
+
+Geométricamente, una función convexa queda por encima de todas sus rectas (o hiperplanos) tangentes. Para funciones dos veces diferenciables, la convexidad equivale a $\nabla^{2}f(x)\succeq 0$ para todo $x$ (módulo~4, tema~5; \cite[§3.1]{bv}). Las dos definiciones siguientes refuerzan esta condición por abajo y la limitan por arriba.
+
+\begin{definicion}[Convexidad fuerte]\label{def:fuerte}
+Sea $\mu>0$. Una función diferenciable $f$ es \emph{$\mu$-fuertemente convexa} si
+\[
+f(y)\ge f(x)+\nabla f(x)\T(y-x)+\frac{\mu}{2}\norm{y-x}^{2}\qquad\text{para todo } x,y.
+\]
+Si $f$ es dos veces diferenciable, esto equivale a $\nabla^{2}f(x)\succeq\mu I$ para todo $x$~\cite[§9.1]{bv}.
+\end{definicion}
+
+\begin{definicion}[Suavidad de Lipschitz]\label{def:suave}
+Sea $L>0$. Una función diferenciable $f$ es \emph{$L$-suave} si su gradiente es lipschitziano de constante $L$:
+\[
+\norm{\nabla f(x)-\nabla f(y)}\le L\norm{x-y}\qquad\text{para todo } x,y.
+\]
+Si $f$ es dos veces diferenciable, esto equivale a que todos los autovalores de $\nabla^{2}f(x)$ estén en $[-L,L]$ para todo $x$; para $f$ convexa, a $\nabla^{2}f(x)\preceq LI$.
+\end{definicion}
+
+Si $f$ es $\mu$-fuertemente convexa y $L$-suave, necesariamente $\mu\le L$, y el cociente
+\[
+\kappa=\frac{L}{\mu}\ge 1
+\]
+se llama \emph{número de condición} de $f$. En el \cref{tema:2} se demuestra que $\kappa$ controla el número de iteraciones del descenso de gradiente.
+
+\begin{ejemplo}[Funciones cuadráticas]\label{ej:cuadratica}
+Sea $f(\theta)=\tfrac12\theta\T Q\theta+c\T\theta+b$, con $Q\in\R^{n\times n}$ simétrica, $c\in\R^{n}$ y $b\in\R$. Entonces $\nabla f(\theta)=Q\theta+c$ y $\nabla^{2}f=Q$ es constante. Si $Q\succ 0$, la función es $\mu$-fuertemente convexa y $L$-suave con
+\[
+\mu=\lambda_{\min}(Q),\qquad L=\lambda_{\max}(Q),\qquad \kappa=\frac{\lambda_{\max}(Q)}{\lambda_{\min}(Q)},
+\]
+que es el número de condición espectral de $Q$ del módulo~3. Para $f(x,y)=x^{2}+5y^{2}$ se tiene $Q=\diag(2,10)$, $\mu=2$, $L=10$ y $\kappa=5$: las curvas de nivel son elipses cuyos semiejes están en razón $\sqrt\kappa=\sqrt5\approx 2{,}236$.
+\end{ejemplo}
+
+\section{Condiciones de optimalidad}
+
+\begin{teorema}[Condición necesaria de primer orden]\label{teo:fermat}
+Si $f$ es diferenciable y $\bar\theta$ es un minimizador local, entonces $\nabla f(\bar\theta)=0$.
+\end{teorema}
+
+\begin{proof}
+Sea $d=-\nabla f(\bar\theta)$ y supóngase $d\ne 0$. La función $\varphi(t)=f(\bar\theta+td)$ cumple $\varphi'(0)=\nabla f(\bar\theta)\T d=-\norm{\nabla f(\bar\theta)}^{2}<0$, luego $\varphi(t)<\varphi(0)$ para todo $t>0$ suficientemente pequeño. Esto contradice que $\bar\theta$ sea minimizador local.
+\end{proof}
+
+Un punto con $\nabla f(\bar\theta)=0$ se llama \emph{punto crítico} o \emph{estacionario}. En general, la condición no es suficiente; para funciones convexas, sí lo es.
+
+\begin{teorema}[Optimalidad en el caso convexo]\label{teo:opt-convexa}
+Sea $f$ convexa y diferenciable. Un punto $\theta^{\ast}$ es minimizador global si y solo si $\nabla f(\theta^{\ast})=0$. En particular, todo minimizador local de una función convexa es global.
+\end{teorema}
+
+\begin{proof}
+Si $\theta^{\ast}$ es minimizador global, también es local y el \cref{teo:fermat} da $\nabla f(\theta^{\ast})=0$. Recíprocamente, si $\nabla f(\theta^{\ast})=0$, el \cref{teo:primer-orden} da $f(y)\ge f(\theta^{\ast})+0$ para todo $y$. La última afirmación se sigue de combinar ambas implicaciones con el \cref{teo:fermat}.
+\end{proof}
+
+\begin{proposicion}[Minimizador de una cuadrática]\label{prop:min-cuadratica}
+Sea $f(\theta)=\tfrac12\theta\T Q\theta+c\T\theta+b$ con $Q\succ 0$. Su único minimizador y su valor mínimo son
+\[
+\theta^{\ast}=-Q^{-1}c,\qquad f^{\ast}=b-\tfrac12\,c\T Q^{-1}c,
+\]
+y para todo $\theta$ se cumple $f(\theta)-f^{\ast}=\tfrac12(\theta-\theta^{\ast})\T Q(\theta-\theta^{\ast})$.
+\end{proposicion}
+
+\begin{proof}
+$f$ es convexa porque $\nabla^{2}f=Q\succ 0$. Por el \cref{teo:opt-convexa}, los minimizadores son las soluciones de $Q\theta+c=0$; como $Q$ es invertible (sus autovalores son positivos), la única es $\theta^{\ast}=-Q^{-1}c$. Desarrollando $\tfrac12(\theta-\theta^{\ast})\T Q(\theta-\theta^{\ast})$ con $Q\theta^{\ast}=-c$ se obtiene $\tfrac12\theta\T Q\theta+c\T\theta+\tfrac12\theta^{\ast\top}Q\theta^{\ast}$, y $\tfrac12\theta^{\ast\top}Q\theta^{\ast}=\tfrac12c\T Q^{-1}c$. Por tanto $f(\theta)=\tfrac12(\theta-\theta^{\ast})\T Q(\theta-\theta^{\ast})+b-\tfrac12c\T Q^{-1}c$, que es mínimo, con valor $b-\tfrac12c\T Q^{-1}c$, cuando $\theta=\theta^{\ast}$.
+\end{proof}
+
+La identidad de la \cref{prop:min-cuadratica} permite trasladar el minimizador al origen: en lo que sigue, al estudiar cuadráticas se supondrá sin pérdida de generalidad $f(\theta)=\tfrac12\theta\T Q\theta$, con $\theta^{\ast}=0$ y $f^{\ast}=0$.
+
+\begin{proposicion}[Desigualdad de Polyak--Łojasiewicz]\label{prop:pl}
+Si $f$ es $\mu$-fuertemente convexa y diferenciable, con valor óptimo $f^{\ast}$, entonces
+\[
+\norm{\nabla f(x)}^{2}\ge 2\mu\bigl(f(x)-f^{\ast}\bigr)\qquad\text{para todo } x.
+\]
+\end{proposicion}
+
+\begin{proof}
+Fijado $x$, el segundo miembro de la \cref{def:fuerte} es una cuadrática en $y$ que se minimiza en $y=x-\nabla f(x)/\mu$, con valor $f(x)-\norm{\nabla f(x)}^{2}/(2\mu)$. Por tanto, $f(y)\ge f(x)-\norm{\nabla f(x)}^{2}/(2\mu)$ para todo $y$. Tomando el ínfimo en $y$, $f^{\ast}\ge f(x)-\norm{\nabla f(x)}^{2}/(2\mu)$, que es la desigualdad buscada.
+\end{proof}
+
+La \cref{prop:pl} dice que, lejos del óptimo en valor, el gradiente no puede ser pequeño. Es la propiedad que hace converger linealmente al descenso de gradiente (\cref{teo:gd-fuerte}).
+
+\section{Paisajes de pérdida no convexos}
+
+La pérdida de una red neuronal profunda no es convexa en sus parámetros (módulo~4, tema~5). La información local en un punto crítico la proporciona el hessiano.
+
+\begin{proposicion}[Clasificación de puntos críticos]\label{prop:clasificacion}
+Sea $f$ de clase $C^{2}$ y $\bar\theta$ un punto crítico.
+\begin{enumerate}
+  \item Si $\nabla^{2}f(\bar\theta)\succ 0$, $\bar\theta$ es un minimizador local estricto.
+  \item Si $\nabla^{2}f(\bar\theta)$ tiene un autovalor negativo, $\bar\theta$ no es minimizador local; si tiene autovalores de ambos signos, es un \emph{punto de silla}.
+  \item Si $\nabla^{2}f(\bar\theta)\succeq 0$ con algún autovalor nulo, el criterio no decide.
+\end{enumerate}
+\end{proposicion}
+
+La demostración, basada en el desarrollo de Taylor de segundo orden, se dio en el módulo~4 (tema~4). El \cref{tab:criticos} recoge los casos con ejemplos en $\R^{2}$.
+
+\begin{table}[h]
+\centering\small
+\caption{Puntos críticos en el origen y autovalores del hessiano.}\label{tab:criticos}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Tipo & Autovalores de $\nabla^{2}f$ & Ejemplo & Comportamiento del descenso \\
+\midrule
+Mínimo local & todos $>0$ & $x^{2}+y^{2}$ & converge si el paso es pequeño \\
+Máximo local & todos $<0$ & $-x^{2}-y^{2}$ & se aleja \\
+Punto de silla & de ambos signos & $x^{2}-y^{2}$ & se aleja salvo en un conjunto de medida nula \\
+Valle plano & alguno nulo & $x^{2}$ & no hay fuerza en la dirección plana \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{ejemplo}[Silla]\label{ej:silla}
+Para $f(x,y)=x^{2}-y^{2}$, el descenso de gradiente con paso $\eta$ actúa por coordenadas: $x\leftarrow(1-2\eta)x$ e $y\leftarrow(1+2\eta)y$. La coordenada $x$ se contrae y la $y$ se expande. Si el punto inicial tiene $y_0=0$, el método converge a la silla; cualquier perturbación $y_0\ne 0$ crece geométricamente y escapa de ella (\cref{eje:1-silla}).
+\end{ejemplo}
+
+\begin{observacion}[El paisaje de las redes profundas]\label{obs:paisaje}
+Se conocen varios hechos empíricos sobre la pérdida de las redes profundas. (i) En alta dimensión, los puntos críticos de pérdida alta son mayoritariamente sillas, no mínimos locales: un mínimo exige que todas las curvaturas sean positivas a la vez~\cite{dauphin}, \cite[§8.2.3]{gbc}. (ii) El espectro del hessiano se concentra cerca de cero, con un grupo menor de autovalores alejados que dependen de los datos~\cite{sagun}; el problema está muy mal condicionado~\cite[§8.2.1]{gbc}. (iii) Los lotes muy grandes tienden a llevar a mínimos más agudos, que se han asociado a una peor generalización~\cite{keskar}. (iv) Las conexiones residuales suavizan visiblemente el paisaje~\cite{li-paisaje}; se estudian en el módulo~11. Los temas siguientes desarrollan algoritmos que funcionan razonablemente en este entorno aunque su análisis se haga en el caso convexo.
+\end{observacion}
+
+\begin{lecturas}
+\item Boyd y Vandenberghe~\cite{bv}, cap.~2 «Convex sets», §3.1 «Basic properties and examples» y §9.1 «Unconstrained minimization problems».
+\item Stanford EE364a~\cite{ee364a}, transparencias del curso correspondientes a los capítulos~2, 3 y~9 de~\cite{bv}.
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.1 «How Learning Differs from Pure Optimization» y §8.2 «Challenges in Neural Network Optimization».
+\item Zhang \emph{et al.}~\cite{d2l}, §12.1 «Optimization and Deep Learning» y §12.2 «Convexity».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-cuartica}
+Sea $f(x)=x^{4}$ en $\R$. Justifique si es (a) convexa, (b) fuertemente convexa, (c) $L$-suave en todo $\R$ para algún $L$. ¿Contradice el apartado (b) que tenga un único minimizador?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-silla}
+Clasifique el punto $(0,0)$ de $f(x,y)=x^{2}-y^{2}$ y explique por qué el descenso de gradiente, empezando exactamente en $(1,0)$, converge a él. ¿Qué ocurre si empieza en $(1,\delta)$ con $\delta\ne 0$? Tome $\eta=0{,}1$ y $\delta=10^{-6}$ y calcule $y_{50}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-cuadratica}
+Halle el minimizador y el valor mínimo de $h(x)=\tfrac12x\T Qx+x\T c+b$ con
+$Q=\begin{pmatrix}2&1\\1&2\end{pmatrix}$, $c=(-3,0)\T$ y $b=1$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §12.6, ejercicio~3.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-constantes}
+Sea $f(x,y)=x^{2}+2xy+5y^{2}$. Calcule su hessiano, demuestre que $f$ es fuertemente convexa y obtenga $\mu$, $L$ y $\kappa$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-maximo}
+Sean $f$ y $g$ funciones convexas en $\R^{n}$. (a) Demuestre que $h(x)=\max\{f(x),g(x)\}$ es convexa. (b) Muestre con un contraejemplo que $\min\{f(x),g(x)\}$ no es convexa en general.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §12.2, ejercicio~3.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-fuerte}
+Sea $f$ diferenciable y $\mu$-fuertemente convexa, con un minimizador $\theta^{\ast}$. Demuestre que (a) $f(\theta)-f^{\ast}\ge\frac{\mu}{2}\norm{\theta-\theta^{\ast}}^{2}$ para todo $\theta$; (b) el minimizador es único; (c) $\norm{\nabla f(\theta)}\ge\mu\norm{\theta-\theta^{\ast}}$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Descenso de gradiente}
+\label{tema:2}
+% =====================================================================
+
+El descenso de gradiente es el algoritmo del que derivan todos los optimizadores del módulo. Este tema demuestra sus garantías de convergencia en tres situaciones de generalidad decreciente: funciones suaves arbitrarias, funciones fuertemente convexas y funciones cuadráticas, en las que el análisis es exacto. El resultado central es que el número de iteraciones crece proporcionalmente al número de condición $\kappa$. Se sigue~\cite[§9.2 y §9.3]{bv}, \cite[§12.3]{d2l} y las clases~21 y~22 de~\cite{mit18065}.
+
+\section{El método y el lema de descenso}
+
+\begin{definicion}[Descenso de gradiente]\label{def:gd}
+Dados $\theta_0\in\R^{n}$ y una \emph{tasa de aprendizaje} (o \emph{paso}) $\eta>0$, el \emph{descenso de gradiente} genera la sucesión
+\[
+\theta_{k+1}=\theta_k-\eta\,\nabla f(\theta_k),\qquad k=0,1,2,\dots
+\]
+\end{definicion}
+
+La dirección $-\nabla f(\theta_k)$ es la de máximo descenso local (módulo~4, tema~1). Por el desarrollo de Taylor de primer orden, $f(\theta_k-\eta\nabla f(\theta_k))=f(\theta_k)-\eta\norm{\nabla f(\theta_k)}^{2}+o(\eta)$, de modo que un paso suficientemente pequeño reduce $f$ siempre que el gradiente no sea nulo. El lema siguiente cuantifica «suficientemente pequeño».
+
+\begin{lema}[Lema de descenso]\label{lem:descenso}
+Si $f$ es $L$-suave, para todo $x,y\in\R^{n}$,
+\[
+f(y)\le f(x)+\nabla f(x)\T(y-x)+\frac{L}{2}\norm{y-x}^{2}.
+\]
+\end{lema}
+
+\begin{proof}
+Sea $d=y-x$ y $\varphi(t)=f(x+td)$, con $\varphi'(t)=\nabla f(x+td)\T d$. Por el teorema fundamental del cálculo,
+\[
+f(y)-f(x)-\nabla f(x)\T d=\int_0^1\bigl(\nabla f(x+td)-\nabla f(x)\bigr)\T d\,dt.
+\]
+Por la desigualdad de Cauchy--Schwarz y la \cref{def:suave}, el integrando está acotado por $\norm{\nabla f(x+td)-\nabla f(x)}\,\norm{d}\le Lt\norm{d}^{2}$. Integrando, $\int_0^1 Lt\norm{d}^{2}\,dt=\frac{L}{2}\norm{d}^{2}$.
+\end{proof}
+
+\begin{corolario}[Descenso suficiente]\label{cor:descenso}
+Si $f$ es $L$-suave y $\theta^{+}=\theta-\eta\nabla f(\theta)$ con $0<\eta<2/L$, entonces
+\[
+f(\theta^{+})\le f(\theta)-\eta\Bigl(1-\frac{L\eta}{2}\Bigr)\norm{\nabla f(\theta)}^{2}.
+\]
+Con $\eta=1/L$ la cota es $f(\theta^{+})\le f(\theta)-\frac{1}{2L}\norm{\nabla f(\theta)}^{2}$, y es la mejor que da el lema.
+\end{corolario}
+
+\begin{proof}
+Basta tomar $x=\theta$ e $y=\theta^{+}$ en el \cref{lem:descenso}, con $y-x=-\eta\nabla f(\theta)$: el término lineal es $-\eta\norm{\nabla f}^{2}$ y el cuadrático, $\frac{L}{2}\eta^{2}\norm{\nabla f}^{2}$. La función $\eta\mapsto\eta(1-L\eta/2)$ es positiva en $(0,2/L)$ y alcanza su máximo, $1/(2L)$, en $\eta=1/L$.
+\end{proof}
+
+\begin{teorema}[Caso no convexo]\label{teo:gd-noconvexo}
+Sea $f$ $L$-suave y acotada inferiormente por $f^{\ast}$. El descenso de gradiente con $\eta=1/L$ cumple, para todo $K\ge 1$,
+\[
+\min_{0\le k<K}\norm{\nabla f(\theta_k)}^{2}\le\frac{2L\bigl(f(\theta_0)-f^{\ast}\bigr)}{K}.
+\]
+\end{teorema}
+
+\begin{proof}
+Por el \cref{cor:descenso}, $\frac{1}{2L}\norm{\nabla f(\theta_k)}^{2}\le f(\theta_k)-f(\theta_{k+1})$. Sumando para $k=0,\dots,K-1$, la suma de la derecha es telescópica y vale $f(\theta_0)-f(\theta_K)\le f(\theta_0)-f^{\ast}$. El mínimo de $K$ números no supera su media, luego $\min_k\norm{\nabla f(\theta_k)}^{2}\le\frac1K\sum_k\norm{\nabla f(\theta_k)}^{2}\le 2L(f(\theta_0)-f^{\ast})/K$.
+\end{proof}
+
+El \cref{teo:gd-noconvexo} solo garantiza aproximarse a un punto crítico, que puede ser una silla; es la clase de garantía que cabe esperar para la pérdida de una red profunda.
+
+\section{Convergencia lineal en funciones fuertemente convexas}
+
+\begin{teorema}[Convergencia lineal]\label{teo:gd-fuerte}
+Sea $f$ $\mu$-fuertemente convexa y $L$-suave, con valor óptimo $f^{\ast}$. El descenso de gradiente con $\eta=1/L$ cumple
+\[
+f(\theta_k)-f^{\ast}\le\Bigl(1-\frac{1}{\kappa}\Bigr)^{k}\bigl(f(\theta_0)-f^{\ast}\bigr),\qquad\kappa=\frac{L}{\mu}.
+\]
+\end{teorema}
+
+\begin{proof}
+Por el \cref{cor:descenso} y la desigualdad de Polyak--Łojasiewicz (\cref{prop:pl}),
+\[
+f(\theta_{k+1})-f^{\ast}\le f(\theta_k)-f^{\ast}-\frac{1}{2L}\norm{\nabla f(\theta_k)}^{2}\le f(\theta_k)-f^{\ast}-\frac{2\mu}{2L}\bigl(f(\theta_k)-f^{\ast}\bigr)=\Bigl(1-\frac{\mu}{L}\Bigr)\bigl(f(\theta_k)-f^{\ast}\bigr).
+\]
+Iterando $k$ veces se obtiene el enunciado.
+\end{proof}
+
+\begin{corolario}[Número de iteraciones]\label{cor:iteraciones}
+En las condiciones del \cref{teo:gd-fuerte}, para alcanzar $f(\theta_k)-f^{\ast}\le\epsilon\,(f(\theta_0)-f^{\ast})$ basta con $k\ge\kappa\ln(1/\epsilon)$ iteraciones.
+\end{corolario}
+
+\begin{proof}
+Como $\ln(1-x)\le -x$ para $x\in[0,1)$, se tiene $(1-1/\kappa)^{k}\le e^{-k/\kappa}$, que es $\le\epsilon$ si $k\ge\kappa\ln(1/\epsilon)$.
+\end{proof}
+
+La convergencia se llama \emph{lineal} porque el error se multiplica en cada paso por un factor constante menor que~1: el logaritmo del error decrece linealmente con $k$. El factor depende solo de $\kappa$. El análisis de~\cite[§9.3]{bv} obtiene el mismo factor $1-\mu/L$, salvo constantes, para búsquedas lineales exacta y con retroceso.
+
+\section{Análisis exacto en cuadráticas}
+
+En una función cuadrática el método es lineal en $\theta$ y puede resolverse en forma cerrada. Toda función de clase $C^{2}$ es aproximadamente cuadrática cerca de un mínimo no degenerado, de modo que este caso describe el comportamiento asintótico general.
+
+\begin{ejemplo}[Una variable]\label{ej:gd-1d}
+Sea $f(x)=\frac{a}{2}x^{2}$ con $a>0$. Entonces $x_{k+1}=x_k-\eta a x_k=(1-\eta a)\,x_k$, de donde $x_k=(1-\eta a)^{k}x_0$. El método converge si y solo si $\abs{1-\eta a}<1$, es decir, $0<\eta<2/a$. Para $f(x)=2x^{2}$ ($a=4$), $x_0=1$ y $\eta=0{,}1$, el factor es $0{,}6$ y los iterados son $1$; $0{,}6$; $0{,}36$; $0{,}216$; $0{,}1296$. Con $\eta=0{,}6>2/a=0{,}5$, el factor es $-1{,}4$: el iterado cambia de signo en cada paso y su módulo crece.
+\end{ejemplo}
+
+\begin{teorema}[Descenso de gradiente en cuadráticas]\label{teo:gd-cuadratica}
+Sea $f(\theta)=\tfrac12\theta\T Q\theta$ con $Q$ simétrica de autovalores $0<\mu=\lambda_1\le\dots\le\lambda_n=L$. Sea $\rho(\eta)=\max_i\abs{1-\eta\lambda_i}$.
+\begin{enumerate}
+  \item $\norm{\theta_k}\le\rho(\eta)^{k}\norm{\theta_0}$, con igualdad si $\theta_0$ es autovector del autovalor que realiza el máximo.
+  \item El método converge a $\theta^{\ast}=0$ para todo $\theta_0$ si y solo si $0<\eta<2/L$.
+  \item El valor de $\eta$ que minimiza $\rho(\eta)$ es $\eta^{\ast}=2/(\mu+L)$, y
+  \[
+  \rho(\eta^{\ast})=\frac{L-\mu}{L+\mu}=\frac{\kappa-1}{\kappa+1}.
+  \]
+\end{enumerate}
+\end{teorema}
+
+\begin{proof}
+Como $\nabla f(\theta)=Q\theta$, la iteración es $\theta_{k+1}=(I-\eta Q)\theta_k$, luego $\theta_k=(I-\eta Q)^{k}\theta_0$. Por el teorema espectral (módulo~3), $Q=U\Lambda U\T$ con $U$ ortogonal. En las coordenadas $z=U\T\theta$, la iteración se desacopla: $z^{(i)}_{k}=(1-\eta\lambda_i)^{k}z^{(i)}_{0}$.
+
+(i) Como $U$ conserva la norma, $\norm{\theta_k}^{2}=\sum_i(1-\eta\lambda_i)^{2k}(z^{(i)}_0)^{2}\le\rho(\eta)^{2k}\norm{\theta_0}^{2}$, con igualdad en el caso indicado.
+
+(ii) Por (i), la condición $\rho(\eta)<1$ es suficiente. Es necesaria: si $\abs{1-\eta\lambda_i}\ge 1$ para algún $i$, el autovector correspondiente no converge a~0. Y $\abs{1-\eta\lambda_i}<1$ para todo $i$ equivale a $0<\eta\lambda_i<2$ para todo $i$, es decir, a $0<\eta<2/L$.
+
+(iii) Para $\eta$ fijo, $\lambda\mapsto\abs{1-\eta\lambda}$ es convexa, así que su máximo en $[\mu,L]$ se alcanza en un extremo: $\rho(\eta)=\max\{\abs{1-\eta\mu},\abs{1-\eta L}\}$. La primera función es decreciente en $\eta$ mientras $\eta\le 1/\mu$, y la segunda es creciente para $\eta\ge 1/L$; el máximo de ambas es mínimo donde se cortan, $1-\eta\mu=\eta L-1$, es decir, $\eta^{\ast}=2/(\mu+L)$. Sustituyendo, $\rho(\eta^{\ast})=1-2\mu/(\mu+L)=(L-\mu)/(L+\mu)$, y dividiendo por $\mu$ se obtiene $(\kappa-1)/(\kappa+1)$.
+\end{proof}
+
+\begin{observacion}
+El \cref{teo:gd-cuadratica} explica la conducta del método. La dirección de curvatura máxima, $\lambda_n=L$, limita el paso: $\eta<2/L$. La dirección de curvatura mínima, $\lambda_1=\mu$, se contrae entonces con un factor $1-\eta\mu>1-2/\kappa$, próximo a~1 si $\kappa$ es grande. Con el paso óptimo, las dos direcciones extremas se contraen al mismo ritmo, pero con signos opuestos: la de curvatura alta oscila.
+\end{observacion}
+
+\begin{ejemplo}[Dos variables]\label{ej:gd-2d}
+Sea $f(x,y)=x^{2}+5y^{2}$, con $Q=\diag(2,10)$, $\mu=2$, $L=10$ y $\kappa=5$. Con $\eta=0{,}05$, los factores son $1-0{,}1=0{,}9$ en $x$ y $1-0{,}5=0{,}5$ en $y$. Desde $(1,1)$:
+\begin{center}\small
+\begin{tabular}{@{}cccc@{}}
+\toprule
+$k$ & $x_k$ & $y_k$ & $f(x_k,y_k)$ \\
+\midrule
+0 & 1 & 1 & 6 \\
+1 & 0{,}9 & 0{,}5 & 2{,}06 \\
+2 & 0{,}81 & 0{,}25 & 0{,}9686 \\
+3 & 0{,}729 & 0{,}125 & 0{,}6096 \\
+\bottomrule
+\end{tabular}
+\end{center}
+La coordenada $y$, de curvatura alta, converge deprisa; la $x$ se arrastra. El paso óptimo es $\eta^{\ast}=2/12=1/6$, con $\rho=4/6=2/3$; la \cref{fig:zigzag} muestra la trayectoria resultante.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[scale=2.6,font=\small]
+  \foreach \c in {0.15,0.45,1,2,3.4,6}{
+    \draw[regla,thin] (0,0) ellipse ({sqrt(\c)} and {sqrt(\c/5)});
+  }
+  \draw[->,gray] (-2.6,0) -- (2.6,0) node[right,black] {$x$};
+  \draw[->,gray] (0,-1.2) -- (0,1.25) node[above,black] {$y$};
+  \draw[thick,-{Stealth[length=2mm]}] (1,1) -- (0.6667,-0.6667);
+  \draw[thick,-{Stealth[length=2mm]}] (0.6667,-0.6667) -- (0.4444,0.4444);
+  \draw[thick,-{Stealth[length=2mm]}] (0.4444,0.4444) -- (0.2963,-0.2963);
+  \draw[thick,-{Stealth[length=2mm]}] (0.2963,-0.2963) -- (0.1975,0.1975);
+  \draw[thick,-{Stealth[length=2mm]}] (0.1975,0.1975) -- (0.1317,-0.1317);
+  \foreach \p in {(1,1),(0.6667,-0.6667),(0.4444,0.4444),(0.2963,-0.2963),(0.1975,0.1975),(0.1317,-0.1317)}{\fill \p circle (0.6pt);}
+  \node[above right] at (1,1) {$\theta_0$};
+  \node[below right] at (0.6667,-0.6667) {$\theta_1$};
+  \node[above right] at (0.4444,0.4444) {$\theta_2$};
+  \fill (0,0) circle (0.8pt) node[below left] {$\theta^{\ast}$};
+\end{tikzpicture}
+\caption{Descenso de gradiente sobre $f(x,y)=x^{2}+5y^{2}$ con el paso óptimo $\eta^{\ast}=1/6$, desde $(1,1)$. Cada coordenada se multiplica por $2/3$ (en $x$) o por $-2/3$ (en $y$): la trayectoria zigzaguea entre las paredes del valle. Las elipses son curvas de nivel.}
+\label{fig:zigzag}
+\end{figure}
+
+\begin{corolario}\label{cor:iter-cuadratica}
+En las condiciones del \cref{teo:gd-cuadratica}, con el paso óptimo, el menor $k$ con $\rho^{k}\le\epsilon$ es $k=\lceil\ln\epsilon/\ln\rho\rceil$, que para $\kappa$ grande es aproximadamente $\frac{\kappa}{2}\ln(1/\epsilon)$.
+\end{corolario}
+
+\begin{proof}
+La primera afirmación se obtiene tomando logaritmos en $\rho^{k}\le\epsilon$, teniendo en cuenta que $\ln\rho<0$. Para la segunda, $\ln\rho=\ln(1-1/\kappa)-\ln(1+1/\kappa)=-2/\kappa+O(\kappa^{-3})$.
+\end{proof}
+
+El \cref{tab:kappa} aplica el corolario con $\epsilon=10^{-3}$. La última columna anticipa el resultado del \cref{tema:4}: con momentum, el número de iteraciones crece como $\sqrt\kappa$ en lugar de como $\kappa$.
+
+\begin{table}[h]
+\centering\small
+\caption{Factor de contracción e iteraciones necesarias para reducir el error a $10^{-3}$ en una cuadrática, con parámetros óptimos.}\label{tab:kappa}
+\begin{tabular}{@{}rcrcr@{}}
+\toprule
+$\kappa$ & $\rho$ del gradiente & Iteraciones & $\rho$ con momentum (\cref{teo:heavy-ball}) & Iteraciones \\
+\midrule
+10 & $0{,}8182$ & 35 & $0{,}5195$ & 11 \\
+100 & $0{,}9802$ & 346 & $0{,}8182$ & 35 \\
+1000 & $0{,}9980$ & 3454 & $0{,}9387$ & 110 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{La función de Rosenbrock y el borde de estabilidad}
+
+\begin{ejemplo}[Función de Rosenbrock]\label{ej:rosenbrock}
+La función $f(x,y)=(1-x)^{2}+100(y-x^{2})^{2}$ es no convexa y tiene su único mínimo en $(1,1)$, con $f=0$. Su hessiano en el mínimo es
+\[
+\nabla^{2}f(1,1)=\begin{pmatrix}802&-400\\-400&200\end{pmatrix},
+\]
+de autovalores $\lambda\approx 0{,}3994$ y $\lambda\approx 1001{,}6$ (\cref{eje:2-rosenbrock}). Cerca del mínimo, $\kappa\approx 2508$ y el descenso de gradiente solo es estable con $\eta<2/1001{,}6\approx 0{,}002$. El mínimo está en el fondo de un valle curvo, estrecho y casi plano a lo largo de su eje. Con $\eta=10^{-3}$ y desde $(-1{,}5;\,2)$, el método no baja de $f\approx 6{,}5\cdot 10^{-3}$ en 5000 iteraciones; es el banco de pruebas de la práctica del módulo.
+\end{ejemplo}
+
+\begin{observacion}[Borde de estabilidad]\label{obs:borde}
+La condición $\eta<2/\lambda_{\max}$ también se observa en redes profundas, pero en sentido inverso. Cohen \emph{et al.}~\cite{cohen} observaron que, al entrenar con descenso de gradiente de paso fijo, la curvatura máxima $\lambda_{\max}$ del hessiano de la pérdida crece hasta situarse en torno a $2/\eta$ y permanece ahí; la pérdida deja de decrecer de forma monótona a corto plazo, pero sigue bajando a largo plazo. La red evoluciona hacia el límite de estabilidad del \cref{teo:gd-cuadratica}.
+\end{observacion}
+
+\begin{lecturas}
+\item Boyd y Vandenberghe~\cite{bv}, §9.2 «Descent methods» y §9.3 «Gradient descent method».
+\item MIT 18.065~\cite{mit18065}, clases~21 «Minimizing a Function Step by Step» y~22 «Gradient Descent: Downhill to a Minimum»; Strang~\cite{strang}, cap.~VI.
+\item Zhang \emph{et al.}~\cite{d2l}, §12.3 «Gradient Descent».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §4.3 «Gradient-Based Optimization» y §8.2.1 «Ill-Conditioning».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-escala}
+Se multiplica la función objetivo por una constante $c>0$, es decir, se minimiza $cf$ en lugar de $f$. ¿Cómo cambian el minimizador, el paso máximo estable del descenso de gradiente y el número de condición? ¿Qué paso hay que usar con $cf$ para reproducir exactamente los iterados obtenidos con $f$ y paso $\eta$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-1d}
+Sea $f(x)=3x^{2}$, $x_0=2$ y $\eta=0{,}1$. Calcule $x_1$, $x_2$ y $x_3$. ¿Para qué valores de $\eta$ converge el método?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-2d}
+Sea $f(x,y)=x^{2}+5y^{2}$ con punto inicial $(1,1)$ y $\eta=1/6$. Calcule tres iteraciones y el factor por el que se multiplica la norma del iterado en cada paso. Compruebe que coincide con el del \cref{teo:gd-cuadratica}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-valle}
+Sea $f(x,y)=\tfrac12(x^{2}+25y^{2})$. (a) Calcule $\kappa$, el paso óptimo $\eta^{\ast}$ y el factor $\rho$ del descenso de gradiente. (b) ¿Cuántas iteraciones hacen falta para reducir el error a $10^{-3}$? (c) Repita (b) con el factor del momentum óptimo, $(\sqrt\kappa-1)/(\sqrt\kappa+1)$. (d) Calcule los dos primeros iterados desde $(1,1)$ con $\eta^{\ast}$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §12.3, ejercicio~3 (diseñar una función con coordenadas a escalas distintas en la que el descenso sea lento).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-paso-largo}
+Sea $F(x,y)=y^{2}+(y-x)^{2}$, cuyo mínimo es $F=0$ en $(0,0)$. (a) Calcule $\nabla F(1,1)$ y tres pasos de descenso de gradiente con paso $s=1/2$ desde $(1,1)$. ¿Qué ocurre con $F$? (b) Explique el resultado con los autovalores del hessiano. (c) Repita (a) con $s=1/4$.
+\fuente{adaptado de MIT 18.065~\cite{mit18065}, problemas de la clase~25 (sección~VI.5 de~\cite{strang}), problema~2. Se usa la versión del enunciado cuyo mínimo es $(0,0)$.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-rosenbrock}
+Calcule los autovalores del hessiano de la función de Rosenbrock en $(1,1)$ (\cref{ej:rosenbrock}), su número de condición y el mayor paso estable del descenso de gradiente. Con $\eta=10^{-3}$, estime cuántas iteraciones hacen falta para reducir a $10^{-3}$ el error en la dirección de curvatura mínima.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cuadratica}
+Demuestre con detalle el \cref{teo:gd-cuadratica}, justificando en particular por qué el máximo de $\abs{1-\eta\lambda}$ sobre $[\mu,L]$ se alcanza en un extremo y por qué el valor óptimo de $\eta$ iguala los dos extremos.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Descenso de gradiente estocástico}
+\label{tema:3}
+% =====================================================================
+
+Un modelo de lenguaje se entrena con billones de tokens; calcular el gradiente exacto del riesgo empírico antes de cada paso es inviable. El descenso de gradiente estocástico sustituye ese gradiente por una estimación barata obtenida de un subconjunto aleatorio de ejemplos. Este tema estudia las propiedades estadísticas de esa estimación, demuestra una garantía de convergencia en el caso convexo y explica por qué el ruido obliga a reducir la tasa de aprendizaje al final del entrenamiento. Se sigue~\cite[§12.4 y §12.5]{d2l}, \cite[§8.1.3 y §8.3.1]{gbc}, la revisión~\cite{bottou} y la clase~25 de~\cite{mit18065}.
+
+\section{El gradiente de minibatch}
+
+Sea $J(\theta)=\frac1N\sum_{i=1}^{N}\ell_i(\theta)$ el riesgo empírico (\cref{def:riesgo}), con cada $\ell_i$ diferenciable.
+
+\begin{definicion}[Descenso de gradiente estocástico]\label{def:sgd}
+Sea $B\ge 1$. En cada paso $k$ se eligen índices $I_1,\dots,I_B$ en $\{1,\dots,N\}$, independientes entre sí y de los pasos anteriores, y se calcula el \emph{gradiente de minibatch}
+\[
+\gb_k=\frac1B\sum_{b=1}^{B}\nabla\ell_{I_b}(\theta_k).
+\]
+El \emph{descenso de gradiente estocástico} (SGD) es la iteración $\theta_{k+1}=\theta_k-\eta_k\,\gb_k$. Con $B=1$ se obtiene el SGD en sentido estricto; con $B=N$ y sin aleatoriedad, el descenso de gradiente del \cref{tema:2}.
+\end{definicion}
+
+Para un vector aleatorio $X\in\R^{n}$ se usa la \emph{varianza total} $\Var[X]=\E\norm{X-\E X}^{2}$, suma de las varianzas de las componentes. Sea, para $\theta$ fijo,
+\[
+\sigma^{2}(\theta)=\frac1N\sum_{i=1}^{N}\norm{\nabla\ell_i(\theta)-\nabla J(\theta)}^{2},
+\]
+la varianza de los gradientes individuales.
+
+\begin{teorema}[Insesgadez y varianza del minibatch]\label{teo:minibatch}
+Si $I_1,\dots,I_B$ son independientes y uniformes en $\{1,\dots,N\}$ (muestreo con reemplazamiento), entonces, para $\theta$ fijo,
+\[
+\E[\gb]=\nabla J(\theta),\qquad\Var[\gb]=\frac{\sigma^{2}(\theta)}{B}.
+\]
+\end{teorema}
+
+\begin{proof}
+Sea $X_b=\nabla\ell_{I_b}(\theta)$. Como $I_b$ es uniforme, $\E[X_b]=\sum_{i=1}^{N}\frac1N\nabla\ell_i(\theta)=\nabla J(\theta)$ y $\Var[X_b]=\sigma^{2}(\theta)$. Por linealidad de la esperanza, $\E[\gb]=\frac1B\sum_b\E[X_b]=\nabla J(\theta)$. Las $X_b$ son independientes, luego los términos cruzados $\E[(X_b-\nabla J)\T(X_{b'}-\nabla J)]$ con $b\ne b'$ se anulan y
+\[
+\Var[\gb]=\frac{1}{B^{2}}\sum_{b=1}^{B}\Var[X_b]=\frac{B\sigma^{2}}{B^{2}}=\frac{\sigma^{2}}{B}.\qedhere
+\]
+\end{proof}
+
+En la práctica se recorre el conjunto de datos en orden aleatorio, lo que equivale a muestrear sin reemplazamiento dentro de cada época. La varianza es entonces algo menor.
+
+\begin{proposicion}[Muestreo sin reemplazamiento]\label{prop:sin-reemplazo}
+Si $\{I_1,\dots,I_B\}$ es un subconjunto de $B$ índices distintos elegido uniformemente entre los $\binom{N}{B}$ posibles, con $1\le B\le N$, entonces $\E[\gb]=\nabla J(\theta)$ y
+\[
+\Var[\gb]=\frac{\sigma^{2}(\theta)}{B}\cdot\frac{N-B}{N-1}.
+\]
+\end{proposicion}
+
+La demostración se propone en el \cref{eje:3-sin-reemplazo}. El factor $(N-B)/(N-1)$ es la \emph{corrección por población finita} de la estadística clásica: vale~1 si $B=1$ y~0 si $B=N$, caso en que $\gb$ es el gradiente exacto.
+
+\begin{ejemplo}\label{ej:minibatch}
+Sean los datos $x=(1,2,3,6)$, la pérdida $\ell_i(w)=\tfrac12(w-x_i)^{2}$ y $w=0$. Los gradientes individuales son $w-x_i=(-1,-2,-3,-6)$, de media $\nabla J=-3$ y varianza $\sigma^{2}=(4+1+0+9)/4=3{,}5$. Los seis minibatches de tamaño $B=2$ sin reemplazamiento dan
+\begin{center}\small
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+Minibatch & $\{1,2\}$ & $\{1,3\}$ & $\{1,6\}$ & $\{2,3\}$ & $\{2,6\}$ & $\{3,6\}$ \\
+\midrule
+$\gb$ & $-1{,}5$ & $-2$ & $-3{,}5$ & $-2{,}5$ & $-4$ & $-4{,}5$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Su media es $-18/6=-3$, el gradiente exacto, y su varianza es $7/6\approx 1{,}1667$, que coincide con $(3{,}5/2)\cdot(2/3)$ según la \cref{prop:sin-reemplazo}.
+\end{ejemplo}
+
+\begin{observacion}[Coste y tamaño del lote]
+La desviación típica del gradiente decrece como $1/\sqrt{B}$, mientras que el coste de calcularlo crece como $B$: duplicar el lote solo divide el ruido por $\sqrt2\approx 1{,}414$. Por eso suele compensar dar muchos pasos ruidosos y baratos antes que pocos exactos~\cite[§8.1.3]{gbc}. El tamaño del lote está limitado además por el paralelismo del hardware (módulo~17). Los modelos de lenguaje usan lotes del orden de millones de tokens: GPT-3, en su versión de $175\cdot 10^{9}$ parámetros, se entrenó con lotes de $3{,}2$ millones de tokens~\cite[tabla~2.1]{gpt3}. Al aumentar el lote, Goyal \emph{et al.}~\cite{goyal} propusieron escalar la tasa de aprendizaje en la misma proporción (\emph{regla de escalado lineal}), acompañada de un calentamiento inicial.
+\end{observacion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=4mm and 4mm,font=\small,
+  caja/.style={draw,rounded corners=2pt,align=center,minimum height=10mm,text width=27mm,inner sep=2pt,font=\footnotesize}]
+  \node[caja] (a) {Muestrear\\minibatch};
+  \node[caja,right=of a] (b) {Propagación:\\pérdida $\hat J$};
+  \node[caja,right=of b] (c) {Retropropagación:\\$\gb=\nabla\hat J$};
+  \node[caja,right=of c] (d) {Recorte del\\gradiente};
+  \node[caja,below=9mm of d] (e) {Optimizador\\(AdamW: $m$, $v$)};
+  \node[caja,left=of e] (f) {Paso $\eta_k$ del\\calendario};
+  \node[caja,left=of f] (g) {Actualizar $\theta$};
+  \draw[-{Stealth[length=2mm]}] (a) -- (b);
+  \draw[-{Stealth[length=2mm]}] (b) -- (c);
+  \draw[-{Stealth[length=2mm]}] (c) -- (d);
+  \draw[-{Stealth[length=2mm]}] (d) -- (e);
+  \draw[-{Stealth[length=2mm]}] (e) -- (f);
+  \draw[-{Stealth[length=2mm]}] (f) -- (g);
+  \draw[-{Stealth[length=2mm]}] (g.west) -| ([xshift=-4mm]a.west) -- (a.west);
+\end{tikzpicture}
+\caption{Un paso de entrenamiento de un modelo de lenguaje. La retropropagación se estudia en los módulos~9 y~10, el recorte del gradiente en el módulo~11, AdamW en los temas~5 y~6 y el calendario en el tema~6.}
+\label{fig:bucle}
+\end{figure}
+
+\section{Convergencia en el caso convexo}
+
+\begin{teorema}[SGD en funciones convexas]\label{teo:sgd-convexo}
+Sea $f$ convexa y diferenciable, con minimizador $\theta^{\ast}$. Sea la iteración $\theta_{t+1}=\theta_t-\eta_t g_t$, $t=1,\dots,T$, donde $g_t$ es un gradiente estocástico que, condicionado a $\theta_t$, cumple $\E[g_t\mid\theta_t]=\nabla f(\theta_t)$ y $\E[\norm{g_t}^{2}\mid\theta_t]\le G^{2}$. Sean $r=\norm{\theta_1-\theta^{\ast}}$ y $\bar\theta_T=\sum_t\eta_t\theta_t/\sum_t\eta_t$. Entonces
+\[
+\E\bigl[f(\bar\theta_T)\bigr]-f(\theta^{\ast})\le\frac{r^{2}+G^{2}\sum_{t=1}^{T}\eta_t^{2}}{2\sum_{t=1}^{T}\eta_t}.
+\]
+\end{teorema}
+
+\begin{proof}
+Desarrollando el cuadrado,
+\[
+\norm{\theta_{t+1}-\theta^{\ast}}^{2}=\norm{\theta_t-\theta^{\ast}}^{2}-2\eta_t\,g_t\T(\theta_t-\theta^{\ast})+\eta_t^{2}\norm{g_t}^{2}.
+\]
+Se toma la esperanza condicionada a $\theta_t$. Por la insesgadez, $\E[g_t\T(\theta_t-\theta^{\ast})\mid\theta_t]=\nabla f(\theta_t)\T(\theta_t-\theta^{\ast})$, y por el \cref{teo:primer-orden} aplicado con $x=\theta_t$ e $y=\theta^{\ast}$, este producto es $\ge f(\theta_t)-f(\theta^{\ast})$. Tomando después la esperanza total,
+\[
+2\eta_t\,\E\bigl[f(\theta_t)-f(\theta^{\ast})\bigr]\le\E\norm{\theta_t-\theta^{\ast}}^{2}-\E\norm{\theta_{t+1}-\theta^{\ast}}^{2}+\eta_t^{2}G^{2}.
+\]
+Sumando para $t=1,\dots,T$, la suma de las diferencias es telescópica y está acotada por $\norm{\theta_1-\theta^{\ast}}^{2}=r^{2}$:
+\[
+2\sum_{t=1}^{T}\eta_t\,\E\bigl[f(\theta_t)-f(\theta^{\ast})\bigr]\le r^{2}+G^{2}\sum_{t=1}^{T}\eta_t^{2}.
+\]
+Finalmente, $\bar\theta_T$ es una combinación convexa de los $\theta_t$ con pesos $\eta_t/\sum_s\eta_s$, y la desigualdad de Jensen para la función convexa $f$ da $f(\bar\theta_T)\le\sum_t\eta_t f(\theta_t)/\sum_t\eta_t$. Dividiendo por $2\sum_t\eta_t$ se obtiene el enunciado.
+\end{proof}
+
+\begin{corolario}\label{cor:sgd-constante}
+Con $T$ fijado y paso constante $\eta_t=\eta=r/(G\sqrt T)$, la cota del \cref{teo:sgd-convexo} vale $rG/\sqrt T$.
+\end{corolario}
+
+\begin{proof}
+Con $\eta$ constante, la cota es $(r^{2}+G^{2}T\eta^{2})/(2T\eta)$. Sustituyendo $\eta=r/(G\sqrt T)$, el numerador es $2r^{2}$ y el denominador $2\sqrt T\,r/G$; el cociente es $rG/\sqrt T$.
+\end{proof}
+
+\begin{corolario}[Condiciones de Robbins--Monro]\label{cor:robbins}
+Si $\sum_{t\ge 1}\eta_t=\infty$ y $\sum_{t\ge 1}\eta_t^{2}<\infty$, la cota del \cref{teo:sgd-convexo} tiende a~0 cuando $T\to\infty$.
+\end{corolario}
+
+\begin{proof}
+El numerador permanece acotado por $r^{2}+G^{2}\sum_{t\ge 1}\eta_t^{2}<\infty$ y el denominador tiende a infinito.
+\end{proof}
+
+Las dos condiciones del \cref{cor:robbins} proceden del trabajo fundacional de Robbins y Monro sobre aproximación estocástica~\cite{robbins}: los pasos deben sumar lo suficiente para llegar a cualquier punto, pero sus cuadrados, que miden el ruido acumulado, deben ser sumables. La velocidad $O(1/\sqrt T)$ es mucho más lenta que la convergencia lineal del \cref{teo:gd-fuerte}: es el precio del ruido.
+
+\section{El ruido y la tasa de aprendizaje}
+
+Con un paso constante, el SGD no converge al minimizador, sino que fluctúa a su alrededor. La proposición siguiente lo cuantifica en el caso más sencillo.
+
+\begin{proposicion}[Suelo de ruido]\label{prop:suelo}
+Sea $f(x)=\frac{a}{2}x^{2}$ con $a>0$ y la iteración $x_{k+1}=x_k-\eta(ax_k+\xi_k)$, donde las $\xi_k$ son variables aleatorias de media~0 y varianza $s^{2}$, independientes entre sí y de $x_0$. Si $0<\eta a<2$, entonces $\E[x_k]\to 0$ y
+\[
+\lim_{k\to\infty}\E[x_k^{2}]=\frac{\eta\,s^{2}}{a(2-\eta a)},\qquad
+\lim_{k\to\infty}\E[f(x_k)]=\frac{\eta\,s^{2}}{2(2-\eta a)}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Sea $q=1-\eta a$, con $\abs{q}<1$. La iteración es $x_{k+1}=qx_k-\eta\xi_k$, y $x_k$ depende solo de $x_0,\xi_0,\dots,\xi_{k-1}$, luego es independiente de $\xi_k$. Tomando esperanzas, $\E[x_{k+1}]=q\,\E[x_k]$, que tiende a~0. Elevando al cuadrado, $\E[x_{k+1}^{2}]=q^{2}\E[x_k^{2}]-2q\eta\,\E[x_k]\E[\xi_k]+\eta^{2}s^{2}=q^{2}\E[x_k^{2}]+\eta^{2}s^{2}$. Sea $e^{\ast}=\eta^{2}s^{2}/(1-q^{2})$, el punto fijo de esta recurrencia. Entonces $\E[x_{k+1}^{2}]-e^{\ast}=q^{2}(\E[x_k^{2}]-e^{\ast})$, que tiende a~0. Como $1-q^{2}=\eta a(2-\eta a)$, se tiene $e^{\ast}=\eta s^{2}/(a(2-\eta a))$, y $\E[f(x_k)]=\frac{a}{2}\E[x_k^{2}]$ tiende a $\frac{a}{2}e^{\ast}$.
+\end{proof}
+
+El exceso de pérdida estacionario es aproximadamente $\eta s^{2}/4$ si $\eta a\ll 1$: proporcional a la tasa de aprendizaje y a la varianza del gradiente. Reducir $\eta$ al final del entrenamiento rebaja ese suelo; es la justificación del decaimiento de la tasa de aprendizaje que se estudia en el \cref{tema:6}.
+
+\begin{observacion}[El ruido no es solo un inconveniente]
+En problemas no convexos, el ruido del minibatch tiene efectos favorables: una iteración exactamente sobre la variedad estable de una silla, como en el \cref{ej:silla}, se desvía de ella con probabilidad~1, y los lotes pequeños tienden a encontrar mínimos más anchos~\cite{keskar}. Estos efectos se conocen sobre todo empíricamente; su análisis riguroso es materia de investigación.
+\end{observacion}
+
+\begin{lecturas}
+\item Zhang \emph{et al.}~\cite{d2l}, §12.4 «Stochastic Gradient Descent» (en particular §12.4.3, análisis de convergencia en el caso convexo) y §12.5 «Minibatch Stochastic Gradient Descent».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.1.3 «Batch and Minibatch Algorithms» y §8.3.1 «Stochastic Gradient Descent».
+\item Bottou, Curtis y Nocedal~\cite{bottou}, revisión de los métodos de optimización para aprendizaje automático a gran escala.
+\item MIT 18.065~\cite{mit18065}, clase~25 «Stochastic Gradient Descent».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-motivos}
+Dé dos motivos por los que ningún modelo de lenguaje se entrena con descenso de gradiente sobre el corpus completo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-minibatch}
+Los gradientes individuales de un problema con $N=4$ ejemplos valen $(-2,0,1,5)$. Calcule el gradiente completo, la varianza $\sigma^{2}$, la media de los seis gradientes de minibatch con $B=2$ sin reemplazamiento y su varianza. Compruebe el resultado con la \cref{prop:sin-reemplazo}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-reemplazo}
+Cuatro gradientes individuales valen $(2,4,6,8)$. Con $B=2$, calcule la media y la varianza del gradiente de minibatch si se muestrea (a) con reemplazamiento, enumerando los 16 pares ordenados, y (b) sin reemplazamiento, enumerando los 6 pares. Compare con $\sigma^{2}/B$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §12.4, ejercicio~3.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-suelo}
+En la situación de la \cref{prop:suelo}, con $a=1$ y $s^{2}=1$, calcule el valor límite de $\E[x_k^{2}]$ y del exceso de pérdida $\E[f(x_k)]$ para $\eta=0{,}1$ y para $\eta=0{,}01$. ¿En qué factor se reduce el exceso de pérdida al dividir el paso por~10? ¿Qué precio se paga en velocidad?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-sin-reemplazo}
+Demuestre la \cref{prop:sin-reemplazo}. Indicación: sean $X_b=\nabla\ell_{I_b}(\theta)-\nabla J(\theta)$; calcule primero $\E[X_b\T X_{b'}]$ para $b\ne b'$ usando que $\sum_{i=1}^{N}\bigl(\nabla\ell_i(\theta)-\nabla J(\theta)\bigr)=0$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-ruido}
+Sea $f(x_1,x_2)=x_1^{2}+2x_2^{2}$ y $w=(w_1,w_2)$ un vector aleatorio con distribución $\mathcal{N}(0,s^{2}I)$. Se define $F(x,w)=(x_1-w_1)^{2}+2(x_2-w_2)^{2}$. Demuestre que (a) $\nabla_xF(x,w)$ es igual a $\nabla f(x)$ más un ruido gaussiano de media~0, y calcule su matriz de covarianza; (b) $\E_w[F(x,w)]=f(x)+3s^{2}$, de modo que minimizar $\E_w[F]$ y minimizar $f$ tienen el mismo minimizador. Concluya que el SGD sobre $F$ es un descenso de gradiente sobre $f$ con gradiente ruidoso.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §12.4, ejercicio~2.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Momentum}
+\label{tema:4}
+% =====================================================================
+
+El \cref{tema:2} mostró que el descenso de gradiente es lento en valles alargados: la dirección de curvatura alta obliga a usar pasos pequeños y la de curvatura baja avanza despacio. El método de momentum, propuesto por Polyak~\cite{polyak} con el nombre de método de la bola pesada, corrige este defecto acumulando los gradientes pasados. Este tema lo presenta como una media móvil exponencial, lo interpreta como la discretización de un sistema mecánico con rozamiento y demuestra que, en cuadráticas, reduce el número de iteraciones de un orden $\kappa$ a un orden $\sqrt\kappa$. Se sigue~\cite[§12.6]{d2l}, \cite[§8.3.2 y §8.3.3]{gbc}, la clase~23 de~\cite{mit18065} y el artículo divulgativo de Goh~\cite{goh}.
+
+\section{Medias móviles exponenciales}
+
+\begin{definicion}[Media móvil exponencial]\label{def:ema}
+Sean $g_1,g_2,\dots$ vectores y $\beta\in[0,1)$. La \emph{acumulación exponencial} con $v_0=0$ es $v_k=\beta v_{k-1}+g_k$, y la \emph{media móvil exponencial} es $\bar v_k=\beta\bar v_{k-1}+(1-\beta)g_k$, con $\bar v_0=0$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:ema}
+Con la notación de la \cref{def:ema},
+\[
+v_k=\sum_{j=1}^{k}\beta^{k-j}g_j,\qquad \bar v_k=(1-\beta)\,v_k.
+\]
+En particular, si $g_j=g$ para todo $j$, entonces $v_k=\frac{1-\beta^{k}}{1-\beta}\,g\to\frac{g}{1-\beta}$ y $\bar v_k=(1-\beta^{k})\,g\to g$.
+\end{proposicion}
+
+\begin{proof}
+La fórmula de $v_k$ se demuestra por inducción: es cierta para $k=1$, y si lo es para $k-1$, entonces $v_k=\beta\sum_{j=1}^{k-1}\beta^{k-1-j}g_j+g_k=\sum_{j=1}^{k}\beta^{k-j}g_j$. Las dos recurrencias son lineales con la misma condición inicial y se diferencian en el factor $(1-\beta)$ del término nuevo, luego $\bar v_k=(1-\beta)v_k$. Con $g_j=g$, la suma es geométrica: $\sum_{j=1}^{k}\beta^{k-j}=\sum_{i=0}^{k-1}\beta^{i}=(1-\beta^{k})/(1-\beta)$.
+\end{proof}
+
+El peso de un gradiente decae geométricamente con su antigüedad; la suma total de los pesos es $1/(1-\beta)$, que se interpreta como el número efectivo de gradientes promediados~\cite[§12.6.1]{d2l}. Con $\beta=0{,}9$ son unos~10; con $\beta=0{,}99$, unos~100.
+
+\section{El método de la bola pesada}
+
+\begin{definicion}[Momentum]\label{def:momentum}
+Dados $\theta_0$, $v_0=0$, un paso $\eta>0$ y un coeficiente $\beta\in[0,1)$, el método de \emph{momentum} (o de la \emph{bola pesada}) es
+\[
+v_{k+1}=\beta v_k+\nabla f(\theta_k),\qquad \theta_{k+1}=\theta_k-\eta\,v_{k+1}.
+\]
+Con $\beta=0$ se recupera el descenso de gradiente.
+\end{definicion}
+
+\begin{proposicion}[Forma de dos pasos]\label{prop:dos-pasos}
+Los iterados del método de momentum cumplen, para $k\ge 1$,
+\[
+\theta_{k+1}=\theta_k-\eta\nabla f(\theta_k)+\beta\,(\theta_k-\theta_{k-1}).
+\]
+\end{proposicion}
+
+\begin{proof}
+De la segunda ecuación, $\eta v_k=\theta_{k-1}-\theta_k$. Sustituyendo la primera en la segunda, $\theta_{k+1}=\theta_k-\eta\beta v_k-\eta\nabla f(\theta_k)=\theta_k-\eta\nabla f(\theta_k)+\beta(\theta_k-\theta_{k-1})$.
+\end{proof}
+
+El término $\beta(\theta_k-\theta_{k-1})$ es la inercia: el iterado conserva una fracción $\beta$ de su desplazamiento anterior. Si el gradiente es constante, la \cref{prop:ema} da $\eta v_k\to\eta g/(1-\beta)$: con $\beta=0{,}9$, el paso efectivo es diez veces el del descenso de gradiente. En un valle estrecho, las componentes del gradiente que cambian de signo de un paso al siguiente (las transversales al valle) se cancelan parcialmente en $v_k$, mientras que las que conservan el signo (a lo largo del valle) se acumulan.
+
+\begin{ejemplo}\label{ej:momentum}
+Sea $f(x)=x^{2}/2$, con $f'(x)=x$, $x_0=1$, $\eta=0{,}1$ y $\beta=0{,}9$:
+\begin{center}\small
+\begin{tabular}{@{}ccccc@{}}
+\toprule
+$k$ & $v_k$ & $x_k$ (momentum) & $x_k$ (descenso de gradiente) \\
+\midrule
+1 & $1$ & $0{,}9$ & $0{,}9$ \\
+2 & $1{,}8$ & $0{,}72$ & $0{,}81$ \\
+3 & $2{,}34$ & $0{,}486$ & $0{,}729$ \\
+4 & $2{,}592$ & $0{,}2268$ & $0{,}6561$ \\
+5 & $2{,}5596$ & $-0{,}02916$ & $0{,}59049$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+El momentum avanza más deprisa y en el paso~5 sobrepasa el mínimo: la bola tiene inercia.
+\end{ejemplo}
+
+\section{Interpretación física}
+
+Considérese una partícula de masa $m>0$ que se mueve en un potencial $f$ con rozamiento viscoso de coeficiente $\gamma>0$. Su posición $\theta(t)$ y su velocidad $u(t)=\dot\theta(t)$ cumplen
+\begin{equation}\label{eq:bola}
+m\,\dot u=-\nabla f(\theta)-\gamma\,u,\qquad\dot\theta=u.
+\end{equation}
+
+\begin{proposicion}[Disipación de energía]\label{prop:energia}
+Sea $E(t)=\frac{m}{2}\norm{u(t)}^{2}+f(\theta(t))$ la energía mecánica. A lo largo de las soluciones de~\eqref{eq:bola}, $\dot E=-\gamma\norm{u}^{2}\le 0$.
+\end{proposicion}
+
+\begin{proof}
+Por la regla de la cadena, $\dot E=m\,u\T\dot u+\nabla f(\theta)\T\dot\theta=u\T\bigl(-\nabla f(\theta)-\gamma u\bigr)+\nabla f(\theta)\T u=-\gamma\norm{u}^{2}$.
+\end{proof}
+
+La energía decrece mientras la partícula se mueve y solo se estabiliza cuando $u=0$, es decir, en reposo en un punto crítico. Sin rozamiento, la energía se conserva y la partícula oscila indefinidamente.
+
+\begin{proposicion}[Discretización]\label{prop:discretizacion}
+Se discretiza~\eqref{eq:bola} con paso temporal $\Delta t>0$ mediante
+\[
+u_{k+1}=u_k+\frac{\Delta t}{m}\bigl(-\nabla f(\theta_k)-\gamma u_k\bigr),\qquad\theta_{k+1}=\theta_k+\Delta t\,u_{k+1}.
+\]
+Con $v_k=-(m/\Delta t)\,u_k$, la iteración es exactamente el método de momentum de la \cref{def:momentum} con
+\[
+\beta=1-\frac{\gamma\,\Delta t}{m},\qquad\eta=\frac{\Delta t^{2}}{m}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Multiplicando la primera ecuación por $-m/\Delta t$: $v_{k+1}=(1-\gamma\Delta t/m)\,v_k+\nabla f(\theta_k)=\beta v_k+\nabla f(\theta_k)$. Y $\Delta t\,u_{k+1}=-(\Delta t^{2}/m)\,v_{k+1}=-\eta v_{k+1}$.
+\end{proof}
+
+El coeficiente $\beta$ mide la fracción de velocidad que sobrevive a un paso: $\beta\to 1$ corresponde a rozamiento nulo y $\beta=0$ a un rozamiento tan grande que la partícula olvida su velocidad en cada paso, que es el descenso de gradiente.
+
+\section{Convergencia en cuadráticas}
+
+\begin{lema}[Una dirección propia]\label{lem:polinomio}
+Sea $f(z)=\frac{\lambda}{2}z^{2}$ con $\lambda>0$. Los iterados del método de momentum cumplen $z_{k+1}=(1+\beta-\eta\lambda)\,z_k-\beta z_{k-1}$, cuyo polinomio característico es
+\[
+p(r)=r^{2}-(1+\beta-\eta\lambda)\,r+\beta.
+\]
+Si $(1-\sqrt\beta)^{2}\le\eta\lambda\le(1+\sqrt\beta)^{2}$, las dos raíces de $p$ tienen módulo $\sqrt\beta$.
+\end{lema}
+
+\begin{proof}
+La recurrencia es la \cref{prop:dos-pasos} con $\nabla f(z)=\lambda z$. Sea $b=1+\beta-\eta\lambda$. El discriminante de $p$ es $b^{2}-4\beta$, que es $\le 0$ si y solo si $\abs{b}\le 2\sqrt\beta$, es decir, $1+\beta-2\sqrt\beta\le\eta\lambda\le 1+\beta+2\sqrt\beta$, que es la condición del enunciado. En ese caso las raíces son complejas conjugadas (o una raíz doble real), y su producto, igual a $\abs{r}^{2}$, es el término independiente $\beta$.
+\end{proof}
+
+\begin{teorema}[Momentum óptimo en cuadráticas]\label{teo:heavy-ball}
+Sea $f(\theta)=\frac12\theta\T Q\theta$ con $Q$ simétrica de autovalores en $[\mu,L]$, $0<\mu<L$, y $\kappa=L/\mu$. Con
+\[
+\eta=\frac{4}{(\sqrt L+\sqrt\mu)^{2}},\qquad\beta=\Bigl(\frac{\sqrt\kappa-1}{\sqrt\kappa+1}\Bigr)^{2},
+\]
+la iteración lineal del método de momentum sobre el par $(\theta_k,\theta_{k-1})$ tiene radio espectral
+\[
+\rho=\sqrt\beta=\frac{\sqrt\kappa-1}{\sqrt\kappa+1}.
+\]
+\end{teorema}
+
+\begin{proof}
+En la base de autovectores de $Q$ la iteración se desacopla, como en el \cref{teo:gd-cuadratica}, en $n$ recurrencias escalares como la del \cref{lem:polinomio}, una por autovalor $\lambda_i$. Cada una es una iteración lineal en $\R^{2}$ cuya matriz tiene por autovalores las raíces de $p$; el radio espectral global es el máximo de los módulos de esas raíces. Se comprueba que todos los $\lambda\in[\mu,L]$ cumplen la condición del lema. Como $\sqrt\beta=(\sqrt L-\sqrt\mu)/(\sqrt L+\sqrt\mu)$,
+\[
+1-\sqrt\beta=\frac{2\sqrt\mu}{\sqrt L+\sqrt\mu},\qquad 1+\sqrt\beta=\frac{2\sqrt L}{\sqrt L+\sqrt\mu},
+\]
+de donde $(1-\sqrt\beta)^{2}=4\mu/(\sqrt L+\sqrt\mu)^{2}=\eta\mu$ y $(1+\sqrt\beta)^{2}=\eta L$. Para $\lambda\in[\mu,L]$, $\eta\lambda\in[\eta\mu,\eta L]$, que es justamente el intervalo del lema. Todas las raíces tienen módulo $\sqrt\beta$.
+\end{proof}
+
+\begin{observacion}
+El radio espectral determina la tasa asintótica: para todo $\delta>0$ existe $C$ tal que $\norm{\theta_k}\le C(\rho+\delta)^{k}$. A diferencia del \cref{teo:gd-cuadratica}, la matriz de la iteración no es simétrica y la constante $C$ puede ser mayor que~1; en los extremos $\lambda=\mu$ y $\lambda=L$ la raíz es doble y aparece un factor polinómico en $k$. Por eso las iteraciones reales pueden ser algo más que las que predice $\rho$ (\cref{eje:4-autovalores}).
+\end{observacion}
+
+Comparando con el \cref{teo:gd-cuadratica}, para $\kappa$ grande, $\ln\rho_{\text{mom}}\approx -2/\sqrt\kappa$ frente a $\ln\rho_{\text{gd}}\approx -2/\kappa$: el número de iteraciones pasa de ser proporcional a $\kappa$ a serlo a $\sqrt\kappa$. Con $\kappa=100$, el factor baja de $0{,}9802$ a $0{,}8182$ y las iteraciones para reducir el error a $10^{-3}$, de 346 a 35 (\cref{tab:kappa}). El artículo de Goh~\cite{goh} permite explorar este resultado de forma interactiva.
+
+\begin{ejemplo}[Rosenbrock]
+En la función del \cref{ej:rosenbrock}, desde $(-1{,}5;\,2)$ y con $\eta=10^{-3}$, el método de momentum con $\beta=0{,}9$ alcanza $f<10^{-4}$ en la iteración~934, mientras que el descenso de gradiente con el mismo paso no lo logra en 5000 iteraciones.
+\end{ejemplo}
+
+\section{Momentum de Nesterov}
+
+\begin{definicion}[Momentum de Nesterov]
+El método de \emph{momentum de Nesterov} evalúa el gradiente en el punto al que llevaría la inercia:
+\[
+v_{k+1}=\beta v_k+\nabla f(\theta_k-\eta\beta v_k),\qquad\theta_{k+1}=\theta_k-\eta v_{k+1}.
+\]
+\end{definicion}
+
+Para funciones convexas y $L$-suaves, una versión de este método con $\beta$ variable alcanza $f(\theta_k)-f^{\ast}=O(1/k^{2})$, frente al $O(1/k)$ del descenso de gradiente, y ese orden es óptimo entre los métodos de primer orden~\cite{nesterov}. En el caso estocástico, en cambio, el momentum de Nesterov no mejora el orden de convergencia~\cite[§8.3.3]{gbc}. En el entrenamiento de redes profundas, el momentum se usa sobre todo a través de Adam (\cref{tema:5}), cuyo primer momento es una media móvil exponencial del gradiente.
+
+\begin{lecturas}
+\item Zhang \emph{et al.}~\cite{d2l}, §12.6 «Momentum», en particular §12.6.3 «Theoretical Analysis».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.3.2 «Momentum» y §8.3.3 «Nesterov Momentum».
+\item MIT 18.065~\cite{mit18065}, clase~23 «Accelerating Gradient Descent (Use Momentum)».
+\item Goh~\cite{goh}, «Why Momentum Really Works», exposición interactiva del análisis de este tema.
+\item Polyak~\cite{polyak}, artículo original del método de la bola pesada.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-efectivo}
+Con gradiente constante $g$, ¿por qué factor multiplica el momentum el paso del descenso de gradiente a largo plazo si $\beta=0{,}9$? ¿Y si $\beta=0{,}99$? ¿Cuántos pasos hacen falta, con $\beta=0{,}9$, para alcanzar el 90~\% de ese valor? Explique por qué un $\beta$ grande favorece que el iterado sobrepase el mínimo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-pasos}
+Aplique tres pasos del método de momentum a $f(x)=x^{2}/2$ con $x_0=1$, $v_0=0$, $\eta=0{,}1$ y $\beta=0{,}9$, y compárelos con tres pasos de descenso de gradiente con el mismo $\eta$. ¿Qué fracción de la distancia inicial al mínimo ha recorrido cada método?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-optimos}
+Una cuadrática tiene $\mu=1$ y $L=100$. Calcule los parámetros $\eta$ y $\beta$ del \cref{teo:heavy-ball}, el factor $\rho$ y el número de iteraciones estimado para reducir el error a $10^{-3}$. Compárelo con el descenso de gradiente con paso óptimo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-autovalores}
+Sea $f(x)=\frac12\sum_{i=1}^{3}\lambda_i x_i^{2}$ con $\lambda_i=2^{-(i-1)}$, es decir, $\lambda=(1,\tfrac12,\tfrac14)$, y $x_0=(1,1,1)$. (a) Con descenso de gradiente y $\eta=1$, ¿cuántos pasos hacen falta para que todas las coordenadas tengan módulo menor que $10^{-2}$? (b) Repita con el paso óptimo del \cref{teo:gd-cuadratica}. (c) Obtenga los parámetros óptimos del momentum, calcule a mano los dos primeros iterados y estime el número de pasos con el radio espectral.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §12.6, ejercicio~2 (autovalores $\lambda_i=2^{-i}$; aquí se reduce a tres coordenadas para el cálculo a mano).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-forma}
+Demuestre la \cref{prop:dos-pasos}. Demuestre después que, si $\nabla f(\theta_k)=g$ para todo $k$, el desplazamiento cumple $\theta_k-\theta_{k+1}=\eta\,\frac{1-\beta^{k+1}}{1-\beta}\,g$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-estabilidad}
+Sea $f(z)=\frac{\lambda}{2}z^{2}$ con $\lambda>0$, $\eta>0$ y $\beta\in[0,1)$. Demuestre que las dos raíces del polinomio $p$ del \cref{lem:polinomio} tienen módulo menor que~1 si y solo si $0<\eta\lambda<2(1+\beta)$. Compare con el límite $\eta\lambda<2$ del descenso de gradiente.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Métodos adaptativos: AdaGrad, RMSProp y Adam}
+\label{tema:5}
+% =====================================================================
+
+El momentum acelera el descenso en valles mal condicionados, pero usa la misma tasa de aprendizaje en todas las coordenadas. Los métodos adaptativos asignan a cada parámetro su propio paso, dividiendo su gradiente por una estimación de su escala típica. Este tema los presenta como preacondicionadores diagonales, estudia AdaGrad y RMSProp y analiza con detalle Adam, el optimizador sobre el que se construye la receta de preentrenamiento de los modelos de lenguaje. Se sigue~\cite[§12.7, §12.8 y §12.10]{d2l}, \cite[§8.5]{gbc} y los artículos originales~\cite{adagrad,rmsprop,adam}.
+
+En todo el tema, las operaciones entre vectores ($g^{2}$, $\sqrt{s}$, cocientes) se entienden elemento a elemento.
+
+\section{Preacondicionamiento diagonal}
+
+\begin{definicion}[Descenso preacondicionado]\label{def:precond}
+Sea $D\in\R^{n\times n}$ diagonal con entradas positivas. El \emph{descenso de gradiente preacondicionado} por $D$ es $\theta_{k+1}=\theta_k-\eta\,D^{-1}\nabla f(\theta_k)$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:precond}
+El descenso preacondicionado por $D$ sobre $f$ es el descenso de gradiente ordinario sobre $\tilde f(\varphi)=f(D^{-1/2}\varphi)$ en las variables $\varphi=D^{1/2}\theta$. Si $f(\theta)=\frac12\theta\T Q\theta$, el hessiano de $\tilde f$ es $D^{-1/2}QD^{-1/2}$.
+\end{proposicion}
+
+\begin{proof}
+Por la regla de la cadena, $\nabla\tilde f(\varphi)=D^{-1/2}\nabla f(D^{-1/2}\varphi)$. Un paso de descenso sobre $\tilde f$ es $\varphi_{k+1}=\varphi_k-\eta D^{-1/2}\nabla f(\theta_k)$; multiplicando por $D^{-1/2}$, $\theta_{k+1}=\theta_k-\eta D^{-1}\nabla f(\theta_k)$. Para la cuadrática, $\tilde f(\varphi)=\frac12\varphi\T D^{-1/2}QD^{-1/2}\varphi$.
+\end{proof}
+
+Si $Q=\diag(a_1,\dots,a_n)$ y se toma $D=Q$, el hessiano transformado es la identidad y $\kappa=1$: el método converge en un paso con $\eta=1$. Un buen preacondicionador diagonal iguala las curvaturas de las coordenadas. Pero solo puede corregir el mal condicionamiento alineado con los ejes; si los autovectores de $Q$ están girados respecto de ellos, una matriz diagonal no basta (\cref{eje:5-precond}). Los métodos de este tema estiman $D$ a partir de los propios gradientes, sin calcular el hessiano.
+
+\section{AdaGrad y RMSProp}
+
+\begin{definicion}[AdaGrad]\label{def:adagrad}
+Con $s_0=0$ y $\varepsilon>0$ pequeño, \emph{AdaGrad}~\cite{adagrad} acumula los cuadrados de los gradientes:
+\[
+s_t=s_{t-1}+g_t^{2},\qquad\theta_t=\theta_{t-1}-\eta\,\frac{g_t}{\sqrt{s_t}+\varepsilon}.
+\]
+\end{definicion}
+
+\begin{proposicion}\label{prop:adagrad}
+Si $\varepsilon=0$ y una coordenada recibe un gradiente constante $g\ne 0$, su paso en la iteración $t$ mide $\eta/\sqrt t$.
+\end{proposicion}
+
+\begin{proof}
+$s_t=tg^{2}$, luego $\eta\,g/\sqrt{tg^{2}}=\eta\,\sign(g)/\sqrt t$.
+\end{proof}
+
+El paso de AdaGrad no depende de la escala del gradiente y decrece como $1/\sqrt t$, un calendario incorporado que es adecuado en problemas convexos pero demasiado agresivo en el entrenamiento de redes profundas, donde la acumulación sin olvido acaba paralizando el método~\cite[§8.5.1]{gbc}.
+
+\begin{definicion}[RMSProp]\label{def:rmsprop}
+\emph{RMSProp}~\cite{rmsprop} sustituye la suma por una media móvil exponencial de coeficiente $\rho\in(0,1)$:
+\[
+s_t=\rho\,s_{t-1}+(1-\rho)\,g_t^{2},\qquad\theta_t=\theta_{t-1}-\eta\,\frac{g_t}{\sqrt{s_t}+\varepsilon}.
+\]
+\end{definicion}
+
+$\sqrt{s_t}$ estima la raíz de la media cuadrática reciente del gradiente de cada coordenada. Una coordenada con gradientes grandes recibe pasos pequeños, y viceversa. Por la \cref{prop:ema}, con gradiente constante $s_t=(1-\rho^{t})g^{2}$, de modo que el primer paso mide $\eta/\sqrt{1-\rho}$: unas $3{,}16$ veces $\eta$ con $\rho=0{,}9$. Este sesgo inicial, producido por el arranque en $s_0=0$, es lo que corrige Adam.
+
+\section{Adam}
+
+\begin{definicion}[Adam]\label{def:adam}
+Sean $\eta>0$, $\beta_1,\beta_2\in[0,1)$, $\varepsilon>0$ y $m_0=v_0=0$. Para $t=1,2,\dots$, con $g_t$ el gradiente (estocástico) en $\theta_{t-1}$, \emph{Adam}~\cite[algoritmo~1]{adam} realiza
+\begin{align*}
+m_t&=\beta_1m_{t-1}+(1-\beta_1)\,g_t, & \hat m_t&=\frac{m_t}{1-\beta_1^{t}},\\
+v_t&=\beta_2v_{t-1}+(1-\beta_2)\,g_t^{2}, & \hat v_t&=\frac{v_t}{1-\beta_2^{t}},\\
+\theta_t&=\theta_{t-1}-\eta\,\frac{\hat m_t}{\sqrt{\hat v_t}+\varepsilon}.
+\end{align*}
+Los valores recomendados en el artículo original son $\eta=10^{-3}$, $\beta_1=0{,}9$, $\beta_2=0{,}999$ y $\varepsilon=10^{-8}$.
+\end{definicion}
+
+Adam combina el momentum (primer momento $m_t$, una media móvil del gradiente) con la normalización de RMSProp (segundo momento $v_t$, una media móvil de su cuadrado). Las divisiones por $1-\beta_1^{t}$ y $1-\beta_2^{t}$ son la \emph{corrección de sesgo}~\cite[§3]{adam}.
+
+\begin{proposicion}[Corrección de sesgo]\label{prop:sesgo}
+Si $g_t=g$ para todo $t$, entonces $m_t=(1-\beta_1^{t})\,g$ y $\hat m_t=g$. Más en general, si los $g_t$ son aleatorios con $\E[g_t]=\bar g$ para todo $t$, entonces $\E[m_t]=(1-\beta_1^{t})\,\bar g$ y $\E[\hat m_t]=\bar g$. Los mismos resultados valen para $v_t$ y $\hat v_t$ con $g_t^{2}$ y $\beta_2$.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:ema}, $m_t=(1-\beta_1)\sum_{s=1}^{t}\beta_1^{t-s}g_s$. Por linealidad de la esperanza,
+\[
+\E[m_t]=(1-\beta_1)\sum_{s=1}^{t}\beta_1^{t-s}\,\bar g=(1-\beta_1)\cdot\frac{1-\beta_1^{t}}{1-\beta_1}\,\bar g=(1-\beta_1^{t})\,\bar g,
+\]
+y dividiendo por $1-\beta_1^{t}$ se obtiene $\E[\hat m_t]=\bar g$. El caso constante es el caso particular determinista. El argumento para $v_t$ es idéntico.
+\end{proof}
+
+Sin corrección, $m_t$ y $v_t$ estarían sesgados hacia~0 al principio. Con $\beta_1=0{,}9$, $1-\beta_1^{t}$ vale $0{,}1$ en $t=1$, $0{,}19$ en $t=2$ y $0{,}6513$ en $t=10$; con $\beta_2=0{,}999$, $1-\beta_2^{t}$ vale $0{,}001$ en $t=1$ y solo $0{,}6323$ en $t=1000$: el sesgo de $v_t$ persiste durante unos miles de pasos.
+
+\begin{proposicion}[Primer paso e invariancia de escala]\label{prop:escala}
+Sea $\varepsilon=0$. (i) En $t=1$, cada coordenada con $g_1\ne 0$ se desplaza exactamente $\eta\,\sign(g_1)$. (ii) Si todos los gradientes se multiplican por una constante $c>0$, los iterados de Adam no cambian.
+\end{proposicion}
+
+\begin{proof}
+(i) $\hat m_1=g_1$ y $\hat v_1=g_1^{2}$, luego $\hat m_1/\sqrt{\hat v_1}=g_1/\abs{g_1}$. (ii) Se propone en el \cref{eje:5-invariancia}.
+\end{proof}
+
+La invariancia de escala significa que $\eta$ fija directamente el tamaño del paso en el espacio de parámetros: Kingma y Ba observan que el desplazamiento de cada coordenada queda aproximadamente acotado por $\eta$~\cite[§2.1]{adam}. Esto hace a Adam mucho menos sensible que el SGD a la escala de la pérdida y a las diferencias de escala entre capas. Con $\varepsilon>0$ la invariancia es solo aproximada; $\varepsilon$ evita divisiones por cero cuando $\hat v_t\approx 0$.
+
+\begin{ejemplo}\label{ej:adam}
+Sea $\eta=0{,}01$, $\theta_0=1$, $\beta_1=0{,}9$, $\beta_2=0{,}999$, $\varepsilon$ despreciable y gradientes $g_1=0{,}5$ y $g_2=-0{,}1$:
+\begin{center}\small
+\begin{tabular}{@{}ccccccc@{}}
+\toprule
+$t$ & $m_t$ & $v_t$ & $\hat m_t$ & $\hat v_t$ & $\eta\,\hat m_t/\sqrt{\hat v_t}$ & $\theta_t$ \\
+\midrule
+1 & $0{,}05$ & $0{,}00025$ & $0{,}5$ & $0{,}25$ & $0{,}01$ & $0{,}99$ \\
+2 & $0{,}035$ & $0{,}00025975$ & $0{,}1842$ & $0{,}1299$ & $0{,}005110$ & $0{,}98489$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+El primer paso mide exactamente $\eta$. En el segundo, aunque el gradiente ha cambiado de signo, el primer momento conserva la inercia del primero y $\theta$ sigue disminuyendo, con un paso menor. Sin corrección de sesgo, el primer paso sería $\eta\cdot 0{,}05/\sqrt{0{,}00025}=\eta\cdot 0{,}1/\sqrt{0{,}001}\approx 3{,}162\,\eta$.
+\end{ejemplo}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[node distance=5mm and 6mm,font=\small,
+  caja/.style={draw,rounded corners=2pt,align=center,minimum height=9mm,text width=44mm,inner sep=2pt},
+  flecha/.style={-{Stealth[length=2mm]}}]
+  \node[caja] (gd) {Descenso de gradiente\\(Cauchy, 1847)};
+  \node[caja,below=of gd] (sgd) {SGD con minibatch\\(Robbins--Monro, 1951)};
+  \node[caja,below left=of sgd] (mom) {Momentum\\(Polyak, 1964)};
+  \node[caja,below right=of sgd] (ada) {AdaGrad (2011)\\RMSProp (2012)};
+  \node[caja,below=17mm of sgd] (adam) {Adam (2015): $m$, $v$\\y corrección de sesgo};
+  \node[caja,below=of adam] (adamw) {AdamW (2019): decaimiento\\de pesos desacoplado};
+  \draw[flecha] (gd) -- (sgd);
+  \draw[flecha] (sgd) -- (mom);
+  \draw[flecha] (sgd) -- (ada);
+  \draw[flecha] (mom) -- (adam);
+  \draw[flecha] (ada) -- (adam);
+  \draw[flecha] (adam) -- (adamw);
+\end{tikzpicture}
+\caption{Genealogía de los optimizadores del módulo. AdamW, que se estudia en el \cref{tema:6}, es el optimizador habitual en el preentrenamiento de los modelos de lenguaje abiertos documentados.}
+\label{fig:genealogia}
+\end{figure}
+
+\begin{observacion}[Adam en los modelos de lenguaje]
+Los artículos de modelos de lenguaje abiertos documentan variantes de Adam con $\beta_2$ menor que el valor recomendado: LLaMA usa AdamW con $\beta_1=0{,}9$ y $\beta_2=0{,}95$~\cite[§2.3]{llama}. Con $\beta_2=0{,}95$, el segundo momento promedia efectivamente unos $1/(1-\beta_2)=20$ pasos en lugar de~1000, y se adapta antes a cambios bruscos en la escala del gradiente. El precio de Adam es la memoria: guarda $m$ y $v$, dos números adicionales por parámetro. En un modelo de $7\cdot 10^{9}$ parámetros son $1{,}4\cdot 10^{10}$ valores, 56~GB en precisión simple (módulo~17). Los optimizadores usados en Claude, Gemini y Grok no se han publicado.
+\end{observacion}
+
+\begin{lecturas}
+\item Zhang \emph{et al.}~\cite{d2l}, §12.7 «Adagrad», §12.8 «RMSProp» y §12.10 «Adam».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.5 «Algorithms with Adaptive Learning Rates» (§8.5.1--8.5.4).
+\item Kingma y Ba~\cite{adam}, §2 «Algorithm» y §3 «Initialization Bias Correction».
+\item Duchi, Hazan y Singer~\cite{adagrad}, artículo original de AdaGrad.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-escala-test}
+Justifique si es verdadera o falsa la afirmación: «si se multiplica la pérdida por 1000, el primer paso de Adam se multiplica por 1000». Compare con lo que ocurre en el SGD.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:5-rmsprop}
+Calcule el primer paso de RMSProp, sin corrección de sesgo y con $\varepsilon$ despreciable, para $\rho=0{,}9$ y para $\rho=0{,}999$, en función de $\eta$. Explique por qué este comportamiento motiva la corrección de sesgo de Adam.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-adam}
+Aplique Adam con $\eta=0{,}01$, $\theta_0=1$, $\beta_1=0{,}9$, $\beta_2=0{,}999$ y $\varepsilon$ despreciable a los gradientes $g_1=0{,}5$ y $g_2=-0{,}1$. Calcule $\theta_1$ y $\theta_2$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-precond}
+Sea $f(x)=0{,}1x_1^{2}+2x_2^{2}$. (a) Calcule el número de condición de su hessiano y el del hessiano preacondicionado por $D=\diag(\nabla^{2}f)$. (b) Se gira el problema $45^{\circ}$: $g(y)=f(R\T y)$ con $R$ la rotación de ángulo $\pi/4$. Calcule el hessiano de $g$, su diagonal y el número de condición tras preacondicionar por esa diagonal. (c) ¿Qué concluye sobre los métodos adaptativos diagonales?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §12.7, ejercicios~2 y~4.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-memoria}
+Un modelo tiene $7\cdot 10^{9}$ parámetros y se entrena con Adam guardando parámetros, gradientes y los dos momentos en precisión simple (4 bytes por número). Calcule la memoria total y la fracción que corresponde al estado del optimizador.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-invariancia}
+Demuestre la parte (ii) de la \cref{prop:escala}: con $\varepsilon=0$, si $g_t$ se sustituye por $cg_t$ con $c>0$ para todo $t$, los iterados $\theta_t$ de Adam no cambian. ¿Es cierto también para $c<0$? ¿Y para el SGD con momentum?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-sin-correccion}
+Demuestre que, con $\varepsilon\to 0$, Adam con corrección de sesgo equivale a usar $m_t$ y $v_t$ sin corregir con la tasa de aprendizaje $\eta_t=\eta\sqrt{1-\beta_2^{t}}/(1-\beta_1^{t})$. Calcule $\eta_t/\eta$ para $t=1$, 2, 10 y 1000 con $\beta_1=0{,}9$ y $\beta_2=0{,}999$, y reproduzca el paso de $t=2$ del \cref{eje:5-adam}.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §12.10, ejercicio~2.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Regularización y calendarios de la tasa de aprendizaje}
+\label{tema:6}
+% =====================================================================
+
+Este tema completa la receta de optimización de los modelos de lenguaje actuales con dos ingredientes que no cambian la dirección del paso, sino su forma y su tamaño: el decaimiento de pesos y el calendario de la tasa de aprendizaje. Se estudia primero la regularización $L^{2}$ y su relación con el decaimiento de pesos, que es una equivalencia para el SGD pero no para Adam; de ahí surge AdamW. Después se definen el calentamiento lineal y el decaimiento coseno y se justifican con los resultados de los temas~3 y~5. Se sigue~\cite[§7.1]{gbc}, \cite[§12.11]{d2l} y los artículos~\cite{adamw,sgdr,goyal}.
+
+\section{Regularización \texorpdfstring{$L^{2}$}{L2}}
+
+\begin{definicion}[Regularización $L^{2}$]\label{def:l2}
+Sea $\lambda>0$. La pérdida \emph{regularizada} con penalización $L^{2}$ es
+\[
+J_\lambda(\theta)=J(\theta)+\frac{\lambda}{2}\norm{\theta}^{2}.
+\]
+\end{definicion}
+
+\begin{proposicion}[Encogimiento]\label{prop:encogimiento}
+Un paso de descenso de gradiente sobre $J_\lambda$ es
+\[
+\theta_{k+1}=(1-\eta\lambda)\,\theta_k-\eta\,\nabla J(\theta_k).
+\]
+\end{proposicion}
+
+\begin{proof}
+$\nabla J_\lambda(\theta)=\nabla J(\theta)+\lambda\theta$, luego $\theta_k-\eta\nabla J_\lambda(\theta_k)=\theta_k-\eta\lambda\theta_k-\eta\nabla J(\theta_k)$.
+\end{proof}
+
+Cada paso multiplica los pesos por $1-\eta\lambda<1$ antes de aplicar el gradiente: de ahí el nombre de \emph{decaimiento de pesos} (\emph{weight decay}).
+
+\begin{proposicion}[Efecto sobre el minimizador]\label{prop:ridge}
+Sea $J(\theta)=\frac12(\theta-c)\T Q(\theta-c)$ con $Q=\diag(a_1,\dots,a_n)$, $a_i>0$. El minimizador de $J_\lambda$ es
+\[
+\theta^{\ast}_i=\frac{a_i}{a_i+\lambda}\,c_i,\qquad i=1,\dots,n.
+\]
+\end{proposicion}
+
+\begin{proof}
+$J_\lambda$ es fuertemente convexa, y su gradiente se anula si y solo si $a_i(\theta_i-c_i)+\lambda\theta_i=0$ para cada $i$, es decir, $\theta_i=a_ic_i/(a_i+\lambda)$.
+\end{proof}
+
+La regularización encoge hacia~0 cada coordenada en el factor $a_i/(a_i+\lambda)$: apenas afecta a las direcciones de curvatura grande ($a_i\gg\lambda$), en las que la pérdida es sensible, y anula casi por completo las de curvatura pequeña ($a_i\ll\lambda$)~\cite[§7.1.1]{gbc}. Por ejemplo, con $n=1$, $a=2$, $c=3$ y $\lambda=1$, el minimizador pasa de $3$ a $6/3=2$.
+
+\begin{observacion}[Interpretación bayesiana]
+Si $J$ es la log-verosimilitud negativa total de los datos y se adopta sobre $\theta$ una distribución a priori gaussiana $\mathcal{N}(0,\lambda^{-1}I)$, entonces $-\ln p(\theta)=\frac{\lambda}{2}\norm{\theta}^{2}+\text{cte}$, y minimizar $J_\lambda$ equivale a maximizar la distribución a posteriori (estimación MAP; módulo~5).
+\end{observacion}
+
+\section{Decaimiento de pesos desacoplado: AdamW}
+
+Para el SGD, regularizar con $L^{2}$ y encoger los pesos en cada paso es lo mismo (\cref{prop:encogimiento}). Para un método preacondicionado no lo es~\cite[§2]{adamw}.
+
+\begin{observacion}[Adam con $L^{2}$]\label{obs:adam-l2}
+Si se aplica Adam a $J_\lambda$, el término $\lambda\theta$ se suma al gradiente antes de calcular $m_t$ y $v_t$, y queda dividido por $\sqrt{\hat v_t}+\varepsilon$. Cuando la normalización está dominada por $\nabla J$, la contribución del término de regularización al paso de la coordenada $i$ es aproximadamente
+\[
+\frac{\eta\lambda\,\theta_i}{\sqrt{\hat v_{t,i}}+\varepsilon},
+\]
+que depende de la escala del gradiente de esa coordenada, mientras que en el SGD es $\eta\lambda\theta_i$ para todas.
+\end{observacion}
+
+Las coordenadas con gradientes grandes ($\hat v_{t,i}$ grande) apenas se regularizan, y las de gradientes pequeños se regularizan en exceso. Loshchilov y Hutter~\cite{adamw} propusieron aplicar el decaimiento fuera de la normalización.
+
+\begin{definicion}[AdamW]\label{def:adamw}
+Con las cantidades $\hat m_t$ y $\hat v_t$ de la \cref{def:adam}, calculadas con el gradiente de $J$ sin regularizar, \emph{AdamW}~\cite[algoritmo~2]{adamw} realiza
+\[
+\theta_t=\theta_{t-1}-\eta_t\Bigl(\frac{\hat m_t}{\sqrt{\hat v_t}+\varepsilon}+\lambda\,\theta_{t-1}\Bigr),
+\]
+donde $\eta_t$ es la tasa de aprendizaje del calendario y $\lambda$ el coeficiente de decaimiento de pesos.
+\end{definicion}
+
+En AdamW todos los pesos se encogen en el mismo factor $1-\eta_t\lambda$, con independencia de sus gradientes. El \cref{tab:adamw} compara ambos métodos con $\eta=10^{-3}$, $\lambda=0{,}1$ y $\theta=1$.
+
+\begin{table}[h]
+\centering\small
+\caption{Encogimiento de un peso $\theta=1$ en un paso, con $\eta=10^{-3}$ y $\lambda=0{,}1$.}\label{tab:adamw}
+\begin{tabular}{@{}ccc@{}}
+\toprule
+$\hat v$ de la coordenada & Adam con $L^{2}$ ($\eta\lambda\theta/\sqrt{\hat v}$) & AdamW ($\eta\lambda\theta$) \\
+\midrule
+$10^{-4}$ & $0{,}01$ & $0{,}0001$ \\
+$1$ & $0{,}0001$ & $0{,}0001$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Convenios]
+En~\cite{adamw}, el decaimiento de pesos del SGD se escribe $\theta_{t+1}=(1-\lambda')\theta_t-\alpha\nabla J(\theta_t)$, sin multiplicar $\lambda'$ por la tasa $\alpha$; con ese convenio, la equivalencia con $L^{2}$ exige $\lambda=\lambda'/\alpha$~\cite[proposición~1]{adamw}. Aquí se sigue el convenio de la \cref{def:adamw}, en el que el decaimiento por paso es $\eta_t\lambda$ y sigue al calendario. La proposición~2 de~\cite{adamw} demuestra que, para un preacondicionador que no sea múltiplo de la identidad, no existe ningún coeficiente $L^{2}$ que reproduzca el decaimiento desacoplado.
+\end{observacion}
+
+\begin{ejemplo}[Escala de un preentrenamiento]
+Con $\eta=3\cdot 10^{-4}$ y $\lambda=0{,}1$, cada paso multiplica los pesos por $1-3\cdot 10^{-5}=0{,}99997$. En $10^{5}$ pasos, si el gradiente no actuara, quedarían multiplicados por $(1-3\cdot 10^{-5})^{10^{5}}\approx e^{-3}\approx 0{,}0498$. El gradiente compensa este encogimiento en los pesos útiles; el resultado es un equilibrio entre ajuste y tamaño de los pesos.
+\end{ejemplo}
+
+\section{Calendarios de la tasa de aprendizaje}
+
+La tasa de aprendizaje es el hiperparámetro más influyente: si es demasiado grande, el método diverge (\cref{teo:gd-cuadratica}); si es demasiado pequeña, avanza despacio. Además, con gradientes estocásticos, un paso constante deja un suelo de ruido proporcional a $\eta$ (\cref{prop:suelo}). Por eso no se usa un $\eta$ fijo, sino un \emph{calendario} $\eta_t$~\cite[§12.11]{d2l}.
+
+\begin{definicion}[Calentamiento lineal y decaimiento coseno]\label{def:coseno}
+Sean $0\le\eta_{\min}<\eta_{\max}$, un número de pasos de calentamiento $W\ge 1$ y un número total de pasos $T>W$. El calendario de \emph{calentamiento lineal y decaimiento coseno} es
+\[
+\eta(t)=\begin{cases}
+\eta_{\max}\,\dfrac{t}{W}, & 0\le t<W,\\[3mm]
+\eta_{\min}+\dfrac{\eta_{\max}-\eta_{\min}}{2}\Bigl(1+\cos\Bigl(\pi\,\dfrac{t-W}{T-W}\Bigr)\Bigr), & W\le t\le T.
+\end{cases}
+\]
+\end{definicion}
+
+\begin{proposicion}[Propiedades]\label{prop:coseno}
+El calendario de la \cref{def:coseno} es continuo en $t=W$, vale $\eta_{\max}$ en $t=W$ y $\eta_{\min}$ en $t=T$, es estrictamente decreciente en $[W,T]$ y en el punto medio del tramo coseno vale $(\eta_{\max}+\eta_{\min})/2$.
+\end{proposicion}
+
+\begin{proof}
+Por la izquierda, $\eta_{\max}t/W\to\eta_{\max}$ cuando $t\to W$; por la derecha, en $t=W$ el coseno vale $\cos 0=1$ y $\eta(W)=\eta_{\min}+(\eta_{\max}-\eta_{\min})=\eta_{\max}$. En $t=T$, $\cos\pi=-1$ y $\eta(T)=\eta_{\min}$. En $[W,T]$, el argumento $\pi(t-W)/(T-W)$ recorre $[0,\pi]$, donde el coseno es estrictamente decreciente. En el punto medio el argumento es $\pi/2$, $\cos(\pi/2)=0$ y $\eta=\eta_{\min}+(\eta_{\max}-\eta_{\min})/2=(\eta_{\max}+\eta_{\min})/2$.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=0.1cm,y=0.9cm,font=\small]
+  \draw[->] (0,0) -- (106,0) node[right] {$t$ (miles de pasos)};
+  \draw[->] (0,0) -- (0,3.6) node[above] {$\eta\ (\times 10^{-4})$};
+  \foreach \x in {0,20,40,60,80,100}{\draw (\x,0) -- (\x,-0.08) node[below] {\x};}
+  \foreach \y in {1,2,3}{\draw (0,\y) -- (-1.2,\y) node[left] {\y};}
+  \draw[regla,dashed] (0,0.3) -- (100,0.3);
+  \node[right,regla] at (100,0.3) {$\eta_{\min}$};
+  \draw[very thick] (0,0) -- (2,3);
+  \draw[very thick] plot[domain=2:100,samples=120] (\x,{0.3+1.35*(1+cos((\x-2)*1.8367347))});
+  \draw[regla,dashed] (51,0) -- (51,1.65) -- (0,1.65);
+  \fill (51,1.65) circle (1.2pt) node[above right] {$1{,}65$};
+\end{tikzpicture}
+\caption{Calendario de la \cref{def:coseno} con $\eta_{\max}=3\cdot 10^{-4}$, $\eta_{\min}=3\cdot 10^{-5}$, $W=2000$ y $T=10^{5}$. En el punto medio del tramo coseno, $t=51\,000$, la tasa es $(\eta_{\max}+\eta_{\min})/2=1{,}65\cdot 10^{-4}$.}
+\label{fig:coseno}
+\end{figure}
+
+\begin{ejemplo}\label{ej:coseno}
+Con los parámetros de la \cref{fig:coseno}:
+\begin{center}\small
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+$t$ (miles de pasos) & 0 & 1 & 2 & 26{,}5 & 51 & 75{,}5 & 100 \\
+\midrule
+$\eta\ (\times 10^{-4})$ & 0 & $1{,}5$ & $3$ & $2{,}605$ & $1{,}65$ & $0{,}6954$ & $0{,}3$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{ejemplo}
+
+\paragraph{Calentamiento.} Al principio del entrenamiento, los gradientes son grandes e irregulares y los momentos de Adam se han estimado con muy pocos datos. Una tasa grande desde el primer paso puede hacer divergir la pérdida. Subir $\eta$ gradualmente da tiempo a que $\hat m_t$ y $\hat v_t$ se estabilicen; el calentamiento se popularizó para entrenar con lotes grandes~\cite{goyal}. El \cref{eje:5-sin-correccion} muestra que la propia corrección de sesgo de Adam actúa como un calentamiento implícito.
+
+\paragraph{Decaimiento.} Por la \cref{prop:suelo}, el exceso de pérdida estacionario del SGD es proporcional a $\eta$; reducir $\eta$ al final permite que los parámetros se asienten. El decaimiento coseno procede del método SGDR de Loshchilov y Hutter~\cite{sgdr}, que lo combinaba con reinicios periódicos; en el preentrenamiento se usa un único ciclo.
+
+\begin{observacion}[La receta de los modelos de lenguaje abiertos]
+LLaMA documenta exactamente esta receta: AdamW con $\beta_1=0{,}9$, $\beta_2=0{,}95$, decaimiento de pesos $\lambda=0{,}1$, recorte del gradiente a norma~1, 2000 pasos de calentamiento y decaimiento coseno hasta el 10~\% de la tasa máxima~\cite[§2.3]{llama}. Es la misma estructura que la del \cref{ej:coseno}. Como se indicó en el \cref{tema:5}, Anthropic, Google y xAI no han publicado los calendarios ni los optimizadores de Claude, Gemini y Grok.
+\end{observacion}
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §7.1 «Parameter Norm Penalties» y §7.1.1 «$L^2$ Parameter Regularization».
+\item Zhang \emph{et al.}~\cite{d2l}, §12.11 «Learning Rate Scheduling», en particular §12.11.3.3 «Cosine Scheduler» y §12.11.3.4 «Warmup».
+\item Loshchilov y Hutter~\cite{adamw}, §2 «Decoupling the Weight Decay from the Gradient-based Update».
+\item Loshchilov y Hutter~\cite{sgdr}, calendario coseno con reinicios.
+\item Touvron \emph{et al.}~\cite{llama}, §2.3 «Optimizer».
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-warmup}
+¿Qué problema resuelve el calentamiento y cuál el decaimiento coseno? Relacione cada uno con un resultado de los temas~3 y~5.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-calendario}
+Con $\eta_{\max}=6\cdot 10^{-4}$, $\eta_{\min}=6\cdot 10^{-5}$, $W=1000$ y $T=11\,000$, calcule $\eta(t)$ para $t=500$, $6000$ y $8500$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-adamw}
+Con $\eta=10^{-3}$, $\lambda=0{,}1$ y $\theta=1$, calcule cuánto encoge el peso en un paso con Adam y regularización $L^{2}$ si $\hat v=10^{-4}$ (aproximación de la \cref{obs:adam-l2}), y con AdamW. ¿Cuál es el cociente entre ambos?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-semivida}
+(a) Si el producto $\eta\lambda$ vale $10^{-4}$ en cada paso, ¿cuántos pasos tarda el decaimiento de pesos, actuando solo, en reducir un peso a la mitad? (b) Compruebe que con $\eta=3\cdot 10^{-4}$ y $\lambda=0{,}1$ un peso queda multiplicado por aproximadamente $0{,}05$ tras $10^{5}$ pasos.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-ridge}
+Sea $J_\lambda(w)=\frac{a}{2}(w-c)^{2}+\frac{\lambda}{2}w^{2}$, con $a>0$ y $\lambda\ge 0$. Halle su minimizador, demuestre que un paso de descenso de gradiente es $w\leftarrow(1-\eta\lambda)w-\eta a(w-c)$ y evalúe el minimizador con $a=2$, $c=3$ y $\lambda=2$. ¿Para qué $\eta$ converge el método?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-polinomico}
+Se considera el calendario polinómico $\eta_t=\eta_0\,t^{-\alpha}$, $t\ge 1$, con $\eta_0>0$ y $\alpha>0$. (a) Demuestre que cumple las condiciones de Robbins--Monro del \cref{cor:robbins} si y solo si $\frac12<\alpha\le 1$. (b) Para $\alpha=\frac12$, demuestre que $\sum_{t=1}^{T}\eta_t\ge 2\eta_0(\sqrt{T+1}-1)$ y $\sum_{t=1}^{T}\eta_t^{2}\le\eta_0^{2}(1+\ln T)$, y deduzca que la cota del \cref{teo:sgd-convexo} es $O(\ln T/\sqrt T)$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §12.11, ejercicio~2 (efecto del exponente de decaimiento en la convergencia).}
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los resultados exactos se dan como fracción cuando existe.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-cuartica}
+\datos $f(x)=x^{4}$, $f'(x)=4x^{3}$, $f''(x)=12x^{2}$.
+\planteamiento usar las caracterizaciones de segundo orden de la convexidad y de la convexidad fuerte (\cref{def:fuerte}) y la definición de $L$-suavidad (\cref{def:suave}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $f''(x)=12x^{2}\ge 0$ para todo $x$: $f$ es convexa.
+  \item (b) La convexidad fuerte exigiría $f''(x)\ge\mu>0$ para todo $x$, pero $f''(0)=0$. No es fuertemente convexa.
+  \item (c) $\abs{f'(x)-f'(0)}=4\abs{x}^{3}$, y el cociente $4\abs{x}^{3}/\abs{x}=4x^{2}$ no está acotado en $\R$. No existe $L$ global.
+  \item Unicidad: $f(x)>0=f(0)$ si $x\ne 0$, luego $0$ es el único minimizador. La convexidad fuerte es suficiente para la unicidad, no necesaria: basta la convexidad estricta, que $f$ sí tiene.
+\end{enumerate}
+\resultado \textbf{convexa (incluso estrictamente), no fuertemente convexa y no $L$-suave en $\R$}; no hay contradicción.
+\comprobacion cerca del mínimo la curvatura es nula, así que el descenso de gradiente con paso fijo converge solo sublinealmente: con $\eta$ pequeño, $x_{k+1}=x_k(1-4\eta x_k^{2})$, cuyo factor tiende a~1.
+\end{solucion}
+
+\begin{solucion}{eje:1-silla}
+\datos $f(x,y)=x^{2}-y^{2}$; punto inicial $(1,0)$ o $(1,\delta)$; $\eta=0{,}1$; $\delta=10^{-6}$.
+\planteamiento clasificar con el hessiano (\cref{prop:clasificacion}) y seguir la iteración por coordenadas (\cref{ej:silla}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\nabla f=(2x,-2y)$ se anula en $(0,0)$.
+  \item $\nabla^{2}f=\diag(2,-2)$, con autovalores de signos opuestos: \emph{punto de silla}.
+  \item Iteración: $x_{k+1}=(1-2\eta)x_k$, $y_{k+1}=(1+2\eta)y_k$.
+  \item Con $y_0=0$: $y_k=0$ para todo $k$. Con $0<\eta<1$, $\abs{1-2\eta}<1$ y $x_k\to 0$: el método converge a la silla.
+  \item Con $y_0=\delta$: $y_k=(1+2\eta)^{k}\delta=1{,}2^{k}\cdot 10^{-6}$. Para $k=50$, $1{,}2^{50}\approx 9100$ e $y_{50}\approx 9{,}1\cdot 10^{-3}$.
+\end{enumerate}
+\resultado \textbf{$(0,0)$ es un punto de silla}; desde $(1,0)$ el método converge a él porque la coordenada inestable es exactamente nula; con $\delta=10^{-6}$, $y_{50}\approx 9{,}1\cdot 10^{-3}$ y sigue creciendo.
+\comprobacion $\ln(1{,}2^{50})=50\cdot 0{,}1823=9{,}116$ y $e^{9{,}116}\approx 9100$.
+\end{solucion}
+
+\begin{solucion}{eje:1-cuadratica}
+\datos $Q=\begin{pmatrix}2&1\\1&2\end{pmatrix}$, $c=(-3,0)\T$, $b=1$.
+\planteamiento $Q$ tiene autovalores $1$ y $3$, luego $Q\succ 0$ y se aplica la \cref{prop:min-cuadratica}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\det Q=4-1=3$; $Q^{-1}=\frac13\begin{pmatrix}2&-1\\-1&2\end{pmatrix}$.
+  \item $x^{\ast}=-Q^{-1}c=-\frac13\bigl(2\cdot(-3)+(-1)\cdot 0;\ (-1)\cdot(-3)+2\cdot 0\bigr)=-\frac13(-6;\,3)=(2;\,-1)$.
+  \item $c\T Q^{-1}c=-c\T x^{\ast}=-\bigl((-3)\cdot 2+0\cdot(-1)\bigr)=6$.
+  \item $h^{\ast}=b-\frac12c\T Q^{-1}c=1-3=-2$.
+\end{enumerate}
+\resultado \textbf{$x^{\ast}=(2,-1)$ y $h(x^{\ast})=-2$.}
+\comprobacion $\frac12x^{\ast\top}Qx^{\ast}=\frac12(2\cdot 4+2\cdot 2\cdot(-1)+2\cdot 1)=\frac12\cdot 6=3$; $x^{\ast\top}c=-6$; $h=3-6+1=-2$. Además $Qx^{\ast}+c=(4-1-3;\ 2-2+0)=(0;\,0)$.
+\end{solucion}
+
+\begin{solucion}{eje:1-constantes}
+\datos $f(x,y)=x^{2}+2xy+5y^{2}$.
+\planteamiento $f=\frac12\theta\T Q\theta$ con $Q$ el hessiano; $\mu=\lambda_{\min}(Q)$ y $L=\lambda_{\max}(Q)$ (\cref{ej:cuadratica}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\partial^{2}f/\partial x^{2}=2$, $\partial^{2}f/\partial x\partial y=2$, $\partial^{2}f/\partial y^{2}=10$: $Q=\begin{pmatrix}2&2\\2&10\end{pmatrix}$.
+  \item Traza $12$ y determinante $20-4=16$. Ecuación característica: $\lambda^{2}-12\lambda+16=0$.
+  \item $\lambda=6\pm\sqrt{36-16}=6\pm 2\sqrt5$: $\lambda_{\min}=6-2\sqrt5\approx 1{,}528$ y $\lambda_{\max}=6+2\sqrt5\approx 10{,}47$.
+  \item Ambos son positivos, luego $Q\succ 0$ y $f$ es $\mu$-fuertemente convexa con $\mu\approx 1{,}528$, y $L$-suave con $L\approx 10{,}47$.
+  \item $\kappa=\dfrac{6+2\sqrt5}{6-2\sqrt5}=\dfrac{(3+\sqrt5)^{2}}{9-5}=\dfrac{14+6\sqrt5}{4}=3{,}5+1{,}5\sqrt5\approx 6{,}854$.
+\end{enumerate}
+\resultado \textbf{$\mu=6-2\sqrt5\approx 1{,}528$, $L=6+2\sqrt5\approx 10{,}47$ y $\kappa\approx 6{,}854$.}
+\comprobacion $\mu+L=12$ (traza) y $\mu L=36-20=16$ (determinante).
+\end{solucion}
+
+\begin{solucion}{eje:1-maximo}
+\datos $f,g$ convexas en $\R^{n}$; $h=\max\{f,g\}$.
+\planteamiento aplicar la definición de convexidad a $h$ y acotar cada función por $h$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sean $x,y$ y $t\in[0,1]$, y $z=tx+(1-t)y$. Por la convexidad de $f$, $f(z)\le tf(x)+(1-t)f(y)$.
+  \item Como $f\le h$ y $t,1-t\ge 0$, $tf(x)+(1-t)f(y)\le th(x)+(1-t)h(y)$. Luego $f(z)\le th(x)+(1-t)h(y)$.
+  \item Del mismo modo, $g(z)\le th(x)+(1-t)h(y)$.
+  \item Por tanto, $h(z)=\max\{f(z),g(z)\}\le th(x)+(1-t)h(y)$: $h$ es convexa.
+  \item (b) Contraejemplo en $\R$: $f(x)=(x-1)^{2}$ y $g(x)=(x+1)^{2}$. Sea $m=\min\{f,g\}$. Entonces $m(1)=m(-1)=0$ y $m(0)=1$.
+  \item Con $x=1$, $y=-1$ y $t=\frac12$: $m(0)=1>\frac12m(1)+\frac12m(-1)=0$. La desigualdad de convexidad falla.
+\end{enumerate}
+\resultado \textbf{el máximo de funciones convexas es convexo; el mínimo, en general, no.}
+\comprobacion la gráfica de $m$ tiene forma de «W», con dos mínimos locales en $\pm 1$; una función convexa no puede tener dos mínimos locales separados por un punto de valor mayor (\cref{teo:opt-convexa}).
+\end{solucion}
+
+\begin{solucion}{eje:1-fuerte}
+\datos $f$ diferenciable, $\mu$-fuertemente convexa, con minimizador $\theta^{\ast}$.
+\planteamiento aplicar la \cref{def:fuerte} en el punto $\theta^{\ast}$, donde $\nabla f(\theta^{\ast})=0$ (\cref{teo:fermat}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Con $x=\theta^{\ast}$ e $y=\theta$: $f(\theta)\ge f(\theta^{\ast})+0+\frac{\mu}{2}\norm{\theta-\theta^{\ast}}^{2}$.
+  \item (b) Si $\theta'$ es otro minimizador, $f(\theta')=f^{\ast}$ y (a) da $0\ge\frac{\mu}{2}\norm{\theta'-\theta^{\ast}}^{2}$, luego $\theta'=\theta^{\ast}$.
+  \item (c) Se escribe la \cref{def:fuerte} con $x=\theta$, $y=\theta^{\ast}$: $f^{\ast}\ge f(\theta)+\nabla f(\theta)\T(\theta^{\ast}-\theta)+\frac{\mu}{2}\norm{\theta-\theta^{\ast}}^{2}$.
+  \item Se suma con la desigualdad de (a), $f(\theta)\ge f^{\ast}+\frac{\mu}{2}\norm{\theta-\theta^{\ast}}^{2}$: queda $0\ge\nabla f(\theta)\T(\theta^{\ast}-\theta)+\mu\norm{\theta-\theta^{\ast}}^{2}$, es decir, $\mu\norm{\theta-\theta^{\ast}}^{2}\le\nabla f(\theta)\T(\theta-\theta^{\ast})$.
+  \item Por Cauchy--Schwarz, $\nabla f(\theta)\T(\theta-\theta^{\ast})\le\norm{\nabla f(\theta)}\,\norm{\theta-\theta^{\ast}}$. Dividiendo por $\norm{\theta-\theta^{\ast}}$ (si es no nulo; si es nulo, la desigualdad es trivial), $\mu\norm{\theta-\theta^{\ast}}\le\norm{\nabla f(\theta)}$.
+\end{enumerate}
+\resultado \textbf{se cumplen (a), (b) y (c)}: la función crece al menos cuadráticamente lejos del óptimo, y el gradiente, al menos linealmente.
+\comprobacion para $f(\theta)=\frac{\mu}{2}\norm{\theta}^{2}$, con $\theta^{\ast}=0$, las tres desigualdades son igualdades: $f-f^{\ast}=\frac{\mu}{2}\norm{\theta}^{2}$ y $\norm{\nabla f}=\mu\norm{\theta}$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-escala}
+\datos $f$ con minimizador $\theta^{\ast}$, constantes $\mu$, $L$; se minimiza $cf$ con $c>0$.
+\planteamiento $\nabla(cf)=c\nabla f$ y $\nabla^{2}(cf)=c\nabla^{2}f$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Minimizador: $cf(\theta)\ge cf(\theta^{\ast})$ para todo $\theta$, luego el minimizador no cambia.
+  \item Las constantes pasan a ser $c\mu$ y $cL$: el paso máximo estable, $2/L$ en una cuadrática, pasa a ser $2/(cL)$.
+  \item $\kappa=cL/(c\mu)=L/\mu$: el número de condición no cambia.
+  \item Con paso $\eta'$ sobre $cf$: $\theta_{k+1}=\theta_k-\eta'c\nabla f(\theta_k)$. Coincide con el descenso sobre $f$ con paso $\eta$ si y solo si $\eta'=\eta/c$.
+\end{enumerate}
+\resultado \textbf{el minimizador y $\kappa$ no cambian; el paso máximo se divide por $c$; con $\eta/c$ se reproducen los mismos iterados.}
+\comprobacion contrasta con Adam, cuyos iterados no cambian aunque se mantenga el mismo $\eta$ (\cref{prop:escala}).
+\end{solucion}
+
+\begin{solucion}{eje:2-1d}
+\datos $f(x)=3x^{2}$, $x_0=2$, $\eta=0{,}1$.
+\planteamiento $f=\frac{a}{2}x^{2}$ con $a=6$; cada paso multiplica $x$ por $1-\eta a$ (\cref{ej:gd-1d}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $f'(x)=6x$; factor $1-0{,}1\cdot 6=0{,}4$.
+  \item $x_1=0{,}4\cdot 2=0{,}8$; $x_2=0{,}4\cdot 0{,}8=0{,}32$; $x_3=0{,}4\cdot 0{,}32=0{,}128$.
+  \item Convergencia: $\abs{1-6\eta}<1\iff 0<\eta<2/6=1/3$.
+\end{enumerate}
+\resultado \textbf{$x_1=0{,}8$, $x_2=0{,}32$, $x_3=0{,}128$; converge si y solo si $0<\eta<1/3\approx 0{,}3333$.} Con $\eta=1/3$ el factor es $-1$ y el iterado oscila entre $\pm 2$.
+\comprobacion $x_3=2\cdot 0{,}4^{3}=2\cdot 0{,}064=0{,}128$. Con $\eta=0{,}4$ el factor sería $1-2{,}4=-1{,}4$, de módulo mayor que~1.
+\end{solucion}
+
+\begin{solucion}{eje:2-2d}
+\datos $f(x,y)=x^{2}+5y^{2}$, $\theta_0=(1,1)$, $\eta=1/6$.
+\planteamiento $Q=\diag(2,10)$; cada coordenada se multiplica por $1-\eta\lambda_i$ (\cref{teo:gd-cuadratica}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Factor en $x$: $1-\frac16\cdot 2=\frac23$. Factor en $y$: $1-\frac16\cdot 10=-\frac23$.
+  \item $\theta_1=\bigl(\frac23;\,-\frac23\bigr)$, $\theta_2=\bigl(\frac49;\,\frac49\bigr)$, $\theta_3=\bigl(\frac{8}{27};\,-\frac{8}{27}\bigr)\approx(0{,}2963;\,-0{,}2963)$.
+  \item Normas: $\norm{\theta_0}=\sqrt2\approx 1{,}414$; $\norm{\theta_1}=\frac23\sqrt2\approx 0{,}9428$; $\norm{\theta_2}=\frac49\sqrt2\approx 0{,}6285$; $\norm{\theta_3}=\frac{8}{27}\sqrt2\approx 0{,}4190$.
+  \item Cociente entre normas consecutivas: $\frac23$.
+  \item Teorema: $\mu=2$, $L=10$, $\kappa=5$; $\eta^{\ast}=2/12=1/6$ y $\rho=(5-1)/(5+1)=\frac23$.
+\end{enumerate}
+\resultado \textbf{$\theta_3=(8/27;\,-8/27)$ y la norma se multiplica por $2/3$ en cada paso}, que es $(\kappa-1)/(\kappa+1)$ porque $\eta=1/6$ es el paso óptimo.
+\comprobacion $f(\theta_3)=6\cdot(8/27)^{2}=384/729\approx 0{,}5267$ y $f(\theta_3)/f(\theta_0)=0{,}5267/6\approx 0{,}08779=(2/3)^{6}$. La coordenada $y$ cambia de signo en cada paso, como en la \cref{fig:zigzag}.
+\end{solucion}
+
+\begin{solucion}{eje:2-valle}
+\datos $f=\frac12(x^{2}+25y^{2})$, $Q=\diag(1,25)$, $\theta_0=(1,1)$, $\epsilon=10^{-3}$.
+\planteamiento \cref{teo:gd-cuadratica} y \cref{cor:iter-cuadratica}: $\eta^{\ast}=2/(\mu+L)$, $\rho=(\kappa-1)/(\kappa+1)$, $k=\lceil\ln\epsilon/\ln\rho\rceil$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\mu=1$, $L=25$, $\kappa=25$.
+  \item $\eta^{\ast}=2/26=1/13\approx 0{,}07692$; $\rho=24/26=12/13\approx 0{,}9231$.
+  \item $\ln 10^{-3}=-6{,}908$; $\ln(12/13)=-0{,}08004$; $6{,}908/0{,}08004\approx 86{,}3$, luego \textbf{87} iteraciones.
+  \item Momentum: $\sqrt\kappa=5$, $\rho=4/6=2/3$, $\ln(2/3)=-0{,}4055$; $6{,}908/0{,}4055\approx 17{,}04$, luego \textbf{18} iteraciones.
+  \item Factores con $\eta^{\ast}$: $1-\frac{1}{13}=\frac{12}{13}$ en $x$ y $1-\frac{25}{13}=-\frac{12}{13}$ en $y$.
+  \item $\theta_1=\bigl(\frac{12}{13};\,-\frac{12}{13}\bigr)\approx(0{,}9231;\,-0{,}9231)$ y $\theta_2=\bigl(\frac{144}{169};\,\frac{144}{169}\bigr)\approx(0{,}8521;\,0{,}8521)$.
+\end{enumerate}
+\resultado \textbf{$\kappa=25$, $\eta^{\ast}=1/13$, $\rho=12/13$; 87 iteraciones con descenso de gradiente frente a 18 con momentum.}
+\comprobacion $\norm{\theta_1}/\norm{\theta_0}=12/13=\rho$. El cociente de iteraciones, $87/18\approx 4{,}8$, es próximo a $\sqrt\kappa=5$.
+\end{solucion}
+
+\begin{solucion}{eje:2-paso-largo}
+\datos $F(x,y)=y^{2}+(y-x)^{2}$, $(x_0,y_0)=(1,1)$, pasos $s=1/2$ y $s=1/4$.
+\planteamiento calcular el gradiente, iterar y analizar la estabilidad con $s<2/\lambda_{\max}$ (\cref{teo:gd-cuadratica}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\partial F/\partial x=-2(y-x)$; $\partial F/\partial y=2y+2(y-x)=4y-2x$. En $(1,1)$: $\nabla F=(0;\,2)$.
+  \item $s=\frac12$. Paso~1: $(1,1)-\frac12(0,2)=(1,0)$, $F=0+1=1$.
+  \item Paso~2: $\nabla F(1,0)=(2;\,-2)$; $(1,0)-\frac12(2,-2)=(0,1)$, $F=1+1=2$.
+  \item Paso~3: $\nabla F(0,1)=(-2;\,4)$; $(0,1)-\frac12(-2,4)=(1,-1)$, $F=1+4=5$. $F$ crece: el método diverge.
+  \item (b) $\nabla^{2}F=\begin{pmatrix}2&-2\\-2&4\end{pmatrix}$, traza 6, determinante 4: $\lambda=3\pm\sqrt5\approx 0{,}7639$ y $5{,}236$. Límite: $2/5{,}236\approx 0{,}3820<0{,}5$. El factor de la dirección rígida es $1-0{,}5\cdot 5{,}236=-1{,}618$, de módulo mayor que~1.
+  \item (c) $s=\frac14$. Paso~1: $(1,1)-\frac14(0,2)=(1;\,0{,}5)$, $F=0{,}25+0{,}25=0{,}5$.
+  \item Paso~2: $\nabla F(1;\,0{,}5)=(1;\,0)$; nuevo punto $(0{,}75;\,0{,}5)$, $F=0{,}25+0{,}0625=0{,}3125$.
+  \item Paso~3: $\nabla F(0{,}75;\,0{,}5)=(0{,}5;\,0{,}5)$; nuevo punto $(0{,}625;\,0{,}375)$, $F=0{,}1406+0{,}0625=0{,}2031$.
+\end{enumerate}
+\resultado \textbf{con $s=1/2$, $F=1$; $2$; $5$: diverge. Con $s=1/4$, $F=0{,}5$; $0{,}3125$; $0{,}2031$: converge.}
+\comprobacion con $s=\frac14$, los factores son $1-0{,}25\cdot 0{,}7639=0{,}8090$ y $1-0{,}25\cdot 5{,}236=-0{,}3090$, ambos de módulo menor que~1.
+\end{solucion}
+
+\begin{solucion}{eje:2-rosenbrock}
+\datos $\nabla^{2}f(1,1)=\begin{pmatrix}802&-400\\-400&200\end{pmatrix}$, $\eta=10^{-3}$, $\epsilon=10^{-3}$.
+\planteamiento autovalores de una matriz $2\times 2$ con la traza y el determinante; $\kappa=\lambda_{\max}/\lambda_{\min}$, paso máximo $2/\lambda_{\max}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Traza: $802+200=1002$. Determinante: $802\cdot 200-400^{2}=160\,400-160\,000=400$.
+  \item $\lambda^{2}-1002\lambda+400=0$; discriminante $1002^{2}-1600=1\,002\,404$, de raíz $\approx 1001{,}2$.
+  \item $\lambda_{\max}=(1002+1001{,}2)/2\approx 1001{,}6$. Para el menor se usa el producto, que evita restar números casi iguales: $\lambda_{\min}=400/1001{,}6\approx 0{,}3994$.
+  \item $\kappa\approx 1001{,}6/0{,}3994\approx 2508$.
+  \item Paso máximo: $2/1001{,}6\approx 1{,}997\cdot 10^{-3}$.
+  \item Con $\eta=10^{-3}$, el factor en la dirección plana es $1-10^{-3}\cdot 0{,}3994=0{,}9996$. Iteraciones: $\ln 10^{-3}/\ln 0{,}9996\approx -6{,}908/(-3{,}995\cdot 10^{-4})\approx 1{,}73\cdot 10^{4}$.
+\end{enumerate}
+\resultado \textbf{$\lambda\approx 0{,}3994$ y $1001{,}6$; $\kappa\approx 2508$; paso máximo $\approx 0{,}002$; unas $17\,300$ iteraciones} para reducir el error en $10^{-3}$ en la dirección plana.
+\comprobacion $\lambda_{\min}+\lambda_{\max}\approx 1002$ (traza). Es coherente con que el descenso de gradiente no llegue a $f<10^{-4}$ en 5000 iteraciones (\cref{ej:rosenbrock}).
+\end{solucion}
+
+\begin{solucion}{eje:2-cuadratica}
+\datos $f(\theta)=\frac12\theta\T Q\theta$, $Q$ simétrica con autovalores $0<\mu=\lambda_1\le\dots\le\lambda_n=L$.
+\planteamiento diagonalizar la iteración lineal $\theta_{k+1}=(I-\eta Q)\theta_k$ y estudiar $\rho(\eta)=\max_i\abs{1-\eta\lambda_i}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\nabla f(\theta)=Q\theta$ por ser $Q$ simétrica (módulo~4), luego $\theta_{k+1}=(I-\eta Q)\theta_k$.
+  \item Teorema espectral: $Q=U\Lambda U\T$ con $U$ ortogonal; $I-\eta Q=U(I-\eta\Lambda)U\T$, de autovalores $1-\eta\lambda_i$.
+  \item Con $z=U\T\theta$, $z^{(i)}_k=(1-\eta\lambda_i)^{k}z^{(i)}_0$ y $\norm{\theta_k}=\norm{z_k}\le\rho(\eta)^{k}\norm{\theta_0}$.
+  \item Si $0<\eta<2/L$: para todo $i$, $0<\eta\lambda_i\le\eta L<2$, luego $-1<1-\eta\lambda_i<1$ y $\rho(\eta)<1$: $\theta_k\to 0$.
+  \item Extremos: $\varphi(\lambda)=\abs{1-\eta\lambda}$ es el valor absoluto de una función afín, luego convexa. Todo $\lambda\in[\mu,L]$ es $\lambda=t\mu+(1-t)L$ y $\varphi(\lambda)\le t\varphi(\mu)+(1-t)\varphi(L)\le\max\{\varphi(\mu),\varphi(L)\}$. Así, $\rho(\eta)=\max\{\abs{1-\eta\mu},\abs{1-\eta L}\}$.
+  \item Óptimo: para $\eta\le 2/(\mu+L)$ el máximo es $1-\eta\mu$, decreciente en $\eta$; para $\eta\ge 2/(\mu+L)$ es $\eta L-1$, creciente. En efecto, $1-\eta\mu\ge\eta L-1\iff\eta\le 2/(\mu+L)$. El mínimo de $\rho$ está, por tanto, en $\eta^{\ast}=2/(\mu+L)$, donde ambos valores se igualan.
+  \item $\rho(\eta^{\ast})=1-\frac{2\mu}{\mu+L}=\frac{L-\mu}{L+\mu}=\frac{\kappa-1}{\kappa+1}$.
+\end{enumerate}
+\resultado \textbf{el método converge para todo $\eta\in(0,2/L)$, y el paso óptimo $2/(\mu+L)$ da el factor $(\kappa-1)/(\kappa+1)$}. Igualar los extremos es óptimo porque cualquier otro $\eta$ empeora uno de los dos.
+\comprobacion con $Q=\diag(2,10)$: $\eta^{\ast}=1/6$ y $\rho=2/3$, el valor observado en el \cref{eje:2-2d}.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-motivos}
+\datos un corpus de billones de tokens y la regla $\theta\leftarrow\theta-\eta\nabla J(\theta)$, con $J$ la media sobre todo el corpus.
+\planteamiento comparar el coste de un paso exacto con el de uno de minibatch y considerar el efecto del ruido.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Coste.} El gradiente exacto exige recorrer todo el corpus, con propagación y retropropagación, para dar un solo paso: un único paso costaría tanto como una época completa.
+  \item \emph{Rendimiento por cálculo.} Por el \cref{teo:minibatch}, un minibatch de $B$ ejemplos da un estimador insesgado de varianza $\sigma^{2}/B$. Con el mismo cálculo que un paso exacto se dan $N/B$ pasos aproximados, que avanzan mucho más.
+  \item \emph{Ruido útil.} El ruido ayuda a abandonar puntos de silla y se asocia a mínimos más anchos (\cref{obs:paisaje}).
+\end{enumerate}
+\resultado \textbf{se usa SGD con minibatch porque el gradiente exacto es inasumible y porque los pasos ruidosos son más eficientes.}
+\comprobacion GPT-3 usó lotes de $3{,}2\cdot 10^{6}$ tokens~\cite[tabla~2.1]{gpt3}, una fracción ínfima de los cientos de miles de millones de tokens con que se entrenó.
+\end{solucion}
+
+\begin{solucion}{eje:3-minibatch}
+\datos gradientes individuales $(-2,0,1,5)$, $N=4$, $B=2$ sin reemplazamiento.
+\planteamiento media, varianza poblacional y enumeración de los $\binom42=6$ minibatches; comprobación con la \cref{prop:sin-reemplazo}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Gradiente completo: $(-2+0+1+5)/4=1$.
+  \item Desviaciones: $(-3,-1,0,4)$; cuadrados $(9,1,0,16)$; $\sigma^{2}=26/4=6{,}5$.
+  \item Minibatches: $\{-2,0\}\to-1$; $\{-2,1\}\to-0{,}5$; $\{-2,5\}\to 1{,}5$; $\{0,1\}\to 0{,}5$; $\{0,5\}\to 2{,}5$; $\{1,5\}\to 3$.
+  \item Media: $(-1-0{,}5+1{,}5+0{,}5+2{,}5+3)/6=6/6=1$.
+  \item Desviaciones: $(-2;\,-1{,}5;\,0{,}5;\,-0{,}5;\,1{,}5;\,2)$; cuadrados $(4;\,2{,}25;\,0{,}25;\,0{,}25;\,2{,}25;\,4)$, que suman 13; varianza $13/6\approx 2{,}167$.
+  \item Fórmula: $(6{,}5/2)\cdot(4-2)/(4-1)=3{,}25\cdot\frac23=13/6$.
+\end{enumerate}
+\resultado \textbf{$\nabla J=1$; $\sigma^{2}=6{,}5$; media de los minibatches $1$ (insesgado); varianza $13/6\approx 2{,}167$.}
+\comprobacion el cálculo directo y la fórmula coinciden, y $2{,}167<\sigma^{2}/B=3{,}25$.
+\end{solucion}
+
+\begin{solucion}{eje:3-reemplazo}
+\datos $g=(2,4,6,8)$, $N=4$, $B=2$.
+\planteamiento enumerar los pares y comparar con $\sigma^{2}/B$ (\cref{teo:minibatch}) y con $\frac{\sigma^{2}}{B}\cdot\frac{N-B}{N-1}$ (\cref{prop:sin-reemplazo}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Media $(2+4+6+8)/4=5$; $\sigma^{2}=(9+1+1+9)/4=5$.
+  \item (a) Con reemplazamiento, las medias de los 16 pares ordenados toman los valores 2, 3, 4, 5, 6, 7, 8 con frecuencias 1, 2, 3, 4, 3, 2, 1.
+  \item Media: $(2+6+12+20+18+14+8)/16=80/16=5$.
+  \item Varianza: $(1\cdot 9+2\cdot 4+3\cdot 1+4\cdot 0+3\cdot 1+2\cdot 4+1\cdot 9)/16=40/16=2{,}5=\sigma^{2}/B$.
+  \item (b) Sin reemplazamiento: $\{2,4\}\to 3$, $\{2,6\}\to 4$, $\{2,8\}\to 5$, $\{4,6\}\to 5$, $\{4,8\}\to 6$, $\{6,8\}\to 7$; media $30/6=5$.
+  \item Varianza: $(4+1+0+0+1+4)/6=10/6\approx 1{,}667=2{,}5\cdot\frac23$.
+\end{enumerate}
+\resultado \textbf{ambos estimadores son insesgados (media 5); varianza $2{,}5$ con reemplazamiento y $5/3\approx 1{,}667$ sin él.}
+\comprobacion las frecuencias del paso~2 suman $1+2+3+4+3+2+1=16$. Sin reemplazamiento no se repite ningún ejemplo y la varianza es menor.
+\end{solucion}
+
+\begin{solucion}{eje:3-suelo}
+\datos $a=1$, $s^{2}=1$, $\eta\in\{0{,}1;\ 0{,}01\}$.
+\planteamiento \cref{prop:suelo}: $\E[x^{2}]\to\eta s^{2}/(a(2-\eta a))$ y $\E[f]\to\eta s^{2}/(2(2-\eta a))$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\eta=0{,}1$: $\E[x^{2}]\to 0{,}1/1{,}9\approx 0{,}05263$; $\E[f]\to 0{,}02632$.
+  \item $\eta=0{,}01$: $\E[x^{2}]\to 0{,}01/1{,}99\approx 0{,}005025$; $\E[f]\to 0{,}002513$.
+  \item Cociente: $0{,}02632/0{,}002513\approx 10{,}47$.
+  \item Velocidad: la media se contrae con factor $1-\eta a$, que pasa de $0{,}9$ a $0{,}99$. Para reducir $\E[x_k]$ en $e^{-1}$ hacen falta $-1/\ln(1-\eta a)$ pasos: unos $9{,}5$ con $\eta=0{,}1$ y unos $99{,}5$ con $\eta=0{,}01$.
+\end{enumerate}
+\resultado \textbf{el exceso de pérdida pasa de $0{,}02632$ a $0{,}002513$, unas $10{,}5$ veces menos; a cambio, la fase transitoria es unas 10 veces más lenta.} Es el compromiso que resuelve un calendario decreciente: pasos grandes al principio y pequeños al final.
+\comprobacion para $\eta a\ll 1$, $\E[f]\approx\eta s^{2}/4$: $0{,}025$ y $0{,}0025$, próximos a los valores exactos.
+\end{solucion}
+
+\begin{solucion}{eje:3-sin-reemplazo}
+\datos $\{I_1,\dots,I_B\}$ uniforme entre los subconjuntos de $B$ índices distintos; $X_b=\nabla\ell_{I_b}(\theta)-\nabla J(\theta)$; $d_i=\nabla\ell_i(\theta)-\nabla J(\theta)$, con $\sum_i d_i=0$ y $\frac1N\sum_i\norm{d_i}^{2}=\sigma^{2}$.
+\planteamiento calcular $\E\norm{X_b}^{2}$ y $\E[X_b\T X_{b'}]$ para $b\ne b'$, y desarrollar $\Var[\gb]=\E\norm{\frac1B\sum_bX_b}^{2}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Por simetría, cada $I_b$ es uniforme en $\{1,\dots,N\}$, luego $\E[X_b]=\frac1N\sum_id_i=0$ (insesgadez) y $\E\norm{X_b}^{2}=\sigma^{2}$.
+  \item Para $b\ne b'$, el par $(I_b,I_{b'})$ es uniforme entre los $N(N-1)$ pares ordenados de índices distintos: $\E[X_b\T X_{b'}]=\frac{1}{N(N-1)}\sum_{i\ne j}d_i\T d_j$.
+  \item Como $\sum_id_i=0$: $0=\norm{\sum_id_i}^{2}=\sum_i\norm{d_i}^{2}+\sum_{i\ne j}d_i\T d_j$, luego $\sum_{i\ne j}d_i\T d_j=-N\sigma^{2}$.
+  \item Por tanto $\E[X_b\T X_{b'}]=-\sigma^{2}/(N-1)$.
+  \item $\Var[\gb]=\frac{1}{B^{2}}\Bigl(\sum_b\E\norm{X_b}^{2}+\sum_{b\ne b'}\E[X_b\T X_{b'}]\Bigr)=\frac{1}{B^{2}}\Bigl(B\sigma^{2}-\frac{B(B-1)\sigma^{2}}{N-1}\Bigr)$.
+  \item Simplificando: $\frac{\sigma^{2}}{B}\Bigl(1-\frac{B-1}{N-1}\Bigr)=\frac{\sigma^{2}}{B}\cdot\frac{N-B}{N-1}$.
+\end{enumerate}
+\resultado \textbf{$\E[\gb]=\nabla J(\theta)$ y $\Var[\gb]=\frac{\sigma^{2}}{B}\cdot\frac{N-B}{N-1}$.}
+\comprobacion $B=1$ da $\sigma^{2}$ y $B=N$ da~0. En el \cref{ej:minibatch}, $(3{,}5/2)\cdot(2/3)=7/6$, que es la varianza obtenida al enumerar.
+\end{solucion}
+
+\begin{solucion}{eje:3-ruido}
+\datos $f(x)=x_1^{2}+2x_2^{2}$; $F(x,w)=(x_1-w_1)^{2}+2(x_2-w_2)^{2}$; $w\sim\mathcal{N}(0,s^{2}I)$.
+\planteamiento derivar $F$ respecto de $x$ y separar la parte que no depende de $w$; después tomar la esperanza en $w$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\nabla_xF(x,w)=\bigl(2(x_1-w_1);\,4(x_2-w_2)\bigr)=\nabla f(x)+\xi$, con $\nabla f(x)=(2x_1;\,4x_2)$ y $\xi=(-2w_1;\,-4w_2)$.
+  \item $\xi$ es una transformación lineal de un vector gaussiano, luego es gaussiano, de media $(0;\,0)$ y covarianza $\diag(4s^{2},16s^{2})$, porque $w_1$ y $w_2$ son independientes.
+  \item $\E_w[(x_1-w_1)^{2}]=x_1^{2}-2x_1\E[w_1]+\E[w_1^{2}]=x_1^{2}+s^{2}$; del mismo modo, $\E_w[(x_2-w_2)^{2}]=x_2^{2}+s^{2}$.
+  \item $\E_w[F(x,w)]=x_1^{2}+s^{2}+2(x_2^{2}+s^{2})=f(x)+3s^{2}$.
+  \item La constante $3s^{2}$ no depende de $x$: $\E_w[F]$ y $f$ tienen el mismo minimizador, $x^{\ast}=0$.
+\end{enumerate}
+\resultado \textbf{$\nabla_xF=\nabla f+\xi$ con $\xi\sim\mathcal{N}(0,\diag(4s^{2},16s^{2}))$ y $\E_w[F]=f+3s^{2}$.} Cada paso de SGD sobre $F$ con una muestra nueva de $w$ es un paso de descenso sobre $f$ con gradiente ruidoso insesgado.
+\comprobacion con $s=0$ el ruido desaparece y $F=f$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-efectivo}
+\datos gradiente constante $g$; $\beta\in\{0{,}9;\ 0{,}99\}$.
+\planteamiento por la \cref{prop:ema}, $v_k=\frac{1-\beta^{k}}{1-\beta}g$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Límite: $v_k\to g/(1-\beta)$. Con $\beta=0{,}9$, factor $10$; con $\beta=0{,}99$, factor $100$.
+  \item El 90~\% del límite exige $1-\beta^{k}\ge 0{,}9$, es decir, $\beta^{k}\le 0{,}1$: $k\ge\ln 0{,}1/\ln 0{,}9=21{,}85$, luego $k=22$.
+  \item Sobrepaso: al acercarse al mínimo, el gradiente disminuye, pero $v_k$ conserva una fracción $\beta$ de la velocidad acumulada. Con $\beta$ grande la memoria es larga y la velocidad tarda en frenarse, de modo que el iterado rebasa el mínimo.
+\end{enumerate}
+\resultado \textbf{factor 10 con $\beta=0{,}9$ y 100 con $\beta=0{,}99$; 22 pasos para llegar al 90~\% con $\beta=0{,}9$.}
+\comprobacion $0{,}9^{22}=0{,}0985\le 0{,}1$ y $0{,}9^{21}=0{,}1094>0{,}1$.
+\end{solucion}
+
+\begin{solucion}{eje:4-pasos}
+\datos $f(x)=x^{2}/2$, $f'(x)=x$, $x_0=1$, $v_0=0$, $\eta=0{,}1$, $\beta=0{,}9$.
+\planteamiento aplicar la \cref{def:momentum}; el descenso de gradiente es $x\leftarrow 0{,}9x$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $k=1$: $v_1=0+1=1$; $x_1=1-0{,}1=0{,}9$.
+  \item $k=2$: $v_2=0{,}9\cdot 1+0{,}9=1{,}8$; $x_2=0{,}9-0{,}18=0{,}72$.
+  \item $k=3$: $v_3=0{,}9\cdot 1{,}8+0{,}72=1{,}62+0{,}72=2{,}34$; $x_3=0{,}72-0{,}234=0{,}486$.
+  \item Descenso de gradiente: $0{,}9$; $0{,}81$; $0{,}729$.
+  \item Fracción recorrida: momentum $1-0{,}486=0{,}514$; descenso de gradiente $1-0{,}729=0{,}271$.
+\end{enumerate}
+\resultado \textbf{momentum: $0{,}9$; $0{,}72$; $0{,}486$ (51,4~\% del camino). Descenso de gradiente: $0{,}9$; $0{,}81$; $0{,}729$ (27,1~\%).}
+\comprobacion en el primer paso ambos coinciden porque $v_0=0$. Por la \cref{prop:dos-pasos}, $x_3=x_2-0{,}1x_2+0{,}9(x_2-x_1)=0{,}648-0{,}162=0{,}486$.
+\end{solucion}
+
+\begin{solucion}{eje:4-optimos}
+\datos $\mu=1$, $L=100$, $\kappa=100$, $\epsilon=10^{-3}$.
+\planteamiento fórmulas del \cref{teo:heavy-ball} y $k=\lceil\ln\epsilon/\ln\rho\rceil$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\sqrt L=10$, $\sqrt\mu=1$: $\eta=4/11^{2}=4/121\approx 0{,}03306$.
+  \item $\beta=\bigl(\frac{10-1}{10+1}\bigr)^{2}=\frac{81}{121}\approx 0{,}6694$; $\rho=\frac{9}{11}\approx 0{,}8182$.
+  \item Iteraciones: $\ln(9/11)=-0{,}2007$; $6{,}908/0{,}2007\approx 34{,}4$, luego 35.
+  \item Descenso de gradiente: $\eta^{\ast}=2/101\approx 0{,}01980$, $\rho=99/101\approx 0{,}9802$; $\ln\rho=-0{,}02000$; $6{,}908/0{,}02000\approx 345{,}4$, luego 346.
+\end{enumerate}
+\resultado \textbf{$\eta=4/121\approx 0{,}03306$, $\beta=81/121\approx 0{,}6694$, $\rho=9/11\approx 0{,}8182$: unas 35 iteraciones frente a 346}, una reducción en un factor próximo a $\sqrt\kappa=10$.
+\comprobacion coincide con la fila $\kappa=100$ del \cref{tab:kappa}. El paso del momentum es mayor que el límite $2/L=0{,}02$ del descenso de gradiente, lo que es posible por el \cref{eje:4-estabilidad}.
+\end{solucion}
+
+\begin{solucion}{eje:4-autovalores}
+\datos $\lambda=(1,\frac12,\frac14)$, $x_0=(1,1,1)$, tolerancia $10^{-2}$.
+\planteamiento las coordenadas evolucionan por separado; en el descenso de gradiente, $x_k^{(i)}=(1-\eta\lambda_i)^{k}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\eta=1$: factores $(0;\,\frac12;\,\frac34)$. La más lenta es la tercera: $0{,}75^{k}<10^{-2}$ exige $k>\ln 0{,}01/\ln 0{,}75=16{,}01$, es decir, $k=17$.
+  \item (b) $\mu=\frac14$, $L=1$: $\eta^{\ast}=2/1{,}25=1{,}6$, factores $(-0{,}6;\,0{,}2;\,0{,}6)$ y $\rho=0{,}6$. $0{,}6^{k}<10^{-2}$ exige $k>9{,}015$: $k=10$.
+  \item (c) $\sqrt L=1$, $\sqrt\mu=\frac12$: $\eta=4/(1{,}5)^{2}=\frac{16}{9}\approx 1{,}778$, $\beta=\bigl(\frac{0{,}5}{1{,}5}\bigr)^{2}=\frac19$, $\rho=\frac13$.
+  \item Primer paso: $v_1=\lambda\odot x_0=(1;\,\frac12;\,\frac14)$; $x_1=x_0-\frac{16}{9}v_1=\bigl(-\frac79;\,\frac19;\,\frac59\bigr)$.
+  \item Segundo paso: $v_2=\frac19v_1+\lambda\odot x_1=\bigl(\frac19-\frac79;\,\frac{1}{18}+\frac{1}{18};\,\frac{1}{36}+\frac{5}{36}\bigr)=\bigl(-\frac23;\,\frac19;\,\frac16\bigr)$.
+  \item $x_2=x_1-\frac{16}{9}v_2=\bigl(-\frac79+\frac{32}{27};\,\frac19-\frac{16}{81};\,\frac59-\frac{16}{54}\bigr)=\bigl(\frac{11}{27};\,-\frac{7}{81};\,\frac{7}{27}\bigr)\approx(0{,}4074;\,-0{,}08642;\,0{,}2593)$.
+  \item Estimación: $(1/3)^{k}<10^{-2}$ exige $k>\ln 0{,}01/\ln(1/3)=4{,}19$, es decir, unos 5 pasos.
+\end{enumerate}
+\resultado \textbf{(a) 17 pasos; (b) 10 pasos; (c) $\eta=16/9$, $\beta=1/9$, $x_2=(11/27;\,-7/81;\,7/27)$ y una estimación de unos 5 pasos.} Una simulación numérica da 7 pasos: la estimación por el radio espectral es optimista porque en los autovalores extremos la raíz es doble (observación posterior al \cref{teo:heavy-ball}).
+\comprobacion la forma de dos pasos (\cref{prop:dos-pasos}) en la primera coordenada da: $x_2^{(1)}=x_1^{(1)}-\eta x_1^{(1)}+\beta(x_1^{(1)}-x_0^{(1)})=-\frac79+\frac{112}{81}-\frac{16}{81}=\frac{-63+96}{81}=\frac{33}{81}=\frac{11}{27}$.
+\end{solucion}
+
+\begin{solucion}{eje:4-forma}
+\datos $v_0=0$, $v_{k+1}=\beta v_k+\nabla f(\theta_k)$, $\theta_{k+1}=\theta_k-\eta v_{k+1}$.
+\planteamiento eliminar $v$ entre las dos ecuaciones; para el gradiente constante, usar la \cref{prop:ema}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item De la segunda ecuación en el paso anterior, $\eta v_k=\theta_{k-1}-\theta_k$ para $k\ge 1$.
+  \item $\theta_{k+1}=\theta_k-\eta\beta v_k-\eta\nabla f(\theta_k)=\theta_k-\eta\nabla f(\theta_k)+\beta(\theta_k-\theta_{k-1})$.
+  \item Con $\nabla f(\theta_k)=g$: $v_{k+1}=\sum_{j=0}^{k}\beta^{k-j}g=\frac{1-\beta^{k+1}}{1-\beta}g$.
+  \item $\theta_k-\theta_{k+1}=\eta v_{k+1}=\eta\frac{1-\beta^{k+1}}{1-\beta}g$.
+\end{enumerate}
+\resultado \textbf{$\theta_{k+1}=\theta_k-\eta\nabla f(\theta_k)+\beta(\theta_k-\theta_{k-1})$ y, con gradiente constante, $\theta_k-\theta_{k+1}=\eta\frac{1-\beta^{k+1}}{1-\beta}g$.}
+\comprobacion $k=0$ da $\eta g$, el paso del descenso de gradiente; $k\to\infty$ da $\eta g/(1-\beta)$. En el \cref{ej:momentum}, $v_2=1{,}8$ y $x_1-x_2=0{,}18=0{,}1\cdot 1{,}8$.
+\end{solucion}
+
+\begin{solucion}{eje:4-estabilidad}
+\datos $p(r)=r^{2}-br+\beta$ con $b=1+\beta-\eta\lambda$, $\beta\in[0,1)$, $\eta\lambda>0$.
+\planteamiento distinguir raíces complejas y reales; en el caso real, usar el signo de $p(\pm 1)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Se calcula $p(1)=1-b+\beta=\eta\lambda$ y $p(-1)=1+b+\beta=2(1+\beta)-\eta\lambda$.
+  \item \emph{Raíces complejas o doble} ($b^{2}\le 4\beta$): su módulo es $\sqrt\beta<1$. Además $\abs{b}\le 2\sqrt\beta<1+\beta$, luego $p(1)>0$ y $p(-1)>0$: la condición del enunciado se cumple.
+  \item \emph{Raíces reales distintas} $r_1<r_2$: $p(r)>0$ fuera de $[r_1,r_2]$ y $p(r)<0$ en su interior. Si ambas están en $(-1,1)$, entonces $\pm 1$ están fuera y $p(\pm 1)>0$.
+  \item Recíprocamente, si $p(1)>0$ y $p(-1)>0$, ningún $\pm 1$ está en $[r_1,r_2]$. Si $b\ge 2$, $p(1)=1+\beta-b\le\beta-1<0$, imposible; si $b\le-2$, $p(-1)\le\beta-1<0$, imposible. Así $\abs{b}<2$ y el vértice $b/2$ está en $(-1,1)$; como $[r_1,r_2]$ contiene el vértice y no contiene $\pm 1$, está contenido en $(-1,1)$.
+  \item En todos los casos: las raíces tienen módulo menor que~1 si y solo si $p(1)>0$ y $p(-1)>0$, es decir, $0<\eta\lambda<2(1+\beta)$.
+\end{enumerate}
+\resultado \textbf{el método es estable si y solo si $0<\eta\lambda<2(1+\beta)$}, frente a $0<\eta\lambda<2$ en el descenso de gradiente: con $\beta=0{,}9$ el paso puede ser hasta $1{,}9$ veces mayor.
+\comprobacion con $\beta=0$ se recupera $0<\eta\lambda<2$. En el \cref{eje:4-optimos}, $\eta L=400/121\approx 3{,}306<2(1+0{,}6694)=3{,}339$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-escala-test}
+\datos Adam con $m_0=v_0=0$; la pérdida se multiplica por $c=1000$, de modo que $g$ pasa a ser $cg$.
+\planteamiento calcular el primer paso de Adam en función de $g$ (\cref{prop:escala}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $m_1=(1-\beta_1)g$ y $v_1=(1-\beta_2)g^{2}$.
+  \item $\hat m_1=g$ y $\hat v_1=g^{2}$, luego $\sqrt{\hat v_1}=\abs{g}$.
+  \item Paso: $\eta g/(\abs{g}+\varepsilon)\approx\eta\,\sign(g)$.
+  \item Con $cg$: $\eta cg/(c\abs{g}+\varepsilon)\approx\eta\,\sign(g)$; el factor $c$ se cancela.
+  \item En el SGD, el paso $\eta g$ pasa a ser $\eta cg$: se multiplica por 1000.
+\end{enumerate}
+\resultado \textbf{falsa}: el primer paso de Adam mide $\eta$ en ambos casos, salvo el efecto despreciable de $\varepsilon$; en el SGD, en cambio, sí se multiplicaría por 1000.
+\comprobacion con $\eta=0{,}01$, $\varepsilon=10^{-8}$ y $g=0{,}5$, el paso es $0{,}01\cdot 0{,}5/(0{,}5+10^{-8})\approx 0{,}0099999998$; con $g=500$, $\approx 0{,}01$ con diez cifras.
+\end{solucion}
+
+\begin{solucion}{eje:5-rmsprop}
+\datos RMSProp con $s_0=0$, $\varepsilon\approx 0$, gradiente inicial $g_1\ne 0$; $\rho\in\{0{,}9;\ 0{,}999\}$.
+\planteamiento $s_1=(1-\rho)g_1^{2}$ y paso $\eta g_1/\sqrt{s_1}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Paso: $\eta g_1/(\sqrt{1-\rho}\,\abs{g_1})=\eta\,\sign(g_1)/\sqrt{1-\rho}$.
+  \item $\rho=0{,}9$: $1/\sqrt{0{,}1}\approx 3{,}162$.
+  \item $\rho=0{,}999$: $1/\sqrt{0{,}001}\approx 31{,}62$.
+\end{enumerate}
+\resultado \textbf{el primer paso mide unas $3{,}16\,\eta$ con $\rho=0{,}9$ y $31{,}6\,\eta$ con $\rho=0{,}999$.} El estimador $s_t$ está sesgado hacia~0 por la inicialización, lo que agranda los primeros pasos justo cuando el gradiente es menos fiable; la corrección de sesgo de Adam divide $v_t$ por $1-\beta_2^{t}$ y elimina el efecto.
+\comprobacion con corrección, $\hat s_1=s_1/(1-\rho)=g_1^{2}$ y el paso vuelve a ser $\eta$.
+\end{solucion}
+
+\begin{solucion}{eje:5-adam}
+\datos $\eta=0{,}01$, $\theta_0=1$, $\beta_1=0{,}9$, $\beta_2=0{,}999$, $\varepsilon\approx 0$, $g_1=0{,}5$, $g_2=-0{,}1$.
+\planteamiento aplicar la \cref{def:adam} paso a paso.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $t=1$: $m_1=0{,}1\cdot 0{,}5=0{,}05$; $v_1=0{,}001\cdot 0{,}25=0{,}00025$.
+  \item $\hat m_1=0{,}05/0{,}1=0{,}5$; $\hat v_1=0{,}00025/0{,}001=0{,}25$; $\sqrt{\hat v_1}=0{,}5$.
+  \item Paso $0{,}01\cdot 0{,}5/0{,}5=0{,}01$; $\theta_1=0{,}99$.
+  \item $t=2$: $m_2=0{,}9\cdot 0{,}05+0{,}1\cdot(-0{,}1)=0{,}045-0{,}01=0{,}035$.
+  \item $v_2=0{,}999\cdot 0{,}00025+0{,}001\cdot 0{,}01=0{,}00024975+0{,}00001=0{,}00025975$.
+  \item Correcciones: $1-0{,}9^{2}=0{,}19$ y $1-0{,}999^{2}=0{,}001999$.
+  \item $\hat m_2=0{,}035/0{,}19=0{,}1842$; $\hat v_2=0{,}00025975/0{,}001999=0{,}1299$; $\sqrt{\hat v_2}=0{,}3605$.
+  \item Paso $0{,}01\cdot 0{,}1842/0{,}3605=0{,}005110$; $\theta_2=0{,}99-0{,}005110=0{,}98489$.
+\end{enumerate}
+\resultado \textbf{$\theta_1=0{,}99$ y $\theta_2\approx 0{,}9849$.}
+\comprobacion aunque $g_2<0$, $\theta$ sigue bajando porque $m_2=0{,}035>0$ conserva la inercia del primer gradiente; el paso de $t=2$ es menor que $\eta$, como corresponde a un cambio de signo del gradiente.
+\end{solucion}
+
+\begin{solucion}{eje:5-precond}
+\datos $f(x)=0{,}1x_1^{2}+2x_2^{2}$; $R$ rotación de ángulo $\pi/4$, $R=\frac{1}{\sqrt2}\begin{pmatrix}1&-1\\1&1\end{pmatrix}$; $g(y)=f(R\T y)$.
+\planteamiento \cref{prop:precond}: el hessiano preacondicionado es $D^{-1/2}QD^{-1/2}$, semejante a $D^{-1}Q$; para $g$, el hessiano es $RQR\T$ por la regla de la cadena.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $Q=\nabla^{2}f=\diag(0{,}2;\,4)$, $\kappa=4/0{,}2=20$.
+  \item $D=\diag(0{,}2;\,4)=Q$: $D^{-1/2}QD^{-1/2}=I$, $\kappa=1$.
+  \item $\nabla^{2}g=RQR\T$. Con $a=0{,}2$ y $b=4$: $RQR\T=\frac12\begin{pmatrix}a+b&a-b\\a-b&a+b\end{pmatrix}=\begin{pmatrix}2{,}1&-1{,}9\\-1{,}9&2{,}1\end{pmatrix}$.
+  \item Diagonal: $D'=\diag(2{,}1;\,2{,}1)=2{,}1\,I$. Preacondicionar por $D'$ divide el hessiano por $2{,}1$: autovalores $0{,}2/2{,}1\approx 0{,}09524$ y $4/2{,}1\approx 1{,}905$, con $\kappa=20$.
+  \item (c) El preacondicionador diagonal elimina el mal condicionamiento cuando los ejes principales coinciden con los coordenados, pero no corrige nada si están girados.
+\end{enumerate}
+\resultado \textbf{(a) $\kappa=20$, y $\kappa=1$ tras preacondicionar; (b) $\nabla^{2}g=\begin{pmatrix}2{,}1&-1{,}9\\-1{,}9&2{,}1\end{pmatrix}$, diagonal $2{,}1\,I$ y $\kappa=20$ tras preacondicionar.} Los métodos adaptativos diagonales dependen de la base: funcionan bien cuando las escalas distintas están alineadas con los parámetros.
+\comprobacion la rotación conserva los autovalores: traza $4{,}2=0{,}2+4$ y determinante $2{,}1^{2}-1{,}9^{2}=0{,}8=0{,}2\cdot 4$.
+\end{solucion}
+
+\begin{solucion}{eje:5-memoria}
+\datos $N=7\cdot 10^{9}$ parámetros; 4 bytes por número; se guardan parámetros, gradientes, $m$ y $v$.
+\planteamiento cada vector ocupa $4N$ bytes.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Un vector: $4\cdot 7\cdot 10^{9}=2{,}8\cdot 10^{10}$ bytes $=28$~GB.
+  \item Cuatro vectores: $4\cdot 28=112$~GB.
+  \item Estado del optimizador ($m$ y $v$): $2\cdot 28=56$~GB.
+  \item Fracción: $56/112=0{,}5$.
+\end{enumerate}
+\resultado \textbf{112~GB en total, de los que 56~GB (el 50~\%) son el estado de Adam}, sin contar las activaciones.
+\comprobacion el SGD sin momentum no tiene estado y necesitaría 56~GB; con momentum, 84~GB. Las técnicas de reparto del estado entre dispositivos se estudian en el módulo~17.
+\end{solucion}
+
+\begin{solucion}{eje:5-invariancia}
+\datos Adam con $\varepsilon=0$; gradientes $g_t$ sustituidos por $g'_t=cg_t$.
+\planteamiento por inducción sobre $t$: si los iterados coinciden hasta $t-1$, los gradientes de ambas ejecuciones en $\theta_{t-1}$ están en razón $c$, y se comprueba cómo escalan $m_t$, $v_t$ y el cociente.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Hipótesis: $\theta'_s=\theta_s$, $m'_s=cm_s$ y $v'_s=c^{2}v_s$ para $s\le t-1$ (cierto para $s=0$, con $m_0=v_0=0$).
+  \item Entonces $g'_t=cg_t$, $m'_t=\beta_1cm_{t-1}+(1-\beta_1)cg_t=cm_t$ y $v'_t=\beta_2c^{2}v_{t-1}+(1-\beta_2)c^{2}g_t^{2}=c^{2}v_t$.
+  \item $\hat m'_t/\sqrt{\hat v'_t}=c\hat m_t/(\abs{c}\sqrt{\hat v_t})=\hat m_t/\sqrt{\hat v_t}$ si $c>0$. Luego $\theta'_t=\theta_t$.
+  \item Si $c<0$, el cociente cambia de signo: los iterados se mueven en sentido contrario (se asciende por $f$). No hay invariancia.
+  \item SGD con momentum: $v'_k=cv_k$ y el paso es $\eta cv_k$: se multiplica por $c$. No hay invariancia.
+\end{enumerate}
+\resultado \textbf{los iterados de Adam son invariantes frente a $g\mapsto cg$ con $c>0$}, pero no con $c<0$, y el SGD con momentum no tiene esta propiedad.
+\comprobacion con $c>0$ y $\varepsilon>0$, el cociente es $c\hat m_t/(c\sqrt{\hat v_t}+\varepsilon)$, que solo coincide si $\varepsilon\ll c\sqrt{\hat v_t}$; de ahí que $\varepsilon$ se elija muy pequeño.
+\end{solucion}
+
+\begin{solucion}{eje:5-sin-correccion}
+\datos $\hat m_t=m_t/(1-\beta_1^{t})$, $\hat v_t=v_t/(1-\beta_2^{t})$, $\varepsilon\to 0$, $\beta_1=0{,}9$, $\beta_2=0{,}999$.
+\planteamiento sacar los factores de corrección fuera del cociente.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\eta\dfrac{\hat m_t}{\sqrt{\hat v_t}}=\eta\,\dfrac{m_t/(1-\beta_1^{t})}{\sqrt{v_t}/\sqrt{1-\beta_2^{t}}}=\eta\,\dfrac{\sqrt{1-\beta_2^{t}}}{1-\beta_1^{t}}\cdot\dfrac{m_t}{\sqrt{v_t}}=\eta_t\,\dfrac{m_t}{\sqrt{v_t}}$.
+  \item $t=1$: $\sqrt{0{,}001}/0{,}1=0{,}03162/0{,}1=0{,}3162$.
+  \item $t=2$: $\sqrt{0{,}001999}/0{,}19=0{,}04471/0{,}19=0{,}2353$.
+  \item $t=10$: $1-0{,}999^{10}=0{,}009955$, de raíz $0{,}09978$; $1-0{,}9^{10}=0{,}6513$; cociente $0{,}1532$.
+  \item $t=1000$: $1-0{,}999^{1000}=0{,}6323$, de raíz $0{,}7952$; $1-0{,}9^{1000}\approx 1$; cociente $0{,}7952$.
+  \item Paso de $t=2$: $m_2=0{,}035$ y $\sqrt{v_2}=\sqrt{0{,}00025975}=0{,}01612$; $0{,}01\cdot 0{,}2353\cdot 0{,}035/0{,}01612=0{,}005109$.
+\end{enumerate}
+\resultado \textbf{$\eta_t/\eta=0{,}3162$; $0{,}2353$; $0{,}1532$; $0{,}7952$ para $t=1$, 2, 10 y 1000.} La corrección equivale a una tasa que crece hacia $\eta$ durante los primeros miles de pasos: un calentamiento implícito.
+\comprobacion el paso de $t=2$ coincide con el del \cref{eje:5-adam} ($0{,}00511$) salvo redondeo. Cuando $t\to\infty$, ambos factores tienden a~1 y $\eta_t\to\eta$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-warmup}
+\datos calendario de calentamiento lineal y decaimiento coseno (\cref{def:coseno}).
+\planteamiento identificar qué falla al principio y al final del entrenamiento con $\eta$ constante.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Al principio.} Los gradientes son grandes e irregulares y los momentos de Adam se estiman con muy pocos gradientes. Una tasa grande desde el primer paso puede hacer divergir la pérdida (\cref{teo:gd-cuadratica}: el paso debe ser menor que $2/\lambda_{\max}$). El calentamiento sube $\eta$ gradualmente; el \cref{eje:5-sin-correccion} muestra que la corrección de sesgo de Adam ya produce un efecto parecido.
+  \item \emph{Al final.} Con gradientes estocásticos, el exceso de pérdida estacionario es proporcional a $\eta$ (\cref{prop:suelo}). El decaimiento coseno reduce $\eta$ suavemente y rebaja ese suelo de ruido.
+\end{enumerate}
+\resultado \textbf{el calentamiento aporta estabilidad inicial y el decaimiento, precisión final.}
+\comprobacion en el \cref{eje:3-suelo}, dividir $\eta$ por 10 divide el exceso de pérdida por $10{,}5$.
+\end{solucion}
+
+\begin{solucion}{eje:6-calendario}
+\datos $\eta_{\max}=6\cdot 10^{-4}$, $\eta_{\min}=6\cdot 10^{-5}$, $W=1000$, $T=11\,000$.
+\planteamiento \cref{def:coseno}; progreso del tramo coseno $(t-1000)/10\,000$; amplitud $\frac12(\eta_{\max}-\eta_{\min})=2{,}7\cdot 10^{-4}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $t=500<W$: $\eta=6\cdot 10^{-4}\cdot 500/1000=3\cdot 10^{-4}$.
+  \item $t=6000$: progreso $0{,}5$; $\cos(\pi/2)=0$; $\eta=6\cdot 10^{-5}+2{,}7\cdot 10^{-4}=3{,}3\cdot 10^{-4}$.
+  \item $t=8500$: progreso $0{,}75$; $\cos(0{,}75\pi)=-0{,}7071$; $1-0{,}7071=0{,}2929$.
+  \item $\eta=6\cdot 10^{-5}+2{,}7\cdot 10^{-4}\cdot 0{,}2929=6\cdot 10^{-5}+7{,}908\cdot 10^{-5}=1{,}391\cdot 10^{-4}$.
+\end{enumerate}
+\resultado \textbf{$\eta(500)=3\cdot 10^{-4}$; $\eta(6000)=3{,}3\cdot 10^{-4}$; $\eta(8500)\approx 1{,}391\cdot 10^{-4}$.}
+\comprobacion en el punto medio, $(\eta_{\max}+\eta_{\min})/2=(6+0{,}6)\cdot 10^{-4}/2=3{,}3\cdot 10^{-4}$ (\cref{prop:coseno}).
+\end{solucion}
+
+\begin{solucion}{eje:6-adamw}
+\datos $\eta=10^{-3}$, $\lambda=0{,}1$, $\theta=1$, $\hat v=10^{-4}$, $\varepsilon\approx 0$.
+\planteamiento con $L^{2}$, el término $\lambda\theta$ queda dividido por $\sqrt{\hat v}$ (\cref{obs:adam-l2}); en AdamW se resta $\eta\lambda\theta$ (\cref{def:adamw}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\sqrt{\hat v}=10^{-2}$.
+  \item Adam con $L^{2}$: $\eta\lambda\theta/\sqrt{\hat v}=10^{-3}\cdot 0{,}1/10^{-2}=10^{-2}$.
+  \item AdamW: $\eta\lambda\theta=10^{-3}\cdot 0{,}1=10^{-4}$.
+  \item Cociente: $10^{-2}/10^{-4}=100$.
+\end{enumerate}
+\resultado \textbf{Adam con $L^{2}$ encoge $0{,}01$ ($\theta\to 0{,}99$) y AdamW $0{,}0001$ ($\theta\to 0{,}9999$); el cociente es 100.} El parámetro de gradientes pequeños se regulariza 100 veces más con $L^{2}$.
+\comprobacion con $\hat v=1$ ambos métodos coinciden en $10^{-4}$, como en el \cref{tab:adamw}.
+\end{solucion}
+
+\begin{solucion}{eje:6-semivida}
+\datos (a) factor por paso $1-10^{-4}$; (b) $\eta=3\cdot 10^{-4}$, $\lambda=0{,}1$, $10^{5}$ pasos.
+\planteamiento tras $k$ pasos de decaimiento puro, el peso queda multiplicado por $(1-\eta\lambda)^{k}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $(1-10^{-4})^{k}=\frac12$, luego $k=\ln 0{,}5/\ln(1-10^{-4})=-0{,}6931/(-1{,}0001\cdot 10^{-4})\approx 6931$.
+  \item (b) $\eta\lambda=3\cdot 10^{-5}$; $\ln\bigl((1-3\cdot 10^{-5})^{10^{5}}\bigr)=10^{5}\ln(1-3\cdot 10^{-5})\approx-3{,}0000$.
+  \item $e^{-3}\approx 0{,}04979$.
+\end{enumerate}
+\resultado \textbf{(a) unos 6931 pasos; (b) el peso queda multiplicado por $\approx 0{,}0498$.}
+\comprobacion para $x$ pequeño, $(1-x)^{k}\approx e^{-kx}$: en (a), $e^{-6931\cdot 10^{-4}}=e^{-0{,}6931}=0{,}5$.
+\end{solucion}
+
+\begin{solucion}{eje:6-ridge}
+\datos $J_\lambda(w)=\frac{a}{2}(w-c)^{2}+\frac{\lambda}{2}w^{2}$, $a>0$, $\lambda\ge 0$; caso numérico $a=2$, $c=3$, $\lambda=2$.
+\planteamiento anular la derivada; $J_\lambda''=a+\lambda>0$ garantiza que es el mínimo (\cref{teo:opt-convexa}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $J_\lambda'(w)=a(w-c)+\lambda w$.
+  \item $J_\lambda'(w^{\ast})=0\Rightarrow(a+\lambda)w^{\ast}=ac\Rightarrow w^{\ast}=ac/(a+\lambda)$.
+  \item Paso de descenso: $w-\eta J_\lambda'(w)=w-\eta\lambda w-\eta a(w-c)=(1-\eta\lambda)w-\eta a(w-c)$.
+  \item Números: $w^{\ast}=2\cdot 3/(2+2)=1{,}5$.
+  \item Convergencia: $J_\lambda$ es una cuadrática de curvatura $a+\lambda$; por el \cref{ej:gd-1d}, converge si y solo si $0<\eta<2/(a+\lambda)$, que con los datos es $0<\eta<0{,}5$.
+\end{enumerate}
+\resultado \textbf{$w^{\ast}=ac/(a+\lambda)=1{,}5$; el paso de descenso es $(1-\eta\lambda)w-\eta a(w-c)$ y converge para $0<\eta<2/(a+\lambda)$.}
+\comprobacion $J_\lambda'(1{,}5)=2\cdot(1{,}5-3)+2\cdot 1{,}5=-3+3=0$. Con $\lambda=0$ se recupera $w^{\ast}=c=3$, y el factor $a/(a+\lambda)=1/2$ es el de la \cref{prop:ridge}.
+\end{solucion}
+
+\begin{solucion}{eje:6-polinomico}
+\datos $\eta_t=\eta_0t^{-\alpha}$, $t\ge 1$, $\eta_0>0$, $\alpha>0$.
+\planteamiento criterio de las series $\sum t^{-p}$ (convergen si y solo si $p>1$) y comparación con integrales para acotar sumas de funciones decrecientes.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\sum_t\eta_t=\eta_0\sum_tt^{-\alpha}$ diverge si y solo si $\alpha\le 1$.
+  \item $\sum_t\eta_t^{2}=\eta_0^{2}\sum_tt^{-2\alpha}$ converge si y solo si $2\alpha>1$, es decir, $\alpha>\frac12$.
+  \item Ambas condiciones a la vez: $\frac12<\alpha\le 1$.
+  \item (b) $\alpha=\frac12$. Como $x\mapsto x^{-1/2}$ es decreciente, $t^{-1/2}\ge\int_t^{t+1}x^{-1/2}\,dx$; sumando, $\sum_{t=1}^{T}t^{-1/2}\ge\int_1^{T+1}x^{-1/2}\,dx=2(\sqrt{T+1}-1)$.
+  \item $\eta_t^{2}=\eta_0^{2}/t$ y, para $t\ge 2$, $1/t\le\int_{t-1}^{t}dx/x$; así $\sum_{t=1}^{T}1/t\le 1+\int_1^{T}dx/x=1+\ln T$.
+  \item Cota del \cref{teo:sgd-convexo}: $\dfrac{r^{2}+G^{2}\eta_0^{2}(1+\ln T)}{4\eta_0(\sqrt{T+1}-1)}$. El numerador crece como $\ln T$ y el denominador como $\sqrt T$.
+\end{enumerate}
+\resultado \textbf{(a) las condiciones de Robbins--Monro se cumplen si y solo si $\frac12<\alpha\le 1$; (b) con $\alpha=\frac12$ la cota es $O(\ln T/\sqrt T)$}, casi la velocidad $O(1/\sqrt T)$ del paso constante óptimo (\cref{cor:sgd-constante}), sin necesidad de conocer $T$ de antemano.
+\comprobacion con $T=100$: $\sum_{t=1}^{100}t^{-1/2}\approx 18{,}59\ge 2(\sqrt{101}-1)\approx 18{,}10$, y $\sum_{t=1}^{100}1/t\approx 5{,}187\le 1+\ln 100\approx 5{,}605$.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+\def\UrlBreaks{\do\/\do-}
+
+\bibitem{bottou}
+L.~Bottou, F.~E. Curtis y J.~Nocedal.
+\newblock Optimization methods for large-scale machine learning.
+\newblock \emph{SIAM Review}, 60(2):223--311, 2018.
+\newblock \url{https://arxiv.org/abs/1606.04838}
+
+\bibitem{bv}
+S.~Boyd y L.~Vandenberghe.
+\newblock \emph{Convex Optimization}.
+\newblock Cambridge University Press, 2004.
+\newblock Cap.~2, «Convex sets»; cap.~3, «Convex functions»; cap.~9, «Unconstrained minimization». Texto del curso EE364a de Stanford.
+\newblock \url{https://web.stanford.edu/~boyd/cvxbook/}
+
+\bibitem{ee364a}
+S.~Boyd.
+\newblock EE364a: Convex Optimization I.
+\newblock Stanford University. Transparencias del curso.
+\newblock \url{https://web.stanford.edu/class/ee364a/lectures.html}
+
+\bibitem{gpt3}
+T.~B. Brown \emph{et al.}
+\newblock Language models are few-shot learners.
+\newblock En \emph{Advances in Neural Information Processing Systems 33 (NeurIPS)}, 2020.
+\newblock \url{https://arxiv.org/abs/2005.14165}
+
+\bibitem{cohen}
+J.~M. Cohen, S.~Kaur, Y.~Li, J.~Z. Kolter y A.~Talwalkar.
+\newblock Gradient descent on neural networks typically occurs at the edge of stability.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2021.
+\newblock \url{https://arxiv.org/abs/2103.00065}
+
+\bibitem{dauphin}
+Y.~N. Dauphin, R.~Pascanu, C.~Gulcehre, K.~Cho, S.~Ganguli e Y.~Bengio.
+\newblock Identifying and attacking the saddle point problem in high-dimensional non-convex optimization.
+\newblock En \emph{Advances in Neural Information Processing Systems 27 (NeurIPS)}, 2014.
+\newblock \url{https://arxiv.org/abs/1406.2572}
+
+\bibitem{adagrad}
+J.~Duchi, E.~Hazan e Y.~Singer.
+\newblock Adaptive subgradient methods for online learning and stochastic optimization.
+\newblock \emph{Journal of Machine Learning Research}, 12:2121--2159, 2011.
+
+\bibitem{goh}
+G.~Goh.
+\newblock Why momentum really works.
+\newblock \emph{Distill}, 2017.
+\newblock \url{https://distill.pub/2017/momentum/}
+
+\bibitem{gbc}
+I.~Goodfellow, Y.~Bengio y A.~Courville.
+\newblock \emph{Deep Learning}.
+\newblock MIT Press, 2016.
+\newblock Cap.~4, «Numerical Computation»; cap.~7, «Regularization for Deep Learning»; cap.~8, «Optimization for Training Deep Models».
+\newblock \url{https://www.deeplearningbook.org/}
+
+\bibitem{goyal}
+P.~Goyal, P.~Dollár, R.~Girshick \emph{et al.}
+\newblock Accurate, large minibatch SGD: Training ImageNet in 1 hour.
+\newblock Prepublicación, 2017.
+\newblock \url{https://arxiv.org/abs/1706.02677}
+
+\bibitem{rmsprop}
+G.~Hinton, N.~Srivastava y K.~Swersky.
+\newblock Neural Networks for Machine Learning, clase~6e: «rmsprop: Divide the gradient by a running average of its recent magnitude».
+\newblock Curso en línea, Coursera, 2012.
+
+\bibitem{keskar}
+N.~S. Keskar, D.~Mudigere, J.~Nocedal, M.~Smelyanskiy y P.~T.~P. Tang.
+\newblock On large-batch training for deep learning: Generalization gap and sharp minima.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2017.
+\newblock \url{https://arxiv.org/abs/1609.04836}
+
+\bibitem{adam}
+D.~P. Kingma y J.~Ba.
+\newblock Adam: A method for stochastic optimization.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2015.
+\newblock \url{https://arxiv.org/abs/1412.6980}
+
+\bibitem{li-paisaje}
+H.~Li, Z.~Xu, G.~Taylor, C.~Studer y T.~Goldstein.
+\newblock Visualizing the loss landscape of neural nets.
+\newblock En \emph{Advances in Neural Information Processing Systems 31 (NeurIPS)}, 2018.
+\newblock \url{https://arxiv.org/abs/1712.09913}
+
+\bibitem{sgdr}
+I.~Loshchilov y F.~Hutter.
+\newblock SGDR: Stochastic gradient descent with warm restarts.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2017.
+\newblock \url{https://arxiv.org/abs/1608.03983}
+
+\bibitem{adamw}
+I.~Loshchilov y F.~Hutter.
+\newblock Decoupled weight decay regularization.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2019.
+\newblock \url{https://arxiv.org/abs/1711.05101}
+
+\bibitem{nesterov}
+Y.~Nesterov.
+\newblock A method for solving the convex programming problem with convergence rate $O(1/k^{2})$.
+\newblock \emph{Soviet Mathematics Doklady}, 27:372--376, 1983.
+
+\bibitem{polyak}
+B.~T. Polyak.
+\newblock Some methods of speeding up the convergence of iteration methods.
+\newblock \emph{USSR Computational Mathematics and Mathematical Physics}, 4(5):1--17, 1964.
+
+\bibitem{robbins}
+H.~Robbins y S.~Monro.
+\newblock A stochastic approximation method.
+\newblock \emph{The Annals of Mathematical Statistics}, 22(3):400--407, 1951.
+
+\bibitem{sagun}
+L.~Sagun, L.~Bottou e Y.~LeCun.
+\newblock Eigenvalues of the Hessian in deep learning: Singularity and beyond.
+\newblock Prepublicación, 2016.
+\newblock \url{https://arxiv.org/abs/1611.07476}
+
+\bibitem{strang}
+G.~Strang.
+\newblock \emph{Linear Algebra and Learning from Data}.
+\newblock Wellesley-Cambridge Press, 2019.
+\newblock Texto del curso 18.065 del MIT.
+
+\bibitem{mit18065}
+G.~Strang.
+\newblock 18.065: Matrix Methods in Data Analysis, Signal Processing, and Machine Learning.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, primavera de 2018.
+\newblock \url{https://ocw.mit.edu/courses/18-065-matrix-methods-in-data-analysis-signal-processing-and-machine-learning-spring-2018/}
+
+\bibitem{llama}
+H.~Touvron \emph{et al.}
+\newblock LLaMA: Open and efficient foundation language models.
+\newblock Prepublicación, 2023.
+\newblock \url{https://arxiv.org/abs/2302.13971}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock Cap.~12, «Optimization Algorithms».
+\newblock \url{https://d2l.ai/}
+
+\end{thebibliography}
+
+
+\end{document}

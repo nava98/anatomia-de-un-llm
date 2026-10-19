@@ -1,0 +1,205 @@
+% =====================================================================
+\chapter{Retropropagación en un perceptrón multicapa}
+\label{tema:5}
+% =====================================================================
+
+Entrenar una red por descenso de gradiente (módulo~7) exige calcular el gradiente de la pérdida respecto a todos los parámetros. La \emph{retropropagación} lo hace aplicando la regla de la cadena del módulo~4 desde la salida hacia la entrada y reutilizando cada derivada intermedia. Este tema la deduce para un MLP con salida softmax y entropía cruzada y la aplica a mano a una red pequeña. Se sigue la §6.5 de~\cite{gbc}, en particular la §6.5.4, las §6.6.2--6.6.4 de~\cite{jm3}, el capítulo~8 de~\cite{bishopdl}, la §5.3 de~\cite{d2l}, las notas «Backpropagation, Intuitions» de~\cite{cs231n} y la clase~3 de CS224N~\cite{cs224n}. El método se popularizó con el artículo de Rumelhart, Hinton y Williams~\cite{rumelhart}; su generalización a grafos arbitrarios, la diferenciación automática, es el objeto del módulo~10.
+
+\section{Grafos computacionales}
+
+\begin{definicion}[Grafo computacional]
+Un \emph{grafo computacional} es un grafo dirigido acíclico cuyos nodos son variables (escalares, vectores o matrices) y en el que cada nodo no inicial se obtiene aplicando una operación conocida a sus predecesores. La \emph{pasada hacia delante} evalúa los nodos en un orden topológico; la \emph{pasada hacia atrás} recorre el grafo en sentido inverso.
+\end{definicion}
+
+\begin{proposicion}[Regla de la cadena en un grafo]\label{prop:cadena-grafo}
+Sea $L$ un nodo escalar final y $v$ un nodo con sucesores $u_1,\dots,u_r$. Entonces
+\[
+\frac{\partial L}{\partial v}=\sum_{k=1}^{r}\frac{\partial L}{\partial u_k}\,\frac{\partial u_k}{\partial v}.
+\]
+\end{proposicion}
+
+\begin{proof}
+$L$ depende de $v$ solo a través de $u_1,\dots,u_r$; es la regla de la cadena multivariable (módulo~4) aplicada a $L=\ell(u_1(v),\dots,u_r(v))$.
+\end{proof}
+
+La consecuencia algorítmica es que, si se conocen $\partial L/\partial u_k$ para todos los sucesores de $v$, el gradiente respecto a $v$ se obtiene con operaciones locales. Recorriendo el grafo en orden topológico inverso, cada derivada se calcula una sola vez~\cite[§6.5.3]{gbc}. Cuando un nodo alimenta a varios sucesores, sus contribuciones se \emph{suman}.
+
+\section{El gradiente de la softmax con entropía cruzada}
+
+\begin{proposicion}\label{prop:delta-salida}
+Sea $z\in\R^{1\times K}$, $p=\softmax(z)$ e $y\in\{0,\dots,K-1\}$, y sea $L=-\ln p_y$. Entonces
+\[
+\frac{\partial L}{\partial z_k}=p_k-\ind[k=y],\qquad\text{es decir,}\qquad \nabla_{\!z}L=p-e_y.
+\]
+\end{proposicion}
+
+\begin{proof}
+Como $\ln p_y=z_y-\ln\sum_j e^{z_j}$, se tiene $L=-z_y+\LSE(z)$. La derivada del primer término respecto a $z_k$ es $-\ind[k=y]$, y la del segundo es $e^{z_k}/\sum_je^{z_j}=p_k$ (módulo~1, tema~4).
+\end{proof}
+
+\begin{corolario}\label{cor:suma-cero}
+Las componentes de $\nabla_{\!z}L$ suman~0.
+\end{corolario}
+
+\begin{proof}
+$\sum_k(p_k-\ind[k=y])=1-1=0$.
+\end{proof}
+
+El gradiente tiene una lectura directa: el descenso sube el logit de la clase correcta, que es la única componente negativa, y baja los demás en proporción a la probabilidad que el modelo les asignaba por error. La misma expresión $p-e_y$ es la que se retropropaga en cada posición durante el preentrenamiento de un LLM.
+
+\section{Capas lineales y de activación}
+
+\begin{proposicion}[Gradientes de una capa afín]\label{prop:capa-lineal}
+Sea $z=xW+b$ con $x\in\R^{1\times n}$, $W\in\R^{n\times m}$ y $b\in\R^{1\times m}$, y sea $g=\nabla_{\!z}L\in\R^{1\times m}$. Entonces
+\[
+\nabla_{\!W}L=x^{\top}g\in\R^{n\times m},\qquad \nabla_{\!b}L=g,\qquad \nabla_{\!x}L=g\,W^{\top}\in\R^{1\times n}.
+\]
+Para un lote $X\in\R^{B\times n}$ con gradientes $G\in\R^{B\times m}$ por filas y pérdida igual a la suma de las pérdidas, $\nabla_{\!W}L=X^{\top}G$, $\nabla_{\!b}L=\mathbf{1}^{\top}G$ y $\nabla_{\!X}L=GW^{\top}$.
+\end{proposicion}
+
+\begin{proof}
+Se tiene $z_j=\sum_ix_iW_{ij}+b_j$, luego $\partial z_j/\partial W_{ik}=x_i\,\ind[j=k]$, $\partial z_j/\partial b_k=\ind[j=k]$ y $\partial z_j/\partial x_i=W_{ij}$. Por la \cref{prop:cadena-grafo}, $\partial L/\partial W_{ik}=\sum_jg_j\,x_i\ind[j=k]=x_ig_k$, que es la entrada $(i,k)$ de $x^{\top}g$; $\partial L/\partial b_k=g_k$; y $\partial L/\partial x_i=\sum_jg_jW_{ij}$, que es la componente $i$ de $gW^{\top}$. Para el lote se suman las contribuciones de cada fila: $\sum_r x_r^{\top}g_r=X^{\top}G$.
+\end{proof}
+
+\begin{observacion}[Análisis dimensional]
+El gradiente respecto a una matriz tiene siempre la forma de la matriz. En la \cref{prop:capa-lineal}, $x^{\top}$ es $n\times 1$ y $g$ es $1\times m$, de modo que $x^{\top}g$ es $n\times m$, como $W$. Comprobar las formas basta a menudo para recordar el orden y las trasposiciones: «entrada traspuesta por gradiente de la salida»~\cite{cs231n}. Con vectores columna, como en las notas de~\cite{cs231n}, las mismas fórmulas aparecen traspuestas.
+\end{observacion}
+
+\begin{proposicion}[Gradiente a través de una activación]\label{prop:activacion}
+Sea $h=\phi(z)$ aplicada componente a componente. Entonces $\nabla_{\!z}L=\nabla_{\!h}L\odot\phi'(z)$.
+\end{proposicion}
+
+\begin{proof}
+Como $h_j$ depende solo de $z_j$, el jacobiano $\partial h/\partial z$ es diagonal con entradas $\phi'(z_j)$, y $\partial L/\partial z_j=(\partial L/\partial h_j)\,\phi'(z_j)$.
+\end{proof}
+
+\section{Las ecuaciones de la retropropagación}
+
+\begin{teorema}[Retropropagación en un MLP de dos capas]\label{teo:backprop}
+Sea el MLP $z^{(1)}=xW_1+b_1$, $h=\phi(z^{(1)})$, $z^{(2)}=hW_2+b_2$, $p=\softmax(z^{(2)})$, $L=-\ln p_y$. Definiendo $\delta^{(2)}=\nabla_{z^{(2)}}L$ y $\delta^{(1)}=\nabla_{z^{(1)}}L$, se cumple
+\[
+\begin{aligned}
+\delta^{(2)}&=p-e_y, & \nabla_{\!W_2}L&=h^{\top}\delta^{(2)}, & \nabla_{\!b_2}L&=\delta^{(2)},\\
+\nabla_{\!h}L&=\delta^{(2)}W_2^{\top}, & \delta^{(1)}&=\nabla_{\!h}L\odot\phi'(z^{(1)}), & & \\
+\nabla_{\!W_1}L&=x^{\top}\delta^{(1)}, & \nabla_{\!b_1}L&=\delta^{(1)}, & \nabla_{\!x}L&=\delta^{(1)}W_1^{\top}.
+\end{aligned}
+\]
+\end{teorema}
+
+\begin{proof}
+La primera ecuación es la \cref{prop:delta-salida}. Las de la capa~2 y $\nabla_hL$ son la \cref{prop:capa-lineal} con entrada $h$ y $g=\delta^{(2)}$. La de $\delta^{(1)}$ es la \cref{prop:activacion}. Las de la capa~1 son de nuevo la \cref{prop:capa-lineal}, con entrada $x$ y $g=\delta^{(1)}$.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth,
+  n/.style={draw,rounded corners=2pt,minimum height=7mm,minimum width=9mm,inner sep=3pt,font=\small}]
+  \foreach \nm/\lab/\xx in {x/{$x$}/0, z1/{$z^{(1)}$}/2.4, h/{$h$}/4.8, z2/{$z^{(2)}$}/7.2, p/{$p$}/9.6, L/{$L$}/12}
+    \node[n] (\nm) at (\xx,0) {\lab};
+  \node[n,above=6mm of z1] (W1) {$W_1,b_1$};
+  \node[n,above=6mm of z2] (W2) {$W_2,b_2$};
+  \draw[->] (x)--(z1); \draw[->] (W1)--(z1); \draw[->] (z1)--node[above,font=\scriptsize]{$\phi$}(h);
+  \draw[->] (h)--(z2); \draw[->] (W2)--(z2); \draw[->] (z2)--(p); \draw[->] (p)--node[above,font=\scriptsize]{$y$}(L);
+  \draw[->,dashed] (L.south) |- ++(0,-0.6) -| node[pos=0.25,below,font=\scriptsize]{$p-e_y$} (z2.south);
+  \draw[->,dashed] ($(z2.south)+(-0.15,0)$) |- ++(0,-1.3) -| node[pos=0.25,below,font=\scriptsize]{$\delta^{(2)}W_2^{\top}$} (h.south);
+  \draw[->,dashed] ($(h.south)+(-0.15,0)$) |- ++(0,-0.6) -| node[pos=0.25,below,font=\scriptsize]{$\odot\,\phi'(z^{(1)})$} (z1.south);
+  \draw[->,dashed] ($(z1.south)+(-0.15,0)$) |- ++(0,-1.3) -| node[pos=0.25,below,font=\scriptsize]{$\delta^{(1)}W_1^{\top}$} (x.south);
+\end{tikzpicture}
+\caption{Grafo computacional del MLP del \cref{teo:backprop}. Las flechas continuas son la pasada hacia delante; las discontinuas, la pasada hacia atrás.}\label{fig:grafo}
+\end{figure}
+
+\begin{observacion}[Coste]
+La pasada hacia delante realiza dos productos de matrices; la hacia atrás, tres para los gradientes de los parámetros y $\nabla_hL$, más uno opcional para $\nabla_xL$, todos de las mismas dimensiones. El coste de calcular el gradiente completo es, por tanto, del mismo orden que el de evaluar la red: aproximadamente el doble. Calcular cada derivada parcial por separado, con diferencias finitas, costaría una evaluación por parámetro.
+\end{observacion}
+
+\section{Un ejemplo completo}
+
+\begin{ejemplo}[Red $2\to 3\to 3$ con ReLU]\label{ej:backprop}
+Sean $x=(1,2)$, clase correcta $y=1$ (clases $0,1,2$),
+\[
+W_1=\begin{pmatrix}1&-1&0{,}5\\0{,}5&0{,}5&-1\end{pmatrix},\quad b_1=(0;\,0{,}5;\,0),\quad
+W_2=\begin{pmatrix}1&0&-1\\0&2&0\\1&1&0\end{pmatrix},\quad b_2=(0,0,0).
+\]
+\emph{Hacia delante.}
+\begin{enumerate}[label=\arabic*.]
+  \item $z^{(1)}=xW_1+b_1=(1+1;\,-1+1+0{,}5;\,0{,}5-2)=(2;\,0{,}5;\,-1{,}5)$.
+  \item $h=\ReLU(z^{(1)})=(2;\,0{,}5;\,0)$.
+  \item $z^{(2)}=hW_2=(2;\,1;\,-2)$.
+  \item $e^{z^{(2)}}=(7{,}3891;\,2{,}7183;\,0{,}1353)$, con suma $10{,}2427$; $p=(0{,}7214;\,0{,}2654;\,0{,}0132)$.
+  \item $L=-\ln 0{,}2654=1{,}3266$.
+\end{enumerate}
+\emph{Hacia atrás.}
+\begin{enumerate}[label=\arabic*.]
+  \item $\delta^{(2)}=p-e_1=(0{,}7214;\,-0{,}7346;\,0{,}0132)=\nabla_{\!b_2}L$.
+  \item $\nabla_{\!W_2}L=h^{\top}\delta^{(2)}$: la fila~1 es $2\,\delta^{(2)}$, la fila~2 es $0{,}5\,\delta^{(2)}$ y la fila~3 es nula:
+  \[
+  \nabla_{\!W_2}L=\begin{pmatrix}1{,}4428&-1{,}4692&0{,}0264\\0{,}3607&-0{,}3673&0{,}0066\\0&0&0\end{pmatrix}.
+  \]
+  \item $\nabla_{\!h}L=\delta^{(2)}W_2^{\top}$; cada componente es el producto escalar de $\delta^{(2)}$ con una fila de $W_2$: $(0{,}7214-0{,}0132;\,2\cdot(-0{,}7346);\,0{,}7214-0{,}7346)=(0{,}7082;\,-1{,}4692;\,-0{,}0132)$.
+  \item $\delta^{(1)}=\nabla_{\!h}L\odot\ind[z^{(1)}>0]=(0{,}7082;\,-1{,}4692;\,0)$. La tercera unidad estaba inactiva y no recibe gradiente.
+  \item $\nabla_{\!W_1}L=x^{\top}\delta^{(1)}$ y $\nabla_{\!b_1}L=\delta^{(1)}$:
+  \[
+  \nabla_{\!W_1}L=\begin{pmatrix}0{,}7082&-1{,}4692&0\\1{,}4164&-2{,}9384&0\end{pmatrix}.
+  \]
+\end{enumerate}
+Las filas de $\nabla_{\!W_2}L$ suman~0, como predice el \cref{cor:suma-cero}. Un paso de descenso con $\eta=0{,}1$ sobre todos los parámetros sube $p_y$ de $0{,}265$ a $0{,}862$ y baja la pérdida de $1{,}3266$ a $0{,}1482$.
+\end{ejemplo}
+
+\section{Comprobación numérica del gradiente}
+
+Un error en una sola ecuación de la retropropagación produce gradientes incorrectos sin ningún mensaje de error. La comprobación estándar compara con diferencias finitas~\cite{cs231n}.
+
+\begin{proposicion}[Diferencias centradas]\label{prop:centradas}
+Sea $f\colon\R\to\R$ de clase $C^{3}$ en un entorno de $\theta$. Entonces
+\[
+\frac{f(\theta+\varepsilon)-f(\theta-\varepsilon)}{2\varepsilon}=f'(\theta)+O(\varepsilon^{2}).
+\]
+\end{proposicion}
+
+\begin{proof}
+Por el teorema de Taylor, $f(\theta\pm\varepsilon)=f(\theta)\pm\varepsilon f'(\theta)+\tfrac12\varepsilon^{2}f''(\theta)\pm\tfrac16\varepsilon^{3}f'''(\xi_\pm)$. Al restar, los términos de orden par se cancelan y queda $2\varepsilon f'(\theta)+O(\varepsilon^{3})$.
+\end{proof}
+
+Aplicada a cada entrada de $W_1$ en el \cref{ej:backprop} con $\varepsilon=10^{-6}$, la fórmula reproduce $\nabla_{\!W_1}L$ con un error menor que $10^{-9}$. La función ReLU no es derivable en~0; la comprobación es fiable mientras ninguna preactivación esté a distancia menor que $\varepsilon$ de ese punto.
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §6.5.1--6.5.4, y en especial §6.5.4 «Back-Propagation Computation in Fully Connected MLP».
+\item Jurafsky y Martin~\cite{jm3}, §6.6.2--6.6.4: gradiente, grafos computacionales y diferenciación hacia atrás.
+\item Stanford CS231n~\cite{cs231n}, «Backpropagation, Intuitions», apartado «Gradients for vectorized operations».
+\item Stanford CS224N~\cite{cs224n}, clase~3 «Backpropagation and Neural Network Basics».
+\item Zhang \emph{et al.}~\cite{d2l}, §5.3 «Forward Propagation, Backward Propagation, and Computational Graphs».
+\item Bishop y Bishop~\cite{bishopdl}, cap.~8 «Backpropagation».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{2}{eje:5-softmax}
+Calcule $\softmax(\ln 4,0,0)$ y la pérdida de entropía cruzada si la clase correcta es la tercera. Compárela con la pérdida de un modelo uniforme.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-delta}
+Para $p=(0{,}5;\,0{,}3;\,0{,}2)$ y clase correcta $y=1$, dé $\nabla_{\!z}L$. ¿Qué componente aumenta un paso de descenso?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-y0}
+Repita la pasada hacia atrás del \cref{ej:backprop} con clase correcta $y=0$. Dé $L$, $\delta^{(2)}$, $\nabla_{\!h}L$ y $\nabla_{\!W_1}L$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-cs224n}
+Una red calcula $h=\sigma(xW_1+b_1)$, $\hat y=\softmax(hW_2+b_2)$ y $J=-\ln\hat y_y$. (a) Escriba $\nabla_{\!x}J$. (b) Evalúelo con $x=(1,2)$, $W_1=\begin{psmallmatrix}1&-1\\0&1\end{psmallmatrix}$, $b_1=(-1,-1)$, $W_2=\begin{psmallmatrix}2&0\\0&-2\end{psmallmatrix}$, $b_2=0$ e $y=0$. (c) ¿Cuántos parámetros tiene la red si la entrada tiene dimensión $D_x=10$, la capa oculta $H=5$ y la salida $D_y=3$?
+\fuente{adaptado de Stanford CS224N, invierno de 2018~\cite{cs224n2018}, tarea~1, problemas~2(c) y~2(d).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-grafo}
+Dibuje el grafo computacional de $f(x,y)=x^{3}(x-y)$, evalúelo en $(2,3)$ y retropropague para obtener $\partial f/\partial x$ y $\partial f/\partial y$.
+\fuente{adaptado de MIT 18.065~\cite{mit18065}, lección~27 «Backpropagation», problema~5.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-suma}
+Demuestre que las componentes de $\nabla_{\!b_2}L$ y las de cada fila de $\nabla_{\!W_2}L$ suman~0, y relacione el resultado con la invariancia de la softmax por traslación. ¿Sigue siendo cierto para un lote de ejemplos?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-swiglu}
+Sea $a=xW_g$, $u=xW_u$, $m=\SiLU(a)\odot u$ y $o=mW_d$, y sea $\nabla_{\!o}L$ el gradiente que llega a la salida. Exprese $\nabla_{\!m}L$, $\nabla_{\!u}L$, $\nabla_{\!a}L$, los gradientes de las tres matrices y $\nabla_{\!x}L$.
+\end{ejercicio}

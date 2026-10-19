@@ -1,0 +1,161 @@
+% =====================================================================
+\chapter{Evaluación, puntos de control y curvas de pérdida}
+\label{tema:4}
+% =====================================================================
+
+La pérdida de entrenamiento de un lote es una cantidad ruidosa que, además, no mide lo que interesa: cómo se comporta el modelo con texto que no ha visto. Este tema define el estimador de la pérdida que se usa para dibujar las curvas, describe qué debe contener un punto de control para poder reanudar el entrenamiento sin perturbarlo, demuestra que la entropía del proceso que genera el texto es una cota inferior de la pérdida esperada y presenta una guía de diagnóstico a partir de la forma de las curvas. Se sigue el §7.8 y el capítulo~11 de~\cite{gbc}, los §5.2 y §7.2.3 de la tarea~1 de CS336~\cite{cs336} y el capítulo~2 de Cover y Thomas~\cite{ct}.
+
+\section{Estimar la pérdida}
+
+\begin{definicion}[Pérdida estimada]\label{def:estimada}
+Sean $(X^{(1)},Y^{(1)}),\dots,(X^{(r)},Y^{(r)})$ lotes extraídos de un conjunto de datos (entrenamiento o validación). La \emph{pérdida estimada} del modelo de parámetros $\theta$ es
+\[
+\hat{\mathcal{L}}(\theta)=\frac1r\sum_{q=1}^{r}\mathcal{L}_q(\theta),
+\]
+donde $\mathcal{L}_q$ es la pérdida media del lote $q$ (\cref{def:perdida}). En la práctica del módulo, $r=20$ y los lotes se extraen con un generador de semilla fija, de modo que son los mismos en todas las evaluaciones.
+\end{definicion}
+
+Si los lotes se extraen de forma independiente, $\hat{\mathcal{L}}(\theta)$ es un estimador insesgado de la pérdida esperada y su varianza es la de un lote dividida por $r$. Usar siempre los mismos lotes tiene una ventaja adicional cuando se comparan dos puntos de la curva.
+
+\begin{proposicion}[Lotes comunes]\label{prop:lotes-comunes}
+Sean $\theta_a$ y $\theta_b$ dos estados del modelo, y sean $\hat{\mathcal{L}}_a$ y $\hat{\mathcal{L}}_b$ sus pérdidas estimadas, vistas como variables aleatorias a través de la elección de los lotes. Entonces
+\[
+\Var\bigl(\hat{\mathcal{L}}_a-\hat{\mathcal{L}}_b\bigr)=\Var(\hat{\mathcal{L}}_a)+\Var(\hat{\mathcal{L}}_b)-2\Cov(\hat{\mathcal{L}}_a,\hat{\mathcal{L}}_b).
+\]
+Si los dos estimadores usan lotes independientes, la covarianza es nula; si usan los mismos lotes y la covarianza es positiva, la varianza de la diferencia es menor.
+\end{proposicion}
+
+\begin{proof}
+Es la fórmula de la varianza de una diferencia, $\Var(A-B)=\E[(A-B)^{2}]-(\E A-\E B)^{2}$, desarrollada. Con lotes independientes, $\hat{\mathcal{L}}_a$ y $\hat{\mathcal{L}}_b$ son funciones de variables independientes y su covarianza es nula.
+\end{proof}
+
+Dos estados próximos del modelo encuentran difíciles los mismos lotes, de modo que sus pérdidas sobre lotes comunes están positivamente correlacionadas; la diferencia entre dos puntos de la curva refleja entonces sobre todo el cambio del modelo y no el azar del muestreo. Es la técnica de los \emph{números aleatorios comunes} de la simulación estocástica.
+
+Durante la evaluación se usan dos instrucciones de PyTorch: \texttt{model.eval()}, que desactiva los componentes que se comportan distinto al entrenar (como el \emph{dropout}), y el contexto \texttt{torch.no\_grad()}, que evita construir el grafo de cómputo y ahorra memoria y tiempo. Al terminar, \texttt{model.train()} devuelve el modelo al modo de entrenamiento.
+
+\section{Puntos de control}
+
+\begin{definicion}[Punto de control]\label{def:checkpoint}
+Un \emph{punto de control} es un registro que contiene todo lo necesario para reanudar el entrenamiento como si no se hubiera interrumpido: los parámetros $\theta$, el estado del optimizador (en AdamW, los momentos $m$, $v$ y el contador de pasos) y el número de paso $s$, que fija la tasa del calendario~\cite[§5.2]{cs336}. Es habitual añadir la pérdida de validación y la configuración del modelo.
+\end{definicion}
+
+Si se reanuda sin el estado del optimizador, AdamW reinicia $m=v=0$ y $t=0$: el primer paso usa momentos estimados con un solo gradiente, sin la protección de un calentamiento, y la curva de pérdida da un salto. Si se reanuda sin el número de paso, el calendario vuelve a empezar.
+
+\begin{proposicion}[Memoria del estado de entrenamiento]\label{prop:memoria}
+En precisión simple (4~bytes por número), los parámetros, los gradientes y los dos momentos de AdamW de un modelo de $N$ parámetros ocupan $16N$ bytes, sin contar las activaciones.
+\end{proposicion}
+
+\begin{proof}
+Cada uno de los cuatro tensores (parámetros, gradientes, $m$ y $v$) tiene $N$ componentes de 4~bytes: $4\cdot 4N=16N$.
+\end{proof}
+
+Para el mini-GPT son $107\,694\cdot 16=1{,}72$~MB, de los que el modelo ocupa $0{,}43$~MB. Para un modelo de $7\cdot 10^{9}$ parámetros, la misma cuenta da $112$~GB, más que la memoria de una GPU de $80$~GB; por eso existen las técnicas de partición del estado del optimizador del módulo~17.
+
+\begin{observacion}[Parada temprana]\label{obs:parada}
+Guardar el punto de control solo cuando la pérdida de validación mejora y devolver al final el mejor es el algoritmo de \emph{parada temprana} de Goodfellow, Bengio y Courville~\cite[§7.8]{gbc}, que actúa como regularizador: limita el número efectivo de pasos de optimización. Los grandes entrenamientos guardan además puntos de control frecuentes porque, con miles de GPU, las interrupciones son rutinarias: el informe de Llama~3 documenta 466 interrupciones en un periodo de 54 días de preentrenamiento~\cite[§3.3.4]{llama3}.
+\end{observacion}
+
+\section{La cota inferior de la pérdida}
+
+\begin{teorema}[La entropía como cota inferior]\label{teo:cota}
+Sean $p$ y $q$ distribuciones sobre $\V$ con $q(x)>0$ siempre que $p(x)>0$. Entonces
+\[
+H(p,q)=-\sum_{x}p(x)\ln q(x)=H(p)+\KL(p\Vert q)\;\ge\;H(p),
+\]
+con igualdad si y solo si $q=p$.
+\end{teorema}
+
+\begin{proof}
+Sumando y restando $\sum_x p(x)\ln p(x)$,
+\[
+-\sum_x p(x)\ln q(x)=-\sum_x p(x)\ln p(x)+\sum_x p(x)\ln\frac{p(x)}{q(x)}=H(p)+\KL(p\Vert q).
+\]
+Por la desigualdad de Gibbs (módulo~6; \cite[teorema~2.6.3]{ct}), $\KL(p\Vert q)\ge 0$ con igualdad si y solo si $p=q$.
+\end{proof}
+
+Si $p$ es la distribución real del token siguiente y $q$ la del modelo, la pérdida esperada no puede bajar de $H(p)$. El \cref{eje:4-condicional} extiende el resultado a distribuciones condicionadas al contexto, que es el caso de un modelo de lenguaje. En consecuencia, si la pérdida media de validación sale claramente por debajo de la entropía del proceso generador, hay una fuga de información. En texto humano no se conoce $H$, pero el mismo resultado explica por qué las curvas de los grandes modelos se aplanan: las leyes de escalado del módulo~16 incluyen un término constante que se interpreta como la entropía irreducible del texto.
+
+\begin{ejemplo}[Entropía del corpus sintético]\label{ej:entropia-corpus}
+Una línea de tipo «objeto» elige de forma uniforme e independiente uno de 6 objetos, 6 colores, 6 materiales y 6 usos; el resto de sus caracteres está determinado. Su entropía es $\ln 6^{4}=7{,}167$ nats, más $\ln 4=1{,}386$ nats por la elección del tipo de línea. Sumando la entropía de todas las líneas del corpus y dividiendo por el número de caracteres, el cuaderno obtiene $H\approx 0{,}125$ nats por carácter. El mini-GPT termina en $0{,}324$: queda margen.
+\end{ejemplo}
+
+\section{Lectura de las curvas de pérdida}
+
+Una curva de pérdida se interpreta respecto de tres referencias horizontales: $\ln K$, la pérdida de la predicción uniforme (\cref{prop:lnK}); la pérdida del modelo de bigramas, que es lo mínimo que hay que superar; y, cuando se conoce, la entropía $H$ del texto, que no puede superarse (\cref{teo:cota}). El \cref{tab:curva} recoge la curva de la práctica.
+
+\begin{table}[h]
+\centering\small
+\caption{Pérdidas del mini-GPT base de la práctica, en nats por carácter. Referencias: $\ln 46=3{,}829$; bigramas, $2{,}035$; entropía del corpus, $\approx 0{,}125$.}\label{tab:curva}
+\begin{tabularx}{\textwidth}{@{}lcc>{\raggedright\arraybackslash}X@{}}
+\toprule
+Momento & Entrenamiento & Validación & Lectura \\
+\midrule
+Paso 0 & $4{,}046$ (un lote) & --- & cerca de $\ln K$: predicción casi uniforme \\
+Paso 100 & $2{,}017$ & $2{,}046$ & alcanza el nivel del bigrama \\
+Paso 200 & $1{,}040$ & $1{,}154$ & aprende palabras y plantillas \\
+Paso 400 & $0{,}370$ & $0{,}425$ & usa el contexto largo \\
+Paso 800 & $0{,}264$ & $0{,}324$ & afinado final con tasa baja \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{La forma.} Hay una caída rápida hasta el nivel del bigrama (pasos 0--100), en la que el modelo aprende las frecuencias de pares de caracteres, y una segunda bajada larga (100--500), en la que aprende a usar el contexto: qué plantilla está escribiendo y qué palabras han aparecido ya. La pendiente final se suaviza a medida que el coseno reduce la tasa.
+
+\paragraph{La brecha.} Al final, la diferencia entre validación y entrenamiento es $0{,}06$ nats. Es un sobreajuste leve: el modelo ha memorizado algunas frases, lo que es esperable cuando cada token se ve unas 57 veces. Si la pérdida de validación empezara a subir mientras la de entrenamiento baja, habría que parar, usar más datos o regularizar más.
+
+\begin{table}[h]
+\centering\small
+\caption{Síntomas frecuentes en las curvas de pérdida y su diagnóstico probable.}\label{tab:sintomas}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Síntoma & Diagnóstico probable & Qué probar \\
+\midrule
+No baja de $\ln K$ & error de programación: objetivos desalineados, tasa nula & sobreajustar un solo lote \\
+Baja y después da NaN & tasa demasiado alta & bajar $\eta_{\max}$, alargar el calentamiento, recortar \\
+Baja muy despacio & tasa demasiado baja & subir $\eta_{\max}$ \\
+Validación sube y entrenamiento baja & sobreajuste & más datos, decaimiento de pesos, parar antes \\
+Pérdida casi nula en ambas & fuga del futuro & revisar la máscara causal (\cref{obs:fuga}) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+La primera prueba de la tercera columna es la estrategia de depuración más recomendada: un modelo correcto debe poder llevar a casi cero la pérdida de un conjunto de datos diminuto, como un único lote; si no lo consigue, el fallo está en el software y no en la capacidad del modelo~\cite[§11.5]{gbc}, \cite[§7.2.3]{cs336}. La misma sección de~\cite{gbc} recomienda razonar con los errores de entrenamiento y de prueba: error bajo en entrenamiento y alto en prueba indica sobreajuste; error alto en ambos deja abiertas la falta de capacidad y un defecto del programa.
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §7.8 «Early Stopping» (algoritmo de parada temprana) y §11.5 «Debugging Strategies».
+\item Stanford CS336~\cite{cs336}, tarea~1, §5.2 «Checkpointing» y §7.2.3 «Tips and tricks for debugging model architectures».
+\item Cover y Thomas~\cite{ct}, §2.6 «Jensen's inequality and its consequences».
+\item Llama Team~\cite{llama3}, §3.3.4 «Reliability and Operational Challenges».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-estado}
+Explique por qué un punto de control debe incluir el estado del optimizador y el número de paso. ¿Qué se observaría en la curva de pérdida si se reanudara sin ellos?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:4-fijos}
+¿Por qué se evalúa siempre con los mismos lotes de validación? Relacione la respuesta con la \cref{prop:lotes-comunes}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-linea}
+Una línea de tipo «objeto» se genera eligiendo de forma uniforme uno de 6 objetos, 6 colores, 6 materiales y 6 usos, y mide 58 caracteres incluido el salto de línea. Contando $\ln 4$ nats por la elección del tipo de línea, ¿qué entropía mínima por carácter tiene? Compárela con la del corpus completo y con la pérdida final del modelo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-brecha}
+Con los datos del \cref{tab:curva} al final del entrenamiento: (a) calcule la perplejidad de entrenamiento y la de validación y el cociente entre ambas; (b) con el \cref{teo:cota} y la entropía del \cref{ej:entropia-corpus}, estime la divergencia media $\KL$ entre la distribución real y la del modelo en validación; (c) interprete la perplejidad correspondiente a la entropía del corpus.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-memoria}
+Suponga que todos los tensores están en precisión simple. (a) Calcule la memoria que ocupan los parámetros, los gradientes y el estado de AdamW de la variante del mini-GPT con $d=128$ y $L=3$, que tiene $609\,838$ parámetros, sin contar las activaciones. (b) Repita el cálculo para un modelo de $7\cdot 10^{9}$ parámetros. ¿Cuántas GPU de $80$~GB harían falta, como mínimo, solo para ese estado?
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §4.3, problema \emph{adamw\_accounting}, apartado (a) (se omiten las activaciones y se usan los tamaños del módulo).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-condicional}
+Sea $(C,X)$ un par aleatorio con distribución conjunta $p(c,x)$ sobre contextos y tokens, y sea $q(x\mid c)$ un modelo con $q(x\mid c)>0$ siempre que $p(c,x)>0$. Demuestre que
+\[
+\E_{p}\bigl[-\ln q(X\mid C)\bigr]\;\ge\;H(X\mid C)=-\sum_{c,x}p(c,x)\ln p(x\mid c),
+\]
+con igualdad si y solo si $q(\cdot\mid c)=p(\cdot\mid c)$ para todo $c$ con $p(c)>0$. Explique por qué este es el resultado que acota la pérdida esperada de un modelo de lenguaje.
+\end{ejercicio}

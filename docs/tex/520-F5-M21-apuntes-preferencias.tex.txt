@@ -1,0 +1,1939 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase V — Módulo 21
+%  Aprendizaje por refuerzo y preferencias
+%  Compilar: latexmk -r ../latexmkrc M21-preferencias.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 21}
+
+% Notación propia del módulo
+\newcommand{\Sset}{\mathcal{S}}
+\newcommand{\Aset}{\mathcal{A}}
+\newcommand{\KL}{D_{\mathrm{KL}}}
+\newcommand{\piref}{\pi_{\mathrm{ref}}}
+\newcommand{\piold}{\pi_{\mathrm{old}}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\media}{\operatorname{media}}
+\newcommand{\desv}{\operatorname{desv}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\LRM}{\mathcal{L}_{\mathrm{RM}}}
+\newcommand{\LDPO}{\mathcal{L}_{\mathrm{DPO}}}
+\newcommand{\pref}{\succ}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-\do\/}\makeatother
+
+\hypersetup{pdftitle={Módulo 21. Aprendizaje por refuerzo y preferencias},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase V \textperiodcentered\ Alineamiento, RL, agentes e interpretabilidad}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 21\par}\vspace{0.3cm}
+{\LARGE Aprendizaje por refuerzo y preferencias\par}
+\vspace{0.2cm}
+{\large Gradiente de política, PPO, modelos de recompensa, DPO y GRPO\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Un modelo preentrenado y ajustado por instrucciones (módulo~20) imita textos, pero imitar no es lo mismo que elegir la respuesta que un usuario preferiría. Para lo segundo se necesita una señal de calidad sobre respuestas completas, que normalmente no es derivable respecto a los parámetros: una nota humana, una comparación entre dos respuestas o el veredicto de un verificador. El aprendizaje por refuerzo proporciona el marco para optimizar una señal así. Este módulo formaliza el modelo de lenguaje como una política en un proceso de decisión de Markov, deduce el gradiente de política y sus técnicas de reducción de varianza, analiza la optimización proximal (PPO) y la regularización por divergencia de Kullback--Leibler respecto a un modelo de referencia, introduce el modelo de Bradley--Terry para aprender recompensas a partir de preferencias, deriva por completo la optimización directa de preferencias (DPO) y estudia la retroalimentación generada por IA, las recompensas verificables con GRPO y el fenómeno de la sobreoptimización. Sobre el entrenamiento de Claude, Gemini y Grok solo se usa información pública.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item definir un proceso de decisión de Markov, el retorno, las funciones de valor y la ventaja, demostrar la ecuación de Bellman y modelizar la generación de texto como un MDP de tokens;
+  \item demostrar el teorema del gradiente de política, deducir el estimador REINFORCE, probar que una línea base no introduce sesgo y obtener la línea base de varianza mínima y la estimación generalizada de la ventaja;
+  \item justificar el muestreo de importancia y el objetivo recortado de PPO, y demostrar la forma cerrada de la política óptima del objetivo con penalización KL;
+  \item formular el modelo de Bradley--Terry, obtener su estimador de máxima verosimilitud y describir el procedimiento RLHF de InstructGPT;
+  \item derivar paso a paso la pérdida DPO y su gradiente, y demostrar los resultados de equivalencia de recompensas en que se apoya;
+  \item describir Constitutional AI y el RL con recompensas verificables, calcular las ventajas de GRPO y analizar la sobreoptimización del modelo de recompensa.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1 se usa la regla de la cadena para secuencias y la softmax con temperatura; del módulo~4, el gradiente y la regla de la cadena del cálculo; del módulo~5, la esperanza, la varianza y la máxima verosimilitud; del módulo~6, la divergencia de Kullback--Leibler y la desigualdad de Gibbs; del módulo~7, el descenso de gradiente estocástico; del módulo~8, la regresión logística y la función sigmoide $\sigma(z)=1/(1+e^{-z})$; del módulo~14, el Transformer como red que produce logits, y del módulo~20, el ajuste fino supervisado (SFT).
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Procesos de decisión de Markov y el LLM como política & \cite{sb}, \cite{silver}, \cite{cs336} \\
+2 & Gradiente de política & \cite{sb}, \cite{cs285}, \cite{williams}, \cite{gae} \\
+3 & Optimización proximal y regularización KL & \cite{cs285}, \cite{ppo}, \cite{instructgpt}, \cite{dpo} \\
+4 & Preferencias, modelo de recompensa y RLHF & \cite{bt}, \cite{christiano}, \cite{stiennon}, \cite{instructgpt} \\
+5 & Optimización directa de preferencias (DPO) & \cite{dpo}, \cite{cs234}, \cite{cs336a5s} \\
+6 & Retroalimentación de IA, recompensas verificables y sobreoptimización & \cite{cai}, \cite{deepseekmath}, \cite{r1}, \cite{gao} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. Los dos primeros temas siguen los capítulos~3 («Finite Markov Decision Processes») y~13 («Policy Gradient Methods») de Sutton y Barto~\cite{sb}, la clase~2 del curso de David Silver en UCL~\cite{silver} y las clases~5 («Policy Gradients»), 6 («Actor-Critic Algorithms») y~9 («Advanced Policy Gradients») del curso CS285 de Berkeley~\cite{cs285}, cuya tarea~2~\cite{cs285hw2} aporta varios ejercicios. La aplicación a modelos de lenguaje sigue la clase~17 del curso CS336 de Stanford~\cite{cs336}, dedicada al RL con recompensas verificables, y su tarea~5~\cite{cs336a5,cs336a5s}; el aprendizaje de recompensas a partir de preferencias sigue además la tarea~3 de CS234~\cite{cs234a3}. Los métodos se toman de sus artículos originales: Williams~\cite{williams} para REINFORCE, Schulman \emph{et al.}~\cite{gae,ppo} para GAE y PPO, Bradley y Terry~\cite{bt} para el modelo de comparaciones, Christiano \emph{et al.}~\cite{christiano}, Stiennon \emph{et al.}~\cite{stiennon} y Ouyang \emph{et al.}~\cite{instructgpt} para RLHF, Rafailov \emph{et al.}~\cite{dpo} para DPO, Bai \emph{et al.}~\cite{cai} para Constitutional AI, Shao \emph{et al.}~\cite{deepseekmath} y DeepSeek-AI~\cite{r1} para GRPO, Lambert \emph{et al.}~\cite{tulu3} para el término RLVR, Liu \emph{et al.}~\cite{drgrpo} para la crítica de GRPO y Gao, Schulman y Hilton~\cite{gao} para la sobreoptimización. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública, y se indica expresamente cuando un detalle no se ha publicado.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\Sset$, $\Aset$, $p(s'\mid s,a)$ & estados, acciones y probabilidades de transición de un MDP \\
+$\gamma\in[0,1]$, $G_t$ & factor de descuento y retorno desde el instante $t$ \\
+$\tau=(s_0,a_0,r_1,s_1,\dots)$ & trayectoria o episodio \\
+$\pi_\theta(a\mid s)$ & política con parámetros $\theta$ \\
+$V^{\pi}$, $Q^{\pi}$, $A^{\pi}=Q^{\pi}-V^{\pi}$ & funciones de valor de estado, de acción y ventaja \\
+$J(\theta)$ & rendimiento esperado de la política $\pi_\theta$ \\
+$x$, $y=y_{1:T}$, $\V$ & instrucción (\emph{prompt}), respuesta de $T$ tokens y vocabulario \\
+$r(x,y)$, $r_\phi$ & recompensa de una respuesta y modelo de recompensa con parámetros $\phi$ \\
+$\piref$, $\piold$ & política de referencia (congelada) y política que generó las muestras \\
+$\rho=\pi_\theta/\piold$, $\varepsilon$ & cociente de importancia y parámetro de recorte de PPO \\
+$\beta>0$, $Z(x)$ & intensidad de la penalización KL y función de partición \\
+$\KL(p\,\|\,q)$ & divergencia de Kullback--Leibler, en nats \\
+$y_w\pref y_l$ & la respuesta $y_w$ se prefiere a $y_l$ \\
+$\sigma(z)=1/(1+e^{-z})$ & función sigmoide \\
+$e_a$ & vector canónico (\emph{one-hot}) de la acción $a$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Procesos de decisión de Markov y el LLM como política}
+\label{tema:1}
+% =====================================================================
+
+Este tema introduce el lenguaje del aprendizaje por refuerzo: agente, entorno, recompensa, retorno, política y funciones de valor. La presentación sigue el capítulo~3 de Sutton y Barto~\cite{sb} y la clase~2 del curso de David Silver~\cite{silver}; la última sección traslada el formalismo a la generación de texto, como en la clase~17 de CS336~\cite{cs336}.
+
+\section{La interfaz agente-entorno}
+
+En cada instante $t=0,1,2,\dots$ un \emph{agente} observa el estado $S_t$ del \emph{entorno}, elige una acción $A_t$ y recibe, en el instante siguiente, una recompensa numérica $R_{t+1}$ y un nuevo estado $S_{t+1}$. La sucesión resultante
+\[
+S_0,\,A_0,\,R_1,\,S_1,\,A_1,\,R_2,\,S_2,\,\dots
+\]
+se llama \emph{trayectoria}. Cuando la interacción termina en un estado terminal tras un número finito de pasos, la trayectoria se llama \emph{episodio}.
+
+\begin{definicion}[Proceso de decisión de Markov finito]\label{def:mdp}
+Un \emph{proceso de decisión de Markov} (MDP) finito es una tupla $(\Sset,\Aset,p,\rho_0,\gamma)$ formada por un conjunto finito de estados $\Sset$, un conjunto finito de acciones $\Aset$, una \emph{dinámica}
+\[
+p(s',r\mid s,a)=P\bigl(S_{t+1}=s',\,R_{t+1}=r\mid S_t=s,\,A_t=a\bigr),
+\]
+que para cada par $(s,a)$ es una distribución sobre $\Sset\times\R$ con soporte finito, una distribución inicial $\rho_0$ sobre $\Sset$ y un \emph{factor de descuento} $\gamma\in[0,1]$. La palabra «Markov» expresa que la distribución de $(S_{t+1},R_{t+1})$ depende de la historia solo a través de $(S_t,A_t)$.
+\end{definicion}
+
+\begin{definicion}[Política]\label{def:politica}
+Una \emph{política} (estacionaria y estocástica) es una aplicación que asigna a cada estado $s$ una distribución $\pi(\cdot\mid s)$ sobre $\Aset$. Una política \emph{parametrizada} $\pi_\theta$ depende de un vector de parámetros $\theta\in\R^{d}$.
+\end{definicion}
+
+Fijados un MDP y una política, la probabilidad de un prefijo de trayectoria $\tau=(s_0,a_0,r_1,s_1,\dots,s_T)$ se obtiene por la regla de la cadena (módulo~1):
+\begin{equation}\label{eq:ptau}
+p_\pi(\tau)=\rho_0(s_0)\prod_{t=0}^{T-1}\pi(a_t\mid s_t)\,p(s_{t+1},r_{t+1}\mid s_t,a_t).
+\end{equation}
+Esta factorización separa lo que controla el agente (los factores $\pi$) de lo que impone el entorno (los factores $p$), y es la base del teorema del gradiente de política del \cref{tema:2}.
+
+\section{Recompensa y retorno}
+
+El objetivo del agente no es maximizar la recompensa inmediata sino una cantidad acumulada~\cite[cap.~3]{sb}.
+
+\begin{definicion}[Retorno]\label{def:retorno}
+El \emph{retorno} desde el instante $t$ es
+\[
+G_t=R_{t+1}+\gamma R_{t+2}+\gamma^{2}R_{t+3}+\dots=\sum_{k=0}^{\infty}\gamma^{k}R_{t+k+1}.
+\]
+En una tarea episódica de horizonte $T$ se toma $R_k=0$ para $k>T$, de modo que la suma es finita y se admite $\gamma=1$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:retorno}
+\begin{enumerate}
+  \item Para todo $t$, $G_t=R_{t+1}+\gamma\,G_{t+1}$.
+  \item Si $\abs{R_k}\le R_{\max}$ para todo $k$ y $\gamma<1$, entonces $\abs{G_t}\le R_{\max}/(1-\gamma)$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Separando el primer término de la serie, $G_t=R_{t+1}+\sum_{k\ge 1}\gamma^{k}R_{t+k+1}=R_{t+1}+\gamma\sum_{j\ge 0}\gamma^{j}R_{t+j+2}=R_{t+1}+\gamma G_{t+1}$.
+(ii) Por la desigualdad triangular, $\abs{G_t}\le\sum_{k\ge0}\gamma^{k}R_{\max}=R_{\max}/(1-\gamma)$, suma de una serie geométrica de razón $\gamma<1$.
+\end{proof}
+
+La recursión (i) permite calcular todos los retornos de un episodio en una sola pasada hacia atrás, empezando por $G_T=0$ (\cref{eje:1-retornos}).
+
+\section{Funciones de valor y ecuación de Bellman}
+
+\begin{definicion}[Funciones de valor y ventaja]\label{def:valor}
+Sea $\pi$ una política. La \emph{función de valor de estado} y la \emph{función de valor de acción} son
+\[
+V^{\pi}(s)=\E_{\pi}\bigl[G_t\mid S_t=s\bigr],\qquad Q^{\pi}(s,a)=\E_{\pi}\bigl[G_t\mid S_t=s,\,A_t=a\bigr],
+\]
+donde $\E_\pi$ indica que las acciones futuras se eligen con $\pi$. La \emph{función ventaja} es $A^{\pi}(s,a)=Q^{\pi}(s,a)-V^{\pi}(s)$.
+\end{definicion}
+
+La ventaja mide cuánto mejor (o peor) que la media de la propia política es elegir $a$ en $s$ y continuar después con $\pi$. Es la cantidad que pondera los gradientes de todos los métodos de los temas~2, 3 y~6.
+
+\begin{teorema}[Ecuación de Bellman para $V^{\pi}$]\label{teo:bellman}
+Para todo estado $s$,
+\[
+V^{\pi}(s)=\sum_{a}\pi(a\mid s)\,Q^{\pi}(s,a),\qquad Q^{\pi}(s,a)=\sum_{s',r}p(s',r\mid s,a)\bigl[r+\gamma V^{\pi}(s')\bigr].
+\]
+En particular, $V^{\pi}(s)=\sum_{a}\pi(a\mid s)\sum_{s',r}p(s',r\mid s,a)\bigl[r+\gamma V^{\pi}(s')\bigr]$.
+\end{teorema}
+
+\begin{proof}
+La primera igualdad es la ley de la esperanza total condicionando a $A_t$: $\E_\pi[G_t\mid S_t=s]=\sum_a P(A_t=a\mid S_t=s)\,\E_\pi[G_t\mid S_t=s,A_t=a]$, y $P(A_t=a\mid S_t=s)=\pi(a\mid s)$. Para la segunda, por la \cref{prop:retorno}, $G_t=R_{t+1}+\gamma G_{t+1}$. Condicionando además a $(S_{t+1},R_{t+1})=(s',r)$, que ocurre con probabilidad $p(s',r\mid s,a)$,
+\[
+\E_\pi[G_t\mid s,a,s',r]=r+\gamma\,\E_\pi[G_{t+1}\mid S_t=s,A_t=a,S_{t+1}=s',R_{t+1}=r]=r+\gamma V^{\pi}(s'),
+\]
+donde la última igualdad usa la propiedad de Markov: dado $S_{t+1}=s'$, la evolución futura no depende de la historia anterior. Sumando sobre $(s',r)$ se obtiene la expresión de $Q^{\pi}$.
+\end{proof}
+
+\begin{corolario}\label{cor:ventaja-media}
+Para todo estado $s$, $\displaystyle\sum_{a}\pi(a\mid s)\,A^{\pi}(s,a)=0$.
+\end{corolario}
+
+\begin{proof}
+Por el \cref{teo:bellman}, $\sum_a\pi(a\mid s)A^{\pi}(s,a)=\sum_a\pi(a\mid s)Q^{\pi}(s,a)-V^{\pi}(s)\sum_a\pi(a\mid s)=V^{\pi}(s)-V^{\pi}(s)=0$.
+\end{proof}
+
+La ecuación de Bellman es un sistema lineal de $\abs{\Sset}$ ecuaciones con $\abs{\Sset}$ incógnitas. Para $\gamma<1$ tiene solución única (\cref{eje:1-contraccion}); el capítulo~4 de~\cite{sb} la resuelve de forma iterativa.
+
+\section{El modelo de lenguaje como política}
+
+La generación autorregresiva encaja en la \cref{def:mdp} con una dinámica especialmente sencilla~\cite{cs336}.
+
+\begin{definicion}[MDP de tokens]\label{def:mdp-tokens}
+Sean $\V$ un vocabulario con un símbolo de fin y $x$ una instrucción. El \emph{MDP de tokens} asociado a $x$ tiene como estados las secuencias $s_t=(x,y_1,\dots,y_t)$, como acciones los tokens $a_t=y_{t+1}\in\V$, una transición determinista $s_{t+1}=(s_t,a_t)$ (concatenación), estado inicial $s_0=x$ y estados terminales los que acaban en el símbolo de fin o alcanzan una longitud máxima. La recompensa es nula salvo en la transición final, en la que vale $r(x,y)$ para la respuesta completa $y=y_{1:T}$, y se toma $\gamma=1$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:mdp-tokens}
+En el MDP de tokens, con una política $\pi_\theta(y_{t+1}\mid x,y_{1:t})$:
+\begin{enumerate}
+  \item la probabilidad de una trayectoria coincide con la de la respuesta, $p_{\pi_\theta}(\tau)=\pi_\theta(y\mid x)=\prod_{t=1}^{T}\pi_\theta(y_t\mid x,y_{<t})$;
+  \item el retorno desde cualquier instante es $G_t=r(x,y)$, y $V^{\pi_\theta}(x)=\E_{y\sim\pi_\theta(\cdot\mid x)}[r(x,y)]$;
+  \item para un prefijo $s_t$ y un token $a$, $Q^{\pi_\theta}(s_t,a)=V^{\pi_\theta}(s_t a)$, donde $s_t a$ denota la concatenación.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) En \eqref{eq:ptau}, $\rho_0$ es la masa puntual en $x$ y cada factor de transición vale~1, porque la transición es determinista; quedan los factores de la política, cuyo producto es $\pi_\theta(y\mid x)$ por la regla de la cadena para secuencias del módulo~1, aplicada de forma condicional a $x$. (ii) Con $\gamma=1$ y una única recompensa no nula en el último paso, la suma de la \cref{def:retorno} se reduce a $r(x,y)$; tomando esperanzas desde $s_0=x$ se obtiene $V^{\pi_\theta}(x)$. (iii) Por el \cref{teo:bellman}, con recompensa intermedia nula y transición determinista a $s_ta$, $Q^{\pi_\theta}(s_t,a)=0+1\cdot V^{\pi_\theta}(s_ta)$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Elemento del MDP & En un modelo de lenguaje \\
+\midrule
+Estado $s_t$ & instrucción $x$ más los tokens generados $y_{1:t}$ \\
+Acción $a_t$ & siguiente token $y_{t+1}$; $\abs{\Aset}=\abs{\V}$, del orden de $10^{4}$--$10^{5}$ \\
+Transición & determinista y conocida: concatenar el token \\
+Política $\pi_\theta(a\mid s)$ & softmax de los logits del Transformer (módulo~14) \\
+Recompensa & normalmente solo al final: $r(x,y)$ \\
+Episodio & una respuesta completa, hasta el símbolo de fin \\
+\bottomrule
+\end{tabular}
+\caption{Correspondencia entre los elementos de un MDP y la generación de texto.}
+\label{tab:mdp-llm}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=9mm,align=center,inner sep=4pt}]
+  \node[caja] (s) {estado $s_t$\\$x,\,y_{1:t}$};
+  \node[caja,right=1.3cm of s] (p) {política $\pi_\theta$\\Transformer $+$ softmax};
+  \node[caja,right=1.3cm of p] (a) {acción $a_t$\\token $y_{t+1}$};
+  \node[caja,below=1.4cm of p] (r) {recompensa $r(x,y)$\\(solo al terminar)};
+  \draw[->,thick] (s) -- (p);
+  \draw[->,thick] (p) -- (a);
+  \draw[->,thick] (a.north) -- ++(0,0.7) -| node[pos=0.25,above] {concatenar: $s_{t+1}=s_t\,a_t$} (s.north);
+  \draw[->,thick,dashed] (a.south) |- node[pos=0.3,right] {¿fin?} (r.east);
+  \draw[->,thick,dashed] (r.north) -- node[right] {señal de aprendizaje} (p.south);
+\end{tikzpicture}
+\caption{El bucle agente-entorno en la generación de texto. La transición es determinista; la única señal externa es la recompensa final.}
+\label{fig:bucle}
+\end{figure}
+
+\begin{observacion}[Bandido contextual]\label{obs:bandido}
+Como la transición es conocida y la recompensa llega solo al final, la respuesta entera $y$ puede verse como una única acción tomada en el contexto $x$ con probabilidad $\pi_\theta(y\mid x)$. Este caso particular de MDP de un solo paso se llama \emph{bandido contextual}. Los métodos de preferencias de los temas~4 y~5 trabajan a este nivel; PPO (\cref{tema:3}) trabaja token a token con ventajas $A^{\pi}(s_t,a_t)$. El número de acciones del bandido es enorme: con $\abs{\V}=5\cdot 10^{4}$ y $T=100$ hay $\abs{\V}^{T}\approx 10^{470}$ respuestas, por lo que ninguna suma sobre $y$ puede calcularse explícitamente.
+\end{observacion}
+
+\begin{ejemplo}[Valores y ventajas en un árbol de respuestas]\label{ej:arbol}
+Sea $\V=\{\texttt{a},\texttt{b}\}$ y respuestas de exactamente dos tokens. La política elige el primer token \texttt{a} con probabilidad $0{,}6$; tras \texttt{a}, elige \texttt{a} con probabilidad $0{,}3$, y tras \texttt{b}, con probabilidad $0{,}5$. La recompensa vale~1 si la respuesta contiene exactamente una \texttt{a} y~0 en otro caso. Por la \cref{prop:mdp-tokens},
+\[
+V(x\texttt{a})=0{,}3\cdot 0+0{,}7\cdot 1=0{,}7,\qquad V(x\texttt{b})=0{,}5\cdot 1+0{,}5\cdot 0=0{,}5,
+\]
+\[
+V(x)=0{,}6\cdot 0{,}7+0{,}4\cdot 0{,}5=0{,}62.
+\]
+Las ventajas del primer token son $A(x,\texttt{a})=0{,}7-0{,}62=0{,}08$ y $A(x,\texttt{b})=0{,}5-0{,}62=-0{,}12$, y su media ponderada es $0{,}6\cdot 0{,}08+0{,}4\cdot(-0{,}12)=0$, como exige el \cref{cor:ventaja-media}. Aunque ninguna recompensa se asigna al primer token, la ventaja le atribuye una parte del mérito final: este es el problema de \emph{asignación de crédito} que resuelven los críticos del \cref{tema:2}.
+\end{ejemplo}
+
+\begin{lecturas}
+\item Sutton y Barto~\cite{sb}, cap.~3, «Finite Markov Decision Processes»: interfaz agente-entorno, retornos, políticas y funciones de valor.
+\item D.~Silver~\cite{silver}, clase~2, «Markov Decision Processes».
+\item CS336~\cite{cs336}, clase~17: formulación del modelo de lenguaje como política.
+\item Levine, CS285~\cite{cs285}, clase~4, «Introduction to Reinforcement Learning».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-chatbot}
+Un asistente conversacional recibe una nota numérica al final de cada respuesta. Identifique el estado, la acción, la transición, la recompensa y el episodio del MDP correspondiente, y explique por qué puede tratarse como un bandido contextual.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-contar}
+Con $\abs{\V}=5\cdot 10^{4}$ y respuestas de longitud fija $T=100$, calcule $\log_{10}$ del número de respuestas posibles. ¿Qué consecuencia tiene para el cálculo exacto de $V^{\pi}(x)=\sum_y\pi(y\mid x)\,r(x,y)$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-retornos}
+En un episodio con $\gamma=0{,}5$ y $T=5$ se reciben las recompensas $R_1=-1$, $R_2=2$, $R_3=6$, $R_4=3$ y $R_5=2$. Calcule $G_0,G_1,\dots,G_5$ con la recursión de la \cref{prop:retorno}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-arbol}
+Repita el \cref{ej:arbol} con la política siguiente: primer token \texttt{a} con probabilidad $0{,}5$; tras \texttt{a}, \texttt{a} con probabilidad $0{,}2$; tras \texttt{b}, \texttt{a} con probabilidad $0{,}6$. Las recompensas son $r(\texttt{aa})=0$, $r(\texttt{ab})=1$, $r(\texttt{ba})=2$ y $r(\texttt{bb})=0$. Calcule $V(x)$, $V(x\texttt{a})$, $V(x\texttt{b})$, las ventajas del primer token y las del segundo token tras \texttt{b}. Compruebe el \cref{cor:ventaja-media} en ambos estados.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-cs285}
+Sea un MDP con un estado no terminal $s_1$ y un estado terminal $s_F$. En $s_1$ la acción $a_1$ da recompensa~1 y mantiene el estado; la acción $a_2$ da recompensa~0 y lleva a $s_F$. La política es $\pi_\theta(a_1\mid s_1)=\theta$, $\pi_\theta(a_2\mid s_1)=1-\theta$, con $0<\theta<1$. (a) Plantee la ecuación de Bellman para $V(s_1)$ con descuento $\gamma$ y resuélvala. (b) Evalúe para $\theta=0{,}75$ con $\gamma=1$ y con $\gamma=0{,}9$. (c) Compruebe el caso $\gamma=1$ calculando directamente $\E[R(\tau)]$ como esperanza del número de veces que se elige $a_1$.
+\fuente{adaptado de Levine, CS285, otoño de 2023, tarea~2 «Policy Gradients», §8, problema~1~\cite{cs285hw2}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-contraccion}
+Sea $\gamma<1$ y sea $T^{\pi}$ el operador que asigna a cada $v\in\R^{\abs{\Sset}}$ el vector
+$(T^{\pi}v)(s)=\sum_a\pi(a\mid s)\sum_{s',r}p(s',r\mid s,a)\,[r+\gamma v(s')]$. (a) Demuestre que $\norm{T^{\pi}u-T^{\pi}v}_\infty\le\gamma\norm{u-v}_\infty$. (b) Deduzca que la ecuación de Bellman tiene a lo sumo una solución. (c) Demuestre que la tiene, observando que es un sistema lineal $(I-\gamma P^{\pi})v=r^{\pi}$ y que $I-\gamma P^{\pi}$ es invertible.
+\fuente{adaptado de Sutton y Barto~\cite{sb}, cap.~3, y de Silver~\cite{silver}, clase~2.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Gradiente de política}
+\label{tema:2}
+% =====================================================================
+
+Este tema deduce el gradiente del rendimiento esperado respecto a los parámetros de la política y lo convierte en un algoritmo estimable por muestreo, REINFORCE~\cite{williams}. Después estudia la varianza del estimador y las dos técnicas que la reducen: la línea base y la ventaja estimada por un crítico, incluida la estimación generalizada de la ventaja (GAE)~\cite{gae}. Se siguen las §13.1--13.5 de Sutton y Barto~\cite{sb} y las clases~5 y~6 de CS285~\cite{cs285}.
+
+\section{Políticas parametrizadas y función de puntuación}
+
+\begin{definicion}[Rendimiento y función de puntuación]\label{def:score}
+Sea $\pi_\theta$ una política parametrizada en un MDP episódico. El \emph{rendimiento} es $J(\theta)=\E_{\tau\sim p_\theta}[R(\tau)]$, con $R(\tau)=\sum_{t=0}^{T-1}\gamma^{t}r_{t+1}$ y $p_\theta=p_{\pi_\theta}$ dada por \eqref{eq:ptau}. Si $\pi_\theta(a\mid s)>0$, el vector $\nabla_\theta\log\pi_\theta(a\mid s)$ se llama \emph{función de puntuación} (\emph{score}) o vector de elegibilidad.
+\end{definicion}
+
+La parametrización más común en espacios de acciones discretos es la softmax de unas preferencias o logits~\cite[§13.1]{sb}. En un LLM los logits son la salida del Transformer y dependen de $\theta$ de forma no lineal; el caso tabular, en el que los propios logits son los parámetros, permite calcular todo a mano.
+
+\begin{proposicion}[Puntuación de la softmax]\label{prop:score-softmax}
+Sea $\pi_\theta=\softmax(\theta)$, con $\theta\in\R^{K}$ y $\pi_\theta(a)=e^{\theta_a}/\sum_b e^{\theta_b}$. Entonces
+\[
+\nabla_\theta\log\pi_\theta(a)=e_a-\pi_\theta .
+\]
+Si los logits son $z=f_\theta(s)$, por la regla de la cadena $\nabla_\theta\log\pi_\theta(a\mid s)=J_f(s)^{\top}(e_a-\pi_\theta(\cdot\mid s))$, con $J_f$ la matriz jacobiana de $f_\theta$.
+\end{proposicion}
+
+\begin{proof}
+$\log\pi_\theta(a)=\theta_a-\log\sum_b e^{\theta_b}$. La derivada parcial respecto a $\theta_k$ es $\mathbb{1}[k=a]-e^{\theta_k}/\sum_b e^{\theta_b}=(e_a)_k-\pi_\theta(k)$. La segunda afirmación es la regla de la cadena del módulo~4.
+\end{proof}
+
+El vector $e_a-\pi_\theta$ es exactamente el gradiente, cambiado de signo, de la entropía cruzada con etiqueta $a$ (módulo~8). Esta coincidencia explica la relación entre gradiente de política y ajuste supervisado que se establece más abajo.
+
+\section{El teorema del gradiente de política}
+
+\begin{lema}[Truco de la derivada logarítmica]\label{lem:logder}
+Si $p_\theta(z)>0$ es diferenciable en $\theta$, entonces $\nabla_\theta p_\theta(z)=p_\theta(z)\,\nabla_\theta\log p_\theta(z)$.
+\end{lema}
+
+\begin{proof}
+Es la regla de la cadena aplicada a $\log$: $\nabla_\theta\log p_\theta(z)=\nabla_\theta p_\theta(z)/p_\theta(z)$.
+\end{proof}
+
+\begin{teorema}[Gradiente de política, forma de trayectorias]\label{teo:pg}
+En un MDP episódico finito con política diferenciable y estrictamente positiva,
+\[
+\nabla_\theta J(\theta)=\E_{\tau\sim p_\theta}\Bigl[R(\tau)\sum_{t=0}^{T-1}\nabla_\theta\log\pi_\theta(a_t\mid s_t)\Bigr].
+\]
+\end{teorema}
+
+\begin{proof}
+Como el conjunto de trayectorias es finito, $J(\theta)=\sum_\tau p_\theta(\tau)R(\tau)$ y el gradiente puede introducirse en la suma. Por el \cref{lem:logder},
+$\nabla_\theta J=\sum_\tau p_\theta(\tau)\,R(\tau)\,\nabla_\theta\log p_\theta(\tau)=\E_{p_\theta}[R(\tau)\nabla_\theta\log p_\theta(\tau)]$. Tomando logaritmos en \eqref{eq:ptau},
+\[
+\log p_\theta(\tau)=\log\rho_0(s_0)+\sum_{t}\log\pi_\theta(a_t\mid s_t)+\sum_t\log p(s_{t+1},r_{t+1}\mid s_t,a_t).
+\]
+El primer y el tercer sumando no dependen de $\theta$, luego su gradiente es nulo, y queda $\nabla_\theta\log p_\theta(\tau)=\sum_t\nabla_\theta\log\pi_\theta(a_t\mid s_t)$.
+\end{proof}
+
+Lo notable del teorema es que la dinámica $p$ desaparece del gradiente: basta con poder \emph{muestrear} trayectorias y evaluar su recompensa, aunque ni el entorno ni la recompensa sean derivables. En la forma de Sutton y Barto~\cite[§13.2]{sb}, el teorema se enuncia con la distribución de estados de la política y $Q^{\pi}$; la versión anterior es la de la clase~5 de CS285~\cite{cs285}.
+
+\begin{corolario}[Gradiente de política en un LLM]\label{cor:pg-llm}
+En el MDP de tokens (\cref{def:mdp-tokens}),
+\[
+\nabla_\theta J(\theta)=\E_{x}\,\E_{y\sim\pi_\theta(\cdot\mid x)}\Bigl[r(x,y)\sum_{t=1}^{T}\nabla_\theta\log\pi_\theta(y_t\mid x,y_{<t})\Bigr].
+\]
+\end{corolario}
+
+\begin{proof}
+Es el \cref{teo:pg} con $R(\tau)=r(x,y)$ (\cref{prop:mdp-tokens}), promediado sobre la distribución de instrucciones.
+\end{proof}
+
+El sumatorio $\sum_t\nabla_\theta\log\pi_\theta(y_t\mid x,y_{<t})$ es el gradiente de la log-verosimilitud de $y$, el mismo que maximiza el SFT del módulo~20. El gradiente de política es, por tanto, un SFT sobre las propias muestras del modelo, ponderado por su recompensa~\cite{cs336}.
+
+\section{REINFORCE}
+
+\begin{definicion}[Estimador REINFORCE]\label{def:reinforce}
+Dadas $N$ trayectorias independientes $\tau^{(1)},\dots,\tau^{(N)}\sim p_\theta$, el estimador REINFORCE del gradiente es
+\[
+\widehat{g}=\frac1N\sum_{i=1}^{N}R(\tau^{(i)})\sum_{t}\nabla_\theta\log\pi_\theta(a^{(i)}_t\mid s^{(i)}_t),
+\]
+y el algoritmo actualiza $\theta\leftarrow\theta+\eta\,\widehat{g}$ con una tasa de aprendizaje $\eta>0$.
+\end{definicion}
+
+Por el \cref{teo:pg}, $\E[\widehat g]=\nabla_\theta J$: el estimador es insesgado. Williams~\cite{williams} lo introdujo en 1992 como un caso de una familia de algoritmos que siguen el gradiente en esperanza.
+
+\begin{ejemplo}[Un paso de REINFORCE en un bandido]\label{ej:reinforce}
+Sean tres acciones con logits $\theta=(0,0,0)$ y recompensas $r=(1,2,0)$. Entonces $\pi=(1/3,1/3,1/3)$ y $J=\pi\cdot r=1$. El gradiente exacto es $\partial J/\partial\theta_k=\sum_a\pi(a)r(a)(e_a-\pi)_k=\pi_k(r_k-J)$, es decir, $\nabla J=(0;\ 0{,}333;\ -0{,}333)$. Si se muestrea $a=1$ (con $r=2$), la puntuación es $e_1-\pi=(-0{,}333;\ 0{,}667;\ -0{,}333)$ y la estimación es $2\,(e_1-\pi)=(-0{,}667;\ 1{,}333;\ -0{,}667)$. Con $\eta=1$, $\theta=(-0{,}667;\ 1{,}333;\ -0{,}667)$ y $\pi=\softmax(\theta)=(0{,}107;\ 0{,}787;\ 0{,}107)$.
+\end{ejemplo}
+
+\section{Causalidad y recompensa futura}
+
+\begin{proposicion}[Las recompensas pasadas no aportan]\label{prop:causalidad}
+Si $t'<t$, entonces $\E_{p_\theta}\bigl[r_{t'+1}\,\nabla_\theta\log\pi_\theta(a_t\mid s_t)\bigr]=0$. En consecuencia,
+\[
+\nabla_\theta J(\theta)=\E_{p_\theta}\Bigl[\sum_{t}\nabla_\theta\log\pi_\theta(a_t\mid s_t)\,\widehat{Q}_t\Bigr],\qquad \widehat Q_t=\sum_{t'\ge t}\gamma^{t'}r_{t'+1}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Condicionando a la historia $h_t=(s_0,a_0,\dots,s_t)$, que determina $r_{t'+1}$ para $t'<t$, se tiene
+$\E[r_{t'+1}\nabla\log\pi_\theta(a_t\mid s_t)\mid h_t]=r_{t'+1}\sum_{a}\pi_\theta(a\mid s_t)\nabla_\theta\log\pi_\theta(a\mid s_t)=r_{t'+1}\nabla_\theta\sum_a\pi_\theta(a\mid s_t)=r_{t'+1}\nabla_\theta 1=0$, por el \cref{lem:logder}. La ley de la esperanza total da el primer enunciado. Para el segundo se desarrolla $R(\tau)=\sum_{t'}\gamma^{t'}r_{t'+1}$ en el \cref{teo:pg} y se eliminan los términos con $t'<t$.
+\end{proof}
+
+La cantidad $\widehat Q_t$ (la «recompensa futura», \emph{reward-to-go}) es una estimación de una muestra de $Q^{\pi}(s_t,a_t)$, salvo el factor $\gamma^{t}$~\cite{cs285hw2}. En el MDP de tokens, con una sola recompensa final, todas las $\widehat Q_t$ valen $r(x,y)$ y la proposición no aporta nada; su utilidad aparece con recompensas intermedias, como la penalización KL por token del \cref{tema:3}.
+
+\section{Línea base y varianza}
+
+\begin{lema}[La puntuación tiene media nula]\label{lem:score-media}
+Para todo estado $s$, $\E_{a\sim\pi_\theta(\cdot\mid s)}\bigl[\nabla_\theta\log\pi_\theta(a\mid s)\bigr]=0$.
+\end{lema}
+
+\begin{proof}
+$\sum_a\pi_\theta(a\mid s)\,\nabla_\theta\pi_\theta(a\mid s)/\pi_\theta(a\mid s)=\nabla_\theta\sum_a\pi_\theta(a\mid s)=\nabla_\theta 1=0$.
+\end{proof}
+
+\begin{proposicion}[Línea base]\label{prop:baseline}
+Sea $b(s)$ cualquier función del estado que no dependa de la acción. Entonces
+\[
+\nabla_\theta J(\theta)=\E_{p_\theta}\Bigl[\sum_t\nabla_\theta\log\pi_\theta(a_t\mid s_t)\bigl(\widehat Q_t-b(s_t)\bigr)\Bigr].
+\]
+\end{proposicion}
+
+\begin{proof}
+Basta ver que $\E[\nabla_\theta\log\pi_\theta(a_t\mid s_t)\,b(s_t)]=0$. Condicionando a $s_t$, el factor $b(s_t)$ sale de la esperanza y queda $b(s_t)\cdot 0$ por el \cref{lem:score-media}.
+\end{proof}
+
+La línea base no cambia la esperanza, pero sí la varianza. En el \cref{ej:reinforce}, la varianza total (traza de la matriz de covarianzas) del estimador de una muestra $(r(a)-b)(e_a-\pi)$ vale $0{,}889$ con $b=0$ y $0{,}222$ con $b=J=1$. Si se suma~10 a todas las recompensas, con $b=0$ sube a $80{,}9$, mientras que con $b=J$ sigue siendo $0{,}222$: la línea base hace el método insensible al origen arbitrario de la escala de recompensas. La clase~5 de CS285 observa que la recompensa media no es la línea base óptima, aunque sí una muy buena~\cite{cs285}; la proposición siguiente da la óptima.
+
+\begin{proposicion}[Línea base de varianza mínima]\label{prop:baseline-optima}
+En un bandido con $g(a)=\nabla_\theta\log\pi_\theta(a)$, la varianza total del estimador $(r(a)-b)\,g(a)$ con $a\sim\pi_\theta$ es mínima para
+\[
+b^{*}=\frac{\E\bigl[r(a)\,\norm{g(a)}^{2}\bigr]}{\E\bigl[\norm{g(a)}^{2}\bigr]}.
+\]
+\end{proposicion}
+
+\begin{proof}
+La varianza total es $V(b)=\E[(r-b)^{2}\norm{g}^{2}]-\norm{\E[(r-b)g]}^{2}$. Por el \cref{lem:score-media}, $\E[(r-b)g]=\E[rg]=\nabla J$ no depende de $b$. Así, $V(b)$ es un polinomio de grado~2 en $b$ con $V'(b)=-2\E[r\norm{g}^{2}]+2b\,\E[\norm{g}^{2}]$ y $V''(b)=2\E[\norm g^{2}]>0$ (salvo en el caso trivial $g\equiv 0$). Su único punto crítico, $b^{*}$, es el mínimo.
+\end{proof}
+
+\begin{ejemplo}\label{ej:baseline-optima}
+Con $\pi=(0{,}5;\ 0{,}3;\ 0{,}2)$ y $r=(1,2,0)$, las normas $\norm{e_a-\pi}^{2}$ valen $0{,}38$, $0{,}78$ y $0{,}98$. Entonces $b^{*}=0{,}658/0{,}62=1{,}061$, frente a $\E[r]=1{,}1$. Las varianzas son $1{,}002$ con $b=0$, $0{,}305$ con $b=\E[r]$ y $0{,}304$ con $b^{*}$: la recompensa media es casi óptima y mucho más sencilla de estimar.
+\end{ejemplo}
+
+\section{Ventaja, crítico y estimación generalizada de la ventaja}
+
+La línea base natural en un MDP es $b(s_t)=V^{\pi}(s_t)$. Entonces $\widehat Q_t-V^{\pi}(s_t)$ es una estimación de la ventaja $A^{\pi}(s_t,a_t)$ de la \cref{def:valor}, y el gradiente queda $\E[\sum_t\nabla\log\pi_\theta(a_t\mid s_t)\,A^{\pi}(s_t,a_t)]$, salvo los factores de descuento. Como $V^{\pi}$ es desconocida, se aproxima con una red $V_\phi$, el \emph{crítico}, entrenada por regresión sobre los retornos observados. La política es el \emph{actor}: de ahí el nombre de métodos actor-crítico~\cite[§13.5]{sb}.
+
+\begin{definicion}[Error de diferencia temporal y GAE]\label{def:gae}
+Dado un crítico $V$, el \emph{error de diferencia temporal} es $\delta_t=r_{t+1}+\gamma V(s_{t+1})-V(s_t)$, con $V(s_T)=0$ en el estado terminal. Para $\lambda\in[0,1]$, la \emph{estimación generalizada de la ventaja} es~\cite{gae}
+\[
+\widehat A^{\mathrm{GAE}(\gamma,\lambda)}_t=\sum_{l=0}^{T-t-1}(\gamma\lambda)^{l}\,\delta_{t+l},
+\]
+que satisface la recursión $\widehat A_t=\delta_t+\gamma\lambda\,\widehat A_{t+1}$, con $\widehat A_T=0$.
+\end{definicion}
+
+\begin{proposicion}[Casos extremos de GAE]\label{prop:gae}
+Con $\lambda=0$, $\widehat A_t=\delta_t$. Con $\lambda=1$, $\widehat A_t=\sum_{l\ge0}\gamma^{l}r_{t+l+1}-V(s_t)$, el retorno observado menos la línea base. Si $V=V^{\pi}$, entonces $\E[\delta_t\mid s_t,a_t]=A^{\pi}(s_t,a_t)$.
+\end{proposicion}
+
+\begin{proof}
+El caso $\lambda=0$ es inmediato. Con $\lambda=1$, la suma es telescópica:
+$\sum_{l}\gamma^{l}\bigl[r_{t+l+1}+\gamma V(s_{t+l+1})-V(s_{t+l})\bigr]=\sum_l\gamma^{l}r_{t+l+1}+\sum_{l}\bigl[\gamma^{l+1}V(s_{t+l+1})-\gamma^{l}V(s_{t+l})\bigr]$, y la segunda suma se reduce a $\gamma^{T-t}V(s_T)-V(s_t)=-V(s_t)$. Por último, $\E[r_{t+1}+\gamma V^{\pi}(s_{t+1})\mid s_t,a_t]=Q^{\pi}(s_t,a_t)$ por el \cref{teo:bellman}, luego $\E[\delta_t\mid s_t,a_t]=Q^{\pi}-V^{\pi}=A^{\pi}$.
+\end{proof}
+
+El parámetro $\lambda$ regula el compromiso entre sesgo y varianza: con $\lambda=0$ se usa solo un paso de recompensa real y se confía en el crítico (poca varianza, sesgo si $V$ es inexacto); con $\lambda=1$ se usa el retorno completo (sin sesgo, mucha varianza)~\cite{cs285}. PPO calcula sus ventajas con GAE.
+
+\begin{ejemplo}[Cálculo de GAE]\label{ej:gae}
+Sea un episodio de tres pasos con recompensas $(0,0,1)$, valores del crítico $V(s_0)=0{,}5$, $V(s_1)=0{,}6$, $V(s_2)=0{,}8$, $\gamma=1$ y $\lambda=0{,}5$. Los errores son $\delta_0=0+0{,}6-0{,}5=0{,}1$, $\delta_1=0+0{,}8-0{,}6=0{,}2$ y $\delta_2=1+0-0{,}8=0{,}2$. Hacia atrás: $\widehat A_2=0{,}2$, $\widehat A_1=0{,}2+0{,}5\cdot 0{,}2=0{,}3$ y $\widehat A_0=0{,}1+0{,}5\cdot 0{,}3=0{,}25$. Con $\lambda=1$ se obtendría $\widehat A_0=0{,}1+0{,}2+0{,}2=0{,}5=G_0-V(s_0)$, de acuerdo con la \cref{prop:gae}.
+\end{ejemplo}
+
+\begin{lecturas}
+\item Sutton y Barto~\cite{sb}, cap.~13: §13.1 (aproximación de la política), §13.2 «The Policy Gradient Theorem», §13.3 «REINFORCE: Monte Carlo Policy Gradient», §13.4 «REINFORCE with Baseline» y §13.5 «Actor--Critic Methods».
+\item Levine, CS285~\cite{cs285}, clases~5 «Policy Gradients» y~6 «Actor-Critic Algorithms».
+\item R.~J. Williams~\cite{williams}, artículo original de REINFORCE.
+\item J.~Schulman \emph{et al.}~\cite{gae}, artículo original de GAE.
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-baseline}
+Explique por qué restar una línea base $b$ no sesga el gradiente de política pero sí cambia su varianza. ¿Por qué no puede usarse una línea base que dependa de la acción muestreada?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-bernoulli}
+Sea la política de Bernoulli $\pi_\theta(1)=\sigma(\theta)$, $\pi_\theta(0)=1-\sigma(\theta)$, con $\theta=\ln 3$, y recompensas $r(1)=1$, $r(0)=0$. Calcule $\pi_\theta(1)$, $\nabla_\theta\log\pi_\theta(1)$, $\nabla_\theta\log\pi_\theta(0)$ y $\nabla_\theta J$, y compruebe que coincide con $\E[r\,\nabla\log\pi_\theta]$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-paso}
+Tres acciones con $\theta=(0,0,0)$. Se muestrea $a=2$ y se recibe $r=-1$. Aplique un paso de REINFORCE con $\eta=1$ y sin línea base. ¿Qué $\theta$ y qué $\pi$ se obtienen?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-cs285}
+En el MDP del \cref{eje:1-cs285}, con $\gamma=1$, una trayectoria que elige $a_1$ exactamente $k$ veces antes de $a_2$ tiene probabilidad $\theta^{k}(1-\theta)$ y retorno $R=k$. (a) Calcule $\nabla_\theta\log p_\theta(\tau)$ en función de $k$. (b) Calcule $\nabla_\theta J$ con el \cref{teo:pg}, usando $\E[k]=\theta/(1-\theta)$ y $\E[k^{2}]=\theta(1+\theta)/(1-\theta)^{2}$. (c) Compruebe el resultado derivando $J(\theta)=\theta/(1-\theta)$ y evalúe en $\theta=1/2$.
+\fuente{adaptado de Levine, CS285, otoño de 2023, tarea~2 «Policy Gradients», §8, problema~1(a)~\cite{cs285hw2}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-gae}
+Un episodio de tres pasos tiene recompensas $(1,0,2)$ y valores del crítico $V(s_0)=2$, $V(s_1)=1{,}5$, $V(s_2)=1$, con $V(s_3)=0$. Con $\gamma=0{,}9$ y $\lambda=0{,}8$, calcule los errores $\delta_t$ y las ventajas GAE. Compruebe que con $\lambda=1$ se obtiene $\widehat A_0=G_0-V(s_0)$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-optima}
+Demuestre que $\E_{a\sim\pi}[\nabla_\theta\log\pi_\theta(a)]=0$, deduzca que una línea base constante no introduce sesgo y demuestre la fórmula de $b^{*}$ de la \cref{prop:baseline-optima}. Compruebe numéricamente el valor del \cref{ej:baseline-optima}.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-varianza}
+En el MDP del \cref{eje:2-cs285}, el estimador de una trayectoria es $g(k)=k\bigl(k/\theta-1/(1-\theta)\bigr)$. Sabiendo que $\E[k^{3}]=\theta(\theta^{2}+4\theta+1)/(1-\theta)^{3}$ y $\E[k^{4}]=\theta(1+\theta)(\theta^{2}+10\theta+1)/(1-\theta)^{4}$, demuestre que
+\[
+\Var[g]=\frac{4\theta^{2}+8\theta+1}{\theta(1-\theta)^{4}},
+\]
+evalúela en $\theta=1/2$ y estudie su comportamiento cuando $\theta\to 0$ y $\theta\to 1$.
+\fuente{adaptado de Levine, CS285, otoño de 2023, tarea~2 «Policy Gradients», §8, problema~2~\cite{cs285hw2}.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Optimización proximal y regularización KL}
+\label{tema:3}
+% =====================================================================
+
+REINFORCE usa cada lote de muestras para un único paso de gradiente. Este tema estudia cómo reutilizar las muestras sin alejarse demasiado de la política que las generó, mediante el muestreo de importancia y el recorte de PPO~\cite{ppo}, y cómo se impide que la política se aleje del modelo de partida mediante una penalización de Kullback--Leibler. La parte de PPO sigue la clase~9 de CS285~\cite{cs285}; la forma cerrada de la política óptima procede del apéndice~A.1 de Rafailov \emph{et al.}~\cite{dpo}, y el objetivo con KL, de la §3.5 de InstructGPT~\cite{instructgpt}.
+
+\section{Muestreo de importancia y objetivo sustituto}
+
+\begin{proposicion}[Muestreo de importancia]\label{prop:is}
+Sean $p$ y $q$ distribuciones sobre un conjunto finito con $q(z)>0$ siempre que $p(z)>0$. Para toda función $f$,
+\[
+\E_{z\sim p}[f(z)]=\E_{z\sim q}\Bigl[\frac{p(z)}{q(z)}\,f(z)\Bigr].
+\]
+\end{proposicion}
+
+\begin{proof}
+$\sum_z q(z)\frac{p(z)}{q(z)}f(z)=\sum_{z:\,q(z)>0}p(z)f(z)=\sum_z p(z)f(z)$, porque los $z$ con $q(z)=0$ tienen $p(z)=0$.
+\end{proof}
+
+Sea $\piold$ la política con la que se generaron las muestras. Para una pareja estado-acción se define el \emph{cociente de importancia}
+\[
+\rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\piold(a_t\mid s_t)}.
+\]
+El \emph{objetivo sustituto} $L(\theta)=\E_{\piold}[\rho_t(\theta)\,\widehat A_t]$ estima, con muestras de $\piold$, la mejora local de la política $\pi_\theta$; la aproximación consiste en ignorar que la distribución de estados también cambia con $\theta$, lo que es aceptable si $\pi_\theta$ y $\piold$ están próximas~\cite{cs285}.
+
+\begin{proposicion}\label{prop:sustituto}
+$\nabla_\theta\rho_t(\theta)=\rho_t(\theta)\,\nabla_\theta\log\pi_\theta(a_t\mid s_t)$. En particular, en $\theta=\theta_{\mathrm{old}}$, $\nabla_\theta L=\E_{\piold}[\nabla_\theta\log\pi_\theta(a_t\mid s_t)\,\widehat A_t]$, el gradiente de política con ventaja del \cref{tema:2}.
+\end{proposicion}
+
+\begin{proof}
+$\piold$ no depende de $\theta$, luego $\nabla\rho_t=\nabla\pi_\theta/\piold=(\pi_\theta/\piold)\nabla\log\pi_\theta$ por el \cref{lem:logder}. En $\theta=\theta_{\mathrm{old}}$ se tiene $\rho_t=1$.
+\end{proof}
+
+Optimizar $L$ durante varios pasos con las mismas muestras es tentador, pero si $\rho_t$ se aleja mucho de~1 la estimación pierde validez y su varianza crece. TRPO resuelve el problema con una restricción explícita sobre la divergencia KL entre $\piold$ y $\pi_\theta$; PPO lo resuelve con un recorte, mucho más sencillo de implementar~\cite{cs285,ppo}.
+
+\section{El objetivo recortado de PPO}
+
+\begin{definicion}[Objetivo recortado]\label{def:ppo}
+Sea $\varepsilon>0$ (típicamente $\varepsilon=0{,}2$) y sea $\clip(\rho,1-\varepsilon,1+\varepsilon)=\min\{\max\{\rho,1-\varepsilon\},1+\varepsilon\}$. El objetivo de PPO es~\cite[§3]{ppo}
+\[
+L^{\mathrm{CLIP}}(\theta)=\E_t\Bigl[\min\bigl(\rho_t(\theta)\widehat A_t,\ \clip(\rho_t(\theta),1-\varepsilon,1+\varepsilon)\,\widehat A_t\bigr)\Bigr].
+\]
+\end{definicion}
+
+\begin{proposicion}[Análisis por casos]\label{prop:ppo-casos}
+Para un término con ventaja $A$ y cociente $\rho$, sea $\ell(\rho)=\min(\rho A,\clip(\rho)A)$.
+\begin{enumerate}
+  \item $\ell(\rho)\le\rho A$ siempre: el recorte nunca aumenta el objetivo.
+  \item Si $A>0$, $\ell(\rho)=\min(\rho,1+\varepsilon)\,A$: el término deja de crecer, y su derivada respecto a $\rho$ se anula, cuando $\rho>1+\varepsilon$.
+  \item Si $A<0$, $\ell(\rho)=\max(\rho,1-\varepsilon)\,A$: la derivada se anula cuando $\rho<1-\varepsilon$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) El mínimo de dos números no supera a ninguno de ellos. (ii) Con $A>0$, $\min(\rho A,\clip(\rho)A)=A\min(\rho,\clip(\rho))$. Si $\rho\le 1+\varepsilon$, $\clip(\rho)\ge\rho$ (vale $\rho$ o $1-\varepsilon>\rho$), y el mínimo es $\rho$; si $\rho>1+\varepsilon$, $\clip(\rho)=1+\varepsilon<\rho$. En ambos casos el resultado es $\min(\rho,1+\varepsilon)$, constante para $\rho>1+\varepsilon$. (iii) Con $A<0$, $\min(\rho A,\clip(\rho)A)=A\max(\rho,\clip(\rho))$; razonando igual, $\max(\rho,\clip(\rho))=\max(\rho,1-\varepsilon)$, constante para $\rho<1-\varepsilon$.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}rrrrrl@{}}
+\toprule
+$\rho$ & $A$ & $\rho A$ & $\clip(\rho)A$ & $\ell$ & Lectura \\
+\midrule
+$1{,}5$ & $+2$ & $3{,}0$ & $2{,}4$ & $2{,}4$ & acción buena que ya subió: sin incentivo para subir más \\
+$0{,}5$ & $+2$ & $1{,}0$ & $1{,}6$ & $1{,}0$ & acción buena que bajó: el gradiente la corrige \\
+$1{,}5$ & $-1$ & $-1{,}5$ & $-1{,}2$ & $-1{,}5$ & acción mala que subió: se penaliza entera \\
+$0{,}5$ & $-1$ & $-0{,}5$ & $-0{,}8$ & $-0{,}8$ & acción mala que ya bajó: gradiente nulo \\
+\bottomrule
+\end{tabular}
+\caption{Los cuatro casos del objetivo recortado con $\varepsilon=0{,}2$.}
+\label{tab:ppo}
+\end{table}
+
+El mínimo convierte $L^{\mathrm{CLIP}}$ en una cota \emph{pesimista} del objetivo sustituto: el recorte elimina el incentivo para alejarse más de $\varepsilon$ en la dirección favorable, pero nunca impide corregir un movimiento desfavorable (\cref{tab:ppo}). En la práctica, PPO combina $L^{\mathrm{CLIP}}$ con una pérdida cuadrática para el crítico y una bonificación de entropía cuando ambos comparten parámetros, y el artículo describe también una variante con penalización KL adaptativa respecto a $\piold$~\cite[§4]{ppo}.
+
+\section{Penalización KL respecto a un modelo de referencia}
+
+En el ajuste por refuerzo de modelos de lenguaje no se maximiza solo la recompensa. Sea $\piref$ el modelo de partida congelado (el modelo SFT). El objetivo regularizado es~\cite{instructgpt}
+\begin{equation}\label{eq:obj-kl}
+\begin{aligned}&\max_{\pi}\ \E_{x}\bigl[J_\beta(\pi;x)\bigr],\\ &J_\beta(\pi;x)=\E_{y\sim\pi(\cdot\mid x)}[r(x,y)]-\beta\,\KL\bigl(\pi(\cdot\mid x)\,\|\,\piref(\cdot\mid x)\bigr),\end{aligned}
+\end{equation}
+con $\beta>0$.
+
+La penalización cumple tres funciones: impide que la política explote errores del modelo de recompensa, que solo es fiable cerca de los datos con que se entrenó (\cref{tema:6}); conserva la fluidez y el conocimiento del preentrenamiento, y mantiene la diversidad, ya que sin ella el óptimo es una política determinista que solo emite la respuesta de máxima recompensa.
+
+\begin{proposicion}[KL de secuencias como suma por tokens]\label{prop:kl-tokens}
+Sean $\pi$ y $\piref$ modelos autorregresivos sobre respuestas. Entonces
+\[
+\begin{aligned}
+\KL\bigl(\pi(\cdot\mid x)\,\|\,\piref(\cdot\mid x)\bigr)&=\E_{y\sim\pi}\Bigl[\sum_{t=1}^{T}\log\frac{\pi(y_t\mid x,y_{<t})}{\piref(y_t\mid x,y_{<t})}\Bigr]\\
+&=\E_{y\sim\pi}\Bigl[\sum_{t=1}^{T}\KL\bigl(\pi(\cdot\mid s_{t-1})\,\|\,\piref(\cdot\mid s_{t-1})\bigr)\Bigr],
+\end{aligned}
+\]
+con $s_{t-1}=(x,y_{<t})$.
+\end{proposicion}
+
+\begin{proof}
+Por la regla de la cadena, $\log\bigl(\pi(y\mid x)/\piref(y\mid x)\bigr)=\sum_t\log\bigl(\pi(y_t\mid s_{t-1})/\piref(y_t\mid s_{t-1})\bigr)$; tomando esperanzas se obtiene la primera igualdad. Para la segunda, en cada sumando se condiciona a $s_{t-1}$: la esperanza de $\log(\pi/\piref)(y_t\mid s_{t-1})$ con $y_t\sim\pi(\cdot\mid s_{t-1})$ es la divergencia KL en ese estado.
+\end{proof}
+
+La proposición justifica la implementación habitual: a la recompensa de cada token muestreado se le resta $\beta\log\bigl(\pi_\theta(y_t\mid s_{t-1})/\piref(y_t\mid s_{t-1})\bigr)$, cuyo valor esperado acumulado es la KL. Cada término individual puede ser negativo; solo su esperanza es no negativa (\cref{eje:3-estimadores}).
+
+\begin{ejemplo}\label{ej:kl}
+En un único paso con $\pi_\theta=(0{,}6;\ 0{,}3;\ 0{,}1)$ y $\piref=(0{,}4;\ 0{,}4;\ 0{,}2)$, las log-razones son $\ln 1{,}5=0{,}405$, $\ln 0{,}75=-0{,}288$ y $\ln 0{,}5=-0{,}693$, y la divergencia es
+$\KL=0{,}6\cdot 0{,}405+0{,}3\cdot(-0{,}288)+0{,}1\cdot(-0{,}693)=0{,}088$ nats.
+\end{ejemplo}
+
+\section{La política óptima en forma cerrada}
+
+\begin{teorema}[Política óptima con penalización KL]\label{teo:optimo-kl}
+Para cada $x$, el objetivo \eqref{eq:obj-kl} sobre las distribuciones $\pi(\cdot\mid x)$ alcanza su máximo, de forma única, en
+\[
+\pi^{*}(y\mid x)=\frac{1}{Z(x)}\,\piref(y\mid x)\exp\Bigl(\frac{r(x,y)}{\beta}\Bigr),\qquad Z(x)=\sum_{y}\piref(y\mid x)\,e^{r(x,y)/\beta},
+\]
+y el valor máximo es $\beta\log Z(x)$.
+\end{teorema}
+
+\begin{proof}
+Se fija $x$ y se omite en la notación. Para cualquier $\pi$ con soporte contenido en el de $\piref$,
+\[
+\E_\pi[r]-\beta\,\E_\pi\Bigl[\log\frac{\pi}{\piref}\Bigr]
+=-\beta\,\E_\pi\Bigl[\log\frac{\pi}{\piref\,e^{r/\beta}}\Bigr]
+=-\beta\,\E_\pi\Bigl[\log\frac{\pi}{Z\,\pi^{*}}\Bigr]
+=\beta\log Z-\beta\,\KL(\pi\,\|\,\pi^{*}).
+\]
+La primera igualdad usa $r=\beta\log e^{r/\beta}$; la segunda, la definición de $\pi^{*}$, que da $\piref e^{r/\beta}=Z\pi^{*}$. El término $\beta\log Z$ no depende de $\pi$, y por la desigualdad de Gibbs (módulo~6) $\KL(\pi\,\|\,\pi^{*})\ge 0$, con igualdad si y solo si $\pi=\pi^{*}$. Si el soporte de $\pi$ no está contenido en el de $\piref$, la divergencia es infinita y el objetivo vale $-\infty$.
+\end{proof}
+
+\begin{ejemplo}[El papel de $\beta$]\label{ej:beta}
+Sean $\piref=(0{,}5;\ 0{,}3;\ 0{,}2)$ y $r=(1,2,0)$. La \cref{tab:beta} muestra $\pi^{*}$ para varios valores de $\beta$. Al disminuir $\beta$, la política gana recompensa a cambio de alejarse de la referencia. Con $\beta=1$, $Z=0{,}5e+0{,}3e^{2}+0{,}2=3{,}776$ y el valor óptimo es $\ln 3{,}776=1{,}329=1{,}534-0{,}205$, de acuerdo con el \cref{teo:optimo-kl}.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+$\beta$ & $\pi^{*}$ & $\E_{\pi^{*}}[r]$ & $\KL(\pi^{*}\,\|\,\piref)$ \\
+\midrule
+$\infty$ (referencia) & $(0{,}500;\ 0{,}300;\ 0{,}200)$ & $1{,}100$ & $0$ \\
+$2$ & $(0{,}448;\ 0{,}443;\ 0{,}109)$ & $1{,}335$ & $0{,}058$ \\
+$1$ & $(0{,}360;\ 0{,}587;\ 0{,}053)$ & $1{,}534$ & $0{,}205$ \\
+$0{,}5$ & $(0{,}182;\ 0{,}808;\ 0{,}010)$ & $1{,}798$ & $0{,}587$ \\
+\bottomrule
+\end{tabular}
+\caption{Política óptima del \cref{ej:beta} en función de $\beta$.}
+\label{tab:beta}
+\end{table}
+
+\begin{observacion}[Distribución de Boltzmann y energía libre]\label{obs:boltzmann}
+Con $E(y)=-r(y)$ y temperatura $\beta$, la política óptima es $\pi^{*}\propto\piref\,e^{-E/\beta}$: una distribución de Boltzmann (la softmax con temperatura del módulo~1) con $\piref$ como medida de fondo. El objetivo cambiado de signo, $\E_\pi[E]+\beta\,\KL(\pi\,\|\,\piref)$, es una energía libre, y la demostración del \cref{teo:optimo-kl} es el principio variacional de Gibbs: el mínimo vale $-\beta\log Z$. Cuando $\beta\to 0$, $\pi^{*}$ se concentra en las respuestas de máxima recompensa; cuando $\beta\to\infty$, $\pi^{*}\to\piref$ (\cref{eje:3-limites}).
+\end{observacion}
+
+El \cref{teo:optimo-kl} no puede aplicarse directamente a un LLM, porque $Z(x)$ es una suma sobre las $\abs{\V}^{T}$ respuestas (\cref{obs:bandido}). Por eso RLHF optimiza \eqref{eq:obj-kl} con PPO. El \cref{tema:5} muestra que la forma cerrada sí puede aprovecharse si se trabaja con diferencias de recompensas, en las que $Z(x)$ se cancela.
+
+\begin{lecturas}
+\item Levine, CS285~\cite{cs285}, clase~9, «Advanced Policy Gradients»: muestreo de importancia, restricción KL, TRPO y PPO.
+\item J.~Schulman \emph{et al.}~\cite{ppo}: §3 «Clipped Surrogate Objective» y §4 «Adaptive KL Penalty Coefficient».
+\item L.~Ouyang \emph{et al.}~\cite{instructgpt}, §3.5: objetivo con penalización KL respecto al modelo SFT.
+\item R.~Rafailov \emph{et al.}~\cite{dpo}, apéndice~A.1: derivación del óptimo del objetivo con restricción KL.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-pesimista}
+Justifique si son verdaderas o falsas: (a) en PPO el recorte puede aumentar el valor del objetivo; (b) con $A>0$ y $\rho<1-\varepsilon$ el gradiente del término es nulo; (c) sin penalización KL, el óptimo de $\E_\pi[r]$ es en general una política determinista.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-ppo}
+Con $\varepsilon=0{,}2$, calcule el objetivo recortado para $(\rho,A)=(1{,}3;\ 1)$, $(0{,}7;\ 1)$, $(0{,}7;\ -2)$ y $(1{,}3;\ -2)$, e indique en cuáles el gradiente respecto a $\theta$ es nulo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-grpoclip}
+Con $\varepsilon=0{,}2$, calcule la pérdida por token $-\min\bigl(\rho A,\clip(\rho,0{,}8,1{,}2)A\bigr)$, con $\rho=\exp(\log\pi_\theta-\log\piold)$, para $A=+1$ y diferencias de log-probabilidad $0{,}1$, $0{,}3$ y $-0{,}4$, y para $A=-1$ con $0{,}3$ y $-0{,}4$. Indique en qué tokens el gradiente es nulo.
+\fuente{adaptado de CS336, primavera de 2025, tarea~5 «Alignment», §7.2, problema \texttt{compute\_\allowbreak{}grpo\_\allowbreak{}clip\_\allowbreak{}loss}~\cite{cs336a5}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-beta}
+Con $\piref=(\tfrac12,\tfrac12)$ y $r=(1,0)$, calcule $\pi^{*}$ para $\beta=1$ y $\beta=0{,}5$, y $\KL(\pi^{*}\,\|\,\piref)$ para $\beta=1$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-estimadores}
+Con las distribuciones del \cref{ej:kl}, calcule para cada token $y$ el estimador $k_1(y)=\log\bigl(\pi_\theta(y)/\piref(y)\bigr)$ y el estimador $k_3(y)=\piref(y)/\pi_\theta(y)-\log\bigl(\piref(y)/\pi_\theta(y)\bigr)-1$. Compruebe que ambos tienen esperanza igual a la KL bajo $\pi_\theta$, y que $k_1$ toma valores negativos mientras que $k_3$ no.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-limites}
+Demuestre que el valor óptimo de \eqref{eq:obj-kl} para un $x$ fijo, $\beta\log Z(x)$, tiende a $\max\{r(y):\piref(y)>0\}$ cuando $\beta\to 0$ y a $\E_{\piref}[r]$ cuando $\beta\to\infty$. Compruebe ambos límites con los datos del \cref{ej:beta} para $\beta=0{,}01$ y $\beta=100$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Preferencias, modelo de recompensa y RLHF}
+\label{tema:4}
+% =====================================================================
+
+Las personas no asignan con fiabilidad una nota absoluta a una respuesta, pero sí deciden con bastante consistencia cuál de dos respuestas prefieren. Este tema presenta el modelo de comparaciones por pares de Bradley y Terry~\cite{bt}, su estimación por máxima verosimilitud y su uso para entrenar un modelo de recompensa a partir de preferencias humanas, como en Christiano \emph{et al.}~\cite{christiano}, Stiennon \emph{et al.}~\cite{stiennon} y Ouyang \emph{et al.}~\cite{instructgpt}. Termina con el procedimiento completo de RLHF de InstructGPT. La parte de aprendizaje de recompensas sigue además la tarea~3 de CS234~\cite{cs234a3}.
+
+\section{El modelo de Bradley--Terry}
+
+\begin{definicion}[Modelo de Bradley--Terry]\label{def:bt}
+Sean $n$ objetos con puntuaciones latentes $r_1,\dots,r_n\in\R$. El \emph{modelo de Bradley--Terry} postula que, al comparar $i$ con $j$, se prefiere $i$ con probabilidad
+\[
+P(i\pref j)=\frac{e^{r_i}}{e^{r_i}+e^{r_j}}=\sigma(r_i-r_j),
+\]
+y que las comparaciones son independientes entre sí.
+\end{definicion}
+
+La segunda igualdad se obtiene dividiendo numerador y denominador entre $e^{r_i}$. El modelo es una regresión logística (módulo~8) cuyo predictor es la \emph{diferencia} de puntuaciones.
+
+\begin{proposicion}[Propiedades]\label{prop:bt}
+\begin{enumerate}
+  \item $P(i\pref j)+P(j\pref i)=1$, y $P(i\pref j)=\tfrac12$ si y solo si $r_i=r_j$.
+  \item Las probabilidades no cambian si se suma una misma constante $c$ a todas las puntuaciones; las puntuaciones solo están determinadas salvo una traslación.
+  \item Las \emph{razones de probabilidades} se multiplican: $\dfrac{P(i\pref j)}{P(j\pref i)}\cdot\dfrac{P(j\pref k)}{P(k\pref j)}=\dfrac{P(i\pref k)}{P(k\pref i)}$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\sigma(z)+\sigma(-z)=1$, y $\sigma(z)=\tfrac12$ solo para $z=0$. (ii) $(r_i+c)-(r_j+c)=r_i-r_j$. (iii) $\sigma(z)/\sigma(-z)=e^{z}$, luego el primer miembro vale $e^{r_i-r_j}e^{r_j-r_k}=e^{r_i-r_k}$.
+\end{proof}
+
+La propiedad (iii) es una forma de transitividad: si $i$ gana a $j$ con razón $3{:}1$ y $j$ a $k$ con razón $2{:}1$, el modelo predice que $i$ gana a $k$ con razón $6{:}1$, es decir, con probabilidad $6/7$.
+
+\begin{definicion}[Modelo de Plackett--Luce]\label{def:pl}
+Para ordenar $K$ objetos, el modelo de Plackett--Luce elige el primero con probabilidad proporcional a $e^{r_i}$, el segundo entre los restantes con la misma regla, y así sucesivamente:
+\[
+P(i_1\pref i_2\pref\dots\pref i_K)=\prod_{k=1}^{K}\frac{e^{r_{i_k}}}{\sum_{m\ge k}e^{r_{i_m}}}.
+\]
+Con $K=2$ se reduce al modelo de Bradley--Terry.
+\end{definicion}
+
+\section{Estimación por máxima verosimilitud}
+
+\begin{proposicion}[Pérdida del modelo de recompensa]\label{prop:bt-mv}
+Sea $\mathcal{D}=\{(x^{(m)},y_w^{(m)},y_l^{(m)})\}_{m=1}^{M}$ un conjunto de comparaciones en las que $y_w$ fue preferida a $y_l$, y sea $r_\phi(x,y)$ una recompensa parametrizada. Bajo el modelo de Bradley--Terry, el estimador de máxima verosimilitud de $\phi$ minimiza
+\[
+\LRM(\phi)=-\frac1M\sum_{m=1}^{M}\log\sigma\bigl(r_\phi(x^{(m)},y_w^{(m)})-r_\phi(x^{(m)},y_l^{(m)})\bigr).
+\]
+Con $z=r_\phi(x,y_w)-r_\phi(x,y_l)$, el gradiente de cada término es $-(1-\sigma(z))\bigl(\nabla_\phi r_\phi(x,y_w)-\nabla_\phi r_\phi(x,y_l)\bigr)$.
+\end{proposicion}
+
+\begin{proof}
+Por independencia, la verosimilitud es $\prod_m\sigma(z_m)$; su logaritmo cambiado de signo y dividido por $M$ es $\LRM$, y minimizarlo equivale a maximizar la verosimilitud. Para el gradiente, $\frac{d}{dz}\log\sigma(z)=\sigma'(z)/\sigma(z)=1-\sigma(z)$, porque $\sigma'=\sigma(1-\sigma)$; la regla de la cadena con $\nabla_\phi z$ completa la expresión.
+\end{proof}
+
+El factor $1-\sigma(z)=\sigma(-z)$ es la probabilidad que el modelo asigna al orden \emph{equivocado}: los pares ya bien ordenados apenas contribuyen y los mal ordenados empujan con fuerza.
+
+\begin{ejemplo}\label{ej:bt}
+Si $r_w=2$ y $r_l=0{,}5$, entonces $P(y_w\pref y_l)=\sigma(1{,}5)=0{,}818$ y la pérdida es $-\ln 0{,}818=0{,}201$. Si $r_w=r_l$, $P=\tfrac12$ y la pérdida es $\ln 2=0{,}693$, el valor de un modelo que no distingue. La derivada respecto a $r_w$ es $-(1-\sigma(1{,}5))=-0{,}182$: el descenso de gradiente aumenta $r_w$, con menos intensidad cuanto más seguro está ya el modelo.
+\end{ejemplo}
+
+\begin{proposicion}[Estimador con dos objetos]\label{prop:bt-dos}
+Si en $n$ comparaciones entre $a$ y $b$ se prefiere $a$ en $n_a$ ocasiones, con $0<n_a<n$, el estimador de máxima verosimilitud de la diferencia es $\widehat{r_a-r_b}=\log\bigl(n_a/(n-n_a)\bigr)$, y la probabilidad estimada es la frecuencia observada $n_a/n$.
+\end{proposicion}
+
+\begin{proof}
+Con $z=r_a-r_b$, la log-verosimilitud es $\ell(z)=n_a\log\sigma(z)+(n-n_a)\log\sigma(-z)$. Su derivada es $n_a(1-\sigma(z))-(n-n_a)\sigma(z)=n_a-n\sigma(z)$, que se anula en $\sigma(z)=n_a/n$, es decir, en $z=\log\bigl(n_a/(n-n_a)\bigr)$. Como $\ell''(z)=-n\sigma(z)(1-\sigma(z))<0$, es un máximo.
+\end{proof}
+
+Si $n_a=n$, la verosimilitud crece sin cota cuando $z\to\infty$ y el estimador no existe: un modelo de recompensa sobreajustado puede separar las preferencias de entrenamiento con márgenes arbitrariamente grandes. En la práctica lo impiden la regularización y la parada temprana.
+
+\section{Modelos de recompensa neuronales}
+
+En el ajuste de LLM, $r_\phi(x,y)$ es un Transformer, normalmente inicializado desde el modelo SFT, en el que la capa de salida sobre el vocabulario se sustituye por una cabeza lineal que produce un escalar a partir del estado oculto del último token~\cite{stiennon,instructgpt}. Tres detalles merecen mención.
+\begin{itemize}[leftmargin=1.4em,label=\textendash]
+  \item \emph{Comparaciones de segmentos.} Christiano \emph{et al.}~\cite{christiano} aplicaron Bradley--Terry a pares de fragmentos de trayectoria en tareas de control, con la recompensa de un fragmento igual a la suma de recompensas por paso predichas (\cref{eje:4-cs234}).
+  \item \emph{Ordenaciones.} En InstructGPT, los anotadores ordenaban entre $K=4$ y $K=9$ respuestas a la misma instrucción. Cada ordenación produce $\binom{K}{2}$ comparaciones, que se tratan en un mismo lote y se ponderan por $1/\binom{K}{2}$ para que las instrucciones con más respuestas no dominen~\cite[§3.5]{instructgpt}.
+  \item \emph{Normalización.} Por la \cref{prop:bt}(ii), la recompensa aprendida está definida salvo una constante; se suele trasladar para que las demostraciones de referencia tengan recompensa media nula antes del RL~\cite{stiennon,instructgpt}.
+\end{itemize}
+
+\section{El procedimiento RLHF de InstructGPT}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},node distance=5mm,
+  caja/.style={draw,thick,rounded corners=2pt,align=center,inner sep=3pt,minimum height=12mm,text width=2.35cm}]
+  \node[caja] (pre) {modelo\\preentrenado};
+  \node[caja,right=of pre] (sft) {1. SFT con\\demostraciones};
+  \node[caja,right=of sft] (rm) {2. modelo de\\recompensa $r_\phi$};
+  \node[caja,right=of rm] (ppo) {3. PPO con\\penalización KL};
+  \node[caja,right=of ppo] (fin) {modelo\\ajustado};
+  \draw[->,thick] (pre) -- (sft);
+  \draw[->,thick] (sft) -- (rm);
+  \draw[->,thick] (rm) -- (ppo);
+  \draw[->,thick] (ppo) -- (fin);
+  \draw[->,thick,dashed] (sft.south) -- ++(0,-0.6) -| node[pos=0.25,below] {$\pi_\theta$ inicial y referencia $\piref$ congelada} (ppo.south);
+  \node[font=\footnotesize,above=1mm of rm] {ordenaciones humanas, Bradley--Terry};
+\end{tikzpicture}
+\caption{Las tres etapas de RLHF según InstructGPT~\cite{instructgpt}. El modelo SFT inicializa la política, sirve de referencia congelada para la penalización KL y, en general, también inicializa el modelo de recompensa.}
+\label{fig:rlhf}
+\end{figure}
+
+El procedimiento de Ouyang \emph{et al.}~\cite[§3.5]{instructgpt} consta de tres etapas (\cref{fig:rlhf}):
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Ajuste supervisado}: el modelo preentrenado se ajusta con demostraciones escritas por anotadores (módulo~20).
+  \item \emph{Modelo de recompensa}: se recogen ordenaciones de respuestas del modelo SFT y se entrena $r_\phi$ con la pérdida de la \cref{prop:bt-mv}. En el artículo, los modelos de recompensa tienen $6\cdot 10^{9}$ parámetros.
+  \item \emph{Optimización por refuerzo}: se maximiza $\E[r_\phi(x,y)]-\beta\,\KL(\pi_\theta\,\|\,\piref)$ con PPO (\cref{tema:3}). La variante PPO-ptx añade un término $\gamma\,\E_{x\sim\mathcal{D}_{\mathrm{pre}}}[\log\pi_\theta(x)]$ de verosimilitud sobre datos de preentrenamiento para reducir la pérdida de rendimiento en tareas clásicas.
+\end{enumerate}
+
+Con este procedimiento, las respuestas de un modelo de $1{,}3\cdot 10^{9}$ parámetros fueron preferidas por los evaluadores a las de GPT-3 de $1{,}75\cdot 10^{11}$ parámetros~\cite{instructgpt}. El coste práctico es alto: durante la tercera etapa conviven en memoria la política, la referencia, el modelo de recompensa y el crítico de PPO, cuatro redes del tamaño de un LLM. Esta es la principal motivación práctica de DPO (\cref{tema:5}).
+
+\begin{lecturas}
+\item R.~A. Bradley y M.~E. Terry~\cite{bt}, artículo original del modelo de comparaciones por pares.
+\item P.~Christiano \emph{et al.}~\cite{christiano} y N.~Stiennon \emph{et al.}~\cite{stiennon}: aprendizaje de recompensas a partir de preferencias humanas.
+\item L.~Ouyang \emph{et al.}~\cite{instructgpt}, §3.5 «Models»: modelo de recompensa, PPO y PPO-ptx.
+\item CS234~\cite{cs234a3}, tarea~3, sección~2 «Learning from preferences».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-conceptos}
+(a) Explique por qué se recogen comparaciones entre respuestas en lugar de notas absolutas. (b) Justifique si es verdadera o falsa la afirmación «las probabilidades de Bradley--Terry no cambian si se suma~5 a todas las recompensas». (c) ¿Qué ocurre con la recompensa aprendida si se multiplican todas por~2?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-bt}
+Un modelo de recompensa da $r_w-r_l=1$. Calcule $P(y_w\pref y_l)$, la pérdida $-\log\sigma(r_w-r_l)$ y su derivada respecto a $r_w$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-cs234}
+Un modelo de recompensa predice $\hat r_\theta(o_t,a_t)$ en cada paso, y la probabilidad de preferir la trayectoria $\sigma^{1}$ a $\sigma^{2}$ es $\sigma(z)$, con $z=\sum_t\hat r_\theta(o^{1}_t,a^{1}_t)-\sum_t\hat r_\theta(o^{2}_t,a^{2}_t)$. La pérdida es la entropía cruzada con etiqueta $\mu\in\{0;\ 0{,}5;\ 1\}$: $L=-[\mu\log\sigma(z)+(1-\mu)\log(1-\sigma(z))]$. (a) Exprese $\nabla_\theta L$ en función de los $\nabla_\theta\hat r_\theta$. (b) Con recompensas por paso $(0{,}5;\ 1{,}0)$ en $\sigma^{1}$ y $(0{,}2;\ 0{,}3)$ en $\sigma^{2}$, calcule $P(\sigma^{1}\pref\sigma^{2})$, $L$ y $\partial L/\partial z$ para $\mu=1$ y para $\mu=0{,}5$.
+\fuente{adaptado de Stanford CS234, invierno de 2025, tarea~3, problema~2.1, apartados (a) y (b)~\cite{cs234a3}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-ranking}
+(a) ¿Cuántas comparaciones produce una ordenación de $K=4$ respuestas? ¿Y de $K=9$? (b) Un anotador ordena tres respuestas como $A\pref B\pref C$ y el modelo de recompensa les asigna $r_A=1{,}0$, $r_B=0{,}2$ y $r_C=-0{,}5$. Calcule la pérdida de cada comparación y la pérdida media ponderada por $1/\binom{3}{2}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-mv}
+En diez comparaciones entre las respuestas $a$ y $b$, los anotadores prefieren $a$ siete veces. Calcule el estimador de máxima verosimilitud de $r_a-r_b$ con la \cref{prop:bt-dos} y compruebe que reproduce la frecuencia observada. Con la \cref{prop:bt}(iii), si además $b$ gana a $c$ con razón $2{:}1$, ¿qué probabilidad predice el modelo para $a\pref c$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-convexidad}
+Sea un modelo de recompensa lineal $r_u(x,y)=u^{\top}\varphi(x,y)$, con $\varphi$ un vector de características fijo y $u\in\R^{d}$. (a) Demuestre que $\LRM(u)$ es convexa en $u$ calculando su matriz hessiana. (b) Demuestre que, si existe $u_0$ con $u_0^{\top}(\varphi(x,y_w)-\varphi(x,y_l))>0$ para todas las comparaciones, el ínfimo de $\LRM$ es~0 y no se alcanza. (c) Interprete (b) en relación con el sobreajuste del modelo de recompensa.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Optimización directa de preferencias (DPO)}
+\label{tema:5}
+% =====================================================================
+
+La optimización directa de preferencias (DPO) de Rafailov \emph{et al.}~\cite{dpo} elimina el modelo de recompensa explícito y el bucle de refuerzo de RLHF. La idea es invertir la forma cerrada del \cref{teo:optimo-kl} para expresar la recompensa en función de la política y sustituirla en el modelo de Bradley--Terry, donde la función de partición se cancela. Este tema reproduce la derivación completa, los resultados de equivalencia de la §5.1 del artículo y el gradiente de la §4. El material se complementa con la clase invitada sobre DPO del curso CS234~\cite{cs234} y con la tarea~5 de CS336~\cite{cs336a5s}.
+
+\section{De la política óptima a la recompensa}
+
+\begin{lema}[Reparametrización]\label{lem:reparam}
+Sea $\pi_r^{*}$ la política óptima del objetivo \eqref{eq:obj-kl} para la recompensa $r$ y la referencia $\piref$, y supóngase $\piref(y\mid x)>0$. Entonces, para todo $(x,y)$,
+\[
+r(x,y)=\beta\log\frac{\pi_r^{*}(y\mid x)}{\piref(y\mid x)}+\beta\log Z(x).
+\]
+\end{lema}
+
+\begin{proof}
+Por el \cref{teo:optimo-kl}, $\pi_r^{*}(y\mid x)=\piref(y\mid x)\,e^{r(x,y)/\beta}/Z(x)$. Tomando logaritmos, $\log\pi_r^{*}=\log\piref+r/\beta-\log Z$; multiplicando por $\beta$ y despejando $r$ se obtiene la igualdad.
+\end{proof}
+
+El término incómodo, $\beta\log Z(x)$, depende solo de la instrucción $x$ y no de la respuesta. Todo lo que sigue explota este hecho.
+
+\section{Clases de equivalencia de recompensas}
+
+\begin{definicion}[Recompensas equivalentes]\label{def:equiv}
+Dos recompensas $r$ y $r'$ son \emph{equivalentes} si existe una función $f$ tal que $r'(x,y)=r(x,y)+f(x)$ para todo $(x,y)$. Es una relación de equivalencia; sus clases se llaman \emph{clases de recompensas}.
+\end{definicion}
+
+\begin{lema}[Las recompensas equivalentes inducen las mismas preferencias]\label{lem:equiv-pref}
+Si $r$ y $r'$ son equivalentes, inducen la misma distribución de preferencias de Bradley--Terry, y también de Plackett--Luce, sobre las respuestas a cada instrucción.
+\end{lema}
+
+\begin{proof}
+Para Bradley--Terry, $r'(x,y_1)-r'(x,y_2)=r(x,y_1)+f(x)-r(x,y_2)-f(x)=r(x,y_1)-r(x,y_2)$. Para Plackett--Luce (\cref{def:pl}), cada factor $e^{r'_{i_k}}/\sum_{m\ge k}e^{r'_{i_m}}$ tiene numerador y denominador multiplicados por $e^{f(x)}$, que se cancela.
+\end{proof}
+
+\begin{lema}[Las recompensas equivalentes inducen la misma política óptima]\label{lem:equiv-pol}
+Si $r$ y $r'$ son equivalentes, $\pi_{r'}^{*}=\pi_r^{*}$.
+\end{lema}
+
+\begin{proof}
+$\piref\,e^{r'/\beta}=\piref\,e^{r/\beta}e^{f(x)/\beta}$ y $Z'(x)=Z(x)e^{f(x)/\beta}$, porque $e^{f(x)/\beta}$ no depende de $y$ y sale de la suma. Al dividir, el factor se cancela.
+\end{proof}
+
+\begin{teorema}[Representación de las clases de recompensas]\label{teo:representacion}
+Toda clase de recompensas contiene un representante de la forma $\hat r(x,y)=\beta\log\bigl(\pi(y\mid x)/\piref(y\mid x)\bigr)$ para alguna política $\pi$, y esa política es única: es la política óptima común de la clase.
+\end{teorema}
+
+\begin{proof}
+\emph{Existencia.} Sea $r$ un elemento de la clase y $\pi=\pi_r^{*}$. Por el \cref{lem:reparam}, $\hat r(x,y)=\beta\log(\pi/\piref)=r(x,y)-\beta\log Z(x)$, que es equivalente a $r$ con $f(x)=-\beta\log Z(x)$. \emph{Unicidad.} Si $\beta\log(\pi_1/\piref)$ y $\beta\log(\pi_2/\piref)$ están en la misma clase, difieren en una función de $x$: $\log\pi_1(y\mid x)-\log\pi_2(y\mid x)=g(x)$, luego $\pi_1=e^{g(x)}\pi_2$. Sumando en $y$, $1=e^{g(x)}$, de modo que $g=0$ y $\pi_1=\pi_2$. Que esa política es la óptima de la clase se sigue del \cref{lem:equiv-pol} y de la existencia.
+\end{proof}
+
+El teorema~1 de~\cite{dpo} enuncia este resultado: parametrizar las recompensas como $\beta\log(\pi/\piref)$ no pierde generalidad, porque toda clase de recompensas compatible con el modelo de preferencias puede escribirse así. Es el sentido preciso del subtítulo del artículo: el modelo de lenguaje es, en secreto, un modelo de recompensa.
+
+\section{La pérdida DPO}
+
+\begin{proposicion}[Preferencias en función de la política óptima]\label{prop:pref-pol}
+Si las preferencias siguen el modelo de Bradley--Terry con recompensa $r$ y $\pi^{*}=\pi^{*}_r$, entonces
+\[
+P(y_w\pref y_l\mid x)=\sigma\Bigl(\beta\log\frac{\pi^{*}(y_w\mid x)}{\piref(y_w\mid x)}-\beta\log\frac{\pi^{*}(y_l\mid x)}{\piref(y_l\mid x)}\Bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+Se sustituye el \cref{lem:reparam} en $P(y_w\pref y_l\mid x)=\sigma\bigl(r(x,y_w)-r(x,y_l)\bigr)$. Ambas respuestas comparten $x$, así que los términos $\beta\log Z(x)$ se cancelan en la diferencia.
+\end{proof}
+
+\begin{definicion}[Pérdida DPO]\label{def:dpo}
+Sea $\pi_\theta$ una política parametrizada y $\hat r_\theta(x,y)=\beta\log\bigl(\pi_\theta(y\mid x)/\piref(y\mid x)\bigr)$ su \emph{recompensa implícita}. La pérdida DPO sobre un conjunto de comparaciones $\mathcal{D}$ es
+\[
+\LDPO(\theta)=-\E_{(x,y_w,y_l)\sim\mathcal{D}}\Bigl[\log\sigma\Bigl(\beta\log\frac{\pi_\theta(y_w\mid x)}{\piref(y_w\mid x)}-\beta\log\frac{\pi_\theta(y_l\mid x)}{\piref(y_l\mid x)}\Bigr)\Bigr].
+\]
+\end{definicion}
+
+La derivación completa se resume en cuatro pasos: (1) el objetivo con KL tiene la solución cerrada del \cref{teo:optimo-kl}; (2) se despeja la recompensa (\cref{lem:reparam}); (3) se sustituye en Bradley--Terry y se cancela $Z(x)$ (\cref{prop:pref-pol}); (4) se reemplaza $\pi^{*}$ por $\pi_\theta$ y se maximiza la verosimilitud de las preferencias. El paso~(4) es legítimo por el \cref{teo:representacion}: ajustar $\pi_\theta$ equivale a ajustar una recompensa dentro de una familia que, sin restricciones de capacidad, contiene todas las clases. Con otras palabras, $\LDPO$ es la pérdida $\LRM$ de la \cref{prop:bt-mv} con $r_\phi$ sustituida por $\hat r_\theta$, y si $\hat r_\theta$ minimiza $\LRM$, entonces $\pi_\theta$ es la política óptima del objetivo con KL para esa recompensa.
+
+En la implementación, $\log\pi_\theta(y\mid x)=\sum_t\log\pi_\theta(y_t\mid x,y_{<t})$ se obtiene sumando las log-probabilidades por token de la respuesta (\cref{prop:mdp-tokens}), y las de $\piref$ se calculan una vez con el modelo congelado.
+
+\begin{proposicion}[Gradiente de DPO]\label{prop:grad-dpo}
+Sea $h=\hat r_\theta(x,y_w)-\hat r_\theta(x,y_l)$. Entonces
+\[
+\nabla_\theta\LDPO=-\beta\,\E_{\mathcal{D}}\Bigl[\sigma(-h)\bigl(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\bigr)\Bigr].
+\]
+\end{proposicion}
+
+\begin{proof}
+Para un término, $L=-\log\sigma(h)$, y $dL/dh=-(1-\sigma(h))=-\sigma(-h)$ como en la \cref{prop:bt-mv}. Como $\piref$ está congelado, $\nabla_\theta h=\beta\bigl(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\bigr)$. La regla de la cadena y la linealidad de la esperanza dan el resultado.
+\end{proof}
+
+El gradiente aumenta la log-probabilidad de la respuesta preferida y reduce la de la rechazada. El peso $\sigma(-h)$ es la probabilidad que la recompensa implícita asigna al orden equivocado: es grande cuando el modelo ordena mal el par y casi nulo cuando ya lo ordena bien. Rafailov \emph{et al.} observan que sin este peso el método degenera~\cite[§4]{dpo}.
+
+\begin{ejemplo}[Un paso de DPO]\label{ej:dpo}
+Sea $\beta=0{,}1$. Las log-probabilidades de la respuesta preferida son $-5$ con la política y $-6$ con la referencia; las de la rechazada, $-7$ y $-6{,}5$. Las recompensas implícitas son $\hat r_w=0{,}1\cdot(-5+6)=0{,}10$ y $\hat r_l=0{,}1\cdot(-7+6{,}5)=-0{,}05$, el margen es $h=0{,}15$ y la pérdida vale $-\ln\sigma(0{,}15)=0{,}621$, por debajo del valor inicial $\ln 2=0{,}693$ que corresponde a $\pi_\theta=\piref$. El peso del gradiente es $\beta\,\sigma(-0{,}15)=0{,}046$.
+\end{ejemplo}
+
+\section{DPO frente a RLHF con PPO}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+ & RLHF con PPO & DPO \\
+\midrule
+Redes en memoria & 4 (política, referencia, recompensa, crítico) & 2 (política, referencia) \\
+Muestreo al entrenar & sí (\emph{on-policy}) & no (datos fijos, \emph{offline}) \\
+Pérdida & objetivo recortado y penalización KL & clasificación binaria \\
+Óptimo teórico & $\pi^{*}$ del objetivo con KL & $\pi^{*}$ del objetivo con KL \\
+\bottomrule
+\end{tabularx}
+\caption{Comparación entre RLHF con PPO y DPO.}
+\label{tab:dpo-ppo}
+\end{table}
+
+Ambos métodos persiguen el mismo óptimo (\cref{tab:dpo-ppo}), pero no son equivalentes en la práctica. DPO solo ve las respuestas del conjunto de datos, generadas en general por otra política, y no explora; PPO evalúa con el modelo de recompensa las respuestas que la política genera en cada momento. Además, DPO controla solo la diferencia $h$: puede reducir a la vez las probabilidades de ambas respuestas siempre que la rechazada baje más, y puede sobreoptimizar su recompensa implícita, por ejemplo favoreciendo respuestas más largas (\cref{tema:6}). El apéndice~A.3 de~\cite{dpo} extiende la pérdida a ordenaciones completas con el modelo de Plackett--Luce.
+
+\begin{lecturas}
+\item R.~Rafailov \emph{et al.}~\cite{dpo}: §4 «Direct Preference Optimization», §5.1 «Your Language Model Is Secretly a Reward Model» y apéndices~A.1--A.6.
+\item CS234~\cite{cs234}, clase~9, clase invitada sobre DPO.
+\item CS336~\cite{cs336a5s}, suplemento de la tarea~5, §6.3: implementación de la pérdida DPO.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-vf}
+Justifique si son verdaderas o falsas: (a) DPO necesita entrenar un modelo de recompensa explícito; (b) DPO muestrea respuestas de la política durante el entrenamiento; (c) la función de partición $Z(x)$ se cancela porque vale~1; (d) al inicio del entrenamiento, con $\pi_\theta=\piref$, la pérdida DPO vale $\ln 2$ para cualquier par.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-paso}
+Con $\beta=0{,}5$, la respuesta preferida tiene $\log\pi_\theta-\log\piref=+0{,}4$ y la rechazada $-0{,}6$. Calcule las recompensas implícitas, el margen, la pérdida y el peso $\beta\,\sigma(-h)$ del gradiente.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-cs336}
+Con $\beta=0{,}2$, la respuesta preferida tiene log-probabilidades por token $(-0{,}5;\ -1{,}2;\ -0{,}3)$ con la política y $(-0{,}6;\ -1{,}5;\ -0{,}4)$ con la referencia; la rechazada, $(-1{,}0;\ -2{,}0)$ y $(-0{,}8;\ -1{,}7)$. Calcule las log-probabilidades de cada secuencia, las recompensas implícitas, el margen, la pérdida y el peso del gradiente.
+\fuente{adaptado de CS336, primavera de 2026, suplemento de la tarea~5 «Instruction Tuning and RLHF», §6.3, problema \texttt{dpo\_\allowbreak{}loss}~\cite{cs336a5s}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-tabular}
+Sea una sola instrucción con dos respuestas posibles, $\piref=(\tfrac12,\tfrac12)$ y $\beta=0{,}5$. En los datos, la respuesta~1 se prefiere a la~2 con probabilidad $p=0{,}8$ (y la~2 a la~1 con probabilidad $0{,}2$). (a) Demuestre que la pérdida DPO esperada, como función del margen $h=\hat r(y_1)-\hat r(y_2)$, es $-p\log\sigma(h)-(1-p)\log\sigma(-h)$ y que se minimiza en $h=\log\bigl(p/(1-p)\bigr)$. (b) Deduzca la política $\pi_\theta$ que minimiza la pérdida y compárela con $\pi^{*}$ del \cref{teo:optimo-kl} para la recompensa $r=(\log 4,\,0)$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-gradiente}
+Deduzca el gradiente de la \cref{prop:grad-dpo} a partir de la \cref{def:dpo}, usando $\sigma'(z)=\sigma(z)(1-\sigma(z))$ y $1-\sigma(z)=\sigma(-z)$. Compruebe que en $\pi_\theta=\piref$ el peso es $\beta/2$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-invariancia}
+Demuestre que si $r'(x,y)=r(x,y)+f(x)$, la política óptima y la pérdida de Bradley--Terry no cambian. Explique por qué este hecho es exactamente el que permite eliminar $Z(x)$ en la derivación de DPO y compruébelo numéricamente con los datos del \cref{eje:3-beta} ($\beta=1$) y $f=5$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Retroalimentación de IA, recompensas verificables y sobreoptimización}
+\label{tema:6}
+% =====================================================================
+
+Los temas anteriores suponen que las preferencias proceden de personas y que la recompensa es fiable. Este tema estudia tres desarrollos que cuestionan esas hipótesis: la sustitución de parte de la supervisión humana por retroalimentación generada por un modelo según una lista de principios, Constitutional AI~\cite{cai}; el uso de verificadores automáticos como recompensa, con el algoritmo GRPO~\cite{deepseekmath,r1} y su análisis en la clase~17 y la tarea~5 de CS336~\cite{cs336,cs336a5}, y la sobreoptimización de recompensas imperfectas, medida por Gao, Schulman y Hilton~\cite{gao}.
+
+\section{Constitutional AI y retroalimentación de IA}
+
+Constitutional AI (Bai \emph{et al.}, Anthropic, 2022)~\cite{cai} entrena un asistente inofensivo sin etiquetas humanas sobre inocuidad: la supervisión humana se concentra en redactar una lista de principios en lenguaje natural, la \emph{constitución}. El método tiene dos fases (\cref{fig:cai}).
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Fase supervisada (SL-CAI).} Un modelo útil responde a instrucciones problemáticas. Después se le pide criticar su propia respuesta según un principio elegido al azar y reescribirla; el proceso puede repetirse. El modelo se ajusta con SFT sobre las revisiones finales.
+  \item \emph{Fase de refuerzo (RL-CAI).} El modelo de la fase~1 genera pares de respuestas. Un modelo de retroalimentación decide cuál cumple mejor un principio, en algunos experimentos razonando paso a paso. Con esas preferencias generadas por IA se entrena un modelo de preferencias de Bradley--Terry (\cref{tema:4}) y se optimiza la política contra él con RL y penalización KL (\cref{tema:3}). Es lo que se denomina RLAIF, \emph{RL from AI feedback}.
+\end{enumerate}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},node distance=5mm and 6mm,
+  caja/.style={draw,thick,rounded corners=2pt,align=center,inner sep=3pt,minimum height=9mm,text width=2.25cm}]
+  \node[caja] (a) {instrucción\\problemática};
+  \node[caja,right=of a] (b) {respuesta\\inicial};
+  \node[caja,right=of b] (c) {crítica según\\un principio};
+  \node[caja,right=of c] (d) {revisión\\$\Rightarrow$ SFT};
+  \node[caja,below=12mm of a] (e) {pares de\\respuestas};
+  \node[caja,right=of e] (f) {la IA elige\\según la\\constitución};
+  \node[caja,right=of f] (g) {modelo de\\preferencias};
+  \node[caja,right=of g] (h) {RL con\\penalización KL};
+  \draw[->,thick] (a)--(b); \draw[->,thick] (b)--(c); \draw[->,thick] (c)--(d);
+  \draw[->,thick] (e)--(f); \draw[->,thick] (f)--(g); \draw[->,thick] (g)--(h);
+  \draw[->,thick,dashed] (d.south) -- ++(0,-0.4) -| (e.north);
+  \node[font=\footnotesize\itshape,above=1mm of b.north east] {fase 1: SL-CAI};
+  \node[font=\footnotesize\itshape,below=1mm of f.south east] {fase 2: RL-CAI (RLAIF)};
+\end{tikzpicture}
+\caption{Las dos fases de Constitutional AI~\cite{cai}. El modelo ajustado en la fase~1 genera los pares de la fase~2.}
+\label{fig:cai}
+\end{figure}
+
+Las matemáticas son las de los temas~3 y~4; lo que cambia es quién genera las comparaciones. En el artículo, las preferencias de utilidad siguen procediendo de personas y las de inocuidad, del modelo~\cite{cai}. La ventaja es doble: el método escala con mucha menos anotación humana, y los valores que se optimizan quedan explícitos y pueden auditarse. Anthropic ha descrito públicamente Constitutional AI como parte del entrenamiento de Claude; la constitución concreta de cada versión y los detalles actuales de su entrenamiento solo se conocen en la medida en que se han publicado.
+
+\section{Recompensas verificables}
+
+En matemáticas o programación no hace falta aprender la recompensa: se puede comprobar la respuesta.
+
+\begin{definicion}[Recompensa verificable]\label{def:rlvr}
+Una \emph{recompensa verificable} es una función $r(x,y)\in\{0,1\}$ calculada por un programa: vale~1 si la respuesta final extraída de $y$ coincide con la solución de referencia o si el código de $y$ supera unas pruebas, y~0 en otro caso. El RL con recompensas de este tipo se denomina RLVR (\emph{reinforcement learning with verifiable rewards}), término introducido en Tülu~3~\cite{tulu3}.
+\end{definicion}
+
+Como solo se premia el resultado, el modelo es libre de escribir cualquier texto intermedio. DeepSeek-R1~\cite{r1} documenta que, al optimizar recompensas de exactitud y de formato con GRPO directamente sobre un modelo base, sin SFT previo (el modelo R1-Zero), las respuestas se alargan y aparecen cadenas de razonamiento extensas que aumentan la tasa de acierto. Sobre los modelos cerrados la información pública es escasa: OpenAI declaró que o1 (2024) se entrenó con RL a gran escala para razonar mediante cadenas de pensamiento sin publicar el algoritmo; Anthropic ofrece un modo de pensamiento extendido en Claude desde Claude~3.7 Sonnet (2025), y Google ofrece modos de razonamiento en Gemini. Los detalles de su entrenamiento no son públicos.
+
+\section{GRPO: optimización de política relativa al grupo}
+
+PPO necesita un crítico del tamaño del modelo para estimar $V(s_t)$. GRPO, introducido en DeepSeekMath~\cite[§4.1]{deepseekmath}, lo sustituye por una línea base empírica: para cada instrucción se generan varias respuestas y cada una se compara con las demás.
+
+\begin{definicion}[Ventaja relativa al grupo]\label{def:grpo-ventaja}
+Para una instrucción $x$ se muestrean $G$ respuestas $y^{(1)},\dots,y^{(G)}\sim\piold(\cdot\mid x)$ con recompensas $r_1,\dots,r_G$. La ventaja de la respuesta $i$, asignada a todos sus tokens, es
+\[
+\widehat A_i=\frac{r_i-\media(r_1,\dots,r_G)}{\desv(r_1,\dots,r_G)+\varepsilon_0},
+\]
+con $\varepsilon_0>0$ pequeño para evitar la división por cero.
+\end{definicion}
+
+\begin{definicion}[Objetivo de GRPO]\label{def:grpo}
+Con $\rho_{i,t}=\pi_\theta(y^{(i)}_t\mid x,y^{(i)}_{<t})/\piold(y^{(i)}_t\mid x,y^{(i)}_{<t})$, el objetivo que se maximiza es~\cite[ec.~(3)]{deepseekmath}
+\[
+\frac1G\sum_{i=1}^{G}\frac{1}{\abs{y^{(i)}}}\sum_{t=1}^{\abs{y^{(i)}}}\Bigl[\min\bigl(\rho_{i,t}\widehat A_i,\ \clip(\rho_{i,t},1-\varepsilon,1+\varepsilon)\widehat A_i\bigr)-\beta\,\widehat{\KL}_{i,t}\Bigr],
+\]
+donde $\widehat{\KL}_{i,t}=u-\log u-1$ con $u=\piref(y^{(i)}_t\mid\cdot)/\pi_\theta(y^{(i)}_t\mid\cdot)$.
+\end{definicion}
+
+A diferencia de RLHF con PPO, la penalización KL no se resta de la recompensa sino que se añade directamente a la pérdida, y se estima con el estimador $k_3$ del \cref{eje:3-estimadores}.
+
+\begin{proposicion}[Propiedades del estimador $k_3$]\label{prop:k3}
+Sean $p$ y $q$ distribuciones con $q(y)>0$ donde $p(y)>0$, y sea $k_3(y)=u-\log u-1$ con $u=q(y)/p(y)$. Entonces $k_3(y)\ge 0$ para todo $y$ y $\E_{y\sim p}[k_3(y)]=\KL(p\,\|\,q)$.
+\end{proposicion}
+
+\begin{proof}
+La función $\varphi(u)=u-\log u-1$ tiene $\varphi'(u)=1-1/u$, que se anula en $u=1$, y $\varphi''(u)=1/u^{2}>0$, luego su mínimo es $\varphi(1)=0$. Para la esperanza, $\E_p[q/p]=\sum_{y:\,p(y)>0}q(y)\le 1$; si $q$ y $p$ tienen el mismo soporte, vale~1. Entonces $\E_p[k_3]=1-\E_p[\log(q/p)]-1=\E_p[\log(p/q)]=\KL(p\,\|\,q)$.
+\end{proof}
+
+\begin{proposicion}[Propiedades de las ventajas de grupo]\label{prop:grpo}
+Con la desviación poblacional y $\varepsilon_0=0$, si no todas las recompensas son iguales, las ventajas de un grupo tienen media~0 y varianza~1. Si todas las recompensas son iguales, todas las ventajas son nulas y el grupo no aporta gradiente al término recortado.
+\end{proposicion}
+
+\begin{proof}
+Restar la media centra los valores y dividir por la desviación típica los escala a varianza~1. Si las recompensas coinciden, todos los numeradores son nulos y, con $\varepsilon_0>0$, también las ventajas.
+\end{proof}
+
+La media del grupo desempeña el papel de la línea base del \cref{tema:2}. Con recompensas binarias y probabilidad de acierto $p$, un grupo de $G$ respuestas no aporta señal con probabilidad $p^{G}+(1-p)^{G}$: las instrucciones que el modelo casi siempre resuelve, o casi nunca, desperdician cómputo (\cref{eje:6-cero}).
+
+\begin{ejemplo}\label{ej:grpo}
+Con $G=4$ y recompensas $(1,0,0,0)$, la media es $0{,}25$ y la desviación poblacional $\sqrt{0{,}1875}=0{,}433$. Las ventajas son $0{,}75/0{,}433=1{,}732$ para la respuesta correcta y $-0{,}25/0{,}433=-0{,}577$ para las otras tres; suman cero.
+\end{ejemplo}
+
+\begin{observacion}[Sesgos de la normalización]\label{obs:drgrpo}
+Liu \emph{et al.}~\cite{drgrpo} señalan dos sesgos en el objetivo de la \cref{def:grpo}. Dividir por la desviación del grupo da más peso a las instrucciones con poca variación de recompensa, y dividir por la longitud $\abs{y^{(i)}}$ hace que, con ventaja negativa, cada token de una respuesta larga se penalice menos que uno de una corta, lo que favorece respuestas incorrectas largas. Su variante, Dr.~GRPO, elimina ambas normalizaciones (\cref{eje:6-drgrpo,eje:6-longitud}).
+\end{observacion}
+
+\section{Sobreoptimización de la recompensa}
+
+Cuando se optimiza un indicador imperfecto, la política acaba encontrando formas de aumentarlo sin mejorar lo que el indicador pretendía medir. Es la ley de Goodhart aplicada al refuerzo, conocida como \emph{reward hacking} (\cref{tab:hacking}).
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Indicador & Explotación típica \\
+\midrule
+modelo de recompensa de utilidad & respuestas más largas, más listas y más halagos \\
+pruebas unitarias & código que detecta la prueba y devuelve el valor esperado \\
+satisfacción del usuario & dar la razón al usuario (adulación, \emph{sycophancy}) \\
+formato correcto & etiquetas impecables con contenido vacío \\
+\bottomrule
+\end{tabular}
+\caption{Ejemplos de explotación de recompensas.}
+\label{tab:hacking}
+\end{table}
+
+Gao, Schulman y Hilton~\cite{gao} midieron el fenómeno de forma controlada: un modelo de recompensa grande hace de recompensa «verdadera» y etiqueta los datos con los que se entrena un modelo de recompensa \emph{proxy} más pequeño; después se optimiza la política contra el proxy y se mide la recompensa verdadera. Al aumentar la divergencia respecto a la política inicial, la recompensa proxy sigue creciendo, mientras que la verdadera crece, alcanza un máximo y decrece.
+
+\begin{definicion}[Mejor de $n$]\label{def:bon}
+La política \emph{mejor de $n$} (\emph{best-of-$n$}) genera $n$ respuestas independientes con la política inicial y devuelve la de mayor recompensa proxy.
+\end{definicion}
+
+Con $d=\sqrt{\KL(\pi\,\|\,\pi_{\mathrm{init}})}$, Gao \emph{et al.} ajustan las formas funcionales
+\[
+R_{\mathrm{bon}}(d)=d\,(\alpha_{\mathrm{bon}}-\beta_{\mathrm{bon}}\,d),\qquad R_{\mathrm{RL}}(d)=d\,(\alpha_{\mathrm{RL}}-\beta_{\mathrm{RL}}\log d)
+\]
+para la ganancia de recompensa verdadera con mejor de $n$ y con RL, con coeficientes que varían de forma suave con el tamaño del modelo de recompensa~\cite{gao}. Para mejor de $n$, la divergencia se calcula analíticamente: $\mathrm{KL}_{\mathrm{bon}}=\log n-(n-1)/n$ (\cref{eje:6-bon}).
+
+\begin{proposicion}[Divergencia óptima]\label{prop:gao}
+$R_{\mathrm{bon}}$ alcanza su máximo en $d^{*}=\alpha_{\mathrm{bon}}/(2\beta_{\mathrm{bon}})$, con valor $\alpha_{\mathrm{bon}}^{2}/(4\beta_{\mathrm{bon}})$. $R_{\mathrm{RL}}$ alcanza su máximo en $d^{*}=e^{\alpha_{\mathrm{RL}}/\beta_{\mathrm{RL}}-1}$, con valor $\beta_{\mathrm{RL}}d^{*}$.
+\end{proposicion}
+
+\begin{proof}
+$R_{\mathrm{bon}}'(d)=\alpha-2\beta d$ se anula en $d^{*}=\alpha/(2\beta)$, y $R_{\mathrm{bon}}''=-2\beta<0$; sustituyendo, $R(d^{*})=\frac{\alpha}{2\beta}\cdot\frac{\alpha}{2}=\alpha^{2}/(4\beta)$. Para RL, $R_{\mathrm{RL}}'(d)=\alpha-\beta\log d-\beta$ se anula en $\log d^{*}=\alpha/\beta-1$, y $R_{\mathrm{RL}}''(d)=-\beta/d<0$; en ese punto, $\alpha-\beta\log d^{*}=\beta$, luego $R(d^{*})=\beta d^{*}$.
+\end{proof}
+
+Existe, por tanto, una cantidad óptima de optimización, y más allá de ella la política empeora. Este es el argumento cuantitativo a favor de la penalización KL del \cref{tema:3}: limita cuánto puede explotar la política los errores de $r_\phi$. Otras defensas habituales son la parada temprana, el reentrenamiento del modelo de recompensa con muestras de la política actual, el uso de recompensas verificables cuando existen, la combinación de varios modelos de recompensa y la revisión manual de las muestras con recompensa anómalamente alta. DPO no es inmune: también puede sobreoptimizar su recompensa implícita.
+
+\begin{lecturas}
+\item Y.~Bai \emph{et al.}~\cite{cai}, «Constitutional AI: Harmlessness from AI Feedback».
+\item Z.~Shao \emph{et al.}~\cite{deepseekmath}, §4.1 «Group Relative Policy Optimization», y DeepSeek-AI~\cite{r1}.
+\item CS336~\cite{cs336}, clase~17, y tarea~5~\cite{cs336a5}, §7.
+\item L.~Gao, J.~Schulman y J.~Hilton~\cite{gao}, «Scaling Laws for Reward Model Overoptimization».
+\item Z.~Liu \emph{et al.}~\cite{drgrpo}, análisis crítico de GRPO.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-cai}
+Ordene los pasos siguientes y asigne cada uno a su fase de Constitutional AI: entrenar un modelo de preferencias; criticar una respuesta según un principio; RL contra el modelo de preferencias; SFT sobre las respuestas revisadas; la IA elige la mejor de dos respuestas.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-grpo}
+Con un grupo de $G=4$ respuestas y recompensas $(1,0,0,0)$, calcule las ventajas de GRPO con la desviación poblacional. ¿Qué ocurre si las cuatro recompensas valen~1?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-drgrpo}
+Para los grupos $(1,1,0,0)$ y $(1,0,0,0)$, calcule las ventajas $\widehat A_i=(r_i-\media)/\desv$ con la desviación muestral (dividiendo entre $G-1$) y las de Dr.~GRPO, $\widehat A_i=r_i-\media$. ¿Qué grupo amplifica más la normalización por la desviación?
+\fuente{adaptado de CS336, primavera de 2025, tarea~5 «Alignment», §7.2, problema \texttt{compute\_\allowbreak{}group\_\allowbreak{}normalized\_\allowbreak{}rewards}~\cite{cs336a5}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-longitud}
+Dos respuestas tienen 2 y 4 tokens (longitud máxima 4) y ventaja $A=3$ en todos sus tokens. La pérdida de cada respuesta es la suma de $\rho_tA$ sobre sus tokens, con $\rho_t=1$, dividida entre su número de tokens (\texttt{masked\_\allowbreak{}mean}) o entre la constante~4 (\texttt{masked\_\allowbreak{}normalize}); después se promedia sobre las dos respuestas. Calcule el valor de cada respuesta y la derivada respecto a cada $\rho_t$ en los dos casos. ¿Qué tokens pesan más con cada opción?
+\fuente{adaptado de CS336, primavera de 2025, tarea~5 «Alignment», §8, problema \texttt{think\_\allowbreak{}about\_\allowbreak{}length\_\allowbreak{}normalization}~\cite{cs336a5}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-cero}
+Un modelo acierta un problema con probabilidad $p$ y se generan grupos de $G$ respuestas con recompensa binaria. Calcule la probabilidad de que el grupo no aporte gradiente para $(p,G)=(0{,}5;\ 8)$, $(0{,}9;\ 8)$ y $(0{,}9;\ 4)$. ¿Qué conclusión se extrae para seleccionar las instrucciones de entrenamiento?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-gao}
+(a) Calcule $\mathrm{KL}_{\mathrm{bon}}=\log n-(n-1)/n$ para $n=4$ y $n=16$. (b) Con $R_{\mathrm{bon}}(d)=d(1-0{,}25\,d)$, calcule la divergencia $d^{*}$ y la KL óptimas, la ganancia máxima y, de forma aproximada, el valor de $n$ que la alcanza. (c) Con $R_{\mathrm{RL}}(d)=d(1-0{,}5\log d)$, calcule $d^{*}$ y la ganancia máxima.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-bon}
+Sea una política inicial cuyas respuestas tienen recompensas proxy continuas y distintas con probabilidad~1, de modo que $U=F(r(y))$, con $F$ la función de distribución de la recompensa, es uniforme en $[0,1]$. (a) Demuestre que la política mejor de $n$ tiene densidad $\pi_{\mathrm{bon}}(y)=n\,F(r(y))^{n-1}\pi_{\mathrm{init}}(y)$. (b) Deduzca que $\KL(\pi_{\mathrm{bon}}\,\|\,\pi_{\mathrm{init}})=\log n-(n-1)/n$.
+\fuente{adaptado de Gao, Schulman y Hilton~\cite{gao}, §2.}
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los logaritmos son naturales, y las divergencias se expresan en nats.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-chatbot}
+\datos asistente que recibe una nota al final de cada respuesta.
+\planteamiento aplicar la \cref{def:mdp-tokens} y la \cref{tab:mdp-llm}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Estado $s_t$: la conversación previa (la instrucción $x$) más los tokens ya generados $y_{1:t}$; es todo lo que la política ve al decidir.
+  \item Acción $a_t$: el siguiente token $y_{t+1}\in\V$.
+  \item Transición: determinista; el nuevo estado es el anterior con el token concatenado.
+  \item Recompensa: nula en cada token intermedio y igual a la nota $r(x,y)$ al emitir el símbolo de fin.
+  \item Episodio: una respuesta completa, desde el primer token hasta el símbolo de fin o la longitud máxima.
+  \item Con $\gamma=1$ y una sola recompensa final, el retorno es la nota (\cref{prop:mdp-tokens}), y la probabilidad de la trayectoria es $\pi_\theta(y\mid x)$; la respuesta entera puede tratarse como una sola acción en el contexto $x$.
+\end{enumerate}
+\resultado \textbf{estado $=$ contexto; acción $=$ token; transición $=$ concatenar; recompensa $=$ la nota, solo al final; episodio $=$ una respuesta}. Es un bandido contextual cuyas acciones son las respuestas.
+\comprobacion la descripción coincide con la \cref{obs:bandido}: la dinámica es conocida y no hay recompensas intermedias que asignar.
+\end{solucion}
+
+\begin{solucion}{eje:1-contar}
+\datos $\abs{\V}=5\cdot 10^{4}$; $T=100$.
+\planteamiento hay $\abs{\V}^{T}$ respuestas; se toma $\log_{10}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\log_{10}(5\cdot 10^{4})=\log_{10}5+4=0{,}69897+4=4{,}69897$.
+  \item $\log_{10}\abs{\V}^{T}=100\cdot 4{,}69897=469{,}9$.
+\end{enumerate}
+\resultado \textbf{unas $10^{469{,}9}\approx 8\cdot 10^{469}$ respuestas}. La suma que define $V^{\pi}(x)$ no puede calcularse término a término; solo puede estimarse por muestreo, que es lo que hacen todos los métodos del módulo.
+\comprobacion $10^{0{,}9}\approx 7{,}9$; y el número estimado de átomos del universo observable, del orden de $10^{80}$, es insignificante en comparación.
+\end{solucion}
+
+\begin{solucion}{eje:1-retornos}
+\datos $\gamma=0{,}5$; $T=5$; $R_{1:5}=(-1,2,6,3,2)$.
+\planteamiento recursión $G_t=R_{t+1}+\gamma G_{t+1}$ hacia atrás desde $G_5=0$ (\cref{prop:retorno}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $G_5=0$.
+  \item $G_4=R_5+0{,}5\,G_5=2+0=2$.
+  \item $G_3=R_4+0{,}5\,G_4=3+1=4$.
+  \item $G_2=R_3+0{,}5\,G_3=6+2=8$.
+  \item $G_1=R_2+0{,}5\,G_2=2+4=6$.
+  \item $G_0=R_1+0{,}5\,G_1=-1+3=2$.
+\end{enumerate}
+\resultado $\mathbf{(G_0,\dots,G_5)=(2,\,6,\,8,\,4,\,2,\,0)}$.
+\comprobacion directamente, $G_0=-1+0{,}5\cdot 2+0{,}25\cdot 6+0{,}125\cdot 3+0{,}0625\cdot 2=-1+1+1{,}5+0{,}375+0{,}125=2$.
+\end{solucion}
+
+\begin{solucion}{eje:1-arbol}
+\datos $\pi(\texttt{a}\mid x)=0{,}5$; $\pi(\texttt{a}\mid x\texttt{a})=0{,}2$; $\pi(\texttt{a}\mid x\texttt{b})=0{,}6$; $r(\texttt{aa})=0$, $r(\texttt{ab})=1$, $r(\texttt{ba})=2$, $r(\texttt{bb})=0$.
+\planteamiento por la \cref{prop:mdp-tokens}, el valor de un prefijo es la recompensa esperada de sus continuaciones, y $Q(s,a)=V(sa)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $V(x\texttt{a})=0{,}2\cdot 0+0{,}8\cdot 1=0{,}8$.
+  \item $V(x\texttt{b})=0{,}6\cdot 2+0{,}4\cdot 0=1{,}2$.
+  \item $V(x)=0{,}5\cdot 0{,}8+0{,}5\cdot 1{,}2=1{,}0$.
+  \item Primer token: $A(x,\texttt{a})=0{,}8-1{,}0=-0{,}2$; $A(x,\texttt{b})=1{,}2-1{,}0=0{,}2$.
+  \item Segundo token tras \texttt{b}: $A(x\texttt{b},\texttt{a})=r(\texttt{ba})-V(x\texttt{b})=2-1{,}2=0{,}8$; $A(x\texttt{b},\texttt{b})=0-1{,}2=-1{,}2$.
+\end{enumerate}
+\resultado $\mathbf{V(x)=1}$, $\mathbf{V(x\texttt{a})=0{,}8}$, $\mathbf{V(x\texttt{b})=1{,}2}$; ventajas $(-0{,}2;\ 0{,}2)$ en el primer token y $(0{,}8;\ -1{,}2)$ en el segundo tras \texttt{b}.
+\comprobacion \cref{cor:ventaja-media}: $0{,}5\cdot(-0{,}2)+0{,}5\cdot 0{,}2=0$ y $0{,}6\cdot 0{,}8+0{,}4\cdot(-1{,}2)=0{,}48-0{,}48=0$.
+\end{solucion}
+
+\begin{solucion}{eje:1-cs285}
+\datos $\pi_\theta(a_1\mid s_1)=\theta$; $a_1$: recompensa~1 y permanece en $s_1$; $a_2$: recompensa~0 y termina; $V(s_F)=0$.
+\planteamiento ecuación de Bellman (\cref{teo:bellman}) en el único estado no terminal.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $Q(s_1,a_1)=1+\gamma V(s_1)$ y $Q(s_1,a_2)=0+\gamma V(s_F)=0$.
+  \item $V(s_1)=\theta\,(1+\gamma V(s_1))+(1-\theta)\cdot 0$, luego $V(s_1)(1-\gamma\theta)=\theta$ y $V(s_1)=\theta/(1-\gamma\theta)$.
+  \item $\gamma=1$, $\theta=0{,}75$: $V=0{,}75/0{,}25=3$.
+  \item $\gamma=0{,}9$, $\theta=0{,}75$: $V=0{,}75/(1-0{,}675)=0{,}75/0{,}325=2{,}308$.
+  \item (c) El número $k$ de veces que se elige $a_1$ antes de $a_2$ cumple $P(k)=\theta^{k}(1-\theta)$, y $R(\tau)=k$. Entonces $\E[k]=(1-\theta)\sum_{k\ge0}k\theta^{k}=(1-\theta)\,\theta/(1-\theta)^{2}=\theta/(1-\theta)$, usando $\sum_k k\theta^{k}=\theta/(1-\theta)^{2}$ (derivada de la serie geométrica).
+\end{enumerate}
+\resultado $\mathbf{V(s_1)=\theta/(1-\gamma\theta)}$; vale $\mathbf{3}$ con $\gamma=1$ y $\mathbf{2{,}308}$ con $\gamma=0{,}9$.
+\comprobacion con $\gamma=1$, $\E[k]=0{,}75/0{,}25=3$, igual que el paso~3. El descuento reduce el valor, como debe.
+\end{solucion}
+
+\begin{solucion}{eje:1-contraccion}
+\datos $\gamma<1$; $(T^{\pi}v)(s)=\sum_a\pi(a\mid s)\sum_{s',r}p(s',r\mid s,a)[r+\gamma v(s')]$.
+\planteamiento acotar la diferencia componente a componente; después usar que una contracción tiene a lo sumo un punto fijo, y expresar la ecuación en forma matricial.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Para cada $s$, los términos de recompensa se cancelan: $(T^{\pi}u)(s)-(T^{\pi}v)(s)=\gamma\sum_a\pi(a\mid s)\sum_{s',r}p(s',r\mid s,a)\,[u(s')-v(s')]$.
+  \item Los pesos $\pi(a\mid s)p(s',r\mid s,a)$ son no negativos y suman~1, luego el valor absoluto del sumatorio es a lo sumo $\max_{s'}\abs{u(s')-v(s')}=\norm{u-v}_\infty$.
+  \item Tomando el máximo en $s$: $\norm{T^{\pi}u-T^{\pi}v}_\infty\le\gamma\norm{u-v}_\infty$.
+  \item (b) Si $u$ y $v$ son soluciones, $u=T^{\pi}u$ y $v=T^{\pi}v$, luego $\norm{u-v}_\infty\le\gamma\norm{u-v}_\infty$; como $\gamma<1$, $\norm{u-v}_\infty=0$.
+  \item (c) Sean $P^{\pi}_{ss'}=\sum_a\pi(a\mid s)\sum_r p(s',r\mid s,a)$ y $r^{\pi}(s)=\sum_a\pi(a\mid s)\sum_{s',r}p(s',r\mid s,a)\,r$. La ecuación es $v=r^{\pi}+\gamma P^{\pi}v$, es decir, $(I-\gamma P^{\pi})v=r^{\pi}$.
+  \item $P^{\pi}$ es estocástica por filas, luego $\norm{\gamma P^{\pi}w}_\infty\le\gamma\norm w_\infty$ para todo $w$. Si $(I-\gamma P^{\pi})w=0$, entonces $w=\gamma P^{\pi}w$ y $\norm w_\infty\le\gamma\norm w_\infty$, de donde $w=0$: la matriz tiene núcleo trivial y es invertible.
+\end{enumerate}
+\resultado \textbf{$T^{\pi}$ es una contracción de constante $\gamma$, y la ecuación de Bellman tiene solución única $v=(I-\gamma P^{\pi})^{-1}r^{\pi}$.}
+\comprobacion en el \cref{eje:1-cs285}, con un único estado no terminal, $P^{\pi}=\theta$ y $r^{\pi}=\theta$, y la fórmula da $v=\theta/(1-\gamma\theta)$, el mismo resultado.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-baseline}
+\planteamiento separar la esperanza del estimador (sesgo) de su dispersión (varianza).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El estimador con línea base es $(r-b)\,g$, con $g=\nabla_\theta\log\pi_\theta(a)$.
+  \item Su esperanza es $\E[rg]-b\,\E[g]$, y $\E[g]=0$ por el \cref{lem:score-media}; luego $\E[(r-b)g]=\E[rg]=\nabla J$.
+  \item La varianza depende de $\E[(r-b)^{2}\norm g^{2}]$, que sí cambia con $b$: si $b$ está cerca de las recompensas típicas, los factores $(r-b)$ son pequeños.
+  \item Si $b$ dependiera de la acción, $\E[b(a)\,g(a)]=\sum_a\pi(a)b(a)\nabla\log\pi(a)=\sum_a b(a)\nabla\pi(a)$, que en general no es nulo, y el estimador quedaría sesgado.
+\end{enumerate}
+\resultado \textbf{la línea base no cambia la media porque la puntuación tiene media nula, pero sí el tamaño de cada muestra y, con ello, la varianza; debe ser independiente de la acción.}
+\comprobacion en el \cref{ej:reinforce}, la media del estimador es $(0;\ 0{,}333;\ -0{,}333)$ con $b=0$ y con $b=1$, mientras que la varianza pasa de $0{,}889$ a $0{,}222$.
+\end{solucion}
+
+\begin{solucion}{eje:2-bernoulli}
+\datos $\pi_\theta(1)=\sigma(\theta)$; $\theta=\ln 3$; $r(1)=1$, $r(0)=0$.
+\planteamiento con $\sigma'=\sigma(1-\sigma)$: $\nabla\log\sigma(\theta)=1-\sigma(\theta)$ y $\nabla\log(1-\sigma(\theta))=-\sigma(\theta)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $e^{\theta}=3$, luego $\sigma(\ln 3)=3/(3+1)=0{,}75$.
+  \item $\nabla_\theta\log\pi_\theta(1)=1-0{,}75=0{,}25$.
+  \item $\nabla_\theta\log\pi_\theta(0)=-0{,}75$.
+  \item $J(\theta)=\sigma(\theta)\cdot 1+(1-\sigma(\theta))\cdot 0=\sigma(\theta)$, luego $J'(\theta)=\sigma(1-\sigma)=0{,}75\cdot 0{,}25=0{,}1875$.
+\end{enumerate}
+\resultado $\mathbf{\pi_\theta(1)=0{,}75}$; puntuaciones $\mathbf{0{,}25}$ y $\mathbf{-0{,}75}$; $\mathbf{\nabla J=3/16=0{,}1875}$.
+\comprobacion $\E[r\nabla\log\pi]=0{,}75\cdot 1\cdot 0{,}25+0{,}25\cdot 0\cdot(-0{,}75)=0{,}1875$. Además, $\E[\nabla\log\pi]=0{,}75\cdot 0{,}25+0{,}25\cdot(-0{,}75)=0$.
+\end{solucion}
+
+\begin{solucion}{eje:2-paso}
+\datos $\theta=(0,0,0)$; $a=2$; $r=-1$; $\eta=1$; $b=0$.
+\planteamiento $\theta\leftarrow\theta+\eta\,r\,(e_a-\pi)$ (\cref{prop:score-softmax,def:reinforce}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\pi=\softmax(0,0,0)=(1/3,1/3,1/3)$.
+  \item $e_2-\pi=(-1/3,\,-1/3,\,2/3)$.
+  \item $\theta=0+1\cdot(-1)\cdot(-1/3,-1/3,2/3)=(1/3,\,1/3,\,-2/3)$.
+  \item $e^{1/3}=1{,}396$ y $e^{-2/3}=0{,}5134$; normalizador $1{,}396+1{,}396+0{,}5134=3{,}305$.
+  \item $\pi=(1{,}396/3{,}305;\ 1{,}396/3{,}305;\ 0{,}5134/3{,}305)=(0{,}4223;\ 0{,}4223;\ 0{,}1554)$.
+\end{enumerate}
+\resultado $\mathbf{\theta=(1/3,1/3,-2/3)}$ y $\mathbf{\pi\approx(0{,}422;\ 0{,}422;\ 0{,}155)}$: la acción castigada pierde probabilidad.
+\comprobacion $0{,}4223+0{,}4223+0{,}1554=1{,}000$, y por simetría las acciones~0 y~1 quedan iguales.
+\end{solucion}
+
+\begin{solucion}{eje:2-cs285}
+\datos $p_\theta(\tau)=\theta^{k}(1-\theta)$; $R=k$; $\E[k]=\theta/(1-\theta)$; $\E[k^{2}]=\theta(1+\theta)/(1-\theta)^{2}$.
+\planteamiento derivar $\log p_\theta(\tau)$ y aplicar el \cref{teo:pg}: $\nabla J=\E[R\,\nabla\log p_\theta(\tau)]$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\log p_\theta(\tau)=k\log\theta+\log(1-\theta)$, luego $\nabla_\theta\log p_\theta(\tau)=k/\theta-1/(1-\theta)$.
+  \item (b) $\nabla J=\E\bigl[k\,(k/\theta-1/(1-\theta))\bigr]=\E[k^{2}]/\theta-\E[k]/(1-\theta)$.
+  \item $\E[k^{2}]/\theta=(1+\theta)/(1-\theta)^{2}$ y $\E[k]/(1-\theta)=\theta/(1-\theta)^{2}$.
+  \item $\nabla J=\bigl((1+\theta)-\theta\bigr)/(1-\theta)^{2}=1/(1-\theta)^{2}$.
+  \item (c) $J(\theta)=\theta/(1-\theta)$ (\cref{eje:1-cs285}); por la regla del cociente, $J'=\bigl((1-\theta)+\theta\bigr)/(1-\theta)^{2}=1/(1-\theta)^{2}$.
+  \item En $\theta=1/2$: $1/(1/2)^{2}=4$.
+\end{enumerate}
+\resultado $\mathbf{\nabla_\theta\log p_\theta(\tau)=k/\theta-1/(1-\theta)}$ y $\mathbf{\nabla J=1/(1-\theta)^{2}}$, que vale $\mathbf{4}$ en $\theta=1/2$.
+\comprobacion los dos caminos coinciden. Una simulación con $4\cdot 10^{6}$ trayectorias en $\theta=1/2$ da una media del estimador de $3{,}998$.
+\end{solucion}
+
+\begin{solucion}{eje:2-gae}
+\datos $r=(1,0,2)$; $V=(2;\ 1{,}5;\ 1)$, $V(s_3)=0$; $\gamma=0{,}9$; $\lambda=0{,}8$, luego $\gamma\lambda=0{,}72$.
+\planteamiento $\delta_t=r_{t+1}+\gamma V(s_{t+1})-V(s_t)$ y $\widehat A_t=\delta_t+\gamma\lambda\widehat A_{t+1}$ (\cref{def:gae}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\delta_0=1+0{,}9\cdot 1{,}5-2=0{,}35$.
+  \item $\delta_1=0+0{,}9\cdot 1-1{,}5=-0{,}6$.
+  \item $\delta_2=2+0-1=1$.
+  \item $\widehat A_2=1$; $\widehat A_1=-0{,}6+0{,}72\cdot 1=0{,}12$; $\widehat A_0=0{,}35+0{,}72\cdot 0{,}12=0{,}35+0{,}0864=0{,}4364$.
+  \item Con $\lambda=1$ ($\gamma\lambda=0{,}9$): $\widehat A_2=1$; $\widehat A_1=-0{,}6+0{,}9=0{,}3$; $\widehat A_0=0{,}35+0{,}27=0{,}62$.
+  \item $G_0=1+0{,}9\cdot 0+0{,}81\cdot 2=2{,}62$, luego $G_0-V(s_0)=0{,}62$.
+\end{enumerate}
+\resultado $\mathbf{\delta=(0{,}35;\ -0{,}6;\ 1)}$ y $\mathbf{\widehat A=(0{,}4364;\ 0{,}12;\ 1)}$; con $\lambda=1$, $\widehat A_0=0{,}62=G_0-V(s_0)$.
+\comprobacion la igualdad del paso~6 es la \cref{prop:gae}. El último paso no depende de $\lambda$ porque no hay errores posteriores.
+\end{solucion}
+
+\begin{solucion}{eje:2-optima}
+\planteamiento primero la identidad de la puntuación; después, minimizar la varianza como función cuadrática de $b$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\E_{a\sim\pi}[\nabla\log\pi_\theta(a)]=\sum_a\pi_\theta(a)\,\nabla\pi_\theta(a)/\pi_\theta(a)=\sum_a\nabla\pi_\theta(a)=\nabla\sum_a\pi_\theta(a)=\nabla 1=0$.
+  \item Sin sesgo: $\E[(r-b)g]=\E[rg]-b\,\E[g]=\E[rg]=\nabla J$, porque $b$ no depende de $a$.
+  \item Varianza total: $V(b)=\E[\norm{(r-b)g}^{2}]-\norm{\E[(r-b)g]}^{2}=\E[(r-b)^{2}\norm g^{2}]-\norm{\nabla J}^{2}$; el segundo término no depende de $b$.
+  \item $V'(b)=-2\,\E[(r-b)\norm g^{2}]=-2\,\E[r\norm g^{2}]+2b\,\E[\norm g^{2}]$.
+  \item $V'(b)=0\iff b^{*}=\E[r\norm g^{2}]/\E[\norm g^{2}]$, y $V''(b)=2\E[\norm g^{2}]>0$, luego es un mínimo.
+  \item Numéricamente, con $\pi=(0{,}5;\ 0{,}3;\ 0{,}2)$: $e_0-\pi=(0{,}5;\ -0{,}3;\ -0{,}2)$, de norma al cuadrado $0{,}25+0{,}09+0{,}04=0{,}38$; análogamente $0{,}78$ y $0{,}98$.
+  \item Numerador: $0{,}5\cdot 1\cdot 0{,}38+0{,}3\cdot 2\cdot 0{,}78+0{,}2\cdot 0\cdot 0{,}98=0{,}19+0{,}468=0{,}658$. Denominador: $0{,}5\cdot 0{,}38+0{,}3\cdot 0{,}78+0{,}2\cdot 0{,}98=0{,}19+0{,}234+0{,}196=0{,}62$.
+\end{enumerate}
+\resultado $\mathbf{\E[\nabla\log\pi]=0}$, la línea base constante no introduce sesgo y $\mathbf{b^{*}=\E[r\norm g^{2}]/\E[\norm g^{2}]}$; en el ejemplo, $\mathbf{b^{*}=0{,}658/0{,}62=1{,}061}$.
+\comprobacion $b^{*}$ es una media ponderada de las recompensas $(1,2,0)$ con pesos positivos, luego está entre $0$ y $2$; queda cerca de $\E[r]=1{,}1$.
+\end{solucion}
+
+\begin{solucion}{eje:2-varianza}
+\datos $g(k)=k(k/\theta-1/(1-\theta))$; momentos $\E[k^{n}]$ del enunciado y del \cref{eje:2-cs285}; $\E[g]=1/(1-\theta)^{2}$.
+\planteamiento $\Var[g]=\E[g^{2}]-\E[g]^{2}$, con $g^{2}$ desarrollado como polinomio en $k$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $g^{2}=k^{2}\bigl(k^{2}/\theta^{2}-2k/(\theta(1-\theta))+1/(1-\theta)^{2}\bigr)=k^{4}/\theta^{2}-2k^{3}/(\theta(1-\theta))+k^{2}/(1-\theta)^{2}$.
+  \item Se escriben los tres términos con denominador común $\theta(1-\theta)^{4}$:
+  \[
+  \frac{\E[k^{4}]}{\theta^{2}}=\frac{(1+\theta)(\theta^{2}+10\theta+1)}{\theta(1-\theta)^{4}},\quad \frac{2\E[k^{3}]}{\theta(1-\theta)}=\frac{2\theta(\theta^{2}+4\theta+1)}{\theta(1-\theta)^{4}},\quad \frac{\E[k^{2}]}{(1-\theta)^{2}}=\frac{\theta^{2}(1+\theta)}{\theta(1-\theta)^{4}}.
+  \]
+  \item Numerador: $(\theta^{3}+11\theta^{2}+11\theta+1)-(2\theta^{3}+8\theta^{2}+2\theta)+(\theta^{3}+\theta^{2})=4\theta^{2}+9\theta+1$.
+  \item $\E[g]^{2}=1/(1-\theta)^{4}=\theta/\bigl(\theta(1-\theta)^{4}\bigr)$.
+  \item $\Var[g]=(4\theta^{2}+9\theta+1-\theta)/\bigl(\theta(1-\theta)^{4}\bigr)=(4\theta^{2}+8\theta+1)/\bigl(\theta(1-\theta)^{4}\bigr)$.
+  \item En $\theta=1/2$: numerador $1+4+1=6$; denominador $\tfrac12\cdot\tfrac1{16}=\tfrac1{32}$; $\Var=6\cdot 32=192$.
+  \item Cuando $\theta\to 0$, $\Var\sim 1/\theta\to\infty$; cuando $\theta\to 1$, $\Var\sim 13/(1-\theta)^{4}\to\infty$.
+\end{enumerate}
+\resultado $\mathbf{\Var[g]=(4\theta^{2}+8\theta+1)/(\theta(1-\theta)^{4})}$, que vale $\mathbf{192}$ en $\theta=1/2$ y diverge en ambos extremos; su mínimo, hallado numéricamente, está en $\theta\approx 0{,}110$, con $\Var\approx 27{,}9$.
+\comprobacion en $\theta=1/2$, $\E[g^{2}]=(1+4{,}5+1)\cdot 32=208$ y $208-4^{2}=192$. La simulación de $4\cdot 10^{6}$ trayectorias da una varianza muestral de $193$. La desviación típica, $\sqrt{192}\approx 13{,}9$, es más de tres veces el gradiente que se quiere estimar: de ahí la necesidad de líneas base.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-pesimista}
+\planteamiento aplicar la \cref{prop:ppo-casos} y la discusión de la penalización KL.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Falsa.} $\min(\rho A,\clip(\rho)A)\le\rho A$: el recorte solo puede bajar o dejar igual el objetivo.
+  \item \textbf{Falsa.} Con $A>0$, $\ell(\rho)=\min(\rho,1+\varepsilon)A=\rho A$ si $\rho<1-\varepsilon$; la derivada es $A\neq 0$. El gradiente se anula con $A>0$ solo si $\rho>1+\varepsilon$.
+  \item \textbf{Verdadera.} $\E_\pi[r]=\sum_y\pi(y)r(y)$ es lineal en $\pi$ y su máximo sobre el símplex se alcanza en un vértice, la masa puntual en una respuesta de máxima recompensa (si hay varias empatadas, cualquier mezcla de ellas es óptima).
+\end{enumerate}
+\resultado \textbf{(a) falsa; (b) falsa; (c) verdadera.}
+\comprobacion en la \cref{tab:ppo} el objetivo es siempre menor o igual que $\rho A$ ($2{,}4\le3{,}0$; $1{,}0\le1{,}0$; $-1{,}5\le-1{,}5$; $-0{,}8\le-0{,}5$), y la fila $(0{,}5;\ +2)$ conserva el gradiente.
+\end{solucion}
+
+\begin{solucion}{eje:3-ppo}
+\datos $\varepsilon=0{,}2$, luego $\clip(\rho)\in[0{,}8;\ 1{,}2]$.
+\planteamiento calcular $\rho A$ y $\clip(\rho)A$ y tomar el mínimo; si gana el término recortado con $\rho$ fuera del intervalo, el gradiente es nulo.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $(1{,}3;\ 1)$: $\rho A=1{,}3$; $\clip(\rho)A=1{,}2$; mínimo $1{,}2$, término recortado: gradiente nulo.
+  \item $(0{,}7;\ 1)$: $\rho A=0{,}7$; $\clip(\rho)A=0{,}8$; mínimo $0{,}7$: gradiente no nulo.
+  \item $(0{,}7;\ -2)$: $\rho A=-1{,}4$; $\clip(\rho)A=0{,}8\cdot(-2)=-1{,}6$; mínimo $-1{,}6$, recortado: gradiente nulo.
+  \item $(1{,}3;\ -2)$: $\rho A=-2{,}6$; $\clip(\rho)A=1{,}2\cdot(-2)=-2{,}4$; mínimo $-2{,}6$: gradiente no nulo.
+\end{enumerate}
+\resultado \textbf{objetivos $1{,}2$; $0{,}7$; $-1{,}6$; $-2{,}6$. Gradiente nulo en el primero y en el tercero.}
+\comprobacion el gradiente se anula cuando el cociente ya se movió más de $\varepsilon$ en la dirección que favorece la ventaja (subir si $A>0$, bajar si $A<0$), como predice la \cref{prop:ppo-casos}.
+\end{solucion}
+
+\begin{solucion}{eje:3-grpoclip}
+\datos $\varepsilon=0{,}2$; $A=+1$ con $\Delta=0{,}1;\ 0{,}3;\ -0{,}4$; $A=-1$ con $\Delta=0{,}3;\ -0{,}4$; $\rho=e^{\Delta}$.
+\planteamiento calcular $\rho$, recortarlo a $[0{,}8;\ 1{,}2]$, tomar el mínimo y cambiar el signo.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $e^{0{,}1}=1{,}105$; $e^{0{,}3}=1{,}350$; $e^{-0{,}4}=0{,}6703$.
+  \item $A=+1$, $\rho=1{,}105$ (dentro del intervalo): mínimo $1{,}105$; pérdida $-1{,}105$; gradiente no nulo.
+  \item $A=+1$, $\rho=1{,}350$: $\min(1{,}350;\ 1{,}2)=1{,}2$; pérdida $-1{,}2$; gradiente nulo.
+  \item $A=+1$, $\rho=0{,}6703$: $\min(0{,}6703;\ 0{,}8)=0{,}6703$; pérdida $-0{,}6703$; gradiente no nulo.
+  \item $A=-1$, $\rho=1{,}350$: $\min(-1{,}350;\ -1{,}2)=-1{,}350$; pérdida $+1{,}350$; gradiente no nulo.
+  \item $A=-1$, $\rho=0{,}6703$: $\min(-0{,}6703;\ -0{,}8)=-0{,}8$; pérdida $+0{,}8$; gradiente nulo.
+\end{enumerate}
+\resultado \textbf{pérdidas $-1{,}105$; $-1{,}2$; $-0{,}670$; $+1{,}350$; $+0{,}8$. Gradiente nulo en el segundo ($A>0$, $\rho>1{,}2$) y en el quinto ($A<0$, $\rho<0{,}8$).}
+\comprobacion el tercer y el cuarto token (pasos~4 y~5) son los que se movieron en la dirección desfavorable y conservan el gradiente, igual que en la \cref{tab:ppo}.
+\end{solucion}
+
+\begin{solucion}{eje:3-beta}
+\datos $\piref=(\tfrac12,\tfrac12)$; $r=(1,0)$; $\beta\in\{1;\ 0{,}5\}$.
+\planteamiento $\pi^{*}(y)\propto\piref(y)e^{r(y)/\beta}$ (\cref{teo:optimo-kl}); después $\KL=\sum\pi^{*}\log(\pi^{*}/\piref)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\pi^{*}(0)=\tfrac12e^{1/\beta}/(\tfrac12e^{1/\beta}+\tfrac12)=e^{1/\beta}/(e^{1/\beta}+1)=\sigma(1/\beta)$.
+  \item $\beta=1$: $e/(e+1)=2{,}718/3{,}718=0{,}7311$.
+  \item $\beta=0{,}5$: $e^{2}/(e^{2}+1)=7{,}389/8{,}389=0{,}8808$.
+  \item KL con $\beta=1$: $0{,}7311\ln(0{,}7311/0{,}5)=0{,}7311\cdot 0{,}3799=0{,}2777$.
+  \item $0{,}2689\ln(0{,}2689/0{,}5)=0{,}2689\cdot(-0{,}6201)=-0{,}1668$.
+  \item $\KL=0{,}2777-0{,}1668=0{,}1109$.
+\end{enumerate}
+\resultado $\mathbf{\pi^{*}=(0{,}731;\ 0{,}269)}$ con $\beta=1$ y $\mathbf{(0{,}881;\ 0{,}119)}$ con $\beta=0{,}5$; $\mathbf{\KL=0{,}111}$ nats.
+\comprobacion un $\beta$ menor concentra más la política en la mejor acción, como en la \cref{tab:beta}; además $\KL\ge 0$.
+\end{solucion}
+
+\begin{solucion}{eje:3-estimadores}
+\datos $\pi_\theta=(0{,}6;\ 0{,}3;\ 0{,}1)$; $\piref=(0{,}4;\ 0{,}4;\ 0{,}2)$; $\KL=0{,}0877$ (\cref{ej:kl}).
+\planteamiento evaluar $k_1$ y $k_3$ en cada token y promediar con los pesos $\pi_\theta$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $k_1$: $\ln(0{,}6/0{,}4)=0{,}4055$; $\ln(0{,}3/0{,}4)=-0{,}2877$; $\ln(0{,}1/0{,}2)=-0{,}6931$.
+  \item $\E[k_1]=0{,}6\cdot 0{,}4055+0{,}3\cdot(-0{,}2877)+0{,}1\cdot(-0{,}6931)=0{,}2433-0{,}0863-0{,}0693=0{,}0877$.
+  \item $k_3$, token~1: $u=0{,}4/0{,}6=0{,}6667$; $0{,}6667-\ln 0{,}6667-1=0{,}6667+0{,}4055-1=0{,}0721$.
+  \item Token~2: $u=0{,}4/0{,}3=1{,}333$; $1{,}333-0{,}2877-1=0{,}0457$.
+  \item Token~3: $u=2$; $2-0{,}6931-1=0{,}3069$.
+  \item $\E[k_3]=0{,}6\cdot 0{,}0721+0{,}3\cdot 0{,}0457+0{,}1\cdot 0{,}3069=0{,}0433+0{,}0137+0{,}0307=0{,}0877$.
+\end{enumerate}
+\resultado $\mathbf{k_1=(0{,}405;\ -0{,}288;\ -0{,}693)}$ y $\mathbf{k_3=(0{,}072;\ 0{,}046;\ 0{,}307)}$; ambos tienen esperanza $\mathbf{0{,}0877}$ nats.
+\comprobacion $k_1$ es negativo en dos tokens, de modo que una penalización por token basada en $k_1$ puede actuar como premio en una muestra concreta; $k_3$ es siempre no negativo (\cref{prop:k3}).
+\end{solucion}
+
+\begin{solucion}{eje:3-limites}
+\datos $\beta\log Z$, con $Z=\sum_y\piref(y)e^{r(y)/\beta}$; sea $r_{\max}=\max\{r(y):\piref(y)>0\}$.
+\planteamiento sacar factor común $e^{r_{\max}/\beta}$ para $\beta\to 0$; desarrollar en serie para $\beta\to\infty$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $Z=e^{r_{\max}/\beta}\,S(\beta)$ con $S(\beta)=\sum_y\piref(y)e^{(r(y)-r_{\max})/\beta}$, luego $\beta\log Z=r_{\max}+\beta\log S(\beta)$.
+  \item Cuando $\beta\to 0^{+}$, los términos con $r(y)<r_{\max}$ tienden a~0 y los de $r(y)=r_{\max}$ valen $\piref(y)$, de modo que $S(\beta)\to c\in(0,1]$ y $\beta\log S(\beta)\to 0$. Límite: $r_{\max}$.
+  \item Cuando $\beta\to\infty$, $e^{r/\beta}=1+r/\beta+O(\beta^{-2})$, luego $Z=1+\E_{\piref}[r]/\beta+O(\beta^{-2})$.
+  \item $\log(1+u)=u+O(u^{2})$, luego $\beta\log Z=\E_{\piref}[r]+O(1/\beta)\to\E_{\piref}[r]$.
+  \item Con los datos del \cref{ej:beta}: $\beta=0{,}01$ da $\beta\log Z=1{,}988$, y $\beta=100$ da $1{,}102$.
+\end{enumerate}
+\resultado \textbf{el valor óptimo tiende a $r_{\max}$ cuando $\beta\to 0$ y a $\E_{\piref}[r]$ cuando $\beta\to\infty$.}
+\comprobacion en el ejemplo, $r_{\max}=2$ y $\E_{\piref}[r]=0{,}5+0{,}6+0=1{,}1$, a los que se aproximan $1{,}988$ y $1{,}102$. Para $\beta=0{,}01$, $1{,}988=2+0{,}01\ln 0{,}3$, de acuerdo con el paso~1 ($S\to\piref(y=1)=0{,}3$).
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-conceptos}
+\planteamiento recordar la \cref{prop:bt} y la motivación del tema.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item Las notas absolutas varían mucho entre anotadores y, para un mismo anotador, con el tiempo y el contexto; elegir entre dos respuestas es una tarea más fácil y más consistente, y el modelo de Bradley--Terry convierte esas elecciones en puntuaciones.
+  \item \textbf{Verdadera.} $\sigma\bigl((r_a+5)-(r_b+5)\bigr)=\sigma(r_a-r_b)$.
+  \item Multiplicar por~2 sí cambia las probabilidades: $\sigma(2(r_a-r_b))$ es más extrema que $\sigma(r_a-r_b)$. La escala de las recompensas está determinada por los datos; solo la traslación es arbitraria.
+\end{enumerate}
+\resultado \textbf{(a) por consistencia y facilidad; (b) verdadera; (c) cambia las probabilidades, porque la escala sí está identificada.}
+\comprobacion con $r_a-r_b=1$, $\sigma(1)=0{,}731$ y $\sigma(2)=0{,}881$.
+\end{solucion}
+
+\begin{solucion}{eje:4-bt}
+\datos $z=r_w-r_l=1$.
+\planteamiento $P=\sigma(z)$; pérdida $-\ln\sigma(z)$; derivada $-(1-\sigma(z))$ (\cref{prop:bt-mv}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $e^{-1}=0{,}3679$; $\sigma(1)=1/1{,}3679=0{,}7311$.
+  \item Pérdida: $-\ln 0{,}7311=0{,}3133$.
+  \item Derivada respecto a $r_w$: $-(1-0{,}7311)=-0{,}2689$.
+\end{enumerate}
+\resultado $\mathbf{P=0{,}731}$; pérdida $\mathbf{0{,}313}$; $\mathbf{\partial L/\partial r_w=-0{,}269}$.
+\comprobacion la derivada es negativa, de modo que el descenso de gradiente sube $r_w$; su módulo es menor que el $0{,}5$ del caso $r_w=r_l$, porque el par ya está bien ordenado.
+\end{solucion}
+
+\begin{solucion}{eje:4-cs234}
+\datos $\sigma^{1}$ con recompensas $(0{,}5;\ 1{,}0)$; $\sigma^{2}$ con $(0{,}2;\ 0{,}3)$; $\mu\in\{1;\ 0{,}5\}$.
+\planteamiento $\frac{d}{dz}\log\sigma(z)=1-\sigma(z)$ y $\frac{d}{dz}\log(1-\sigma(z))=-\sigma(z)$; después, regla de la cadena con $z(\theta)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $dL/dz=-[\mu(1-\sigma(z))-(1-\mu)\sigma(z)]=-(\mu-\sigma(z))$.
+  \item $\nabla_\theta z=\sum_t\nabla_\theta\hat r_\theta(o^{1}_t,a^{1}_t)-\sum_t\nabla_\theta\hat r_\theta(o^{2}_t,a^{2}_t)$.
+  \item (a) $\nabla_\theta L=-(\mu-\sigma(z))\bigl[\sum_t\nabla_\theta\hat r_\theta(o^{1}_t,a^{1}_t)-\sum_t\nabla_\theta\hat r_\theta(o^{2}_t,a^{2}_t)\bigr]$.
+  \item (b) $R^{1}=1{,}5$; $R^{2}=0{,}5$; $z=1$; $P=\sigma(1)=0{,}7311$.
+  \item $\mu=1$: $L=-\ln 0{,}7311=0{,}3133$; $dL/dz=-(1-0{,}7311)=-0{,}2689$.
+  \item $\mu=0{,}5$: $\ln 0{,}7311=-0{,}3133$ y $\ln 0{,}2689=-1{,}313$; $L=0{,}5\cdot 0{,}3133+0{,}5\cdot 1{,}313=0{,}8133$; $dL/dz=-(0{,}5-0{,}7311)=+0{,}2311$.
+\end{enumerate}
+\resultado $\mathbf{\nabla L=-(\mu-\sigma(z))(\sum\nabla\hat r^{1}-\sum\nabla\hat r^{2})}$; $\mathbf{P=0{,}731}$; con $\mu=1$, $L=0{,}313$ y $dL/dz=-0{,}269$; con $\mu=0{,}5$, $L=0{,}813$ y $dL/dz=+0{,}231$.
+\comprobacion con $\mu=0{,}5$ el gradiente es positivo: el descenso reduce $z$ hacia~0, donde $P=0{,}5$ coincide con la etiqueta de empate; allí la pérdida sería $\ln 2=0{,}693<0{,}813$.
+\end{solucion}
+
+\begin{solucion}{eje:4-ranking}
+\datos $K\in\{4,9\}$; ordenación $A\pref B\pref C$ con $r=(1{,}0;\ 0{,}2;\ -0{,}5)$.
+\planteamiento una ordenación de $K$ elementos determina el resultado de cada uno de los $\binom K2$ pares.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\binom 42=6$ y $\binom 92=36$.
+  \item Pares de la ordenación: $(A,B)$ con diferencia $0{,}8$; $(A,C)$ con $1{,}5$; $(B,C)$ con $0{,}7$.
+  \item $-\ln\sigma(0{,}8)=0{,}3711$; $-\ln\sigma(1{,}5)=0{,}2014$; $-\ln\sigma(0{,}7)=0{,}4032$.
+  \item Media ponderada por $1/3$: $(0{,}3711+0{,}2014+0{,}4032)/3=0{,}9757/3=0{,}3252$.
+\end{enumerate}
+\resultado \textbf{6 y 36 comparaciones; pérdidas $0{,}371$, $0{,}201$ y $0{,}403$; media $0{,}325$.}
+\comprobacion la pérdida más baja corresponde al par con mayor margen ($A,C$), y todas son menores que $\ln 2=0{,}693$ porque el modelo ordena bien los tres pares.
+\end{solucion}
+
+\begin{solucion}{eje:4-mv}
+\datos $n=10$; $n_a=7$; $b\pref c$ con razón $2{:}1$.
+\planteamiento \cref{prop:bt-dos} y \cref{prop:bt}(iii).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\widehat{r_a-r_b}=\ln(7/3)=0{,}8473$.
+  \item $\sigma(0{,}8473)=1/(1+3/7)=7/10=0{,}7$.
+  \item Razón $a{:}b$ estimada: $7/3$. Razón $a{:}c$: $(7/3)\cdot 2=14/3$.
+  \item $P(a\pref c)=(14/3)/(1+14/3)=14/17=0{,}8235$.
+\end{enumerate}
+\resultado la diferencia estimada es $\mathbf{0{,}847}$ y reproduce la frecuencia observada $\mathbf{0{,}7}$; el modelo predice $\mathbf{P(a\pref c)=14/17\approx 0{,}824}$.
+\comprobacion $r_a-r_c=\ln(7/3)+\ln 2=\ln(14/3)=1{,}540$ y $\sigma(1{,}540)=0{,}824$.
+\end{solucion}
+
+\begin{solucion}{eje:4-convexidad}
+\datos $r_u(x,y)=u^{\top}\varphi(x,y)$; $\Delta_m=\varphi(x^{(m)},y_w^{(m)})-\varphi(x^{(m)},y_l^{(m)})$; $z_m=u^{\top}\Delta_m$.
+\planteamiento calcular gradiente y hessiana de $\LRM(u)=-\frac1M\sum_m\log\sigma(u^{\top}\Delta_m)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Gradiente: $\nabla\LRM=-\frac1M\sum_m(1-\sigma(z_m))\,\Delta_m$.
+  \item Como $\frac{d}{dz}(1-\sigma(z))=-\sigma(z)(1-\sigma(z))$, la hessiana es $H=\frac1M\sum_m\sigma(z_m)(1-\sigma(z_m))\,\Delta_m\Delta_m^{\top}$.
+  \item Para todo $v$, $v^{\top}Hv=\frac1M\sum_m\sigma(z_m)(1-\sigma(z_m))(v^{\top}\Delta_m)^{2}\ge 0$: $H$ es semidefinida positiva y $\LRM$ es convexa.
+  \item (b) Cada término $-\log\sigma(z)$ es positivo, luego $\LRM>0$. Si $u_0^{\top}\Delta_m>0$ para todo $m$, con $u=cu_0$ y $c\to\infty$ cada $z_m\to\infty$ y $-\log\sigma(z_m)\to 0$: el ínfimo es~0, pero ningún $u$ finito lo alcanza.
+  \item (c) Si los datos son separables, la máxima verosimilitud empuja la norma de $u$ hacia infinito y las probabilidades hacia 0 o 1: el modelo se vuelve arbitrariamente confiado, un caso extremo de sobreajuste que la regularización ($\ell_2$) o la parada temprana evitan.
+\end{enumerate}
+\resultado \textbf{$H=\frac1M\sum_m\sigma(z_m)(1-\sigma(z_m))\Delta_m\Delta_m^{\top}\succeq 0$; con datos separables, $\inf\LRM=0$ no se alcanza.}
+\comprobacion es la misma estructura que la regresión logística del módulo~8, con características $\Delta_m$ y todas las etiquetas iguales a~1. La convexidad se pierde si $r_\phi$ es una red neuronal.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-vf}
+\planteamiento repasar la \cref{def:dpo}, la \cref{prop:pref-pol} y la \cref{tab:dpo-ppo}.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Falsa.} DPO usa la recompensa implícita $\hat r_\theta=\beta\log(\pi_\theta/\piref)$; no entrena ninguna red de recompensa aparte.
+  \item \textbf{Falsa.} Trabaja con comparaciones $(x,y_w,y_l)$ recogidas de antemano.
+  \item \textbf{Falsa.} $Z(x)$ no vale~1 en general; se cancela porque depende solo de $x$ y las dos respuestas comparten $x$.
+  \item \textbf{Verdadera.} Con $\pi_\theta=\piref$, ambas recompensas implícitas son nulas, $h=0$ y $-\log\sigma(0)=\ln 2$.
+\end{enumerate}
+\resultado \textbf{(a) F, (b) F, (c) F, (d) V.}
+\comprobacion $\ln 2=0{,}693$ es el valor inicial citado en el \cref{ej:dpo}.
+\end{solucion}
+
+\begin{solucion}{eje:5-paso}
+\datos $\beta=0{,}5$; diferencias de log-probabilidad $+0{,}4$ (preferida) y $-0{,}6$ (rechazada).
+\planteamiento $\hat r=\beta(\log\pi_\theta-\log\piref)$; $h=\hat r_w-\hat r_l$; pérdida $-\ln\sigma(h)$; peso $\beta\sigma(-h)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\hat r_w=0{,}5\cdot 0{,}4=0{,}2$; $\hat r_l=0{,}5\cdot(-0{,}6)=-0{,}3$.
+  \item $h=0{,}2-(-0{,}3)=0{,}5$.
+  \item $e^{-0{,}5}=0{,}6065$; $\sigma(0{,}5)=1/1{,}6065=0{,}6225$; pérdida $-\ln 0{,}6225=0{,}4741$.
+  \item $\sigma(-0{,}5)=0{,}3775$; peso $0{,}5\cdot 0{,}3775=0{,}1888$.
+\end{enumerate}
+\resultado $\mathbf{\hat r_w=0{,}2}$; $\mathbf{\hat r_l=-0{,}3}$; $\mathbf{h=0{,}5}$; pérdida $\mathbf{0{,}474}$; peso $\mathbf{0{,}189}$.
+\comprobacion la pérdida queda por debajo de $\ln 2$ y el peso por debajo de $\beta/2=0{,}25$, porque el par ya está bien ordenado ($h>0$).
+\end{solucion}
+
+\begin{solucion}{eje:5-cs336}
+\datos $\beta=0{,}2$; log-probabilidades por token del enunciado.
+\planteamiento la log-probabilidad de una secuencia es la suma de las de sus tokens; después, la \cref{def:dpo}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\log\pi_\theta(y_w)=-0{,}5-1{,}2-0{,}3=-2{,}0$; $\log\piref(y_w)=-0{,}6-1{,}5-0{,}4=-2{,}5$.
+  \item $\log\pi_\theta(y_l)=-1{,}0-2{,}0=-3{,}0$; $\log\piref(y_l)=-0{,}8-1{,}7=-2{,}5$.
+  \item $\hat r_w=0{,}2\cdot(-2{,}0+2{,}5)=0{,}1$; $\hat r_l=0{,}2\cdot(-3{,}0+2{,}5)=-0{,}1$.
+  \item $h=0{,}1-(-0{,}1)=0{,}2$.
+  \item $e^{-0{,}2}=0{,}8187$; $\sigma(0{,}2)=1/1{,}8187=0{,}5498$; pérdida $-\ln 0{,}5498=0{,}5981$.
+  \item $\sigma(-0{,}2)=0{,}4502$; peso $0{,}2\cdot 0{,}4502=0{,}0900$.
+\end{enumerate}
+\resultado $\mathbf{\hat r_w=0{,}1}$; $\mathbf{\hat r_l=-0{,}1}$; $\mathbf{h=0{,}2}$; pérdida $\mathbf{0{,}598}$; peso $\mathbf{0{,}0900}$.
+\comprobacion $0{,}598<\ln 2$ porque $h>0$, y el peso queda algo por debajo de $\beta/2=0{,}1$. Las respuestas tienen distinta longitud, pero DPO solo usa las sumas.
+\end{solucion}
+
+\begin{solucion}{eje:5-tabular}
+\datos $\piref=(\tfrac12,\tfrac12)$; $\beta=0{,}5$; $P(y_1\pref y_2)=p=0{,}8$ en los datos.
+\planteamiento promediar la pérdida sobre los dos órdenes posibles, minimizar en $h$ y despejar $\pi_\theta$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Con probabilidad $p$ el par es $(y_w,y_l)=(y_1,y_2)$ y su margen es $h$; con probabilidad $1-p$ es $(y_2,y_1)$ y su margen es $-h$. La pérdida esperada es $\ell(h)=-p\log\sigma(h)-(1-p)\log\sigma(-h)$.
+  \item $\ell'(h)=-p\,\sigma(-h)+(1-p)\,\sigma(h)=-p+\sigma(h)$, usando $\sigma(-h)=1-\sigma(h)$; se anula en $\sigma(h)=p$, y $\ell''=\sigma(h)(1-\sigma(h))>0$.
+  \item $h^{*}=\log\bigl(p/(1-p)\bigr)=\ln 4=1{,}386$.
+  \item $h=\beta\bigl[\log(\pi(y_1)/\piref(y_1))-\log(\pi(y_2)/\piref(y_2))\bigr]=\beta\log(\pi(y_1)/\pi(y_2))$, porque $\piref$ es uniforme.
+  \item $\log(\pi(y_1)/\pi(y_2))=1{,}386/0{,}5=2{,}773=\ln 16$, luego $\pi(y_1)/\pi(y_2)=16$ y $\pi_\theta=(16/17,\ 1/17)=(0{,}941;\ 0{,}059)$.
+  \item Con $r=(\ln 4,0)$ y $\beta=0{,}5$: $\pi^{*}\propto(\tfrac12e^{2\ln 4},\ \tfrac12)=(8;\ 0{,}5)$, es decir, $\pi^{*}=(16/17,\ 1/17)$.
+\end{enumerate}
+\resultado $\mathbf{h^{*}=\ln 4}$ y $\mathbf{\pi_\theta=(16/17,\ 1/17)\approx(0{,}941;\ 0{,}059)}$, que coincide con $\pi^{*}$ para $r=(\ln 4,0)$.
+\comprobacion bajo Bradley--Terry, $r=(\ln 4,0)$ da $P(y_1\pref y_2)=\sigma(\ln 4)=4/5=0{,}8=p$: DPO recupera exactamente la política óptima de la recompensa que generó los datos, como afirma el \cref{teo:representacion}.
+\end{solucion}
+
+\begin{solucion}{eje:5-gradiente}
+\planteamiento regla de la cadena en dos eslabones: $L=-\log\sigma(h)$ y $h=h(\theta)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $dL/dh=-\sigma'(h)/\sigma(h)=-\sigma(h)(1-\sigma(h))/\sigma(h)=-(1-\sigma(h))=-\sigma(-h)$.
+  \item $h=\beta[\log\pi_\theta(y_w\mid x)-\log\piref(y_w\mid x)]-\beta[\log\pi_\theta(y_l\mid x)-\log\piref(y_l\mid x)]$.
+  \item $\piref$ está congelado: $\nabla_\theta\log\piref=0$.
+  \item $\nabla_\theta h=\beta\bigl(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\bigr)$.
+  \item $\nabla_\theta L=(dL/dh)\,\nabla_\theta h=-\beta\,\sigma(-h)\bigl(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\bigr)$; la esperanza sobre $\mathcal{D}$ da la \cref{prop:grad-dpo}.
+  \item En $\pi_\theta=\piref$, $h=0$ y $\beta\sigma(0)=\beta/2$.
+\end{enumerate}
+\resultado $\mathbf{\nabla\LDPO=-\beta\,\E[\sigma(-h)(\nabla\log\pi_\theta(y_w\mid x)-\nabla\log\pi_\theta(y_l\mid x))]}$, con peso inicial $\beta/2$.
+\comprobacion en el \cref{eje:5-paso} ($h=0{,}5$) el peso baja a $0{,}189<0{,}25=\beta/2$, como corresponde a un par ya bien ordenado.
+\end{solucion}
+
+\begin{solucion}{eje:5-invariancia}
+\datos $r'(x,y)=r(x,y)+f(x)$.
+\planteamiento sustituir $r'$ en $\pi^{*}$ y en Bradley--Terry; comparar con la reparametrización del \cref{lem:reparam}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\piref\,e^{r'/\beta}=\piref\,e^{r/\beta}\,e^{f(x)/\beta}$, y $Z'(x)=Z(x)\,e^{f(x)/\beta}$; al normalizar, el factor se cancela y $\pi^{*}_{r'}=\pi^{*}_r$ (\cref{lem:equiv-pol}).
+  \item $r'(x,y_w)-r'(x,y_l)=r(x,y_w)-r(x,y_l)$, luego las probabilidades y la pérdida de Bradley--Terry no cambian (\cref{lem:equiv-pref}).
+  \item En DPO, $r=\beta\log(\pi^{*}/\piref)+\beta\log Z(x)$: la recompensa es la implícita más un término $f(x)=\beta\log Z(x)$.
+  \item Por el paso~2, Bradley--Terry no distingue $r$ de $r-f$; por eso puede usarse la recompensa implícita sin conocer $Z(x)$.
+  \item Numéricamente, con $\beta=1$, $\piref=(\tfrac12,\tfrac12)$ y $r'=(6,5)$: $\pi^{*}(0)=e^{6}/(e^{6}+e^{5})=e/(e+1)=0{,}731$.
+\end{enumerate}
+\resultado \textbf{$\pi^{*}$ y la pérdida de Bradley--Terry son invariantes a sumar $f(x)$; como $\beta\log Z(x)$ es un término de esa forma, desaparece en DPO.}
+\comprobacion $0{,}731$ coincide con el valor del \cref{eje:3-beta} sin $f$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-cai}
+\planteamiento seguir la \cref{fig:cai}: la fase~1 es supervisada; la fase~2, RL con preferencias de IA.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Fase~1 (SL-CAI): criticar una respuesta según un principio (y revisarla) $\to$ SFT sobre las respuestas revisadas.
+  \item Fase~2 (RL-CAI): la IA elige la mejor de dos respuestas $\to$ entrenar el modelo de preferencias $\to$ RL contra él.
+\end{enumerate}
+\resultado \textbf{criticar (F1) $\to$ SFT sobre revisiones (F1) $\to$ la IA elige (F2) $\to$ modelo de preferencias (F2) $\to$ RL (F2).}
+\comprobacion cada paso necesita el resultado del anterior: no hay modelo de preferencias sin pares etiquetados, ni RL sin modelo de preferencias, y los pares de la fase~2 los genera el modelo de la fase~1.
+\end{solucion}
+
+\begin{solucion}{eje:6-grpo}
+\datos $G=4$; $r=(1,0,0,0)$; desviación poblacional.
+\planteamiento \cref{def:grpo-ventaja}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Media: $1/4=0{,}25$.
+  \item Desviaciones respecto a la media: $0{,}75$ y $-0{,}25$ (tres veces).
+  \item Varianza: $(0{,}5625+3\cdot 0{,}0625)/4=0{,}75/4=0{,}1875$; desviación $\sqrt{0{,}1875}=0{,}4330$.
+  \item $\widehat A_1=0{,}75/0{,}4330=1{,}732$; $\widehat A_{2,3,4}=-0{,}25/0{,}4330=-0{,}5774$.
+  \item Si las cuatro valen~1: media~1, desviación~0; con $\varepsilon_0>0$ todas las ventajas son~0.
+\end{enumerate}
+\resultado $\mathbf{\widehat A=(1{,}732;\ -0{,}577;\ -0{,}577;\ -0{,}577)}$; con recompensas iguales, $\widehat A=0$ y el grupo no aporta gradiente.
+\comprobacion $1{,}732-3\cdot 0{,}577\approx 0$ y $(1{,}732^{2}+3\cdot 0{,}577^{2})/4=(3+1)/4=1$, de acuerdo con la \cref{prop:grpo}.
+\end{solucion}
+
+\begin{solucion}{eje:6-drgrpo}
+\datos grupos $(1,1,0,0)$ y $(1,0,0,0)$; desviación muestral (entre $G-1=3$).
+\planteamiento restar la media del grupo y, en GRPO, dividir entre la desviación.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Grupo $(1,1,0,0)$: media $0{,}5$; desviaciones $\pm 0{,}5$; varianza muestral $4\cdot 0{,}25/3=1/3$; desviación $0{,}5774$.
+  \item GRPO: $\pm 0{,}5/0{,}5774=\pm 0{,}866$. Dr.~GRPO: $\pm 0{,}5$.
+  \item Grupo $(1,0,0,0)$: media $0{,}25$; varianza muestral $(0{,}5625+3\cdot 0{,}0625)/3=0{,}25$; desviación $0{,}5$.
+  \item GRPO: $0{,}75/0{,}5=1{,}5$ y $-0{,}25/0{,}5=-0{,}5$. Dr.~GRPO: $0{,}75$ y $-0{,}25$.
+  \item Factor de amplificación $1/\desv$: $1/0{,}5774=1{,}732$ en el primer grupo y $1/0{,}5=2$ en el segundo.
+\end{enumerate}
+\resultado \textbf{GRPO: $(0{,}866;\ 0{,}866;\ -0{,}866;\ -0{,}866)$ y $(1{,}5;\ -0{,}5;\ -0{,}5;\ -0{,}5)$; Dr.~GRPO: $(0{,}5;\ 0{,}5;\ -0{,}5;\ -0{,}5)$ y $(0{,}75;\ -0{,}25;\ -0{,}25;\ -0{,}25)$. El grupo $(1,0,0,0)$, de menor desviación, se amplifica más ($\times 2$ frente a $\times 1{,}732$).}
+\comprobacion en ambos métodos las ventajas de cada grupo suman~0. Dividir por la desviación da más peso a las instrucciones con poca variación (casi todo aciertos o casi todo fallos), que es la crítica de la \cref{obs:drgrpo}.
+\end{solucion}
+
+\begin{solucion}{eje:6-longitud}
+\datos longitudes $n_1=2$ y $n_2=4$; longitud máxima~4; $A=3$; $\rho_t=1$; media final sobre dos respuestas.
+\planteamiento escribir cada pérdida como suma de $\rho_tA$ dividida por su normalizador, promediar y derivar respecto a cada $\rho_t$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sumas por respuesta: $2\cdot 3=6$ y $4\cdot 3=12$.
+  \item \texttt{masked\_\allowbreak{}mean}: $6/2=3$ y $12/4=3$; media $(3+3)/2=3$.
+  \item \texttt{masked\_\allowbreak{}normalize}: $6/4=1{,}5$ y $12/4=3$; media $(1{,}5+3)/2=2{,}25$.
+  \item Derivada con \texttt{masked\_\allowbreak{}mean}: $A/(2n_i)$; respuesta corta $3/4=0{,}75$, larga $3/8=0{,}375$.
+  \item Derivada con \texttt{masked\_\allowbreak{}normalize}: $A/(2\cdot 4)=0{,}375$ en todos los tokens.
+\end{enumerate}
+\resultado \textbf{\texttt{masked\_\allowbreak{}mean}: valores $(3,3)$ y derivadas $0{,}75$ por token corto y $0{,}375$ por token largo. \texttt{masked\_\allowbreak{}normalize}: valores $(1{,}5;\ 3)$ y derivada $0{,}375$ en todos los tokens.}
+\comprobacion con \texttt{masked\_\allowbreak{}mean} cada respuesta pesa lo mismo en total ($2\cdot 0{,}75=4\cdot 0{,}375=1{,}5$), así que un token de una respuesta corta pesa el doble; con ventaja negativa, los tokens de las respuestas largas se penalizan menos, que es el sesgo de longitud de la \cref{obs:drgrpo}.
+\end{solucion}
+
+\begin{solucion}{eje:6-cero}
+\datos recompensas binarias independientes con probabilidad de acierto $p$; grupos de tamaño $G$.
+\planteamiento el grupo no aporta gradiente si todas las recompensas son iguales: todas 1 (probabilidad $p^{G}$) o todas 0 (probabilidad $(1-p)^{G}$).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $(0{,}5;\ 8)$: $2\cdot 0{,}5^{8}=2/256=0{,}0078$.
+  \item $(0{,}9;\ 8)$: $0{,}9^{8}+0{,}1^{8}=0{,}4305+10^{-8}=0{,}4305$.
+  \item $(0{,}9;\ 4)$: $0{,}9^{4}+0{,}1^{4}=0{,}6561+0{,}0001=0{,}6562$.
+\end{enumerate}
+\resultado \textbf{$0{,}78\,\%$, $43{,}0\,\%$ y $65{,}6\,\%$.} Las instrucciones demasiado fáciles o demasiado difíciles desperdician la mayor parte del cómputo; conviene filtrar el conjunto de entrenamiento por dificultad o aumentar $G$.
+\comprobacion la expresión es simétrica en $p\leftrightarrow 1-p$ y mínima en $p=0{,}5$; con $p=0{,}1$ y $G=8$ también da $0{,}4305$.
+\end{solucion}
+
+\begin{solucion}{eje:6-gao}
+\datos $\mathrm{KL}_{\mathrm{bon}}=\log n-(n-1)/n$; $R_{\mathrm{bon}}=d(1-0{,}25d)$; $R_{\mathrm{RL}}=d(1-0{,}5\log d)$; $d=\sqrt{\KL}$.
+\planteamiento evaluar la fórmula y aplicar la \cref{prop:gao}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $n=4$: $\ln 4-3/4=1{,}386-0{,}75=0{,}636$ nats. $n=16$: $\ln 16-15/16=2{,}773-0{,}9375=1{,}835$ nats.
+  \item (b) $d^{*}=\alpha/(2\beta)=1/0{,}5=2$, luego $\mathrm{KL}^{*}=d^{*2}=4$ nats y $R^{*}=\alpha^{2}/(4\beta)=1/1=1$.
+  \item Se busca $n$ con $\ln n-(n-1)/n=4$. Como $(n-1)/n\approx 1$ para $n$ grande, $\ln n\approx 5$ y $n\approx e^{5}\approx 148$; la solución numérica es $n\approx 147$.
+  \item (c) $d^{*}=e^{\alpha/\beta-1}=e^{2-1}=e=2{,}718$; $R^{*}=\beta d^{*}=0{,}5e=1{,}359$; $\mathrm{KL}^{*}=e^{2}=7{,}39$ nats.
+\end{enumerate}
+\resultado \textbf{$\mathrm{KL}_{\mathrm{bon}}=0{,}636$ y $1{,}835$ nats; mejor de $n$: $d^{*}=2$, $\mathrm{KL}^{*}=4$ nats, $R^{*}=1$, con $n\approx 147$; RL: $d^{*}=e\approx 2{,}72$ y $R^{*}\approx 1{,}36$.}
+\comprobacion $R_{\mathrm{bon}}(2)=2(1-0{,}5)=1$ y $R_{\mathrm{bon}}(4)=4(1-1)=0$: con el doble de la divergencia óptima, la ganancia verdadera desaparece. $R_{\mathrm{RL}}(e)=e(1-0{,}5)=1{,}359$.
+\end{solucion}
+
+\begin{solucion}{eje:6-bon}
+\datos $U=F(r(y))\sim\mathcal{U}[0,1]$ bajo $\pi_{\mathrm{init}}$; se eligen $n$ muestras independientes y se devuelve la de mayor recompensa.
+\planteamiento calcular la probabilidad de que una respuesta concreta sea la elegida y después la esperanza de $\log(\pi_{\mathrm{bon}}/\pi_{\mathrm{init}})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) La respuesta elegida está en un entorno de $y$ si una de las $n$ muestras (hay $n$ posibilidades, excluyentes con probabilidad~1) cae allí y las $n-1$ restantes tienen menor recompensa, lo que ocurre con probabilidad $F(r(y))^{n-1}$. Luego $\pi_{\mathrm{bon}}(y)=n\,F(r(y))^{n-1}\pi_{\mathrm{init}}(y)$.
+  \item (b) $\log\bigl(\pi_{\mathrm{bon}}/\pi_{\mathrm{init}}\bigr)=\log n+(n-1)\log U$, con $U=F(r(y))$.
+  \item Bajo $\pi_{\mathrm{bon}}$, $U$ es el máximo de $n$ uniformes, con densidad $n u^{n-1}$ en $[0,1]$.
+  \item $\E[\log U]=\int_0^{1}n u^{n-1}\log u\,du$. Integrando por partes, $\int_0^{1}u^{n-1}\log u\,du=-1/n^{2}$, luego $\E[\log U]=-1/n$.
+  \item $\KL=\log n+(n-1)(-1/n)=\log n-(n-1)/n$.
+\end{enumerate}
+\resultado $\mathbf{\KL(\pi_{\mathrm{bon}}\,\|\,\pi_{\mathrm{init}})=\log n-(n-1)/n}$.
+\comprobacion con $n=1$ se obtiene $0$, como debe; con $n=2$, $\ln 2-0{,}5=0{,}193$ nats; la KL crece como $\log n$, de modo que multiplicar $n$ por $e$ añade aproximadamente un nat.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{cai}
+Y.~Bai, S.~Kadavath, S.~Kundu, A.~Askell \emph{et al.}
+\newblock Constitutional AI: Harmlessness from AI feedback.
+\newblock Prepublicación, Anthropic, 2022.
+\newblock \url{https://arxiv.org/abs/2212.08073}
+
+\bibitem{bt}
+R.~A. Bradley y M.~E. Terry.
+\newblock Rank analysis of incomplete block designs: I. The method of paired comparisons.
+\newblock \emph{Biometrika}, 39(3/4):324--345, 1952.
+
+\bibitem{christiano}
+P.~Christiano, J.~Leike, T.~B. Brown, M.~Martic, S.~Legg y D.~Amodei.
+\newblock Deep reinforcement learning from human preferences.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2017.
+\newblock \url{https://arxiv.org/abs/1706.03741}
+
+\bibitem{r1}
+DeepSeek-AI (D.~Guo, D.~Yang, H.~Zhang, J.~Song \emph{et al.}).
+\newblock DeepSeek-R1: Incentivizing reasoning capability in LLMs via reinforcement learning.
+\newblock Prepublicación, 2025. Publicado en \emph{Nature}, 645:633--638, 2025.
+\newblock \url{https://arxiv.org/abs/2501.12948}
+
+\bibitem{cs234a3}
+E.~Brunskill y equipo docente de CS234.
+\newblock CS234: Reinforcement Learning. Tarea~3.
+\newblock Stanford University, invierno de 2025. Secciones~1 «Reward engineering», 2 «Learning from preferences» y~3 «Direct preference optimization».
+\newblock \url{https://web.stanford.edu/class/cs234/assignments/a3/hw3_questions.pdf}
+
+\bibitem{cs234}
+E.~Brunskill.
+\newblock CS234: Reinforcement Learning.
+\newblock Stanford University, primavera de 2024. Bloque «Policy Gradient» (clases~5--7) y clase~9, con la clase invitada sobre DPO de R.~Rafailov, A.~Sharma y E.~Mitchell.
+\newblock \url{https://web.stanford.edu/class/cs234/CS234Spr2024/modules.html}
+
+\bibitem{cs336}
+P.~Liang, T.~Hashimoto \emph{et al.}
+\newblock CS336: Language Modeling from Scratch.
+\newblock Stanford University, primavera de 2025. Clase~17: aprendizaje por refuerzo con recompensas verificables, gradiente de política y GRPO.
+\newblock \url{https://github.com/stanford-cs336/spring2025-lectures}
+
+\bibitem{cs336a5}
+Equipo docente de CS336.
+\newblock CS336: Language Modeling from Scratch. Tarea~5, «Alignment».
+\newblock Stanford University, primavera de 2025. §7.2 y §8.
+\newblock \url{https://github.com/stanford-cs336/assignment5-alignment}
+
+\bibitem{cs336a5s}
+Equipo docente de CS336.
+\newblock CS336: Language Modeling from Scratch. Suplemento de la tarea~5, «Instruction Tuning and RLHF».
+\newblock Stanford University, primavera de 2026. §6.3.
+\newblock \url{https://github.com/stanford-cs336/assignment5-alignment}
+
+\bibitem{gao}
+L.~Gao, J.~Schulman y J.~Hilton.
+\newblock Scaling laws for reward model overoptimization.
+\newblock En \emph{International Conference on Machine Learning (ICML)}, 2023.
+\newblock \url{https://arxiv.org/abs/2210.10760}
+
+\bibitem{tulu3}
+N.~Lambert, J.~Morrison, V.~Pyatkin, S.~Huang, H.~Ivison \emph{et al.}
+\newblock Tülu 3: Pushing frontiers in open language model post-training.
+\newblock Prepublicación, Allen Institute for AI, 2024.
+\newblock \url{https://arxiv.org/abs/2411.15124}
+
+\bibitem{cs285}
+S.~Levine.
+\newblock CS285: Deep Reinforcement Learning.
+\newblock University of California, Berkeley, otoño de 2023. Clases~4 «Introduction to Reinforcement Learning», 5 «Policy Gradients», 6 «Actor-Critic Algorithms» y~9 «Advanced Policy Gradients».
+\newblock \url{https://rail.eecs.berkeley.edu/deeprlcourse-fa23/}
+
+\bibitem{cs285hw2}
+S.~Levine y equipo docente de CS285.
+\newblock CS285: Deep Reinforcement Learning. Tarea~2, «Policy Gradients».
+\newblock University of California, Berkeley, otoño de 2023. §2 (repaso) y §8 (problemas de análisis).
+\newblock \url{https://rail.eecs.berkeley.edu/deeprlcourse-fa23/}
+
+\bibitem{drgrpo}
+Z.~Liu, C.~Chen, W.~Li, P.~Qi, T.~Pang, C.~Du, W.~S. Lee y M.~Lin.
+\newblock Understanding R1-Zero-like training: A critical perspective.
+\newblock Prepublicación, 2025.
+\newblock \url{https://arxiv.org/abs/2503.20783}
+
+\bibitem{instructgpt}
+L.~Ouyang, J.~Wu, X.~Jiang, D.~Almeida, C.~L. Wainwright \emph{et al.}
+\newblock Training language models to follow instructions with human feedback.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2022.
+\newblock \url{https://arxiv.org/abs/2203.02155}
+
+\bibitem{dpo}
+R.~Rafailov, A.~Sharma, E.~Mitchell, S.~Ermon, C.~D. Manning y C.~Finn.
+\newblock Direct preference optimization: Your language model is secretly a reward model.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2023.
+\newblock \url{https://arxiv.org/abs/2305.18290}
+
+\bibitem{gae}
+J.~Schulman, P.~Moritz, S.~Levine, M.~I. Jordan y P.~Abbeel.
+\newblock High-dimensional continuous control using generalized advantage estimation.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2016.
+\newblock \url{https://arxiv.org/abs/1506.02438}
+
+\bibitem{ppo}
+J.~Schulman, F.~Wolski, P.~Dhariwal, A.~Radford y O.~Klimov.
+\newblock Proximal policy optimization algorithms.
+\newblock Prepublicación, 2017.
+\newblock \url{https://arxiv.org/abs/1707.06347}
+
+\bibitem{deepseekmath}
+Z.~Shao, P.~Wang, Q.~Zhu, R.~Xu, J.~Song \emph{et al.}
+\newblock DeepSeekMath: Pushing the limits of mathematical reasoning in open language models.
+\newblock Prepublicación, 2024.
+\newblock \url{https://arxiv.org/abs/2402.03300}
+
+\bibitem{silver}
+D.~Silver.
+\newblock UCL Course on Reinforcement Learning.
+\newblock University College London, 2015. Clase~2, «Markov Decision Processes».
+\newblock \url{https://www.davidsilver.uk/teaching/}
+
+\bibitem{stiennon}
+N.~Stiennon, L.~Ouyang, J.~Wu, D.~M. Ziegler, R.~Lowe, C.~Voss, A.~Radford, D.~Amodei y P.~Christiano.
+\newblock Learning to summarize from human feedback.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2020.
+\newblock \url{https://arxiv.org/abs/2009.01325}
+
+\bibitem{sb}
+R.~S. Sutton y A.~G. Barto.
+\newblock \emph{Reinforcement Learning: An Introduction}, 2.ª ed.
+\newblock MIT Press, 2018. Caps.~3 «Finite Markov Decision Processes» y~13 «Policy Gradient Methods».
+\newblock \url{http://incompleteideas.net/book/the-book-2nd.html}
+
+\bibitem{williams}
+R.~J. Williams.
+\newblock Simple statistical gradient-following algorithms for connectionist reinforcement learning.
+\newblock \emph{Machine Learning}, 8(3--4):229--256, 1992.
+
+\end{thebibliography}
+
+
+\end{document}

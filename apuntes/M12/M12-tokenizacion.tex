@@ -1,0 +1,131 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase III — Módulo 12
+%  Representar el lenguaje
+%  Compilar: latexmk -r ../latexmkrc M12-tokenizacion.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 12}
+
+% Notación propia del módulo
+\newcommand{\tok}[1]{\texttt{#1}}
+\newcommand{\hx}[1]{\texttt{#1}}
+\newcommand{\bits}[1]{\texttt{#1}}
+\newcommand{\ESP}{\rule[-0.2ex]{0.55em}{0.6pt}}
+\newcommand{\vs}{\texttt{\textvisiblespace}}
+\newcommand{\PMI}{\operatorname{PMI}}
+\newcommand{\PPMI}{\operatorname{PPMI}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Enc}{\operatorname{enc}}
+\newcommand{\Dec}{\operatorname{dec}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\sep}{\ensuremath{\cdot}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 12. Representar el lenguaje},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase III \textperiodcentered\ Secuencias y Transformer}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 12\par}\vspace{0.3cm}
+{\LARGE Representar el lenguaje\par}
+\vspace{0.2cm}
+{\large Tokenización, embeddings y modelos secuenciales\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Antes de que un gran modelo de lenguaje procese un texto, un programa sin parámetros aprendidos por descenso de gradiente lo convierte en una secuencia de enteros, y una tabla convierte cada entero en un vector. Este módulo estudia esas dos etapas y la historia de los modelos que precedieron al Transformer. Parte de la representación del texto como bytes mediante UTF-8, desarrolla el algoritmo BPE (\emph{Byte Pair Encoding}) y el modelo unigram de SentencePiece, analiza el coste del vocabulario y sus efectos sobre el comportamiento de los modelos, presenta los embeddings estáticos de word2vec y termina con los modelos de $n$-gramas, las redes recurrentes y las LSTM, cuyas limitaciones motivan la atención del módulo~13.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item codificar a mano caracteres Unicode en UTF-8 y demostrar que esta codificación es un código prefijo que se autosincroniza;
+  \item ejecutar a mano el entrenamiento y la codificación de BPE, demostrar cuánto acorta cada fusión y probar que la decodificación de un BPE de bytes recupera el texto original;
+  \item definir el modelo unigram, demostrar la corrección del algoritmo de Viterbi para segmentar y describir su entrenamiento por EM y poda;
+  \item calcular el coste en parámetros de un vocabulario y la compresión de un tokenizador, y explicar los efectos de la tokenización sobre el recuento de letras, la aritmética y los idiomas;
+  \item definir los embeddings, la similitud coseno y la información mutua puntual, derivar los gradientes de skip-gram con softmax y con muestreo negativo y relacionar este último con la PMI;
+  \item analizar la dispersión de los $n$-gramas, demostrar la cota exponencial del gradiente en una red recurrente, describir la LSTM y el recorte del gradiente, y justificar por qué estos modelos no escalan como el Transformer.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1 se usan los tokens, el tokenizador como par codificación-decodificación, los modelos de $n$-gramas y la entropía cruzada; del módulo~2, el producto escalar, la norma y la similitud coseno; del módulo~3, los valores y vectores propios de una matriz simétrica y la norma espectral; del módulo~4, la regla de la cadena multivariable y el jacobiano; del módulo~6, la información mutua; del módulo~8, la regresión logística y la softmax con entropía cruzada; del módulo~9, el modelo de lenguaje neuronal de Bengio \emph{et al.}, y del módulo~11, el desvanecimiento del gradiente y las conexiones residuales. Se usan también la numeración binaria y hexadecimal.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Del texto a los bytes: Unicode y UTF-8 & \cite{jm3}, \cite{rfc3629}, \cite{cs336} \\
+2 & El algoritmo BPE & \cite{sennrich}, \cite{jm3}, \cite{cs336}, \cite{gpt2} \\
+3 & El modelo unigram, SentencePiece y el vocabulario & \cite{kudo}, \cite{sentencepiece}, \cite{jm3}, \cite{petrov} \\
+4 & Embeddings y word2vec & \cite{jm3}, \cite{cs224n}, \cite{mikolov13b}, \cite{levy} \\
+5 & Modelos secuenciales: $n$-gramas, RNN y LSTM & \cite{jm3}, \cite{cs224n}, \cite{bengio94}, \cite{pascanu}, \cite{lstm} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La parte de tokenización sigue el capítulo~2 de Jurafsky y Martin~\cite{jm3}, «Words and Tokens» (§2.3 «Unicode» y §2.4 «Subword Tokenization: Byte-Pair Encoding»), y la sección~2 de la tarea~1 del curso CS336 de Stanford~\cite{cs336}, en la que se programa un tokenizador BPE de bytes. Los algoritmos se toman de sus artículos originales: Sennrich, Haddow y Birch~\cite{sennrich} para BPE, Radford \emph{et al.}~\cite{gpt2} para su versión a nivel de byte, Kudo~\cite{kudo} para el modelo unigram y Kudo y Richardson~\cite{sentencepiece} para SentencePiece; la codificación UTF-8 se define en el RFC~3629~\cite{rfc3629}. Los embeddings siguen el capítulo~5 de~\cite{jm3}, «Embeddings», y la clase~2 de CS224N~\cite{cs224n}, «Word Vectors», con los artículos de Mikolov \emph{et al.}~\cite{mikolov13a,mikolov13b} y de Levy y Goldberg~\cite{levy}. Los modelos recurrentes siguen el capítulo~14 de~\cite{jm3}, «RNNs and LSTMs», la clase~4 de CS224N, el capítulo~10 de Goodfellow, Bengio y Courville~\cite{gbc} y los capítulos~9 y~10 de Zhang \emph{et al.}~\cite{d2l}; los resultados sobre el gradiente proceden de Bengio, Simard y Frasconi~\cite{bengio94} y de Pascanu, Mikolov y Bengio~\cite{pascanu}, y la LSTM, de Hochreiter y Schmidhuber~\cite{lstm}. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública: el informe técnico de Gemini~\cite{gemini} indica que su tokenizador es de tipo SentencePiece, los pesos de Grok-1 publicados por xAI incluyen su vocabulario, y Anthropic no ha publicado los detalles del tokenizador de Claude.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\Sigma$, $\Sigma^{*}$ & alfabeto de caracteres (puntos de código Unicode) y cadenas sobre él \\
+$\mathcal{B}=\{0,\dots,255\}$ & conjunto de los bytes; $\mathcal{B}^{*}$, cadenas de bytes \\
+\hx{U+00F1}, \hx{C3}, \bits{110xxxxx} & punto de código, byte en hexadecimal y patrón de bits \\
+$\V$, $K=\abs{\V}$, $\V_0$ & vocabulario, su tamaño y vocabulario inicial de BPE \\
+$k$ & número de fusiones de BPE \\
+$u\Vert v$ & concatenación de las cadenas $u$ y $v$ \\
+$s=(t_1,\dots,t_m)$, $p(t)$ & segmentación en tokens y probabilidad unigram de un token \\
+$E\in\R^{K\times d}$, $e_i$ & matriz de embeddings y vector \emph{one-hot} del token $i$ \\
+$v_w$, $u_w$ & vector de una palabra como centro y como contexto en skip-gram \\
+$\sigma$, $\odot$ & sigmoide logística y producto componente a componente \\
+$h_t$, $c_t$ & estado oculto de una red recurrente y celda de memoria de una LSTM \\
+$f_t$, $i_t$, $o_t$ & puertas de olvido, de entrada y de salida de una LSTM \\
+$\norm{\cdot}$ & norma euclídea de un vector o norma espectral de una matriz \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

@@ -1,0 +1,168 @@
+% =====================================================================
+\chapter{Ajuste eficiente en parámetros}
+\label{tema:4}
+% =====================================================================
+
+El ajuste completo de un modelo de $D$ parámetros produce, para cada tarea, una copia de $D$ parámetros y exige guardar durante el entrenamiento el estado del optimizador de todos ellos. Los métodos de \emph{ajuste eficiente en parámetros} (PEFT, del inglés \emph{parameter-efficient fine-tuning}) congelan el modelo preentrenado y entrenan un número pequeño de parámetros nuevos. Este tema presenta los adaptadores, el ajuste de \emph{prompt} y de prefijo, y la noción de dimensión intrínseca que explica por qué bastan tan pocos parámetros. Se sigue el §8.2 de Jurafsky y Martin~\cite{jm3}, la clase~9 de CS224N~\cite{cs224n} y los artículos originales~\cite{houlsby,lester,li-liang,li-intrinsic,aghajanyan}; LoRA, el método más usado, ocupa el \cref{tema:5}.
+
+\section{Planteamiento}
+
+\begin{definicion}[Ajuste eficiente en parámetros]\label{def:peft}
+Sea $\theta_0\in\R^{D}$ un modelo preentrenado. Un método PEFT define una familia de modelos $f_{\theta_0,\varphi}$ con parámetros nuevos $\varphi\in\R^{P}$, $P\ll D$, tal que existe $\varphi_0$ con $f_{\theta_0,\varphi_0}=f_{\theta_0}$, y entrena solo $\varphi$, partiendo de $\varphi_0$ o de un valor próximo, con $\theta_0$ congelado.
+\end{definicion}
+
+Los métodos se agrupan en tres familias: \emph{aditivos}, que añaden módulos o vectores nuevos (adaptadores, ajuste de \emph{prompt} y de prefijo); \emph{selectivos}, que entrenan un subconjunto de los parámetros existentes (la sonda lineal del \cref{tema:1} es el caso extremo), y de \emph{reparametrización}, que escriben la actualización $\Delta\theta$ como función de pocos parámetros (subespacios aleatorios, \cref{sec:intrinseca}, y LoRA, \cref{tema:5}).
+
+\begin{proposicion}[Memoria del entrenamiento]\label{prop:memoria-peft}
+Con precisión mixta y Adam, el ajuste completo requiere unos $16D$ bytes para pesos, gradientes y estado del optimizador (módulo~17). Con un método PEFT y el modelo base en bf16, la memoria es de unos $2D+16P$ bytes, sin contar las activaciones.
+\end{proposicion}
+
+\begin{proof}
+En el ajuste completo, cada parámetro ocupa 2 bytes de peso en bf16, 2 de gradiente, 4 de copia maestra en fp32 y 8 de los dos momentos de Adam en fp32: 16 bytes. En un método PEFT los $D$ parámetros congelados solo necesitan su peso en bf16 (2 bytes): no tienen gradiente ni estado de Adam. Los $P$ parámetros entrenables necesitan los 16 bytes completos.
+\end{proof}
+
+Con $D=7\cdot 10^{9}$ y $P=2\cdot 10^{7}$, la memoria baja de $112$~GB a $14+0{,}32=14{,}32$~GB. Además, cada tarea se almacena con $P$ parámetros en lugar de $D$, y un mismo modelo base puede servir muchas tareas cambiando solo $\varphi$.
+
+\section{Adaptadores}
+
+\begin{definicion}[Adaptador]\label{def:adaptador}
+Sea $h\in\R^{d}$ la salida de una subcapa de un Transformer. Un \emph{adaptador} con dimensión de cuello $m\ll d$ calcula
+\[
+a(h)=h+W_{\uparrow}\,g\bigl(W_{\downarrow}h+b_{\downarrow}\bigr)+b_{\uparrow},\qquad W_{\downarrow}\in\R^{m\times d},\ W_{\uparrow}\in\R^{d\times m},
+\]
+con $g$ una no linealidad. Houlsby \emph{et al.}~\cite{houlsby} insertan dos adaptadores por capa, tras la subcapa de atención y tras la red de alimentación hacia delante, y entrenan además los parámetros de normalización de capa.
+\end{definicion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},font=\small,
+  caja/.style={draw,thick,minimum height=7mm,minimum width=30mm,align=center}]
+  \node (in) at (0,0) {$h\in\R^{d}$};
+  \node[caja] (d) at (0,1.2) {$W_{\downarrow}$: $d\to m$};
+  \node[caja] (g) at (0,2.3) {no linealidad $g$};
+  \node[caja] (u) at (0,3.4) {$W_{\uparrow}$: $m\to d$};
+  \node[draw,thick,circle,inner sep=1pt] (s) at (0,4.5) {$+$};
+  \node (out) at (0,5.4) {$a(h)\in\R^{d}$};
+  \draw[->] (in) -- (d);
+  \draw[->] (d) -- (g);
+  \draw[->] (g) -- (u);
+  \draw[->] (u) -- (s);
+  \draw[->] (s) -- (out);
+  \draw[->] (in.east) -- ++(1.9,0) |- node[pos=0.25,right] {identidad} (s.east);
+\end{tikzpicture}
+\caption{Adaptador con cuello de botella. Si $W_{\uparrow}$ y $b_{\uparrow}$ son nulos, el adaptador es la identidad.}
+\label{fig:adaptador}
+\end{figure}
+
+\begin{proposicion}\label{prop:adaptador}
+Un adaptador tiene $2md+m+d$ parámetros. Si se inicializa con $W_{\uparrow}=0$ y $b_{\uparrow}=0$, entonces $a(h)=h$ para todo $h$, de modo que el modelo con adaptadores coincide al principio con el preentrenado.
+\end{proposicion}
+
+\begin{proof}
+$W_{\downarrow}$ y $W_{\uparrow}$ aportan $md$ parámetros cada una; $b_{\downarrow}\in\R^{m}$ y $b_{\uparrow}\in\R^{d}$, $m+d$. Con $W_{\uparrow}=0$ y $b_{\uparrow}=0$, el sumando $W_{\uparrow}g(\cdot)+b_{\uparrow}$ es nulo.
+\end{proof}
+
+Houlsby \emph{et al.} usan una inicialización \emph{casi} nula, de modo que el adaptador es casi la identidad, y obtienen en GLUE resultados a menos de un $0{,}4\,\%$ de los del ajuste completo añadiendo un $3{,}6\,\%$ de parámetros por tarea~\cite{houlsby}.
+
+\begin{observacion}[Latencia]
+Los adaptadores añaden capas que se ejecutan en serie y no pueden fusionarse con los pesos originales, porque contienen una no linealidad. Hu \emph{et al.}~\cite[§3]{hu-lora} midieron aumentos de la latencia de inferencia superiores al $30\,\%$ con secuencias cortas y lotes pequeños. LoRA evita este problema (\cref{tema:5}).
+\end{observacion}
+
+\section{Ajuste de \emph{prompt} y de prefijo}
+
+\begin{definicion}[Ajuste de \emph{prompt}]\label{def:prompt-tuning}
+Sea $E\in\R^{T\times d}$ la matriz de \emph{embeddings} de una entrada. El \emph{ajuste de prompt} antepone $p$ vectores entrenables $P_e\in\R^{p\times d}$ y alimenta el modelo congelado con $[P_e;E]\in\R^{(p+T)\times d}$. Tiene $pd$ parámetros~\cite{lester}.
+\end{definicion}
+
+Los vectores de $P_e$ no tienen por qué corresponder a ningún token del vocabulario: forman un \emph{prompt continuo} (\emph{soft prompt}). Lester \emph{et al.}~\cite{lester} observaron que la diferencia con el ajuste completo disminuye con la escala y prácticamente desaparece en modelos de unos $10^{10}$ parámetros.
+
+\begin{definicion}[Ajuste de prefijo]\label{def:prefix}
+El \emph{ajuste de prefijo} antepone, en cada una de las $L$ capas, $p$ claves y $p$ valores entrenables, $P_K^{l},P_V^{l}\in\R^{p\times d}$, a las claves y valores calculados a partir de la entrada. Tiene $2Lpd$ parámetros. Para estabilizar el entrenamiento, Li y Liang~\cite{li-liang} reparametrizan los prefijos mediante una pequeña red que se descarta al terminar; con ello entrenan en torno al $0{,}1\,\%$ de los parámetros.
+\end{definicion}
+
+El efecto de un prefijo sobre la atención admite una descripción exacta.
+
+\begin{teorema}[El prefijo interpola la atención]\label{teo:prefijo}
+Sean $q\in\R^{d}$ una consulta, $K,V\in\R^{T\times d}$ las claves y valores de la entrada y $P_K,P_V\in\R^{p\times d}$ los del prefijo. Escríbase $\mathrm{At}(q,K,V)=\softmax(Kq/\sqrt{d})\T V$. Entonces
+\[
+\mathrm{At}\bigl(q,[P_K;K],[P_V;V]\bigr)=\bigl(1-\mu(q)\bigr)\,\mathrm{At}(q,K,V)+\mu(q)\,\mathrm{At}(q,P_K,P_V),
+\]
+con
+\[
+\mu(q)=\frac{S_P}{S_P+S_K},\qquad S_P=\sum_{j=1}^{p}e^{(P_K)_j\cdot q/\sqrt{d}},\quad S_K=\sum_{i=1}^{T}e^{k_i\cdot q/\sqrt{d}}.
+\]
+\end{teorema}
+
+\begin{proof}
+Sean $a_i=e^{k_i\cdot q/\sqrt d}$ y $b_j=e^{(P_K)_j\cdot q/\sqrt d}$. La atención sobre la concatenación es
+\[
+\frac{\sum_j b_j(P_V)_j+\sum_i a_iv_i}{S_P+S_K}
+=\frac{S_P}{S_P+S_K}\cdot\frac{\sum_j b_j(P_V)_j}{S_P}+\frac{S_K}{S_P+S_K}\cdot\frac{\sum_i a_iv_i}{S_K}.
+\]
+Los dos cocientes de la derecha son, por definición de la softmax, $\mathrm{At}(q,P_K,P_V)$ y $\mathrm{At}(q,K,V)$, y $S_K/(S_P+S_K)=1-\mu(q)$.
+\end{proof}
+
+\begin{corolario}\label{cor:prefijo}
+El ajuste de prefijo no altera los pesos relativos de atención entre las posiciones de la entrada: solo mezcla la salida original con un vector que depende de la consulta, con una proporción $\mu(q)\in(0,1)$.
+\end{corolario}
+
+Esta lectura, que relaciona el ajuste de prefijo con los adaptadores, se desarrolla en He \emph{et al.}~\cite{he-unified}.
+
+\section{Dimensión intrínseca}\label{sec:intrinseca}
+
+¿Por qué basta con ajustar una fracción mínima de los parámetros? Li \emph{et al.}~\cite{li-intrinsic} propusieron medir la dimensión efectiva de un problema de optimización restringiendo el entrenamiento a un subespacio aleatorio.
+
+\begin{definicion}[Subespacio aleatorio y dimensión intrínseca]\label{def:intrinseca}
+Sean $\theta_0\in\R^{D}$ y $P\in\R^{D\times d'}$ una matriz aleatoria fija. Se entrena solo $z\in\R^{d'}$, inicializado en $0$, con la reparametrización $\theta=\theta_0+Pz$. La \emph{dimensión intrínseca} $d_{90}$ de una tarea es el menor $d'$ con el que se alcanza el $90\,\%$ del rendimiento del ajuste completo~\cite[§3]{aghajanyan}.
+\end{definicion}
+
+\begin{proposicion}[Gradiente en el subespacio]\label{prop:grad-subespacio}
+Si $\mathcal{L}$ es derivable, $\nabla_z\mathcal{L}(\theta_0+Pz)=P\T\,\nabla_\theta\mathcal{L}(\theta)\big|_{\theta=\theta_0+Pz}$.
+\end{proposicion}
+
+\begin{proof}
+La aplicación $z\mapsto\theta_0+Pz$ es afín con jacobiana $P$. Por la regla de la cadena (módulo~4), $\nabla_z\mathcal{L}=P\T\nabla_\theta\mathcal{L}$.
+\end{proof}
+
+Aghajanyan \emph{et al.}~\cite{aghajanyan} estimaron la dimensión intrínseca del ajuste de modelos de lenguaje preentrenados, usando para $P$ la transformada Fastfood, que evita almacenar una matriz densa de $D\times d'$. Sus tres resultados principales son:
+\begin{enumerate}
+  \item con RoBERTa-Large, unos 200 parámetros bastan para alcanzar el $90\,\%$ del rendimiento del ajuste completo en la tarea MRPC~\cite[§4.2]{aghajanyan};
+  \item la dimensión intrínseca disminuye a lo largo del preentrenamiento y es menor en los modelos con más parámetros~\cite[§5.1 y~§5.2]{aghajanyan};
+  \item una cota de generalización basada en compresión depende de la dimensión intrínseca y no del número total de parámetros: con $n$ ejemplos, el error de generalización es $O(\sqrt{d_{90}/n})$, para modelos entrenados en el subespacio~\cite[§5.3]{aghajanyan}.
+\end{enumerate}
+
+\begin{observacion}
+El segundo resultado explica en parte la paradoja de que los modelos mayores se ajusten con menos datos: el preentrenamiento comprime el problema de adaptación. Hu \emph{et al.} formularon a partir de aquí la hipótesis que motiva LoRA~\cite[§1 y~§4.1]{hu-lora}: si el ajuste vive en un subespacio de dimensión pequeña, también la actualización de cada matriz de pesos debe tener un \emph{rango intrínseco} bajo. LoRA no fija las direcciones al azar: aprende la mejor base de rango $r$.
+\end{observacion}
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, §8.2 «Parameter Efficient Fine Tuning».
+\item CS224N~\cite{cs224n}, clase~9 «Efficient Adaptation (Prompting + PEFT)».
+\item Houlsby \emph{et al.}~\cite{houlsby}, sección sobre los adaptadores y su inicialización.
+\item Lester \emph{et al.}~\cite{lester} y Li y Liang~\cite{li-liang}.
+\item Aghajanyan \emph{et al.}~\cite{aghajanyan}, §3 (definición), §4 (resultados) y §5 (relación con el preentrenamiento y la generalización).
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-congelar}
+Sobre un cuerpo preentrenado con representaciones de dimensión $h=768$ y unos $1{,}1\cdot 10^{8}$ parámetros se coloca una cabeza lineal de 2 clases con sesgo. Se congelan todos los parámetros anteriores a la cabeza. (a) ¿Cuántos parámetros se entrenan y qué fracción del total representan? (b) ¿A qué familia de métodos PEFT pertenece este procedimiento? (c) ¿Cabe esperar más o menos exactitud que con el ajuste completo? Razone en qué casos la diferencia sería pequeña.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §14.2, ejercicio~3.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-adaptadores}
+Un Transformer de 12 capas con $d=768$ y unos $1{,}1\cdot 10^{8}$ parámetros lleva dos adaptadores por capa con $m=64$ (se ignoran los parámetros de normalización). (a) Calcule los parámetros de los adaptadores y su porcentaje respecto al modelo. (b) Compare el almacenamiento necesario para 20 tareas con adaptadores y con 20 copias ajustadas por completo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-prefijo}
+Un modelo tiene $L=24$ capas y $d=1024$. Calcule los parámetros entrenables del ajuste de \emph{prompt} y del ajuste de prefijo con $p=20$ vectores (sin contar la red de reparametrización) y el cociente entre ambos.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-subespacio}
+Sean $D=3$, $\theta_0=(1,0,2)$, $P=(1,2,-1)\T$ (de modo que $d'=1$) y la pérdida $\mathcal{L}(\theta)=\norm{\theta-\theta^{\star}}^{2}$ con $\theta^{\star}=(2,3,1)$. (a) Halle el $z$ óptimo y el $\theta$ correspondiente. (b) Calcule la pérdida que queda y compárela con la del ajuste completo. (c) Compruebe la \cref{prop:grad-subespacio} en $z=0$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-proyeccion}
+En la reparametrización $\theta=\theta_0+Pz$: (a) demuestre que el conjunto de modelos alcanzables es el subespacio afín $\theta_0+\Col(P)$, de dimensión $\rango P$; (b) demuestre que un paso de descenso de gradiente en $z$ con tasa $\eta$ desplaza $\theta$ en $-\eta PP\T\nabla_\theta\mathcal{L}$; (c) si las columnas de $P$ son ortonormales, demuestre que ese desplazamiento es la proyección ortogonal sobre $\Col(P)$ del paso de descenso de gradiente del ajuste completo.
+\end{ejercicio}

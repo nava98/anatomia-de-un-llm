@@ -1,0 +1,124 @@
+% =====================================================================
+\chapter{Contar el cómputo: FLOPs y la regla \texorpdfstring{$6ND$}{6ND}}
+\label{tema:6}
+% =====================================================================
+
+El coste de un Transformer se mide en operaciones de coma flotante (FLOPs). Casi todas proceden de productos de matrices, de modo que basta un único lema para contarlas. Este tema deduce el coste de una pasada hacia delante, unos $2N$ FLOPs por token más un término de atención proporcional al contexto, y el coste del entrenamiento, $C\approx 6ND$. Se sigue~\cite[§2.1]{kaplan}, la sección de contabilidad de recursos de la práctica~1 de CS336~\cite[§3.5]{cs336} y los datos de entrenamiento de Llama~2~\cite[§2.2.1 y tabla~2]{llama2}.
+
+\section{El coste de un producto de matrices}
+
+\begin{definicion}[FLOP]
+Un \emph{FLOP} es una suma o una multiplicación en coma flotante. El \emph{rendimiento} de un acelerador se mide en FLOP/s; su \emph{aprovechamiento} (MFU, \emph{model FLOPs utilization}) es el cociente entre los FLOP/s útiles que alcanza un entrenamiento y el máximo teórico del hardware~\cite[problema \texttt{adamw\_accounting}]{cs336}.
+\end{definicion}
+
+\begin{lema}[Regla $2mkp$]\label{lem:2mkp}
+El producto de una matriz $m\times k$ por una matriz $k\times p$ requiere $2mkp$ FLOPs, contando como $2k$ las operaciones de cada producto escalar de longitud $k$.
+\end{lema}
+
+\begin{proof}
+El resultado tiene $mp$ entradas, y cada una es un producto escalar $\sum_{r=1}^{k}a_rb_r$ que requiere $k$ multiplicaciones y $k$ sumas de acumulación (o $k-1$ si no se cuenta la primera, que no altera el orden de magnitud). En total, $mp\cdot 2k$.
+\end{proof}
+
+\section{La pasada hacia delante}
+
+\begin{proposicion}[Coste hacia delante]\label{prop:forward}
+Sea $N_{\mathrm{mat}}$ el número de parámetros de las matrices que multiplican al flujo (proyecciones de atención, MLP y unembedding). Una pasada hacia delante sobre una secuencia de $n$ tokens requiere
+\[
+C_{\mathrm{fwd}}=2nN_{\mathrm{mat}}+4Ln^{2}d
+\]
+FLOPs, más operaciones elemento a elemento (normalizaciones, softmax, activaciones, RoPE) de coste $O(Lnd+Ln^{2}h)$, que se desprecian. Por token, el coste es $2N_{\mathrm{mat}}+4Lnd\approx 2N+4Lnd$.
+\end{proposicion}
+
+\begin{proof}
+Cada matriz de pesos $W\in\R^{a\times b}$ multiplica a una matriz $n\times a$; por el \cref{lem:2mkp}, cuesta $2nab$, es decir, $2n$ FLOPs por peso. Sumando sobre todas las matrices se obtiene $2nN_{\mathrm{mat}}$. El embedding de entrada es una indexación y no cuesta FLOPs. Quedan los dos productos de la atención que no involucran pesos: en cada capa y cada cabeza, $Q_iK_i\T$ es $(n\times d_k)(d_k\times n)$ y cuesta $2n^{2}d_k$, y el producto de los pesos por $V_i$ es $(n\times n)(n\times d_k)$ y cuesta lo mismo. Con $h$ cabezas y $hd_k=d$, son $4n^{2}d$ por capa y $4Ln^{2}d$ en total. Dividiendo por $n$ se obtiene el coste por token; $N_{\mathrm{mat}}$ difiere de $N$ solo en el embedding de entrada y las normalizaciones.
+\end{proof}
+
+\begin{observacion}
+Kaplan \emph{et al.}~\cite[§2.1, ecuación~(2.2)]{kaplan} escriben $C_{\mathrm{fwd}}\approx 2N+2Ln_{\mathrm{ctx}}d$ por token. El factor es la mitad del de la \cref{prop:forward}, lo que concuerda con tener en cuenta la máscara causal: el token $t$ solo atiende a $t$ posiciones, y el promedio de $t$ sobre la secuencia es aproximadamente $n/2$. La práctica de CS336 cuenta los productos completos $n\times n$, como la \cref{prop:forward}.
+\end{observacion}
+
+\begin{corolario}[Contexto en el que la atención iguala a los pesos]\label{cor:nstar}
+El término de atención por token, $4Lnd$, iguala a $2N$ cuando $n^{*}=N/(2Ld)$.
+\end{corolario}
+
+\begin{proof}
+Se despeja $n$ en $4Lnd=2N$.
+\end{proof}
+
+Para LLaMA-2~7B, $n^{*}=6\,738\,415\,616/(2\cdot 32\cdot 4096)\approx 25\,705$ tokens; con su contexto de $4096$ tokens, la atención añade un $15{,}9\,\%$ al coste $2N$. Para contextos mucho mayores domina el término cuadrático, lo que motiva FlashAttention (módulo~17) y la atención con ventana deslizante (módulo~18).
+
+\section{La pasada hacia atrás y la regla \texorpdfstring{$6ND$}{6ND}}
+
+\begin{teorema}[El retroceso cuesta el doble]\label{teo:backward}
+Sea $Y=XW$ una capa lineal con $X\in\R^{n\times a}$ y $W\in\R^{a\times b}$, y sea $G=\partial\Loss/\partial Y\in\R^{n\times b}$. La pasada hacia delante cuesta $2nab$ FLOPs y la pasada hacia atrás, que calcula
+\[
+\frac{\partial\Loss}{\partial X}=GW\T\qquad\text{y}\qquad\frac{\partial\Loss}{\partial W}=X\T G,
+\]
+cuesta $4nab$ FLOPs.
+\end{teorema}
+
+\begin{proof}
+Las dos fórmulas de los gradientes son las de la retropropagación por una capa lineal (módulo~10). Por el \cref{lem:2mkp}: $Y=XW$ es $(n\times a)(a\times b)$, con $2nab$ FLOPs; $GW\T$ es $(n\times b)(b\times a)$, con $2nba$; $X\T G$ es $(a\times n)(n\times b)$, con $2anb$. El primer gradiente hace falta para propagar hacia las capas anteriores y el segundo para actualizar $W$.
+\end{proof}
+
+\begin{corolario}[Regla $6ND$]\label{cor:6nd}
+Entrenar un Transformer de $N$ parámetros con $D$ tokens cuesta $C\approx 6ND$ FLOPs, despreciando el término de atención y las operaciones elemento a elemento.
+\end{corolario}
+
+\begin{proof}
+Por el \cref{teo:backward}, cada peso de una capa lineal cuesta $2+4=6$ FLOPs por token entre las dos pasadas. Sumando sobre todos los pesos y todos los tokens, $6ND$. La actualización de Adam cuesta $O(N)$ FLOPs por paso, despreciables frente a los $O(N\cdot\text{tokens por paso})$ de las dos pasadas.
+\end{proof}
+
+Kaplan \emph{et al.}\ enuncian la misma estimación, $C\approx 6N$ FLOPs por token de entrenamiento~\cite[§2.1]{kaplan}, que es la base de las leyes de escalado del módulo~16.
+
+\begin{ejemplo}[Coste de LLaMA-2~7B]\label{ej:coste7b}
+Llama~2~7B se entrenó con $D=2\cdot 10^{12}$ tokens~\cite[§2.1]{llama2}. Por el \cref{cor:6nd},
+\[
+C\approx 6\cdot 6{,}738\cdot 10^{9}\cdot 2\cdot 10^{12}=8{,}086\cdot 10^{22}~\text{FLOPs}.
+\]
+Una GPU A100 tiene un máximo de $312\cdot 10^{12}$~FLOP/s en bf16. Con un aprovechamiento del $40\,\%$, el entrenamiento requeriría $8{,}086\cdot 10^{22}/(0{,}4\cdot 312\cdot 10^{12})\approx 6{,}48\cdot 10^{8}$~s, unas $180\,000$ horas de GPU. El artículo declara $184\,320$ horas de A100-80GB para el modelo de 7B~\cite[tabla~2]{llama2}, lo que corresponde a un aprovechamiento del $39\,\%$.
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+La regla $6ND$ permite estimar el coste de cualquier entrenamiento cuyos $N$ y $D$ sean públicos. Para Claude, Gemini y Grok, sus desarrolladores no han publicado $D$, y en los modelos con mezcla de expertos (módulo~18) el coste depende de los parámetros \emph{activos} por token, no del total.
+\end{observacion}
+
+\begin{lecturas}
+\item Kaplan \emph{et al.}~\cite{kaplan}, §2.1 y tabla~1 (parámetros y cómputo por operación).
+\item Hashimoto y Liang~\cite{cs336}, §3.5, apartado «Resource accounting», y los problemas de contabilidad \texttt{transformer\_accounting} y \texttt{adamw\_accounting}.
+\item Touvron \emph{et al.}~\cite{llama2}, §2.2.1 y tabla~2 (horas de GPU de Llama~2).
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-2n}
+Explique por qué una pasada hacia delante cuesta unos $2$ FLOPs por parámetro y por token. Compruébelo contando las operaciones del producto de un vector de $\R^{2}$ por una matriz $2\times 3$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-horas}
+LLaMA-2~7B ($N=6{,}738\cdot 10^{9}$) se entrenó con $2\cdot 10^{12}$ tokens. Calcule los FLOPs de entrenamiento y las horas de A100 ($312\cdot 10^{12}$~FLOP/s) con un aprovechamiento del $40\,\%$. Despeje el aprovechamiento real a partir de las $184\,320$ horas declaradas.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-small}
+Considere la arquitectura del \cref{eje:5-xl} con la forma de GPT-2 \emph{small} ($L=12$, $d=768$, $h=12$, $\dff=2048$, $V=50\,257$) y una secuencia de $n=1024$ tokens. (a) Enumere los productos de matrices de un bloque y su coste con el \cref{lem:2mkp}. (b) Calcule el coste total de la pasada hacia delante. (c) ¿Qué parte domina? (d) Compare las proporciones con las del modelo con forma de GPT-2 XL que se dan en la solución.
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, problema \texttt{transformer\_accounting}, apartados~(b)--(d).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-16k}
+Repita el recuento de la pasada hacia delante del modelo del \cref{eje:5-xl} con $n=16\,384$ en lugar de $1024$. ¿Por qué factor se multiplica el total? ¿Qué fracción pasa a corresponder a los productos $QK\T$ y $AV$?
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, problema \texttt{transformer\_accounting}, apartado~(e).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-h100}
+Se entrena el modelo del \cref{eje:5-xl} durante $400\,000$ pasos con lotes de $1024$ secuencias de $1024$ tokens en una sola GPU H100, cuyo máximo en TF32 es $495\cdot 10^{12}$~FLOP/s, con un aprovechamiento del $50\,\%$. Supóngase que la pasada hacia atrás cuesta el doble que la pasada hacia delante. ¿Cuántas horas tarda? Compárelo con la estimación $6ND$.
+\fuente{adaptado de Hashimoto y Liang~\cite{cs336}, problema \texttt{adamw\_accounting}, apartado~(d).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-6nd}
+Demuestre el \cref{teo:backward} para una capa $Y=XW+\uno c\T$ con sesgo $c\in\R^{b}$: obtenga los tres gradientes, cuente sus FLOPs y demuestre que el coste del sesgo es despreciable frente al de $W$ cuando $a$ es grande. Compruebe el recuento con $n=1$ y $a=b=2$ sin sesgo.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-atencion}
+Para LLaMA-2~7B con $n=4096$: (a) calcule la fracción que representa el término de atención $4Lnd$ respecto de $2N$; (b) obtenga $n^{*}$ del \cref{cor:nstar}; (c) demuestre que la fracción es lineal en $n$ y compruebe la coherencia de (a) y (b).
+\end{ejercicio}

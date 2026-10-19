@@ -1,0 +1,177 @@
+% =====================================================================
+\chapter{Funciones de activación}
+\label{tema:2}
+% =====================================================================
+
+La activación determina qué funciones puede representar una red y cómo fluye el gradiente a través de ella. Este tema estudia las activaciones clásicas (sigmoide y tangente hiperbólica), la ReLU, que se impuso en la década de 2010, y las activaciones suaves y con puerta que usan los modelos de lenguaje actuales. Se sigue la §6.3 de~\cite{gbc}, la §5.1.2 de~\cite{d2l} y las notas «Neural Networks Part~1» de~\cite{cs231n}; las definiciones de GELU y SwiGLU proceden de los artículos originales de Hendrycks y Gimpel~\cite{hendrycks} y de Shazeer~\cite{shazeer}.
+
+\section{Sigmoide y tangente hiperbólica}
+
+\begin{definicion}
+La \emph{sigmoide logística} y la \emph{tangente hiperbólica} son
+\[
+\sigma(t)=\frac{1}{1+e^{-t}},\qquad \tanh(t)=\frac{e^{t}-e^{-t}}{e^{t}+e^{-t}}.
+\]
+\end{definicion}
+
+\begin{proposicion}\label{prop:sigmoide}
+Para todo $t\in\R$:
+\begin{enumerate}
+  \item $\sigma'(t)=\sigma(t)\bigl(1-\sigma(t)\bigr)$ y $0<\sigma'(t)\le 1/4$, con igualdad solo en $t=0$;
+  \item $\tanh(t)=2\sigma(2t)-1$;
+  \item $\tanh'(t)=1-\tanh^{2}(t)\in(0,1]$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Por la regla de la cadena, $\sigma'(t)=e^{-t}/(1+e^{-t})^{2}=\sigma(t)\cdot e^{-t}/(1+e^{-t})$, y el segundo factor es $1-\sigma(t)$. Como $\sigma(t)\in(0,1)$, el producto $s(1-s)$ con $s=\sigma(t)$ es positivo y alcanza su máximo $1/4$ solo en $s=1/2$, es decir, en $t=0$. (ii) Dividiendo numerador y denominador por $e^{t}$, $\tanh(t)=(1-e^{-2t})/(1+e^{-2t})=2/(1+e^{-2t})-1=2\sigma(2t)-1$. (iii) Derivando (ii) y usando (i), $\tanh'(t)=4\sigma(2t)(1-\sigma(2t))$; como $\sigma(2t)=(1+\tanh t)/2$, resulta $4\cdot\frac{1+\tanh t}{2}\cdot\frac{1-\tanh t}{2}=1-\tanh^{2}t$.
+\end{proof}
+
+Por (ii), una red con activaciones tanh y otra con sigmoides representan la misma familia de funciones: el factor~2 y el desplazamiento $-1$ se absorben en los pesos y sesgos de las capas adyacentes (\cref{eje:2-tanh}). La diferencia práctica es que tanh está centrada en~0.
+
+\begin{observacion}[Saturación y desvanecimiento del gradiente]\label{obs:desvanecimiento}
+Cuando $\abs{t}$ es grande, $\sigma'(t)$ y $\tanh'(t)$ son casi nulas: la unidad está \emph{saturada}. En la retropropagación (\cref{tema:5}) el gradiente que atraviesa una capa se multiplica por $\phi'(z)$; con sigmoides, tras $k$ capas el factor es a lo sumo $4^{-k}$, que para $k=10$ vale menos de $10^{-6}$. Este \emph{desvanecimiento del gradiente} dificultó durante años el entrenamiento de redes profundas~\cite[§6.3.2]{gbc}.
+\end{observacion}
+
+\section{La unidad lineal rectificada}
+
+\begin{definicion}[ReLU]
+La \emph{unidad lineal rectificada} es $\ReLU(t)=\max(0,t)$. Su derivada es $\ReLU'(t)=\ind[t>0]$ para $t\neq 0$; en $t=0$ se toma por convenio el valor~0.
+\end{definicion}
+
+La ReLU tiene tres ventajas~\cite[§6.3.1]{gbc}: su cálculo es una comparación; en la región activa su derivada vale exactamente~1, de modo que el gradiente no se encoge al atravesar muchas capas; y es \emph{positivamente homogénea}, $\ReLU(ct)=c\ReLU(t)$ para $c\ge 0$, lo que simplifica el análisis de la varianza (\cref{tema:4}). Su inconveniente es que una unidad cuya preactivación es negativa para todos los datos tiene gradiente nulo y deja de aprender: se dice que está \emph{muerta}~\cite{cs231n}. Las variantes \emph{leaky} ReLU, $\max(\alpha t,t)$ con $0<\alpha<1$ fijo, y PReLU, con $\alpha$ aprendido~\cite{he}, evitan ese problema.
+
+\section{Activaciones suaves: GELU y SiLU}
+
+\begin{definicion}[GELU y SiLU]\label{def:gelu}
+Sea $\Phi$ la función de distribución de la normal estándar. Se definen
+\[
+\GELU(t)=t\,\Phi(t),\qquad \SiLU(t)=t\,\sigma(t).
+\]
+Más en general, $\mathrm{Swish}_\beta(t)=t\,\sigma(\beta t)$ con $\beta>0$, de modo que $\SiLU=\mathrm{Swish}_1$.
+\end{definicion}
+
+Hendrycks y Gimpel~\cite{hendrycks} motivan GELU como el valor esperado de una puerta aleatoria: si $m\sim\mathrm{Bernoulli}(\Phi(t))$, entonces $\E[m\,t]=t\,\Phi(t)$. La entrada se deja pasar con una probabilidad que crece con su valor, en lugar de cortarse según su signo como en la ReLU. En la práctica se usa la aproximación
+\[
+\GELU(t)\approx\tfrac12\,t\Bigl(1+\tanh\Bigl[\sqrt{2/\pi}\,\bigl(t+0{,}044715\,t^{3}\bigr)\Bigr]\Bigr),
+\]
+cuyo error absoluto es menor que $5\cdot 10^{-4}$ en todo $\R$. GELU es la activación de BERT y de GPT-2.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=0.95cm,y=0.95cm,>=Stealth]
+  \draw[->,regla] (-3.3,0)--(3.4,0) node[right,tinta]{$t$};
+  \draw[->,regla] (0,-0.4)--(0,3.2);
+  \foreach \v in {-3,-2,-1,1,2,3} {\draw[regla] (\v,0.05)--(\v,-0.05); \node[font=\scriptsize,tinta] at (\v,-0.55) {$\v$};}
+  \foreach \v in {1,2,3} \draw[regla] (0.05,\v)--(-0.05,\v) node[left,font=\scriptsize,tinta]{$\v$};
+  \draw[thick,densely dotted] plot[domain=-3:3,samples=60] (\x,{max(0,\x)});
+  \draw[thick] plot[domain=-3:3,samples=120] (\x,{0.5*\x*(1+tanh(0.7978845608*(\x+0.044715*\x*\x*\x)))});
+  \draw[thick,dashed] plot[domain=-3:3,samples=120] (\x,{\x/(1+exp(-\x))});
+  \begin{scope}[shift={(4.2,2.4)},font=\small]
+    \draw[thick,densely dotted] (0,0.5)--(0.6,0.5) node[right]{$\ReLU$};
+    \draw[thick] (0,0)--(0.6,0) node[right]{$\GELU$};
+    \draw[thick,dashed] (0,-0.5)--(0.6,-0.5) node[right]{$\SiLU$};
+  \end{scope}
+\end{tikzpicture}
+\caption{ReLU, GELU y SiLU en $[-3,3]$. Las dos activaciones suaves dejan pasar una pequeña señal negativa.}\label{fig:activaciones}
+\end{figure}
+
+\begin{table}[h]
+\centering\small
+\caption{Valores de ReLU, GELU y SiLU.}\label{tab:activaciones}
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+$t$ & $-2$ & $-1$ & $-0{,}5$ & $0$ & $0{,}5$ & $1$ & $2$ \\
+\midrule
+$\ReLU(t)$ & $0$ & $0$ & $0$ & $0$ & $0{,}5$ & $1$ & $2$ \\
+$\GELU(t)$ & $-0{,}0455$ & $-0{,}1587$ & $-0{,}1543$ & $0$ & $0{,}3457$ & $0{,}8413$ & $1{,}9545$ \\
+$\SiLU(t)$ & $-0{,}2384$ & $-0{,}2689$ & $-0{,}1888$ & $0$ & $0{,}3112$ & $0{,}7311$ & $1{,}7616$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proposicion}\label{prop:silu}
+\begin{enumerate}
+  \item $\SiLU'(t)=\sigma(t)\bigl(1+t\,(1-\sigma(t))\bigr)$; en particular $\SiLU'(0)=1/2$.
+  \item $\GELU'(t)=\Phi(t)+t\,\varphi(t)$, donde $\varphi$ es la densidad normal estándar; en particular $\GELU'(0)=1/2$.
+  \item Ni GELU ni SiLU son monótonas: ambas tienen un único mínimo global negativo, que vale aproximadamente $-0{,}170$ en $t\approx-0{,}752$ para GELU y $-0{,}278$ en $t\approx-1{,}278$ para SiLU.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Regla del producto y \cref{prop:sigmoide}(i): $\SiLU'(t)=\sigma(t)+t\,\sigma(t)(1-\sigma(t))$. (ii) Regla del producto y $\Phi'=\varphi$. En $t=0$, $\sigma(0)=\Phi(0)=1/2$. (iii) Para $t>0$ ambas funciones son positivas, y para $t\le 0$ son $\le 0$ y tienden a~0 cuando $t\to-\infty$; como valen~0 en $t=0$ y son negativas en $t=-1$, alcanzan un mínimo negativo en $(-\infty,0)$. Los valores numéricos se obtienen resolviendo $\GELU'(t)=0$ y $\SiLU'(t)=0$ por métodos numéricos; la unicidad se comprueba estudiando el signo de la derivada, y se omite.
+\end{proof}
+
+Cuando $\beta\to\infty$, $\sigma(\beta t)\to\ind[t>0]$ para $t\neq 0$ y $\mathrm{Swish}_\beta$ tiende a la ReLU; el \cref{eje:2-swish-relu} prueba que la convergencia es uniforme.
+
+\section{Unidades con puerta: GLU y SwiGLU}
+
+En una unidad con puerta, una proyección de la entrada decide, componente a componente, cuánto se deja pasar de otra proyección.
+
+\begin{definicion}[Capas prealimentadas con puerta; Shazeer]\label{def:swiglu}
+Sean $d,H\ge 1$, $W_g,W_u\in\R^{d\times H}$ y $W_d\in\R^{H\times d}$. Para $x\in\R^{1\times d}$ se definen, sin sesgos,
+\[
+\FFN_{\mathrm{GLU}}(x)=\bigl(\sigma(xW_g)\odot xW_u\bigr)W_d,\qquad
+\FFN_{\mathrm{SwiGLU}}(x)=\bigl(\SiLU(xW_g)\odot xW_u\bigr)W_d.
+\]
+La rama $xW_g$ es la \emph{puerta}, la rama $xW_u$ es el \emph{contenido} y $W_d$ proyecta de vuelta a dimensión $d$. El MLP clásico de un Transformer es $\FFN(x)=\phi(xW_1)W_2$, con $W_1\in\R^{d\times 4d}$ y $W_2\in\R^{4d\times d}$.
+\end{definicion}
+
+La unidad GLU fue propuesta por Dauphin \emph{et al.} para modelos de lenguaje convolucionales; Shazeer~\cite[§2]{shazeer} estudió variantes que sustituyen la sigmoide por otras funciones y observó que SwiGLU y GEGLU mejoran la calidad del Transformer frente a ReLU y GELU con el mismo número de parámetros.
+
+\begin{ejemplo}\label{ej:swiglu}
+Sean $x=(1,2)$, $W_g=\begin{psmallmatrix}1&-1\\0&1\end{psmallmatrix}$, $W_u=\begin{psmallmatrix}1&0\\1&1\end{psmallmatrix}$ y $W_d=\begin{psmallmatrix}1\\-1\end{psmallmatrix}$ (salida de dimensión~1 para simplificar). Entonces $xW_g=(1,1)$ y $\SiLU(1)=\sigma(1)=0{,}7311$; $xW_u=(3,2)$; el producto componente a componente es $(2{,}1932;\,1{,}4621)$ y la salida, $2{,}1932-1{,}4621=0{,}7311$.
+\end{ejemplo}
+
+\begin{proposicion}[Anchura de SwiGLU con igual número de parámetros]\label{prop:anchura}
+Una capa $\FFN_{\mathrm{SwiGLU}}$ de anchura $H$ tiene $3dH$ pesos y un MLP clásico $d\to 4d\to d$ tiene $8d^{2}$. Ambos coinciden si y solo si $H=\tfrac{2}{3}\cdot 4d=8d/3$.
+\end{proposicion}
+
+\begin{proof}
+$W_g$ y $W_u$ tienen $dH$ pesos cada una y $W_d$ otros $Hd$; el MLP clásico tiene $d\cdot 4d+4d\cdot d$. La igualdad $3dH=8d^{2}$ equivale a $H=8d/3$.
+\end{proof}
+
+Shazeer reduce la anchura en un factor $2/3$ por este motivo~\cite[§2]{shazeer}, y LLaMA adopta la misma regla: usa SwiGLU con dimensión oculta $\tfrac23\,4d$ en lugar de $4d$~\cite[§2.2]{touvron}. Para LLaMA-7B, con $d=4096$, se obtiene $8\cdot 4096/3\approx 10\,923$; el código publicado redondea al múltiplo de~256 siguiente, $H=11\,008$, con $3\cdot 4096\cdot 11\,008=135\,266\,304$ pesos por capa frente a $2\cdot 4096\cdot 16\,384=134\,217\,728$ del MLP clásico. Qué activación usan internamente Claude, Gemini o Grok no es información pública.
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §6.3 «Hidden Units», en especial §6.3.1 y §6.3.2.
+\item Zhang \emph{et al.}~\cite{d2l}, §5.1.2 «Activation Functions».
+\item Stanford CS231n~\cite{cs231n}, «Neural Networks Part~1», apartado «Commonly used activation functions».
+\item Hendrycks y Gimpel~\cite{hendrycks}, definición y motivación de GELU.
+\item Shazeer~\cite{shazeer}, §2 «Gated Linear Units (GLU) and Variants», y Touvron \emph{et al.}~\cite{touvron}, §2.2.
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-sigmoide}
+Derive $\sigma(t)=1/(1+e^{-t})$ y exprese el resultado solo en función de $\sigma(t)$. Evalúe $\sigma'(0)$ y $\sigma'(\ln 3)$.
+\fuente{adaptado de Stanford CS224N, invierno de 2018~\cite{cs224n2018}, tarea~1, problema~2(a).}
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:2-anchura}
+¿Qué tres matrices tiene una capa SwiGLU y qué papel cumple cada una? ¿Por qué LLaMA usa una anchura oculta de unos $\tfrac23\cdot 4d$ y no $4d$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-tanh}
+Demuestre que $\tanh(t)+1=2\sigma(2t)$ y compruébelo en $t=0{,}5$. Deduzca que toda red con capas tanh puede reescribirse como una red con sigmoides que calcula la misma función, cambiando solo pesos y sesgos.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.1, ejercicio~5.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-swish}
+Calcule la derivada de $\mathrm{Swish}_\beta(t)=t\,\sigma(\beta t)$. Evalúela con $\beta=1$ en $t=1$, $0$ y $-1$, y con $\beta=2$ en $t=1$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.1, ejercicio~3.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-desvanece}
+En una red de diez capas sigmoides, todas las preactivaciones de un camino valen $z=2$. (a) Calcule el factor $\prod\sigma'(z)$ por el que se multiplica el gradiente a lo largo de ese camino y compárelo con la cota $4^{-10}$. (b) ¿Qué factor se obtendría con ReLU?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.1, ejercicio~7.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-swiglu}
+Evalúe la capa SwiGLU del \cref{ej:swiglu} con $x=(1,0)$. Compruebe que la primera componente de la puerta sigue valiendo $\SiLU(1)$ y explique por qué la segunda no influye en la salida.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-swish-relu}
+Demuestre que $\sup_{t\in\R}\abs{\mathrm{Swish}_\beta(t)-\ReLU(t)}=c/\beta$, donde $c=\max_{s\ge 0}s\,\sigma(-s)$, y que $c\le 1/e$. Deduzca que $\mathrm{Swish}_\beta\to\ReLU$ uniformemente en $\R$ cuando $\beta\to\infty$.
+\end{ejercicio}

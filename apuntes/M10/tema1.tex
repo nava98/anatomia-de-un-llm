@@ -1,0 +1,188 @@
+% =====================================================================
+\chapter{Grafos computacionales y métodos de diferenciación}
+\label{tema:1}
+% =====================================================================
+
+Este tema fija el objeto que se deriva: un programa que calcula una función a partir de operaciones elementales. Se formaliza como traza de evaluación y como grafo dirigido acíclico, y se comparan las tres maneras de obtener derivadas con un ordenador: diferencias finitas, derivación simbólica y diferenciación automática. Se siguen las secciones~2 y~3 de~\cite{baydin}, el capítulo~2 de~\cite{gw}, la §6.5.1 de~\cite{gbc} y las notas de la clase~8 de MIT 18.337~\cite{mit18337}.
+
+\section{Trazas de evaluación}
+
+Todo programa que calcula un número real a partir de otros sin bifurcaciones que dependan de los datos ejecuta una sucesión finita de operaciones aritméticas y de funciones de biblioteca ($\exp$, $\ln$, $\sen$, $\tanh$\dots). Cuando hay bifurcaciones o bucles, cada ejecución concreta recorre una sucesión de este tipo, que depende de la entrada; las derivadas se toman respecto a esa sucesión.
+
+\begin{definicion}[Operaciones elementales]\label{def:elementales}
+Un conjunto de \emph{operaciones elementales} es una colección finita $\Phi$ de funciones $\varphi\colon U_\varphi\subseteq\R^{k_\varphi}\to\R$, con $U_\varphi$ abierto y $k_\varphi\le k$ argumentos, de clase $C^{1}$ y cuyas derivadas parciales $\partial\varphi/\partial u_j$ se pueden evaluar con un número acotado de operaciones. En este módulo $\Phi$ contiene la suma, la resta, el producto, la división, las potencias de exponente fijo, $\exp$, $\ln$, $\sen$, $\cos$ y $\tanh$.
+\end{definicion}
+
+\begin{definicion}[Traza de evaluación]\label{def:traza}
+Sea $f\colon\R^{n}\to\R^{m}$. Una \emph{traza de evaluación} de $f$ es una sucesión de variables
+\[
+v_{1-n},\dots,v_0,\;v_1,\dots,v_\ell
+\]
+tal que $v_{i-n}=x_i$ para $i=1,\dots,n$, cada variable intermedia se obtiene como $v_i=\varphi_i\bigl((v_j)_{j\pre i}\bigr)$ con $\varphi_i\in\Phi$ y $j\pre i\Rightarrow j<i$, y las salidas son $y_{m-i}=v_{\ell-i}$ para $i=0,\dots,m-1$. La relación $j\pre i$ se lee «$v_j$ es un argumento de $\varphi_i$».
+\end{definicion}
+
+La condición $j<i$ expresa que cada variable se calcula a partir de variables ya calculadas. Es la notación de Griewank y Walther~\cite[cap.~2]{gw}, que Baydin \emph{et al.} adoptan en~\cite[§3]{baydin}: las entradas llevan índices no positivos, las intermedias, positivos, y las salidas son las últimas variables.
+
+\begin{definicion}[Grafo computacional]\label{def:grafo}
+El \emph{grafo computacional} de una traza es el grafo dirigido $G=(V,E)$ con un nodo por variable y una arista $v_j\to v_i$ por cada par $j\pre i$. Los nodos sin aristas entrantes son las entradas.
+\end{definicion}
+
+\begin{proposicion}\label{prop:aciclico}
+El grafo computacional de una traza es acíclico, y el orden de la traza es un \emph{orden topológico}: toda arista va de un índice menor a uno mayor.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{def:traza}, toda arista $v_j\to v_i$ cumple $j<i$. Un ciclo $v_{i_1}\to v_{i_2}\to\dots\to v_{i_1}$ daría $i_1<i_2<\dots<i_1$, lo cual es imposible.
+\end{proof}
+
+\begin{ejemplo}[El ejemplo de Baydin \emph{et al.}]\label{ej:baydin}
+Sea $f(x_1,x_2)=\ln x_1+x_1x_2-\sen x_2$, evaluada en $(x_1,x_2)=(2,5)$~\cite[§3, fig.~4 y tabla~2]{baydin}. Su traza es
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Variable & Definición & Valor \\
+\midrule
+$v_{-1}$ & $x_1$ & $2$ \\
+$v_0$ & $x_2$ & $5$ \\
+$v_1$ & $\ln v_{-1}$ & $0{,}6931$ \\
+$v_2$ & $v_{-1}\cdot v_0$ & $10$ \\
+$v_3$ & $\sen v_0$ & $-0{,}9589$ \\
+$v_4$ & $v_1+v_2$ & $10{,}6931$ \\
+$v_5$ & $v_4-v_3$ & $11{,}6521$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+y $y=v_5$. La \cref{fig:grafo-baydin} muestra el grafo: $v_{-1}$ alimenta a dos operaciones ($v_1$ y $v_2$), igual que $v_0$ ($v_2$ y $v_3$).
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},
+  n/.style={draw,circle,minimum size=9mm,inner sep=0pt,font=\small},
+  lab/.style={font=\scriptsize,text=black!70}]
+  \node[n] (vm1) at (0,1.2) {$v_{-1}$};
+  \node[n] (v0)  at (0,-1.2) {$v_{0}$};
+  \node[n] (v1)  at (2.4,2.0) {$v_{1}$};
+  \node[n] (v2)  at (2.4,0) {$v_{2}$};
+  \node[n] (v3)  at (2.4,-2.0) {$v_{3}$};
+  \node[n] (v4)  at (4.8,1.0) {$v_{4}$};
+  \node[n] (v5)  at (7.2,0) {$v_{5}$};
+  \node[lab,above=0pt of v1] {$\ln$};
+  \node[lab,above=0pt of v2] {$\times$};
+  \node[lab,below=0pt of v3] {$\sen$};
+  \node[lab,above=0pt of v4] {$+$};
+  \node[lab,above=0pt of v5] {$-$};
+  \node[lab,left=2pt of vm1] {$x_1$};
+  \node[lab,left=2pt of v0] {$x_2$};
+  \node[lab,right=2pt of v5] {$y$};
+  \draw[->] (vm1)--(v1); \draw[->] (vm1)--(v2); \draw[->] (v0)--(v2); \draw[->] (v0)--(v3);
+  \draw[->] (v1)--(v4); \draw[->] (v2)--(v4); \draw[->] (v4)--(v5); \draw[->] (v3)--(v5);
+\end{tikzpicture}
+\caption{Grafo computacional de la traza del \cref{ej:baydin}. Cada nodo interior lleva la operación elemental que lo calcula.}
+\label{fig:grafo-baydin}
+\end{figure}
+
+\begin{observacion}
+En un modelo de lenguaje, la traza de una pasada hacia delante tiene miles de millones de operaciones escalares, pero se organiza en unas pocas operaciones sobre tensores: productos de matrices, softmax, normalizaciones. El grafo que construyen los sistemas reales tiene un nodo por operación tensorial (\cref{tema:6}); la teoría de los temas~2 a~5 se formula con escalares y se extiende sin cambios a bloques.
+\end{observacion}
+
+\section{Tres maneras de derivar}
+
+\subsection{Diferencias finitas}
+
+La aproximación más directa sustituye la derivada por un cociente incremental. Para $f\colon\R^{n}\to\R$ y la base canónica $e_1,\dots,e_n$,
+\[
+\frac{\partial f}{\partial x_i}(x)\approx\frac{f(x+he_i)-f(x)}{h}
+\qquad\text{o}\qquad
+\frac{\partial f}{\partial x_i}(x)\approx\frac{f(x+he_i)-f(x-he_i)}{2h}.
+\]
+En el módulo~4 (tema~6) se demostró que el error de truncamiento es $O(h)$ en la primera fórmula y $O(h^{2})$ en la segunda, y que el redondeo añade un error de orden $\uep\abs{f}/h$, donde $\uep\approx 1{,}1\cdot 10^{-16}$ es la unidad de redondeo de doble precisión. El compromiso entre ambos da un paso óptimo $h^{*}\sim\uep^{1/3}$ para la diferencia centrada, con un error mínimo de orden $\uep^{2/3}\approx 10^{-11}$.
+
+\begin{proposicion}[Coste de las diferencias finitas]\label{prop:coste-fd}
+Aproximar el gradiente de $f\colon\R^{n}\to\R$ por diferencias centradas requiere $2n$ evaluaciones de $f$; por diferencias hacia delante, $n+1$.
+\end{proposicion}
+
+\begin{proof}
+Cada componente centrada usa $f(x+he_i)$ y $f(x-he_i)$, distintas para cada $i$: $2n$ evaluaciones. Hacia delante, $f(x)$ es común a todas las componentes y cada una añade $f(x+he_i)$: $n+1$.
+\end{proof}
+
+Con $n=10^{11}$ parámetros, ni la precisión ni el coste son aceptables. Las diferencias finitas se usan para \emph{comprobar} un gradiente en unas pocas direcciones, nunca para entrenar~\cite[§2.1]{baydin}.
+
+\begin{observacion}[Paso complejo]\label{obs:paso-complejo}
+Si $f$ es analítica y real sobre la recta real, el desarrollo de Taylor $f(x+ih)=f(x)+ihf'(x)-\tfrac12h^{2}f''(x)-\tfrac{i}{6}h^{3}f'''(x)+\dots$ da
+\[
+f'(x)=\frac{\operatorname{Im}f(x+ih)}{h}+O(h^{2}).
+\]
+No hay resta de cantidades próximas, de modo que el error de redondeo no crece al disminuir $h$ y puede tomarse $h=10^{-20}$. Es un precursor del modo directo del \cref{tema:2}: la unidad imaginaria hace el papel de un infinitesimal, aunque con $i^{2}=-1$ en lugar de $\varepsilon^{2}=0$~\cite{mit18337}.
+\end{observacion}
+
+\subsection{Derivación simbólica}
+
+La derivación simbólica aplica las reglas del cálculo a la \emph{expresión} de $f$ y devuelve otra expresión. Es exacta, pero, si se aplica sin compartir subexpresiones, el tamaño del resultado puede crecer exponencialmente~\cite[§2.2]{baydin}.
+
+\begin{ejemplo}[Crecimiento de las expresiones]\label{ej:logistica}
+Sea la recurrencia logística $l_1=x$, $l_{k+1}=4l_k(1-l_k)$~\cite[tabla~1]{baydin}. Se tiene $l_2=4x(1-x)$ y $l_3=16x(1-x)(1-2x)^{2}$. Por la regla del producto, la derivada de $l_{k+1}$ contiene la de $l_k$ y una copia de $l_k$: $l_{k+1}'=4l_k'(1-l_k)-4l_kl_k'$. Si cada $l_k$ se sustituye por su expresión en $x$, la expresión de $l_k'$ duplica al menos su tamaño en cada paso. En cambio, el par $(l_k,l_k')$ se puede calcular numéricamente con un número constante de operaciones por paso, como se verá en el \cref{tema:2}.
+\end{ejemplo}
+
+\subsection{Diferenciación automática}
+
+\begin{definicion}[Diferenciación automática]\label{def:ad}
+La \emph{diferenciación automática} (\emph{automatic differentiation}, AD) es la familia de técnicas que calculan valores numéricos de derivadas de una función definida por un programa, aplicando la regla de la cadena a los \emph{valores} de la traza de evaluación y usando, en cada operación elemental, su derivada local conocida.
+\end{definicion}
+
+Como subraya~\cite[§3]{baydin}, la AD no manipula expresiones sino números: cada operación elemental aporta una derivada local que se combina con las demás. A diferencia de las diferencias finitas, el resultado es exacto salvo el redondeo de cada operación; a diferencia de la derivación simbólica, el coste es proporcional al de la traza. La regla de la cadena admite dos órdenes de aplicación, que dan los dos modos de la AD: el \emph{directo} (\emph{forward}), del \cref{tema:2}, y el \emph{inverso} (\emph{reverse}), del \cref{tema:3}.
+
+\begin{center}\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Método & Exactitud & Coste de $\nabla f$, $f\colon\R^{n}\to\R$ & Uso \\
+\midrule
+Diferencias finitas & error $O(h^{2})$ más redondeo & $2n$ evaluaciones & comprobar \\
+Simbólica & exacta & expresiones que pueden crecer & cálculo a mano \\
+AD, modo directo & exacta salvo redondeo & $n$ pasadas & pocas entradas \\
+AD, modo inverso & exacta salvo redondeo & una pasada (\cref{teo:barato}) & entrenar redes \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{observacion}[Conexión con los LLM]
+La retropropagación de los módulos~8 y~9 es el modo inverso de la AD aplicado a la traza de una red neuronal~\cite[§6.5]{gbc}. Una llamada a \texttt{loss.backward()} en PyTorch recorre la traza registrada durante la pasada hacia delante y aplica en cada nodo la regla local que se estudia en el \cref{tema:3}.
+\end{observacion}
+
+\begin{lecturas}
+\item Baydin \emph{et al.}~\cite{baydin}, §2 «What AD Is Not» (§2.1 y §2.2) y comienzo de la §3, con la figura~4 y la tabla~2.
+\item Griewank y Walther~\cite{gw}, cap.~2 «A Framework for Evaluating Functions».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §6.5.1 «Computational Graphs».
+\item MIT 18.337~\cite{mit18337}, notas de la clase~8, apartados «Finite Differencing and Numerical Stability» y «Complex Step Differentiation».
+\item Grosse~\cite{grosse}, lección~6, apartados iniciales sobre las alternativas a la AD.
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-traza}
+Para el \cref{ej:baydin}, indique cuántos nodos y aristas tiene el grafo, qué nodos tienen más de un sucesor y escriba otro orden topológico distinto del de la traza.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-precision}
+Ordene de menor a mayor precisión y justifique: diferencias centradas con $h=10^{-5}$, diferenciación automática y diferencias centradas con $h=10^{-15}$, todo en doble precisión. Ilústrelo con $f(x)=e^{x}$ en $x=1$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-d2l}
+Sea $f(x)=\ln(x^{2})\cdot\sen x+x^{-1}$. (a) Descomponga $f$ en operaciones elementales y dibuje su grafo de dependencias, de $x$ a $f(x)$. (b) Escriba la traza de evaluación en $x=2$ (radianes) con cuatro cifras significativas.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.5 «Automatic Differentiation», ejercicio~5.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-complejo}
+Para $f(x)=e^{x}$, demuestre que $\operatorname{Im}f(x+ih)/h=e^{x}\,\sen(h)/h$ y deduzca que el error relativo de la aproximación por paso complejo es $1-\sen(h)/h\approx h^{2}/6$. Calcúlelo para $h=10^{-1}$ y $h=10^{-8}$ y compárelo con el de la diferencia centrada con el mismo $h$ en doble precisión, cuyo error relativo es $\sinh(h)/h-1$ más un término de redondeo de orden $\uep/h$.
+\fuente{adaptado de MIT 18.337~\cite{mit18337}, notas de la clase~8, apartado «Complex Step Differentiation».}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-logistica}
+Para la recurrencia del \cref{ej:logistica} con $x=0{,}2$, calcule $l_2$, $l_3$ y las derivadas $l_2'$, $l_3'$ propagando el par $(l_k,l_k')$ con la regla $l_{k+1}'=4l_k'(1-2l_k)$. Compruebe el resultado derivando la expresión $l_3=16x(1-x)(1-2x)^{2}$.
+\fuente{adaptado de Baydin \emph{et al.}~\cite{baydin}, §2.2 y tabla~1 (se añade el cálculo numérico).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-grado}
+Para la recurrencia del \cref{ej:logistica}, demuestre que $l_k$ es un polinomio en $x$ de grado exactamente $2^{k-1}$, de modo que su expresión desarrollada tiene hasta $2^{k-1}+1$ coeficientes, y que, en cambio, el par $(l_k,l_k')$ se obtiene con a lo sumo $6(k-1)$ operaciones aritméticas a partir de $(x,1)$.
+\end{ejercicio}

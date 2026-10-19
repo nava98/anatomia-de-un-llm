@@ -1,0 +1,204 @@
+% =====================================================================
+\chapter{Aproximación de bajo rango y análisis de componentes principales}
+\label{tema:5}
+% =====================================================================
+
+La SVD escribe una matriz como suma de piezas de rango~1 ordenadas por su valor singular. Este tema demuestra que quedarse con las $k$ primeras piezas da la mejor aproximación posible de rango $k$ (teorema de Eckart--Young~\cite{eckart-young}) y extrae tres consecuencias: la compresión de matrices, el ajuste fino de bajo rango LoRA~\cite{hu-lora} y el análisis de componentes principales (PCA). Se sigue la clase~7 de 18.065~\cite{mit18065}, los §7.2 y~§7.3 de~\cite{strang-ila}, el §4.6 y el cap.~10 de~\cite{mml} y el tutorial de Shlens~\cite{shlens}.
+
+\section{El teorema de Eckart--Young}
+
+Sea $A=\sum_{i=1}^{r}\sigma_iu_iv_i\T$ la SVD de $A\in\R^{m\times n}$ y, para $k<r$, sea
+\[
+A_k=\sum_{i=1}^{k}\sigma_i\,u_iv_i\T,
+\]
+que tiene rango $k$ y cuya SVD es la de $A$ truncada. Como $A-A_k=\sum_{i>k}\sigma_iu_iv_i\T$ es a su vez una SVD, la \cref{prop:normas-svd} da
+\[
+\norm{A-A_k}_2=\sigma_{k+1},\qquad \norm{A-A_k}_F=\Bigl(\sum_{i=k+1}^{r}\sigma_i^{2}\Bigr)^{1/2}.
+\]
+
+\begin{lema}\label{lem:interseccion}
+Si $W_1$ y $W_2$ son subespacios de $\R^{n}$ con $\dim W_1+\dim W_2>n$, entonces $W_1\cap W_2$ contiene un vector no nulo.
+\end{lema}
+
+\begin{proof}
+Sean $\{a_1,\dots,a_p\}$ y $\{b_1,\dots,b_q\}$ bases de $W_1$ y $W_2$, con $p+q>n$. Por el \cref{lem:steinitz}, los $p+q$ vectores son dependientes: $\sum_i\alpha_ia_i=\sum_j\beta_jb_j$ con algún coeficiente no nulo. Ese vector común es no nulo, porque si lo fuera, la independencia de cada base anularía todos los coeficientes.
+\end{proof}
+
+\begin{teorema}[Eckart--Young]\label{teo:eckart-young}
+Sea $A\in\R^{m\times n}$ con valores singulares $\sigma_1\ge\sigma_2\ge\cdots$ y sea $k<\rango(A)$. Para toda $B\in\R^{m\times n}$ con $\rango(B)\le k$,
+\[
+\norm{A-B}_2\ge\sigma_{k+1}=\norm{A-A_k}_2
+\qquad\text{y}\qquad
+\norm{A-B}_F\ge\Bigl(\sum_{i>k}\sigma_i^{2}\Bigr)^{1/2}=\norm{A-A_k}_F.
+\]
+Es decir, $A_k$ es la mejor aproximación de rango a lo sumo $k$ de $A$ en ambas normas.
+\end{teorema}
+
+\begin{proof}
+\emph{Norma espectral.} Por el \cref{teo:rango-nulidad}, $\dim\Nuc(B)\ge n-k$. El subespacio $W=\gen\{v_1,\dots,v_{k+1}\}$ tiene dimensión $k+1$, y $(n-k)+(k+1)>n$. Por el \cref{lem:interseccion} existe un vector unitario $w\in\Nuc(B)\cap W$. Escribiendo $w=\sum_{i\le k+1}c_iv_i$ con $\sum_ic_i^{2}=1$,
+\[
+\norm{(A-B)w}^{2}=\norm{Aw}^{2}=\Bigl\|\sum_{i=1}^{k+1}c_i\sigma_iu_i\Bigr\|^{2}=\sum_{i=1}^{k+1}c_i^{2}\sigma_i^{2}\ge\sigma_{k+1}^{2}\sum_{i=1}^{k+1}c_i^{2}=\sigma_{k+1}^{2}.
+\]
+Como $\norm{w}=1$, se concluye $\norm{A-B}_2\ge\sigma_{k+1}$.
+
+\emph{Norma de Frobenius.} Sea $E=A-B$ con valores singulares $\tau_1\ge\tau_2\ge\cdots$ y truncamientos $E_{j}$ ($E_0=0$). Para cada $j\ge 1$, la matriz $B+E_{j-1}$ tiene rango a lo sumo $k+j-1$, y $A-(B+E_{j-1})=E-E_{j-1}$. Por la parte ya demostrada aplicada a $A$ con $k+j-1$ en lugar de $k$,
+\[
+\sigma_{k+j}\le\norm{E-E_{j-1}}_2=\tau_j
+\]
+(si $k+j-1\ge\rango(A)$, entonces $\sigma_{k+j}=0$ y la desigualdad es trivial).
+Sumando los cuadrados, $\norm{A-B}_F^{2}=\sum_j\tau_j^{2}\ge\sum_{j\ge 1}\sigma_{k+j}^{2}=\sum_{i>k}\sigma_i^{2}$.
+\end{proof}
+
+La parte espectral es el teorema~4.25 de~\cite{mml}; la de Frobenius es el enunciado original de Eckart y Young~\cite{eckart-young}. La desigualdad $\sigma_{k+j}(A)\le\sigma_j(A-B)$ usada en la segunda parte es un caso de la desigualdad de Weyl para valores singulares.
+
+\begin{ejemplo}\label{ej:A1}
+Con la matriz del \cref{ej:svd23} y $k=1$,
+\[
+A_1=5\cdot\frac{1}{\sqrt{2}}\begin{pmatrix}1\\1\end{pmatrix}\frac{1}{\sqrt{2}}\begin{pmatrix}1&1&0\end{pmatrix}=\begin{pmatrix}2{,}5&2{,}5&0\\2{,}5&2{,}5&0\end{pmatrix},
+\]
+y $\norm{A-A_1}_F=\norm{A-A_1}_2=\sigma_2=3$. La fracción de la norma de Frobenius al cuadrado que conserva $A_1$, llamada \emph{energía retenida}, es $\sigma_1^{2}/(\sigma_1^{2}+\sigma_2^{2})=25/34\approx 0{,}7353$.
+\end{ejemplo}
+
+\section{Compresión de matrices}
+
+Almacenar $A_k$ requiere $k$ columnas de $U$, $k$ filas de $V\T$ y $k$ valores singulares: $k(m+n+1)$ números frente a los $mn$ de $A$. La compresión compensa cuando $k(m+n+1)<mn$, y es eficaz cuando los valores singulares decrecen deprisa, pues entonces el error $(\sum_{i>k}\sigma_i^{2})^{1/2}$ es pequeño con $k$ pequeño.
+
+\begin{table}[h]
+\centering\small
+\caption{Coste de almacenamiento de la aproximación de rango $k$.}\label{tab:compresion}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Matriz & $mn$ & $k$ & $k(m+n+1)$ & Fracción \\
+\midrule
+Imagen de $512\times 512$ & $262\,144$ & 20 & $20\,500$ & $7{,}8\,\%$ \\
+Imagen de $1000\times 800$ & $800\,000$ & 50 & $90\,050$ & $11{,}3\,\%$ \\
+Pesos de $4096\times 4096$ & $16\,777\,216$ & 8 & $65\,544$ & $0{,}39\,\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Una imagen en escala de grises es una matriz de intensidades. Las regiones uniformes, los bordes horizontales y verticales y los degradados suaves tienen rango bajo; los bordes diagonales y el ruido requieren muchos términos~\cite[§7.2]{strang-ila}. La práctica del módulo aplica la SVD a una imagen sintética y muestra cómo decae el error con $k$.
+
+\section{Ajuste fino de bajo rango}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},font=\small,
+  caja/.style={draw,thick,minimum height=8mm,minimum width=24mm,align=center}]
+  \node (x) at (0,0) {$x\in\R^{d_{\text{in}}}$};
+  \node[caja] (W) at (3.6,0.9) {$W_0$ congelada\\ $d_{\text{out}}\times d_{\text{in}}$};
+  \node[caja] (A) at (3.0,-0.9) {$A$ entrenable\\ $r\times d_{\text{in}}$};
+  \node[caja] (B) at (6.2,-0.9) {$B$ entrenable\\ $d_{\text{out}}\times r$};
+  \node[draw,thick,circle,inner sep=1pt] (s) at (8.4,0) {$+$};
+  \node (h) at (10.6,0) {$h=W_0x+BAx$};
+  \draw[->] (x) |- (W);
+  \draw[->] (x) |- (A);
+  \draw[->] (A) -- node[above] {$\R^{r}$} (B);
+  \draw[->] (W) -| (s);
+  \draw[->] (B) -| (s);
+  \draw[->] (s) -- (h);
+\end{tikzpicture}
+\caption{Capa lineal con LoRA. La entrada atraviesa la matriz congelada $W_0$ y, en paralelo, el cuello de dimensión $r$ formado por $A$ y $B$; la corrección $\Delta W=BA$ tiene rango a lo sumo~$r$.}
+\label{fig:lora}
+\end{figure}
+
+LoRA~\cite{hu-lora} parte de la hipótesis de que la modificación que el ajuste fino introduce en los pesos de un modelo preentrenado tiene un \emph{rango intrínseco} bajo. En lugar de actualizar $W_0$, aprende $\Delta W=BA$ (\cref{fig:lora}), con $r(d_{\text{in}}+d_{\text{out}})$ parámetros (\cref{obs:lora-rango}). Al terminar, $BA$ puede sumarse a $W_0$, de modo que la inferencia no tiene coste adicional. El \cref{teo:eckart-young} cuantifica lo que se pierde: si la actualización ideal es $\Delta W^{\star}$, ninguna corrección de rango $r$ puede acercarse a ella más que $(\sum_{i>r}\sigma_i^{2}(\Delta W^{\star}))^{1/2}$ (\cref{eje:5-lora}). La apuesta de LoRA, respaldada empíricamente en~\cite{hu-lora}, es que el espectro de $\Delta W^{\star}$ decae deprisa.
+
+\section{Análisis de componentes principales}
+
+\begin{definicion}[Datos centrados y covarianza]
+Sean $n$ puntos $x_1,\dots,x_n\in\R^{d}$ con media $\mu=\frac1n\sum_ix_i$. La matriz de datos centrados $X\in\R^{n\times d}$ tiene por filas $(x_i-\mu)\T$. La \emph{matriz de covarianza} es
+\[
+C=\frac{1}{n}X\T X\in\R^{d\times d}.
+\]
+\end{definicion}
+
+$C$ es simétrica y semidefinida positiva (\cref{prop:AtA}). Algunos textos dividen por $n-1$ en lugar de $n$; el factor no cambia los autovectores. Para un vector unitario $w$, las proyecciones de los puntos sobre $w$ son las componentes de $Xw$, que tienen media cero, y su varianza es
+\[
+\frac1n\norm{Xw}^{2}=\frac1n w\T X\T Xw=w\T Cw.
+\]
+
+\begin{teorema}[Dirección de máxima varianza]\label{teo:pca}
+Sean $\lambda_1\ge\dots\ge\lambda_d\ge 0$ los autovalores de $C$ y $q_1,\dots,q_d$ autovectores ortonormales. La dirección unitaria $w$ que maximiza la varianza de las proyecciones es $w=q_1$, y la varianza máxima es $\lambda_1$. Más en general, entre todos los subespacios de dimensión $k$, el que maximiza la varianza total de las proyecciones es $\gen\{q_1,\dots,q_k\}$, con varianza $\lambda_1+\dots+\lambda_k$.
+\end{teorema}
+
+\begin{proof}[Demostración para $k=1$]
+La varianza es $w\T Cw$ y la \cref{prop:rayleigh} da su máximo, $\lambda_1$, en $w=q_1$. El caso general se demuestra por inducción, maximizando sobre los vectores ortogonales a $q_1,\dots,q_{k-1}$~\cite[§10.2.2]{mml}.
+\end{proof}
+
+Los vectores $q_i$ son las \emph{componentes principales}, y la \emph{varianza explicada} por la componente $i$ es $\lambda_i/\sum_j\lambda_j$.
+
+\begin{teorema}[PCA mediante la SVD]\label{teo:svd-pca}
+Sea $X=U\Sigma V\T$ la SVD de la matriz de datos centrados. Entonces las componentes principales son las columnas de $V$, los autovalores de la covarianza son $\lambda_i=\sigma_i^{2}/n$ y las coordenadas de los datos en las $k$ primeras componentes son
+\[
+Z_k=XV_k=U_k\Sigma_k\in\R^{n\times k},
+\]
+cuya columna $i$ tiene varianza $\lambda_i$.
+\end{teorema}
+
+\begin{proof}
+$C=\frac1nX\T X=\frac1nV\Sigma\T U\T U\Sigma V\T=V\,\frac{\Sigma\T\Sigma}{n}\,V\T$, que es una descomposición espectral de $C$ con autovectores $v_i$ y autovalores $\sigma_i^{2}/n$. Además, $XV=U\Sigma V\T V=U\Sigma$, y sus $k$ primeras columnas son $\sigma_iu_i$. Su varianza es $\norm{\sigma_iu_i}^{2}/n=\sigma_i^{2}/n$; la media es cero porque $X$ está centrada.
+\end{proof}
+
+La reconstrucción de los datos a partir de $k$ componentes es $Z_kV_k\T=U_k\Sigma_kV_k\T=X_k$, el truncamiento de la SVD de $X$. Por el \cref{teo:eckart-young}, PCA es la mejor aproximación de rango $k$ de los datos centrados, con error cuadrático total $\sum_{i>k}\sigma_i^{2}$: maximizar la varianza proyectada y minimizar el error de reconstrucción son el mismo problema~\cite[§10.3]{mml}.
+
+\begin{ejemplo}\label{ej:pca}
+Sean los puntos ya centrados $(2,2)$, $(-2,-2)$, $(1,-1)$ y $(-1,1)$. Entonces
+\[
+X\T X=\begin{pmatrix}4+4+1+1&4+4-1-1\\4+4-1-1&4+4+1+1\end{pmatrix}=\begin{pmatrix}10&6\\6&10\end{pmatrix},\qquad
+C=\frac14X\T X=\begin{pmatrix}2{,}5&1{,}5\\1{,}5&2{,}5\end{pmatrix}.
+\]
+Los autovalores de $C$ son $\lambda_1=4$ y $\lambda_2=1$, y la primera componente principal es $q_1=(1,1)/\sqrt{2}$, que explica $4/5=80\,\%$ de la varianza. Las proyecciones sobre $q_1$ son $2\sqrt{2}$, $-2\sqrt{2}$, $0$ y $0$, cuya varianza es $(8+8)/4=4=\lambda_1$. Con la SVD, los valores singulares de $X$ son $\sigma=(4,2)$ y $\sigma_i^{2}/4=(4,1)$.
+\end{ejemplo}
+
+\begin{observacion}[Cálculo numérico]
+En la práctica se calcula la SVD de $X$ y no la descomposición espectral de $X\T X$: formar $X\T X$ eleva al cuadrado el número de condición $\sigma_1/\sigma_r$ y pierde precisión en las componentes de varianza pequeña~\cite[§10.4]{mml}.
+\end{observacion}
+
+\begin{observacion}[Visualización de embeddings]
+Los embeddings de GPT-2 small tienen $\dmodel=768$ componentes~\cite{gpt2}. Proyectarlos sobre las dos primeras componentes principales da la imagen plana que conserva más varianza, y palabras de un mismo campo semántico suelen aparecer agrupadas. Conviene leer siempre la varianza explicada: una proyección ortogonal nunca alarga distancias, de modo que dos puntos alejados en el plano también lo están en $\R^{768}$, pero dos puntos cercanos en el plano pueden estar lejos en el espacio original (\cref{eje:5-varexp}). Los métodos de interpretabilidad del módulo~23 usan PCA para encontrar direcciones dominantes en las activaciones de un modelo.
+\end{observacion}
+
+\begin{lecturas}
+\item MIT 18.065~\cite{mit18065}, clase~7 «Eckart-Young: The Closest Rank $k$ Matrix to $A$»; lectura: Strang~\cite{strang-lafd}, §I.9.
+\item Strang~\cite{strang-ila}, §7.2 «Image Processing by Linear Algebra» y §7.3 «Principal Component Analysis (PCA by the SVD)».
+\item Deisenroth, Faisal y Ong~\cite{mml}, §4.6 «Matrix Approximation» (teorema~4.25) y cap.~10 «Dimensionality Reduction with Principal Component Analysis», §10.1--10.4.
+\item Shlens~\cite{shlens}, tutorial completo.
+\item Hu \emph{et al.}~\cite{hu-lora}, §4 «Our Method» (formulación de LoRA).
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-centrar}
+Explique por qué PCA exige centrar los datos. ¿Qué dirección obtendría como primera componente si aplicara la receta a datos sin centrar y muy alejados del origen? Indicación: desarrolle $\frac1n\sum_ix_ix_i\T$ en función de $C$ y de la media $\mu$.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:5-varexp}
+El PCA de unos embeddings de dimensión 768 da varianzas explicadas $0{,}12$ y $0{,}07$ para las dos primeras componentes. ¿Qué fracción de la varianza muestra el gráfico bidimensional? Si dos puntos aparecen lejos en el gráfico, ¿lo están en $\R^{768}$? ¿Y si aparecen cerca?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-svd}
+Sea $A=\begin{pmatrix}3&0\\4&5\end{pmatrix}$. Calcule (a) sus valores singulares; (b) el error $\norm{A-A_1}_F$; (c) la energía retenida por $A_1$; (d) la matriz $A_1$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-mml}
+Con la SVD obtenida en el \cref{eje:4-mml}, calcule la mejor aproximación de rango~1 de $A=\begin{pmatrix}2&2\\-1&1\end{pmatrix}$, su error en norma de Frobenius y en norma espectral y la energía retenida.
+\fuente{adaptado de Deisenroth, Faisal y Ong~\cite{mml}, ejercicio~4.10 (aplicado a la matriz del ejercicio~4.9).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-pca}
+Realice el PCA de los puntos centrados $(4,2)$, $(2,4)$, $(-2,-4)$ y $(-4,-2)$: matriz de covarianza, autovalores, primera componente principal, varianza explicada y proyecciones sobre ella. Compruebe el resultado con el \cref{teo:svd-pca}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-coste}
+(a) Una imagen de $1000\times 800$ se comprime con rango $k=50$. ¿Cuántos números se almacenan y qué fracción del original suponen? ¿A partir de qué $k$ deja de compensar? (b) Se aplica LoRA de rango $r=16$ a una matriz de $4096\times 4096$. ¿Cuántos parámetros se entrenan, qué porcentaje de la matriz suponen y cuál es el rango máximo de $\Delta W$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-lora}
+Sea $\Delta W^{\star}\in\R^{d\times n}$ con valores singulares $\sigma_1\ge\sigma_2\ge\cdots$. Demuestre que
+\[
+\min_{B\in\R^{d\times r},\,A\in\R^{r\times n}}\norm{\Delta W^{\star}-BA}_F=\Bigl(\sum_{i>r}\sigma_i^{2}\Bigr)^{1/2},
+\]
+dé matrices $B$ y $A$ que alcanzan el mínimo y calcule su valor para $\Delta W^{\star}=\diag(3,2,1)$ y $r=1$.
+\end{ejercicio}

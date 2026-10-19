@@ -1,0 +1,1656 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase III — Módulo 15
+%  Construye tu GPT
+%  Compilar: latexmk -r ../latexmkrc M15-mini-gpt.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 15}
+
+% Notación propia del módulo
+\newcommand{\tok}[1]{\texttt{#1}}
+\newcommand{\vs}{\texttt{\textvisiblespace}}
+\newcommand{\nl}{\texttt{\textbackslash n}}
+\newcommand{\LN}{\operatorname{LN}}
+\newcommand{\MHA}{\operatorname{MHA}}
+\newcommand{\MLP}{\operatorname{MLP}}
+\newcommand{\GELU}{\operatorname{GELU}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\KL}{D_{\mathrm{KL}}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\topk}{\operatorname{top}_k}
+\newcommand{\ind}{\mathbb{1}}
+\newcommand{\Qm}{\bm{Q}}
+\newcommand{\Km}{\bm{K}}
+\newcommand{\Vm}{\bm{V}}
+\newcommand{\Mm}{\bm{M}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 15. Construye tu GPT},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase III \textperiodcentered\ Secuencias y Transformer}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 15\par}\vspace{0.3cm}
+{\LARGE Construye tu GPT\par}
+\vspace{0.2cm}
+{\large Entrenamiento, evaluación y generación de un Transformer decoder\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Los módulos~12 a~14 han presentado por separado las piezas de un gran modelo de lenguaje: el tokenizador, la atención y el bloque Transformer. Este módulo las reúne en un modelo completo, un \emph{mini-GPT} de unos $10^{5}$ parámetros, y estudia todo lo que hace falta para entrenarlo y usarlo: cómo se convierte un corpus en ejemplos de entrenamiento, qué función se minimiza, con qué optimizador y con qué calendario de la tasa de aprendizaje, cómo se mide el progreso y se guardan puntos de control, cómo se leen las curvas de pérdida y cómo se genera texto con temperatura, top-$k$ y top-$p$. La receta es, a escala reducida, la que documentan los modelos abiertos como GPT-2 y LLaMA; los detalles de entrenamiento de Claude, Gemini y Grok no se han publicado.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item construir las ventanas de contexto y los lotes a partir de un corpus tokenizado, contar las predicciones que contienen y definir la pérdida de entropía cruzada y la perplejidad;
+  \item derivar el gradiente de la entropía cruzada respecto de los logits, demostrar la invariancia de la softmax frente a traslaciones y justificar el valor $\ln K$ de la pérdida inicial;
+  \item describir la arquitectura completa de un Transformer decoder, contar sus parámetros y demostrar que la máscara causal hace que una sola pasada produzca las $T$ predicciones de una ventana;
+  \item definir AdamW, el calendario de calentamiento lineal y decaimiento coseno y el recorte del gradiente por norma global, y demostrar sus propiedades principales;
+  \item estimar la pérdida de validación, diseñar puntos de control, interpretar una curva de pérdida con sus tres referencias y demostrar que la entropía del proceso generador es una cota inferior de la pérdida esperada;
+  \item definir la temperatura, el muestreo top-$k$ y el muestreo de núcleo (top-$p$), demostrar que la entropía de la distribución crece con la temperatura y razonar el efecto de los hiperparámetros principales.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1 se usan la regla de la cadena, la softmax con temperatura, la entropía cruzada y la perplejidad; del módulo~6, la divergencia de Kullback--Leibler y la desigualdad de Gibbs; del módulo~7, Adam, AdamW y el calendario coseno; del módulo~8, la softmax con entropía cruzada; del módulo~10, la diferenciación automática y PyTorch; del módulo~11, la normalización de capa, las conexiones residuales y el recorte del gradiente; del módulo~12, la tokenización; del módulo~13, la atención con máscara causal y multicabeza, y del módulo~14, el bloque Transformer y la regla $C\approx 6ND$.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Datos, ventanas y objetivo de entrenamiento & \cite{cs336}, \cite{d2l}, \cite{cs224n} \\
+2 & La arquitectura mini-GPT & \cite{gpt2}, \cite{vaswani}, \cite{cs336}, \cite{d2l}, \cite{llama} \\
+3 & Optimización: AdamW, calendario y recorte & \cite{cs336}, \cite{adamw}, \cite{sgdr}, \cite{llama}, \cite{gbc} \\
+4 & Evaluación, puntos de control y curvas de pérdida & \cite{gbc}, \cite{cs336}, \cite{ct}, \cite{llama3} \\
+5 & Generación e hiperparámetros & \cite{cs336}, \cite{fan}, \cite{holtzman}, \cite{gbc} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La organización sigue la tarea~1 (\emph{basics}) del curso CS336 de Stanford, «Language Modeling from Scratch»~\cite{cs336}, en la que se programa un modelo de lenguaje Transformer completo: el §4 (entropía cruzada, AdamW, calendario de la tasa y recorte del gradiente), el §5 (cargador de datos, puntos de control y bucle de entrenamiento) y el §6 (decodificación con temperatura y top-$p$). Se complementa con las clases~5 («Transformers») y~7 («Pretraining») del curso CS224N~\cite{cs224n}, con los capítulos~9 y~11 de Zhang \emph{et al.}~\cite{d2l} (§9.3 sobre la partición de secuencias, §9.5 sobre recorte y decodificación, §11.9.3 sobre los modelos decoder) y con los capítulos~7, 8 y~11 de Goodfellow, Bengio y Courville~\cite{gbc} para la parada temprana, los algoritmos de optimización y la metodología práctica. Los métodos se toman de sus artículos originales: Vaswani \emph{et al.}~\cite{vaswani} para el Transformer, Radford \emph{et al.}~\cite{gpt2} para GPT-2, Touvron \emph{et al.}~\cite{llama} para la receta de entrenamiento de LLaMA, Loshchilov y Hutter para AdamW~\cite{adamw} y para el calendario coseno~\cite{sgdr}, Fan, Lewis y Dauphin~\cite{fan} para el muestreo top-$k$ y Holtzman \emph{et al.}~\cite{holtzman} para el muestreo de núcleo. El código de referencia de la práctica sigue la estructura del repositorio nanoGPT de Karpathy~\cite{nanogpt}. Los resultados numéricos de entrenamiento proceden del cuaderno de prácticas del módulo, ejecutado con la semilla indicada en él. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\V$, $K=\abs{\V}$ & vocabulario y su tamaño \\
+$u_{1:n}$ & corpus tokenizado de $n$ tokens \\
+$T$, $B$ & longitud de la ventana de contexto y tamaño del lote \\
+$x_{1:T}$, $y_{1:T}$ & ventana de entrada y ventana objetivo, con $y_t=x_{t+1}$ \\
+$d$, $L$, $n_h$, $d_k=d/n_h$ & dimensión del modelo, número de bloques, de cabezas y dimensión por cabeza \\
+$\Qm,\Km,\Vm$, $\Mm$ & matrices de consultas, claves y valores, y máscara causal \\
+$z\in\R^{K}$, $p=\softmax(z)$ & logits y distribución predicha en una posición \\
+$\ell$, $\mathcal{L}$ & pérdida de una posición y pérdida media \\
+$\theta$, $N$ & parámetros del modelo y su número \\
+$s$, $S$, $W$ & paso de entrenamiento, número total de pasos y pasos de calentamiento \\
+$\eta_s$, $\eta_{\max}$, $\eta_{\min}$ & tasa de aprendizaje en el paso $s$ y sus valores máximo y mínimo \\
+$\lambda$, $\beta_1,\beta_2$ & decaimiento de pesos y coeficientes de los momentos de AdamW \\
+$c$, $\clip_c$ & umbral y operador de recorte del gradiente \\
+$\tau$, $k$, $\rho$ & temperatura, parámetro de top-$k$ y umbral de top-$p$ \\
+$H(p)$, $H(p,q)$, $\KL(p\Vert q)$ & entropía, entropía cruzada y divergencia de Kullback--Leibler (en nats) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Datos, ventanas y objetivo de entrenamiento}
+\label{tema:1}
+% =====================================================================
+
+Un modelo de lenguaje autorregresivo se entrena con una única secuencia larga de enteros, de la que se extraen ventanas de longitud fija. Este tema formaliza esa preparación de los datos, define la función que se minimiza (la entropía cruzada media sobre todas las posiciones de un lote) y demuestra tres propiedades de esa función que se usan durante todo el módulo: su gradiente respecto de los logits, su invariancia frente a traslaciones de los logits, que permite calcularla de forma estable, y su valor cuando la predicción es uniforme. Se sigue el §4.1 y el §5.1 de la tarea~1 de CS336~\cite{cs336}, el §9.3.3 de~\cite{d2l} y la clase~7 de CS224N~\cite{cs224n}.
+
+\section{El corpus como secuencia de tokens}
+
+\begin{definicion}[Corpus tokenizado]\label{def:corpus}
+Sea $\V$ un vocabulario de tamaño $K$, identificado con $\{0,1,\dots,K-1\}$. Un \emph{corpus tokenizado} es una secuencia $u_{1:n}=(u_1,\dots,u_n)\in\V^{n}$. Si el texto original está formado por varios documentos, se concatenan en una sola secuencia, separados por un token delimitador.
+\end{definicion}
+
+La concatenación es una decisión de ingeniería con una justificación precisa: todas las ventanas tienen la misma longitud y no hace falta rellenar con símbolos de relleno (\emph{padding}), que consumen cómputo sin aportar señal~\cite[§5.1]{cs336}. El precio es que una ventana puede cruzar la frontera entre dos documentos; el delimitador permite al modelo aprender que lo que sigue no depende de lo anterior.
+
+\begin{ejemplo}[El corpus de la práctica]\label{ej:corpus}
+El cuaderno del módulo genera 200 líneas de texto sintético en español con cuatro plantillas: partes del tiempo, recetas, diálogos y descripciones de objetos inventados. Por ejemplo:
+\begin{center}\small
+\begin{tabular}{@{}l@{}}
+\texttt{objeto. una taza blanca de barro. sirve para llevar libros.}\\
+\texttt{receta. asa calabaza con cebolla durante diez minutos. añade sal y sirve templado.}
+\end{tabular}
+\end{center}
+El corpus tiene $n=16\,066$ caracteres y $46$ caracteres distintos. Se tokeniza por caracteres: $\V$ es la lista ordenada de caracteres distintos, de modo que $K=46$, el salto de línea \nl\ es el token~$0$ y el espacio el token~$1$. Un tokenizador BPE (módulo~12) acortaría las secuencias, pero con un corpus tan pequeño apenas hay pares frecuentes que fusionar.
+\end{ejemplo}
+
+Un corpus sintético tiene una ventaja metodológica: se conoce el proceso que lo genera. Se sabe, por ejemplo, que tras «receta.» viene uno de seis verbos y que «un reloj» exige «negro» y no «negra». Esto permite juzgar qué ha aprendido el modelo y calcular la pérdida mínima alcanzable (\cref{tema:4}).
+
+\section{Ventanas de contexto y lotes}
+
+\begin{definicion}[Ventana de contexto]\label{def:ventana}
+Sea $T\ge 1$ la \emph{longitud de contexto}. Para cada $i\in\{1,\dots,n-T\}$, la \emph{ventana} que empieza en $i$ es el par
+\[
+x=(u_i,u_{i+1},\dots,u_{i+T-1}),\qquad y=(u_{i+1},u_{i+2},\dots,u_{i+T}),
+\]
+es decir, $y_t=x_{t+1}$ para $t<T$ e $y_T=u_{i+T}$. La secuencia $y$ es la \emph{ventana objetivo}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:ventanas}
+Un corpus de $n$ tokens tiene exactamente $n-T$ ventanas de longitud $T$, y cada una contiene $T$ problemas de predicción: predecir $y_t$ a partir del prefijo $x_{1:t}$, para $t=1,\dots,T$.
+\end{proposicion}
+
+\begin{proof}
+La ventana que empieza en $i$ necesita los tokens $u_i,\dots,u_{i+T}$, es decir, $T+1$ tokens consecutivos. Esto exige $i\ge 1$ e $i+T\le n$, luego $i\in\{1,\dots,n-T\}$, que tiene $n-T$ elementos. En la posición $t$, el contexto disponible es $x_{1:t}=u_{i:i+t-1}$ y el token que lo sigue en el corpus es $u_{i+t}=y_t$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:sal-y-sol}
+Con el texto «sal y sol\nl» ($n=10$) y $T=4$ hay $10-4=6$ ventanas:
+\begin{center}\small
+\begin{tabular}{@{}ccc@{\qquad}ccc@{}}
+\toprule
+Inicio & $x$ & $y$ & Inicio & $x$ & $y$ \\
+\midrule
+1 & \tok{sal\vs} & \tok{al\vs y} & 4 & \tok{\vs y\vs s} & \tok{y\vs so} \\
+2 & \tok{al\vs y} & \tok{l\vs y\vs} & 5 & \tok{y\vs so} & \tok{\vs sol} \\
+3 & \tok{l\vs y\vs} & \tok{\vs y\vs s} & 6 & \tok{\vs sol} & \tok{sol}\nl \\
+\bottomrule
+\end{tabular}
+\end{center}
+En la primera ventana el modelo debe predecir «a» tras «s», «l» tras «sa», el espacio tras «sal» e «y» tras «sal\vs». En total hay $6\cdot 4=24$ predicciones en un texto de 10 caracteres.
+\end{ejemplo}
+
+\begin{definicion}[Lote]\label{def:lote}
+Un \emph{lote} de tamaño $B$ es un par de matrices de enteros $X,Y\in\V^{B\times T}$ cuyas filas son $B$ ventanas, con inicios elegidos de forma independiente y uniforme en $\{1,\dots,n-T\}$. Un lote contiene $B\cdot T$ predicciones.
+\end{definicion}
+
+Con $B=T=32$, cada paso de entrenamiento ve $1024$ predicciones; en $800$ pasos son $819\,200$, unas $57$ veces los $14\,459$ tokens de entrenamiento del \cref{ej:corpus}. Con tan pocos datos es inevitable repetir; los grandes modelos, en cambio, ven cada token una vez o pocas veces (módulo~16).
+
+\begin{observacion}[Partición en entrenamiento y validación]\label{obs:particion}
+El conjunto de validación se obtiene cortando el corpus \emph{por posición}: el 90~\% inicial ($14\,459$ tokens) se usa para entrenar y el 10~\% final ($1\,607$ tokens) para validar. Si se eligieran ventanas al azar para cada conjunto, una ventana de validación podría solaparse con una de entrenamiento y la pérdida de validación subestimaría el error de generalización.
+\end{observacion}
+
+La alternativa al muestreo independiente de inicios es partir el corpus en trozos consecutivos sin solape, con un desplazamiento inicial aleatorio en cada época, como hace~\cite[§9.3.3]{d2l}. El \cref{eje:1-d2l} compara ambas estrategias.
+
+\section{La pérdida de entropía cruzada}
+
+En cada posición $t$ de cada ventana, el modelo devuelve un vector de \emph{logits} $z_t\in\R^{K}$ y la distribución predicha $p_t=\softmax(z_t)$, con $p_{t,j}=e^{z_{t,j}}/\sum_{a}e^{z_{t,a}}$.
+
+\begin{definicion}[Pérdida de entrenamiento]\label{def:perdida}
+La pérdida de una posición con objetivo $y\in\V$ y logits $z$ es
+\[
+\ell(z,y)=-\ln\softmax(z)_y.
+\]
+La pérdida de un lote es la media sobre sus $B\cdot T$ posiciones,
+\[
+\mathcal{L}(\theta)=\frac{1}{BT}\sum_{b=1}^{B}\sum_{t=1}^{T}\ell\bigl(z_{b,t}(\theta),\,Y_{b,t}\bigr),
+\]
+donde $z_{b,t}(\theta)$ son los logits que el modelo de parámetros $\theta$ produce en la posición $t$ de la fila $b$ a partir de $X_{b,1:t}$.
+\end{definicion}
+
+La pérdida $\ell$ es la entropía cruzada entre la distribución degenerada en $y$ y la distribución predicha~\cite[§4.1]{cs336}. Su media sobre el corpus es la estimación de máxima verosimilitud del módulo~1 aplicada a un modelo con parámetros compartidos: minimizar $\mathcal{L}$ equivale a maximizar $\sum\ln P_\theta(y_t\mid x_{1:t})$.
+
+\begin{definicion}[Perplejidad]\label{def:ppl}
+Si una secuencia de $m$ predicciones tiene pérdidas $\ell_1,\dots,\ell_m$, su \emph{perplejidad} es
+\[
+\PPL=\exp\Bigl(\frac1m\sum_{i=1}^{m}\ell_i\Bigr).
+\]
+\end{definicion}
+
+La perplejidad es el número de opciones equiprobables entre las que el modelo duda en media: un modelo uniforme sobre $K$ símbolos tiene perplejidad $K$. Es independiente de la base del logaritmo, porque $e^{\mathcal{L}}=2^{\mathcal{L}/\ln 2}$. En la práctica del módulo, el modelo de bigramas del módulo~1 llega a $2{,}035$ nats por carácter ($\PPL=7{,}65$) y el mini-GPT a $0{,}324$ ($\PPL=1{,}38$).
+
+\section{Gradiente y estabilidad numérica}
+
+\begin{proposicion}[Gradiente de la entropía cruzada]\label{prop:gradiente}
+Sea $p=\softmax(z)$. Para todo $i\in\V$,
+\[
+\frac{\partial\ell(z,y)}{\partial z_i}=p_i-\ind[i=y],
+\]
+es decir, $\nabla_z\ell=p-e_y$, donde $e_y$ es el vector \emph{one-hot} de $y$.
+\end{proposicion}
+
+\begin{proof}
+Por la definición de la softmax, $\ell(z,y)=-z_y+\ln\sum_{a}e^{z_a}$. La derivada del primer término respecto de $z_i$ es $-\ind[i=y]$. La del segundo es $e^{z_i}/\sum_a e^{z_a}=p_i$ por la regla de la cadena.
+\end{proof}
+
+\begin{ejemplo}\label{ej:gradiente}
+Sean $K=3$, $z=(2,1,0)$ y el objetivo $y$ el primero de los tres tokens: $\sum_a e^{z_a}=7{,}389+2{,}718+1=11{,}107$, luego $p=(0{,}6652;\allowbreak\,0{,}2447;\allowbreak\,0{,}0900)$, $\ell=-\ln 0{,}6652=0{,}4076$ y $\nabla_z\ell=(-0{,}3348;\allowbreak\,0{,}2447;\allowbreak\,0{,}0900)$. El gradiente sube el logit correcto y baja los demás en proporción a su probabilidad; sus componentes suman cero.
+\end{ejemplo}
+
+El gradiente de la \cref{prop:gradiente} es la única señal que recibe todo el mini-GPT: la retropropagación (módulo~10) la transporta desde los logits hasta los embeddings.
+
+\begin{proposicion}[Invariancia frente a traslaciones]\label{prop:traslacion}
+Para todo $c\in\R$, $\softmax(z+c\mathbf 1)=\softmax(z)$. En consecuencia, con $z^{\star}=\max_a z_a$,
+\[
+\ell(z,y)=-(z_y-z^{\star})+\ln\sum_{a}e^{\,z_a-z^{\star}},
+\]
+y todos los exponentes del segundo miembro son menores o iguales que~0.
+\end{proposicion}
+
+\begin{proof}
+$e^{z_j+c}/\sum_a e^{z_a+c}=e^{c}e^{z_j}/(e^{c}\sum_a e^{z_a})=\softmax(z)_j$. Tomando $c=-z^{\star}$ y aplicando $\ell=-\ln\softmax(z)_y$ se obtiene la fórmula, en la que $z_a-z^{\star}\le 0$.
+\end{proof}
+
+La fórmula estable evita el desbordamiento: en precisión simple el mayor número representable es unos $3{,}4\cdot 10^{38}\approx e^{88{,}7}$, de modo que $e^{1000}$ daría infinito y el cociente, un valor indefinido. Es la técnica \emph{log-sum-exp} del módulo~11, que CS336 exige en su implementación de la entropía cruzada~\cite[§4.1]{cs336}.
+
+\begin{proposicion}[Pérdida de la predicción uniforme]\label{prop:lnK}
+Si todos los logits de una posición son iguales, la pérdida vale $\ln K$ para cualquier objetivo.
+\end{proposicion}
+
+\begin{proof}
+Si $z=c\mathbf 1$, por la \cref{prop:traslacion} $\softmax(z)=\softmax(\mathbf 0)=(1/K,\dots,1/K)$, y $\ell=-\ln(1/K)=\ln K$.
+\end{proof}
+
+Con $K=46$, $\ln 46=3{,}829$ nats ($5{,}52$ bits). Una red recién inicializada con pesos pequeños produce logits casi iguales, y su pérdida inicial está cerca de ese valor; en la práctica del módulo el primer lote da $4{,}046$. Una pérdida inicial muy superior a $\ln K$ indica una inicialización defectuosa: el modelo está muy seguro de respuestas equivocadas.
+
+\begin{lecturas}
+\item Stanford CS336~\cite{cs336}, tarea~1, §4.1 «Cross-entropy loss» (ecuaciones 16--18) y §5.1 «Data Loader».
+\item Zhang \emph{et al.}~\cite{d2l}, §9.3.2 «Perplexity» y §9.3.3 «Partitioning Sequences».
+\item Stanford CS224N~\cite{cs224n}, clase~7 «Pretraining (Scaling, Systems, Data)».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.1.3 «Batch and Minibatch Algorithms».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-desplazada}
+¿Por qué la ventana objetivo $y$ es la ventana de entrada $x$ desplazada una posición? ¿Cuántas predicciones contiene un lote de forma $(B,T)$? Particularice para $B=T=32$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-hola}
+Con el texto «hola\nl» y $T=2$, escriba todas las ventanas $(x,y)$ y cuente las predicciones. ¿Por qué no hay una ventana que empiece en el cuarto carácter?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-d2l}
+Un corpus tiene $n=10$ tokens $u_1,\dots,u_{10}$ y se usan ventanas de $T=4$. (a) ¿Cuántas ventanas hay si cualquier inicio es válido? (b) Si en su lugar se corta el corpus en trozos consecutivos sin solape, empezando tras descartar los $k\in\{0,1,2,3\}$ primeros tokens, ¿cuántos trozos se obtienen con cada $k$? Si se elige $k$ al azar con probabilidad uniforme y después uno de los trozos de ese corte, también con probabilidad uniforme, ¿con qué probabilidad resulta elegida cada una de las ventanas de (a)? ¿Es uniforme este muestreo? ¿Qué procedimiento sí lo es? (c) ¿Qué problema aparecería si cada ejemplo tuviera que ser una frase completa, y cómo lo resuelve el corpus concatenado?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §9.3, ejercicios~4 y~5 (se fijan $n$ y $T$ y se pide el recuento explícito).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-estable}
+(a) Calcule $\ell(o,y)$ para $o=(1000,\,1001,\,999)$ con objetivo el primer componente, aplicando la \cref{prop:traslacion}. ¿Qué ocurriría al calcular $e^{1000}$ en precisión simple? (b) Una secuencia de 4 tokens tiene pérdidas $(0{,}5;\allowbreak\,1{,}2;\allowbreak\,0{,}1;\allowbreak\,2{,}0)$. Calcule su perplejidad.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §4.1, problema \emph{cross\_entropy} y ecuación~(18) (datos numéricos añadidos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-ppl}
+Un lote tiene pérdida media $0{,}7$ nats por carácter. Calcule su perplejidad y su pérdida en bits por carácter, y compruebe que la perplejidad no depende de la base.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-cabeza-cero}
+Demuestre que, si la capa de salida del modelo, $z=Wh+b$, se inicializa con $W=0$ y $b=0$, la pérdida inicial de cualquier lote es exactamente $\ln K$, sean cuales sean los demás parámetros. Demuestre además que, en ese punto, el gradiente de la pérdida respecto de $b$ es $\tfrac1K\mathbf 1-\hat\pi$, donde $\hat\pi$ es la frecuencia empírica de cada token entre los objetivos del lote, y explique qué aprende el sesgo en el primer paso de descenso de gradiente.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{La arquitectura mini-GPT}
+\label{tema:2}
+% =====================================================================
+
+El mini-GPT es el bloque Transformer del módulo~14 apilado $L$ veces entre una capa de entrada, que convierte tokens y posiciones en vectores, y una capa de salida, que devuelve un logit por token del vocabulario. Ninguna pieza es nueva; este tema fija la definición completa del modelo, demuestra la propiedad de causalidad que justifica entrenar las $T$ predicciones de una ventana con una sola pasada y cuenta sus parámetros. La arquitectura es la de GPT-2~\cite[§2.3]{gpt2}, construida sobre el decoder de Vaswani \emph{et al.}~\cite{vaswani}; se sigue también el §3 de la tarea~1 de CS336~\cite{cs336}, la clase~5 de CS224N~\cite{cs224n} y el §11.9.3 de~\cite{d2l}.
+
+\section{Definición del modelo}
+
+Se recuerdan del módulo~11 la \emph{normalización de capa} de un vector $v\in\R^{d}$,
+\[
+\LN(v)=\gamma\odot\frac{v-\mu(v)\mathbf 1}{\sqrt{\sigma^{2}(v)+\varepsilon}}+\beta,\qquad \mu(v)=\frac1d\sum_{i}v_i,\quad \sigma^{2}(v)=\frac1d\sum_i\bigl(v_i-\mu(v)\bigr)^{2},
+\]
+con parámetros $\gamma,\beta\in\R^{d}$, y del módulo~14 el perceptrón por posición $\MLP(v)=W_2\,\GELU(W_1v+b_1)+b_2$, con $W_1\in\R^{4d\times d}$ y $W_2\in\R^{d\times 4d}$.
+
+\begin{definicion}[Atención causal multicabeza]\label{def:mha}
+Sea $H\in\R^{T\times d}$ la matriz cuyas filas son las representaciones de las $T$ posiciones, y sea $n_h$ un divisor de $d$, con $d_k=d/n_h$. Se calculan $\Qm=HW_Q$, $\Km=HW_K$ y $\Vm=HW_V$, con $W_Q,W_K,W_V\in\R^{d\times d}$, y se parten por columnas en $n_h$ bloques $\Qm_r,\Km_r,\Vm_r\in\R^{T\times d_k}$. La \emph{máscara causal} es la matriz $\Mm\in\{0,-\infty\}^{T\times T}$ con $\Mm_{tj}=0$ si $j\le t$ y $\Mm_{tj}=-\infty$ si $j>t$. Cada cabeza calcula
+\[
+\mathrm{head}_r=\softmax\Bigl(\frac{\Qm_r\Km_r^{\top}}{\sqrt{d_k}}+\Mm\Bigr)\Vm_r,\qquad r=1,\dots,n_h,
+\]
+con la softmax aplicada por filas y el convenio $e^{-\infty}=0$, y la salida es
+$\MHA(H)=[\mathrm{head}_1\;\cdots\;\mathrm{head}_{n_h}]\,W_O+\mathbf 1 b_O^{\top}$, con $W_O\in\R^{d\times d}$ y $b_O\in\R^{d}$.
+\end{definicion}
+
+En la implementación, las tres proyecciones se agrupan en una sola matriz $d\times 3d$ sin sesgo, como sugiere CS336~\cite[§3.4]{cs336}; el número de parámetros es el mismo.
+
+\begin{definicion}[Mini-GPT]\label{def:minigpt}
+Sean $K$, $T$, $d$, $L$ y $n_h$ enteros positivos con $n_h\mid d$. El \emph{mini-GPT} con estos hiperparámetros transforma una ventana $x_{1:T}\in\V^{T}$ en logits $z_{1:T}\in\R^{T\times K}$ mediante:
+\begin{enumerate}[label=(\arabic*)]
+  \item \emph{entrada}: $h^{0}_t=E_{x_t}+P_t$, donde $E\in\R^{K\times d}$ es la tabla de embeddings de token y $P\in\R^{T\times d}$ la de embeddings de posición, ambas aprendidas;
+  \item \emph{bloques}: para $\ell=1,\dots,L$, con $H^{\ell-1}$ la matriz de filas $h^{\ell-1}_t$,
+  \[
+  A^{\ell}=H^{\ell-1}+\MHA_{\ell}\bigl(\LN_{\ell,1}(H^{\ell-1})\bigr),\qquad
+  H^{\ell}=A^{\ell}+\MLP_{\ell}\bigl(\LN_{\ell,2}(A^{\ell})\bigr),
+  \]
+  donde $\LN$ y $\MLP$ se aplican a cada fila por separado;
+  \item \emph{salida}: $z_t=W_{\mathrm{s}}\,\LN_{\mathrm{f}}(h^{L}_t)+b_{\mathrm{s}}$, con $W_{\mathrm{s}}\in\R^{K\times d}$ y $b_{\mathrm{s}}\in\R^{K}$.
+\end{enumerate}
+La distribución predicha en la posición $t$ es $p_t=\softmax(z_t)$.
+\end{definicion}
+
+La forma $x\leftarrow x+f(\LN(x))$ se llama \emph{pre-norm}: la normalización se aplica a la entrada de cada subcapa y el flujo residual queda sin normalizar, lo que estabiliza el entrenamiento de redes profundas (módulo~11). GPT-2 introdujo exactamente estos dos cambios respecto de GPT: la normalización en la entrada de cada subbloque y una normalización final tras el último bloque~\cite[§2.3]{gpt2}. La \cref{fig:minigpt} resume el flujo de datos. Suele decirse que la atención es la etapa en la que las posiciones se \emph{comunican} y el MLP aquella en la que cada posición \emph{procesa} lo recibido.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},node distance=5mm,
+  caja/.style={draw,rectangle,rounded corners=2pt,minimum width=44mm,minimum height=6.5mm,align=center},
+  suma/.style={draw,circle,inner sep=0pt,minimum size=4.5mm}]
+  \node[caja] (in) {Ventana $x_{1:T}$ (enteros)};
+  \node[caja,below left=6mm and -14mm of in,minimum width=26mm] (emb) {Embedding $E$\\$K\times d$};
+  \node[caja,below right=6mm and -14mm of in,minimum width=26mm] (pos) {Posición $P$\\$T\times d$};
+  \node[suma,below=17mm of in] (s0) {$+$};
+  \node[caja,below=6mm of s0] (ln1) {$\LN_{\ell,1}$ y $\MHA_\ell$ con máscara $\Mm$};
+  \node[suma,below=of ln1] (s1) {$+$};
+  \node[caja,below=of s1] (ln2) {$\LN_{\ell,2}$ y $\MLP_\ell$ ($d\to 4d\to d$)};
+  \node[suma,below=of ln2] (s2) {$+$};
+  \node[caja,below=7mm of s2] (lnf) {$\LN_{\mathrm{f}}$ y cabeza $W_{\mathrm{s}}$ ($d\to K$)};
+  \node[caja,below=of lnf] (out) {Logits $z_{1:T}$ y pérdida con $y_{1:T}$};
+  \draw[->] (in) -- (emb); \draw[->] (in) -- (pos);
+  \draw[->] (emb) -- (s0); \draw[->] (pos) -- (s0);
+  \draw[->] (s0) -- (ln1); \draw[->] (ln1) -- (s1); \draw[->] (s1) -- (ln2); \draw[->] (ln2) -- (s2);
+  \draw[->] (s2) -- (lnf); \draw[->] (lnf) -- (out);
+  \coordinate (a) at ($(s0.south)!0.4!(ln1.north)$);
+  \draw[->] (a) -- ++(-30mm,0) |- (s1.west);
+  \coordinate (b) at ($(s1.south)!0.4!(ln2.north)$);
+  \draw[->] (b) -- ++(-30mm,0) |- (s2.west);
+  \coordinate (izq) at ($(a)+(-30mm,0)$);
+  \node[draw,dashed,rounded corners,fit=(izq)(a)(ln1)(ln2)(s2),inner sep=2.5mm] (blk) {};
+  \node[anchor=west,font=\footnotesize] at (blk.east) {$\times L$ bloques};
+\end{tikzpicture}
+\caption{Flujo de datos del mini-GPT de la \cref{def:minigpt}. Las flechas de la izquierda son las conexiones residuales; cada subcapa normaliza su entrada (pre-norm).}
+\label{fig:minigpt}
+\end{figure}
+
+\section{La máscara causal}
+
+\begin{lema}\label{lem:mascara}
+Sea $S\in\R^{T\times T}$ una matriz de puntuaciones. La fila $t$ de $\softmax(S+\Mm)$ vale
+\[
+a_{tj}=\begin{cases}\dfrac{e^{S_{tj}}}{\sum_{j'\le t}e^{S_{tj'}}} & j\le t,\\[3mm] 0 & j>t,\end{cases}
+\]
+es decir, es la softmax de $(S_{t1},\dots,S_{tt})$ completada con ceros. En particular, cada fila suma~1 y la fila~1 es $(1,0,\dots,0)$.
+\end{lema}
+
+\begin{proof}
+Con el convenio $e^{-\infty}=0$, los términos con $j>t$ no contribuyen al denominador y su numerador es nulo. El denominador contiene al menos el término $j=1$, que es positivo, luego la expresión está bien definida.
+\end{proof}
+
+\begin{ejemplo}\label{ej:mascara}
+Con $T=3$ y puntuaciones por filas $(1,0,2)$, $(2,1,0)$ y $(0,1,1)$, la máscara anula las entradas por encima de la diagonal y la softmax por filas da
+\[
+\begin{pmatrix}1&0&0\\ 0{,}731&0{,}269&0\\ 0{,}155&0{,}422&0{,}422\end{pmatrix}.
+\]
+La segunda fila es $\softmax(2,1)$; la tercera, $\softmax(0,1,1)=(1,e,e)/(1+2e)$. La primera posición solo se atiende a sí misma.
+\end{ejemplo}
+
+\begin{teorema}[Causalidad]\label{teo:causal}
+En el mini-GPT, para cada $t\in\{1,\dots,T\}$, los logits $z_t$ dependen solo de $x_{1:t}$: si dos ventanas $x$ y $x'$ coinciden en las $t$ primeras posiciones, entonces $z_t(x)=z_t(x')$.
+\end{teorema}
+
+\begin{proof}
+Se demuestra por inducción sobre $\ell$ la afirmación $\mathcal{P}(\ell)$: \emph{para todo $s$, la fila $h^{\ell}_s$ depende solo de $x_{1:s}$}.
+
+\emph{Base.} $h^{0}_s=E_{x_s}+P_s$ depende solo de $x_s$.
+
+\emph{Paso.} Supóngase $\mathcal{P}(\ell-1)$. La normalización actúa fila a fila, de modo que la fila $s$ de $\LN_{\ell,1}(H^{\ell-1})$ depende solo de $h^{\ell-1}_s$ y, por la hipótesis, de $x_{1:s}$. Lo mismo ocurre con las filas $s$ de $\Qm_r$, $\Km_r$ y $\Vm_r$, que son productos de esa fila por matrices fijas. Por el \cref{lem:mascara}, la fila $t$ de $\mathrm{head}_r$ es $\sum_{j\le t}a_{tj}(\Vm_r)_j$, con pesos $a_{tj}$ que son la softmax de $(\Qm_r)_t\cdot(\Km_r)_j/\sqrt{d_k}$ para $j\le t$. Todas estas cantidades proceden de filas $j\le t$, que dependen de $x_{1:j}\subseteq x_{1:t}$. La concatenación, el producto por $W_O$ y la suma residual con $h^{\ell-1}_t$ conservan la propiedad, luego la fila $t$ de $A^{\ell}$ depende solo de $x_{1:t}$. El MLP, la segunda normalización y la segunda suma residual actúan fila a fila, de modo que $h^{\ell}_t$ depende solo de $x_{1:t}$. Esto prueba $\mathcal{P}(\ell)$.
+
+Por inducción se cumple $\mathcal{P}(L)$, y $z_t$ se obtiene de $h^{L}_t$ aplicando operaciones fila a fila.
+\end{proof}
+
+\begin{corolario}\label{cor:una-pasada}
+Una sola evaluación del mini-GPT sobre la ventana $x_{1:T}$ produce, en cada posición $t$, los mismos logits que se obtendrían evaluándolo sobre el prefijo $x_{1:t}$. Por tanto, una pasada calcula las $T$ distribuciones $P_\theta(\cdot\mid x_{1:t})$ de la \cref{def:perdida}, cada una con su contexto correcto.
+\end{corolario}
+
+\begin{proof}
+Evaluar el modelo sobre el prefijo equivale a evaluarlo sobre cualquier ventana que lo extienda, y por el \cref{teo:causal} el valor de $z_t$ no depende de cómo se complete.
+\end{proof}
+
+\begin{observacion}[Fuga del futuro]\label{obs:fuga}
+Sin la máscara, la posición $t$ puede atender a $x_{t+1}=y_t$. Una cabeza que copie el token siguiente lleva la pérdida a casi cero sin aprender a predecir nada, y el modelo falla al generar, cuando el futuro no existe. Una pérdida de validación próxima a cero en los primeros cientos de pasos es el síntoma característico (\cref{tab:sintomas}). La implementación original pone a $-\infty$ las entradas de la softmax correspondientes a conexiones ilegales~\cite[§3.2.3]{vaswani}.
+\end{observacion}
+
+\section{Recuento de parámetros}
+
+\begin{proposicion}[Parámetros del mini-GPT]\label{prop:parametros}
+Con proyecciones $W_Q,W_K,W_V$ sin sesgo, sesgos en $W_O$, en el MLP y en la cabeza, y sin compartir $E$ con $W_{\mathrm{s}}$, el mini-GPT de la \cref{def:minigpt} tiene
+\[
+N=\underbrace{Kd}_{E}+\underbrace{Td}_{P}+L\,(12d^{2}+10d)+\underbrace{2d}_{\LN_{\mathrm{f}}}+\underbrace{dK+K}_{\text{cabeza}}
+\]
+parámetros. El número de cabezas $n_h$ no interviene.
+\end{proposicion}
+
+\begin{proof}
+En cada bloque: las proyecciones $Q,K,V$ aportan $3d^{2}$ y la de salida $d^{2}+d$; el MLP, $(4d\cdot d+4d)+(d\cdot 4d+d)=8d^{2}+5d$; las dos normalizaciones, $2\cdot 2d=4d$. La suma es $12d^{2}+10d$. Partir $W_Q,W_K,W_V$ en $n_h$ bloques de columnas no cambia su tamaño, luego $n_h$ no interviene. Se añaden las dos tablas de entrada, la normalización final y la cabeza.
+\end{proof}
+
+\begin{table}[h]
+\centering\small
+\caption{Parámetros del mini-GPT de la práctica: $K=46$, $T=32$, $d=64$, $L=2$, $n_h=4$.}\label{tab:parametros}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Pieza & Fórmula & Parámetros \\
+\midrule
+Embedding de token & $Kd$ & 2\,944 \\
+Embedding de posición & $Td$ & 2\,048 \\
+Atención (por bloque) & $3d^{2}+d^{2}+d$ & 16\,448 \\
+MLP (por bloque) & $8d^{2}+5d$ & 33\,088 \\
+Dos normalizaciones (por bloque) & $4d$ & 256 \\
+Bloque completo & $12d^{2}+10d$ & 49\,792 \\
+Dos bloques & $2\,(12d^{2}+10d)$ & 99\,584 \\
+Normalización final & $2d$ & 128 \\
+Cabeza & $dK+K$ & 2\,990 \\
+\midrule
+Total & & 107\,694 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El 92~\% de los parámetros está en los bloques ($99\,584/107\,694=0{,}925$). El término $12d^{2}$ crece con el cuadrado de la anchura, mientras que las tablas crecen linealmente en $d$; en los modelos grandes la proporción de los bloques es aún mayor, salvo que el vocabulario sea muy grande (\cref{eje:2-gpt2}). Es la misma cuenta que el módulo~14 hace para un modelo de $7\cdot 10^{9}$ parámetros.
+
+\begin{observacion}[Pesos atados]\label{obs:atados}
+Vaswani \emph{et al.} comparten la matriz de embeddings con la transformación lineal previa a la softmax~\cite[§3.4]{vaswani}, de modo que $W_{\mathrm{s}}=E$ y se ahorran $Kd$ parámetros. El mini-GPT de la práctica no los ata; con atadura tendría $107\,694-2\,944=104\,750$ parámetros.
+\end{observacion}
+
+\section{Del mini-GPT a los modelos abiertos}
+
+Los modelos abiertos más citados usan la misma estructura con algunas piezas sustituidas. LLaMA normaliza la entrada de cada subcapa con RMSNorm, sustituye la GELU por SwiGLU con dimensión oculta $\tfrac23\cdot 4d$ y elimina los embeddings de posición absolutos en favor de las rotaciones RoPE en cada capa~\cite[§2.2]{llama}; CS336 adopta esas mismas piezas~\cite[§3]{cs336}. GPT-2, además de la normalización en la entrada de cada subbloque, escala por $1/\sqrt{N_{\mathrm{r}}}$ al inicializar los pesos de las capas residuales, con $N_{\mathrm{r}}$ el número de capas residuales, usa un vocabulario de $50\,257$ tokens y un contexto de $1024$~\cite[§2.3]{gpt2}. El \cref{tab:arquitecturas} resume las diferencias.
+
+\begin{table}[h]
+\centering\small
+\caption{Componentes del mini-GPT, de GPT-2 y de LLaMA, según los artículos citados y la implementación de GPT-2 de nanoGPT~\cite{nanogpt}.}\label{tab:arquitecturas}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Componente & Mini-GPT & GPT-2~\cite{gpt2} & LLaMA~\cite{llama} \\
+\midrule
+Posiciones & tabla aprendida $T\times d$ & tabla aprendida & RoPE en cada capa \\
+Normalización & LayerNorm pre-norm & LayerNorm pre-norm y final & RMSNorm pre-norm \\
+MLP & GELU, $d\to 4d\to d$ & GELU, $d\to 4d\to d$ & SwiGLU, dimensión $\tfrac23\cdot 4d$ \\
+Tokenizador & caracteres, $K=46$ & BPE de bytes, $K=50\,257$ & BPE (SentencePiece) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Sobre los modelos comerciales, la información pública es limitada: el informe técnico de Gemini indica que sus modelos se construyen sobre decoders Transformer~\cite[§2]{gemini}; xAI publicó en 2024 los pesos y el código de Grok-1, un Transformer de 64 capas con mezcla de 8 expertos y RoPE~\cite{grok1}, y Anthropic no ha publicado la arquitectura de Claude.
+
+\begin{lecturas}
+\item Radford \emph{et al.}~\cite{gpt2}, §2.3 «Model».
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.1--3.4, en particular §3.2.3 sobre la máscara y §3.4 sobre los pesos compartidos.
+\item Stanford CS336~\cite{cs336}, tarea~1, §3.4 «Pre-Norm Transformer Block» y §3.5 «The Full Transformer LM».
+\item Stanford CS224N~\cite{cs224n}, clase~5 «Transformers».
+\item Zhang \emph{et al.}~\cite{d2l}, §11.9.3 «Decoder-Only».
+\item Karpathy~\cite{nanogpt}, archivo \texttt{model.py} del repositorio nanoGPT.
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-sin-mascara}
+¿Qué ocurre si se quita la máscara causal durante el entrenamiento? ¿Y si se entrena con máscara y se quita solo al generar? Distinga lo que ocurre en el primer bloque y en los siguientes.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-mascara}
+Una cabeza de atención con $T=3$ tiene puntuaciones escaladas por filas $(0,1,3)$, $(1,1,2)$ y $(2,0,1)$ y valores $v_1=(1,0)$, $v_2=(0,1)$, $v_3=(1,1)$. Calcule la matriz de pesos tras la máscara causal y la salida de la cabeza en cada posición. ¿Qué entradas de la matriz de puntuaciones no influyen en el resultado?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-param32}
+Cuente los parámetros del mini-GPT con $K=46$, $T=32$, $d=32$ y $L=2$, y compare la parte de los bloques con la del modelo del \cref{tab:parametros}. ¿Cuántos parámetros tendría con pesos atados?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-cabezas}
+Se compara el mini-GPT base ($d=64$, $n_h=4$) con una variante de una sola cabeza ($n_h=1$). (a) ¿Cuántos parámetros tiene cada uno? (b) ¿Cuál es la dimensión $d_k$ de cada cabeza y cuántas matrices de pesos de atención $T\times T$ calcula cada bloque en cada caso? (c) En la práctica, la variante de una cabeza termina con pérdida de validación $0{,}336$ frente a $0{,}324$. Explique por qué la diferencia no puede atribuirse a la capacidad medida en número de parámetros.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-gpt2}
+GPT-2 \emph{small} tiene $K=50\,257$, $T=1024$, $d=768$ y $L=12$, usa sesgo también en las proyecciones $Q$, $K$, $V$ y comparte la matriz de embeddings con la cabeza, que no tiene sesgo. (a) Adapte la \cref{prop:parametros} y calcule el número de parámetros. (b) ¿Cuánta memoria ocupan en precisión simple? (c) ¿Qué fracción de los parámetros está en los bloques y cuál en las tablas de embeddings? Compárela con la del mini-GPT.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §3.5, problema \emph{transformer\_accounting}, apartados (a) y (d) (se sustituye la arquitectura de la tarea por la de GPT-2 y el tamaño XL por el \emph{small}).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-permutacion}
+Considérese el mini-GPT sin embeddings de posición ($P=0$). Sea $\sigma$ una permutación de $\{1,\dots,T\}$ y $x^{\sigma}$ la ventana con $x^{\sigma}_t=x_{\sigma(t)}$. (a) Demuestre que, si se suprime la máscara ($\Mm=0$), el modelo es equivariante: $z_t(x^{\sigma})=z_{\sigma(t)}(x)$ para todo $t$ y cualquier $L$. (b) Demuestre que, con máscara y $L=1$, los logits de la última posición son invariantes frente a cualquier permutación que fije $T$. (c) Explique por qué el argumento de (b) no se extiende a $L\ge 2$ y qué consecuencia tiene sobre la posibilidad de entrenar un decoder sin codificación posicional.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Optimización: AdamW, calendario y recorte}
+\label{tema:3}
+% =====================================================================
+
+Entrenar el mini-GPT consiste en repetir un paso muy breve: tomar un lote, calcular la pérdida, retropropagar y actualizar los parámetros. Lo que separa un entrenamiento estable de uno que diverge son tres piezas que rodean ese paso: el optimizador AdamW, el calendario de la tasa de aprendizaje y el recorte del gradiente. Este tema las define tal como las especifica la tarea~1 de CS336~\cite[§4.2--4.5]{cs336}, demuestra sus propiedades principales y estima el coste del entrenamiento. AdamW y el calendario coseno se estudiaron en el módulo~7; aquí se usan en su forma de implementación, siguiendo a Loshchilov y Hutter~\cite{adamw,sgdr} y la receta documentada por LLaMA~\cite[§2.3]{llama}.
+
+\section{El paso de entrenamiento}
+
+\begin{definicion}[Paso de entrenamiento]\label{def:paso}
+Dados los parámetros $\theta_{s}$ y el estado del optimizador en el paso $s=0,1,\dots,S-1$, un \emph{paso de entrenamiento} consiste en:
+\begin{enumerate}[label=\arabic*.]
+  \item fijar la tasa $\eta_s$ según el calendario;
+  \item extraer un lote $(X,Y)$ (\cref{def:lote});
+  \item calcular los logits y la pérdida $\mathcal{L}(\theta_s)$ (\cref{def:perdida});
+  \item poner a cero los gradientes acumulados y calcular $g=\nabla_\theta\mathcal{L}(\theta_s)$ por retropropagación;
+  \item recortar $g$ por norma global (\cref{def:recorte});
+  \item aplicar un paso de AdamW con tasa $\eta_s$ (\cref{def:adamw-impl});
+  \item cada cierto número de pasos, evaluar la pérdida de entrenamiento y de validación y guardar un punto de control si la validación mejora (\cref{tema:4}).
+\end{enumerate}
+\end{definicion}
+
+El orden importa. El recorte actúa sobre el gradiente ya calculado y antes de que el optimizador lo incorpore a sus momentos; si se aplicara después, un gradiente anómalo ya habría contaminado $m$ y $v$. En PyTorch, el paso~4 son las llamadas \texttt{zero\_grad} y \texttt{backward}, y el paso~6 es \texttt{step}~\cite[§4.2.1]{cs336}.
+
+\section{AdamW}
+
+\begin{definicion}[AdamW, forma de implementación]\label{def:adamw-impl}
+Sean $\beta_1,\beta_2\in[0,1)$, $\lambda\ge 0$ y $\varepsilon>0$, y sean $m_0=v_0=0$. En la iteración $t=1,2,\dots$, con tasa $\alpha$ y gradiente $g_t$, AdamW realiza
+\begin{align*}
+\alpha_t&=\alpha\,\frac{\sqrt{1-\beta_2^{t}}}{1-\beta_1^{t}}, &
+\theta&\leftarrow\theta-\alpha\lambda\theta,\\
+m_t&=\beta_1 m_{t-1}+(1-\beta_1)g_t, &
+v_t&=\beta_2 v_{t-1}+(1-\beta_2)g_t^{2},\\
+\theta&\leftarrow\theta-\alpha_t\,\frac{m_t}{\sqrt{v_t}+\varepsilon}, &&
+\end{align*}
+donde el cuadrado, la raíz y el cociente se aplican componente a componente.
+\end{definicion}
+
+Es el algoritmo~1 de CS336~\cite[§4.3]{cs336}, que reproduce el algoritmo~2 de Loshchilov y Hutter~\cite{adamw}. La corrección de sesgo de los momentos del módulo~7 aparece aquí agrupada en $\alpha_t$; la diferencia con la forma $\hat m_t/(\sqrt{\hat v_t}+\varepsilon)$ es solo la escala efectiva de $\varepsilon$. El término $-\alpha\lambda\theta$ es el \emph{decaimiento de pesos desacoplado}: no pasa por los momentos y encoge todos los pesos en la misma proporción.
+
+\begin{proposicion}[Encogimiento por decaimiento]\label{prop:encoge}
+Si un parámetro recibe gradiente nulo durante los pasos $s=0,\dots,S-1$, con tasas $\eta_s$ y $\lambda\eta_s<1$, su valor final es
+\[
+\theta_S=\theta_0\prod_{s=0}^{S-1}(1-\lambda\eta_s)\;\le\;\theta_0\exp\Bigl(-\lambda\sum_{s=0}^{S-1}\eta_s\Bigr)\qquad(\theta_0\ge 0).
+\]
+\end{proposicion}
+
+\begin{proof}
+Con $g=0$ se tiene $m_t=v_t=0$ en todo paso, y la actualización se reduce a $\theta\leftarrow(1-\lambda\eta_s)\theta$. Iterando se obtiene el producto. La cota se sigue de $1-u\le e^{-u}$ para todo $u\in\R$, aplicada a cada factor positivo.
+\end{proof}
+
+\begin{ejemplo}\label{ej:encoge}
+Con $\lambda=0{,}1$ y el calendario del \cref{ej:calendario}, la suma de las tasas de los 800 pasos es $\sum_s\eta_s=1{,}308$, de modo que un peso sin gradiente se multiplica por $\prod_s(1-\lambda\eta_s)=0{,}877$, prácticamente igual a $e^{-0{,}1308}=0{,}877$. Con la tasa constante $3\cdot 10^{-3}$, el factor sería $0{,}9997^{800}=0{,}787$.
+\end{ejemplo}
+
+Los momentos $m$ y $v$ forman el \emph{estado} del optimizador: dos números por parámetro, además del contador $t$. Por eso el estado ocupa el doble que el modelo y debe guardarse en los puntos de control (\cref{tema:4}). LLaMA usa $\beta_1=0{,}9$, $\beta_2=0{,}95$ y $\lambda=0{,}1$~\cite[§2.3]{llama}; CS336 señala que $(0{,}9;\allowbreak\,0{,}999)$ es la elección típica y $(0{,}9;\allowbreak\,0{,}95)$ la habitual en modelos de lenguaje grandes~\cite[§4.3]{cs336}.
+
+\section{Calentamiento lineal y decaimiento coseno}
+
+\begin{definicion}[Calendario del módulo]\label{def:calendario}
+Sean $0\le\eta_{\min}<\eta_{\max}$, $W\ge 1$ pasos de calentamiento y $S>W$ pasos totales. Para $s=0,\dots,S-1$,
+\[
+\eta_s=\begin{cases}
+\eta_{\max}\,\dfrac{s+1}{W}, & s<W,\\[3mm]
+\eta_{\min}+\tfrac12(\eta_{\max}-\eta_{\min})\Bigl(1+\cos\dfrac{\pi(s-W)}{S-W}\Bigr), & s\ge W.
+\end{cases}
+\]
+\end{definicion}
+
+El tramo coseno es la ecuación~(5) de SGDR~\cite[§3]{sgdr} con un único ciclo. La práctica usa $\eta_{\min}=\eta_{\max}/10$, como LLaMA~\cite[§2.3]{llama} y la configuración de ejemplo de nanoGPT~\cite{nanogpt}.
+
+\begin{proposicion}[Propiedades del calendario]\label{prop:calendario}
+En el calendario de la \cref{def:calendario}:
+\begin{enumerate}
+  \item $\eta_s$ crece estrictamente en $\{0,\dots,W-1\}$, con $\eta_0=\eta_{\max}/W$ y $\eta_{W-1}=\eta_W=\eta_{\max}$;
+  \item $\eta_s$ decrece estrictamente en $\{W,\dots,S-1\}$, y la expresión del tramo coseno vale $\eta_{\min}$ en $s=S$;
+  \item en el punto medio del tramo coseno, $s=W+(S-W)/2$, vale $(\eta_{\max}+\eta_{\min})/2$;
+  \item para todo $u\in[0,S-W]$, $\eta(W+u)+\eta(S-u)=\eta_{\max}+\eta_{\min}$, donde $\eta(\cdot)$ denota la expresión del tramo coseno evaluada en un real.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) En el tramo lineal, $\eta_s$ es una función afín de pendiente $\eta_{\max}/W>0$; en $s=W-1$ vale $\eta_{\max}W/W$, y en $s=W$ el coseno vale $\cos 0=1$ y $\eta_W=\eta_{\min}+(\eta_{\max}-\eta_{\min})=\eta_{\max}$. (ii) El argumento $\pi(s-W)/(S-W)$ recorre $[0,\pi)$, intervalo en el que el coseno decrece estrictamente; en $s=S$ el argumento es $\pi$ y $1+\cos\pi=0$. (iii) En el punto medio el argumento es $\pi/2$ y $\cos(\pi/2)=0$. (iv) Con $\phi=\pi u/(S-W)$, los argumentos de $\eta(W+u)$ y $\eta(S-u)$ son $\phi$ y $\pi-\phi$, y $\cos(\pi-\phi)=-\cos\phi$; al sumar, los cosenos se cancelan y queda $2\eta_{\min}+(\eta_{\max}-\eta_{\min})$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:calendario}
+Con $S=800$, $W=100$, $\eta_{\max}=3\cdot 10^{-3}$ y $\eta_{\min}=3\cdot 10^{-4}$:
+\begin{center}\small
+\begin{tabular}{@{}rlr@{}}
+\toprule
+Paso $s$ & Fase & $\eta_s$ \\
+\midrule
+0 & calentamiento & $3\cdot 10^{-5}$ \\
+49 & calentamiento & $1{,}5\cdot 10^{-3}$ \\
+100 & pico & $3\cdot 10^{-3}$ \\
+275 & un cuarto del coseno & $2{,}605\cdot 10^{-3}$ \\
+450 & mitad del coseno & $1{,}65\cdot 10^{-3}$ \\
+625 & tres cuartos del coseno & $6{,}954\cdot 10^{-4}$ \\
+799 & último paso & $3{,}000\cdot 10^{-4}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Los pasos 275 y 625 son simétricos respecto del punto medio: $2{,}605\cdot 10^{-3}+0{,}695\cdot 10^{-3}=3{,}3\cdot 10^{-3}=\eta_{\max}+\eta_{\min}$, como afirma la \cref{prop:calendario}~(iv).
+\end{ejemplo}
+
+\begin{observacion}[El convenio de CS336]\label{obs:cs336-cal}
+CS336 define el calentamiento como $\alpha_t=(t/T_w)\,\alpha_{\max}$ para $t<T_w$, el coseno entre $T_w$ y $T_c$ y una tasa constante $\alpha_{\min}$ para $t>T_c$~\cite[§4.4]{cs336}. Con ese convenio, $\alpha_0=0$ (el primer paso no mueve los pesos, salvo por el decaimiento, que también se multiplica por $\alpha$) y el pico se alcanza en $t=T_w$; con el del módulo, la tasa empieza en $\eta_{\max}/W$ y llega al pico en $s=W-1$. Ambas formas difieren en un paso y son equivalentes en la práctica.
+\end{observacion}
+
+La justificación de ambas fases se dio en el módulo~7. Durante el calentamiento, los momentos de Adam se han estimado con muy pocos gradientes, y estos son grandes e irregulares; una tasa grande desde el primer paso puede llevar a una región de la que el entrenamiento no se recupera. Al final, una tasa pequeña reduce el exceso de pérdida debido al ruido del gradiente estocástico. LLaMA documenta 2000 pasos de calentamiento y decaimiento coseno hasta el 10~\% de la tasa máxima~\cite[§2.3]{llama}.
+
+\section{Recorte del gradiente por norma global}
+
+\begin{definicion}[Recorte por norma global]\label{def:recorte}
+Sea $g=(g^{(1)},\dots,g^{(P)})$ el gradiente de todos los tensores de parámetros, considerado como un único vector, y $\norm{g}_2=\bigl(\sum_{q}\norm{g^{(q)}}_2^{2}\bigr)^{1/2}$ su \emph{norma global}. Dados $c>0$ y $\varepsilon>0$ pequeño,
+\[
+\clip_c(g)=\begin{cases} g, & \norm{g}_2<c,\\[1mm] \dfrac{c}{\norm{g}_2+\varepsilon}\,g, & \norm{g}_2\ge c.\end{cases}
+\]
+\end{definicion}
+
+Es la definición de CS336, con $\varepsilon=10^{-6}$~\cite[§4.5]{cs336}; LLaMA usa $c=1$~\cite[§2.3]{llama}, como la práctica del módulo. El recorte protege de los gradientes anómalos que aparecen cuando la superficie de pérdida tiene acantilados~\cite[§8.2.4]{gbc}, y que de otro modo dañarían durante muchos pasos las medias móviles de Adam.
+
+\begin{proposicion}[Propiedades del recorte]\label{prop:recorte}
+Para todo $g$:
+\begin{enumerate}
+  \item $\clip_c(g)$ es un múltiplo positivo de $g$, luego tiene su misma dirección y sentido;
+  \item $\norm{\clip_c(g)}_2<c$ si $\norm{g}_2\ge c$, y $\clip_c(g)=g$ en otro caso;
+  \item recortar cada tensor por separado con el mismo umbral produce, en general, un vector que no es múltiplo de $g$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) El factor $c/(\norm{g}_2+\varepsilon)$ es positivo. (ii) Si $\norm{g}_2\ge c$, entonces $\norm{\clip_c(g)}_2=c\,\norm{g}_2/(\norm{g}_2+\varepsilon)<c$. (iii) Basta un contraejemplo: con dos tensores $g^{(1)}=(3,4)$ y $g^{(2)}=(12)$ y $c=1$, el recorte por tensor (con $\varepsilon\to 0$) da $(0{,}6;\allowbreak\,0{,}8)$ y $(1)$. El vector resultante $(0{,}6;\allowbreak\,0{,}8;\allowbreak\,1)$ no es proporcional a $(3,4,12)$, porque los cocientes componente a componente son $0{,}2$, $0{,}2$ y $1/12$.
+\end{proof}
+
+El recorte global no cambia la dirección de descenso; solo limita la longitud del paso. El recorte por tensor, en cambio, altera el peso relativo de cada parte del modelo en la actualización.
+
+\section{El coste del entrenamiento}
+
+Por la regla del módulo~14, entrenar un modelo de $N$ parámetros con $D$ tokens cuesta $C\approx 6ND$ operaciones de coma flotante (FLOP): $2ND$ en la pasada hacia delante y el doble en la retropropagación. CS336 usa la misma hipótesis sobre la retropropagación~\cite[§4.3, problema \emph{adamw\_accounting}]{cs336}.
+
+\begin{ejemplo}\label{ej:coste}
+En la práctica, $N=107\,694$ y $D=800\cdot 32\cdot 32=819\,200$ tokens, luego $C\approx 6\cdot 107\,694\cdot 819\,200=5{,}29\cdot 10^{11}$ FLOP. El entrenamiento dura unos 17~s en un núcleo de CPU libre, lo que corresponde a unos $3\cdot 10^{10}$ FLOP/s efectivos. Con matrices tan pequeñas el procesador trabaja muy por debajo de su pico (módulo~17).
+\end{ejemplo}
+
+\begin{lecturas}
+\item Stanford CS336~\cite{cs336}, tarea~1, §4.2 «The SGD Optimizer», §4.3 «AdamW», §4.4 «Learning rate scheduling» y §4.5 «Gradient clipping».
+\item Loshchilov y Hutter~\cite{adamw}, algoritmo~2; y~\cite{sgdr}, §3, ecuación~(5).
+\item Touvron \emph{et al.}~\cite{llama}, §2.3 «Optimizer».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.2.4 «Cliffs and Exploding Gradients» y §8.5.3 «Adam».
+\item Zhang \emph{et al.}~\cite{d2l}, §9.5.3 «Gradient Clipping».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-orden}
+En el paso de entrenamiento de la \cref{def:paso}, explique por qué el recorte se aplica después de la retropropagación y antes del paso del optimizador, y por qué se usa la norma global y no la de cada tensor. ¿Qué problema resuelve el calentamiento y cuál el decaimiento coseno?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-calendario}
+Con el calendario de la \cref{def:calendario}, $W=200$, $S=2000$, $\eta_{\max}=10^{-3}$ y $\eta_{\min}=10^{-4}$, calcule $\eta_9$ y $\eta_{1000}$. Compruebe el segundo valor con la \cref{prop:calendario}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-cs336-cal}
+Con el convenio de la \cref{obs:cs336-cal}, $\alpha_{\max}=10^{-3}$, $\alpha_{\min}=10^{-4}$, $T_w=100$ y $T_c=1000$, calcule $\alpha_t$ en $t=0$, $50$, $100$, $325$, $550$, $775$, $1000$ y $1200$. ¿En qué se diferencia del calendario del módulo?
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §4.4, problema \emph{learning\_rate\_schedule} (se pide el cálculo a mano en puntos concretos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-clip}
+Con $c=1$ y $\varepsilon=10^{-6}$: (a) recorte $g=(3,4,0)$; (b) recorte $g=(0{,}3;\allowbreak\,0{,}4;\allowbreak\,0)$; (c) un modelo tiene dos tensores con gradientes $(3,4)$ y $(12)$. Recorte con la norma global y compare con el recorte por tensor: ¿qué fracción de la norma corresponde al primer tensor en cada caso?
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §4.5, problema \emph{gradient\_clipping} (datos numéricos añadidos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-sgd}
+El SGD con tasa decreciente de CS336 actualiza
+\[
+w\leftarrow w-\frac{\alpha}{\sqrt{t+1}}\,\nabla L(w),\qquad t=0,1,2,\dots
+\]
+Se minimiza $L(w)=\frac{1}{100}\sum_{i=1}^{100}w_i^{2}$. (a) Demuestre que cada paso multiplica todos los pesos por $f_t=1-\alpha/(50\sqrt{t+1})$. (b) Para $\alpha=1$, $10$, $100$ y $1000$, calcule $f_0$, $f_1$, $f_2$ y el cociente $L_3/L_0$. ¿Qué tasas hacen decrecer la pérdida y cuál la hace divergir?
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §4.2, problema \emph{learning\_rate\_tuning} (se sustituye la simulación por el cálculo exacto de tres pasos).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-flops}
+Estime los FLOP de entrenar el mini-GPT de $107\,694$ parámetros durante 2000 pasos con $B=T=32$. Con el rendimiento efectivo del \cref{ej:coste}, ¿cuánto duraría?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-proyeccion}
+Sea $\mathcal{B}_c=\{u:\norm{u}_2\le c\}$ y sea $\Pi_c(g)$ la proyección euclídea de $g$ sobre $\mathcal{B}_c$, es decir, el punto de $\mathcal{B}_c$ más próximo a $g$. Demuestre que $\Pi_c(g)=g$ si $\norm{g}_2\le c$ y $\Pi_c(g)=c\,g/\norm{g}_2$ en otro caso, y concluya que el recorte por norma global con $\varepsilon=0$ es la proyección sobre la bola de radio $c$. ¿Es el recorte por tensor la proyección sobre algún conjunto? Descríbalo.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Evaluación, puntos de control y curvas de pérdida}
+\label{tema:4}
+% =====================================================================
+
+La pérdida de entrenamiento de un lote es una cantidad ruidosa que, además, no mide lo que interesa: cómo se comporta el modelo con texto que no ha visto. Este tema define el estimador de la pérdida que se usa para dibujar las curvas, describe qué debe contener un punto de control para poder reanudar el entrenamiento sin perturbarlo, demuestra que la entropía del proceso que genera el texto es una cota inferior de la pérdida esperada y presenta una guía de diagnóstico a partir de la forma de las curvas. Se sigue el §7.8 y el capítulo~11 de~\cite{gbc}, los §5.2 y §7.2.3 de la tarea~1 de CS336~\cite{cs336} y el capítulo~2 de Cover y Thomas~\cite{ct}.
+
+\section{Estimar la pérdida}
+
+\begin{definicion}[Pérdida estimada]\label{def:estimada}
+Sean $(X^{(1)},Y^{(1)}),\dots,(X^{(r)},Y^{(r)})$ lotes extraídos de un conjunto de datos (entrenamiento o validación). La \emph{pérdida estimada} del modelo de parámetros $\theta$ es
+\[
+\hat{\mathcal{L}}(\theta)=\frac1r\sum_{q=1}^{r}\mathcal{L}_q(\theta),
+\]
+donde $\mathcal{L}_q$ es la pérdida media del lote $q$ (\cref{def:perdida}). En la práctica del módulo, $r=20$ y los lotes se extraen con un generador de semilla fija, de modo que son los mismos en todas las evaluaciones.
+\end{definicion}
+
+Si los lotes se extraen de forma independiente, $\hat{\mathcal{L}}(\theta)$ es un estimador insesgado de la pérdida esperada y su varianza es la de un lote dividida por $r$. Usar siempre los mismos lotes tiene una ventaja adicional cuando se comparan dos puntos de la curva.
+
+\begin{proposicion}[Lotes comunes]\label{prop:lotes-comunes}
+Sean $\theta_a$ y $\theta_b$ dos estados del modelo, y sean $\hat{\mathcal{L}}_a$ y $\hat{\mathcal{L}}_b$ sus pérdidas estimadas, vistas como variables aleatorias a través de la elección de los lotes. Entonces
+\[
+\Var\bigl(\hat{\mathcal{L}}_a-\hat{\mathcal{L}}_b\bigr)=\Var(\hat{\mathcal{L}}_a)+\Var(\hat{\mathcal{L}}_b)-2\Cov(\hat{\mathcal{L}}_a,\hat{\mathcal{L}}_b).
+\]
+Si los dos estimadores usan lotes independientes, la covarianza es nula; si usan los mismos lotes y la covarianza es positiva, la varianza de la diferencia es menor.
+\end{proposicion}
+
+\begin{proof}
+Es la fórmula de la varianza de una diferencia, $\Var(A-B)=\E[(A-B)^{2}]-(\E A-\E B)^{2}$, desarrollada. Con lotes independientes, $\hat{\mathcal{L}}_a$ y $\hat{\mathcal{L}}_b$ son funciones de variables independientes y su covarianza es nula.
+\end{proof}
+
+Dos estados próximos del modelo encuentran difíciles los mismos lotes, de modo que sus pérdidas sobre lotes comunes están positivamente correlacionadas; la diferencia entre dos puntos de la curva refleja entonces sobre todo el cambio del modelo y no el azar del muestreo. Es la técnica de los \emph{números aleatorios comunes} de la simulación estocástica.
+
+Durante la evaluación se usan dos instrucciones de PyTorch: \texttt{model.eval()}, que desactiva los componentes que se comportan distinto al entrenar (como el \emph{dropout}), y el contexto \texttt{torch.no\_grad()}, que evita construir el grafo de cómputo y ahorra memoria y tiempo. Al terminar, \texttt{model.train()} devuelve el modelo al modo de entrenamiento.
+
+\section{Puntos de control}
+
+\begin{definicion}[Punto de control]\label{def:checkpoint}
+Un \emph{punto de control} es un registro que contiene todo lo necesario para reanudar el entrenamiento como si no se hubiera interrumpido: los parámetros $\theta$, el estado del optimizador (en AdamW, los momentos $m$, $v$ y el contador de pasos) y el número de paso $s$, que fija la tasa del calendario~\cite[§5.2]{cs336}. Es habitual añadir la pérdida de validación y la configuración del modelo.
+\end{definicion}
+
+Si se reanuda sin el estado del optimizador, AdamW reinicia $m=v=0$ y $t=0$: el primer paso usa momentos estimados con un solo gradiente, sin la protección de un calentamiento, y la curva de pérdida da un salto. Si se reanuda sin el número de paso, el calendario vuelve a empezar.
+
+\begin{proposicion}[Memoria del estado de entrenamiento]\label{prop:memoria}
+En precisión simple (4~bytes por número), los parámetros, los gradientes y los dos momentos de AdamW de un modelo de $N$ parámetros ocupan $16N$ bytes, sin contar las activaciones.
+\end{proposicion}
+
+\begin{proof}
+Cada uno de los cuatro tensores (parámetros, gradientes, $m$ y $v$) tiene $N$ componentes de 4~bytes: $4\cdot 4N=16N$.
+\end{proof}
+
+Para el mini-GPT son $107\,694\cdot 16=1{,}72$~MB, de los que el modelo ocupa $0{,}43$~MB. Para un modelo de $7\cdot 10^{9}$ parámetros, la misma cuenta da $112$~GB, más que la memoria de una GPU de $80$~GB; por eso existen las técnicas de partición del estado del optimizador del módulo~17.
+
+\begin{observacion}[Parada temprana]\label{obs:parada}
+Guardar el punto de control solo cuando la pérdida de validación mejora y devolver al final el mejor es el algoritmo de \emph{parada temprana} de Goodfellow, Bengio y Courville~\cite[§7.8]{gbc}, que actúa como regularizador: limita el número efectivo de pasos de optimización. Los grandes entrenamientos guardan además puntos de control frecuentes porque, con miles de GPU, las interrupciones son rutinarias: el informe de Llama~3 documenta 466 interrupciones en un periodo de 54 días de preentrenamiento~\cite[§3.3.4]{llama3}.
+\end{observacion}
+
+\section{La cota inferior de la pérdida}
+
+\begin{teorema}[La entropía como cota inferior]\label{teo:cota}
+Sean $p$ y $q$ distribuciones sobre $\V$ con $q(x)>0$ siempre que $p(x)>0$. Entonces
+\[
+H(p,q)=-\sum_{x}p(x)\ln q(x)=H(p)+\KL(p\Vert q)\;\ge\;H(p),
+\]
+con igualdad si y solo si $q=p$.
+\end{teorema}
+
+\begin{proof}
+Sumando y restando $\sum_x p(x)\ln p(x)$,
+\[
+-\sum_x p(x)\ln q(x)=-\sum_x p(x)\ln p(x)+\sum_x p(x)\ln\frac{p(x)}{q(x)}=H(p)+\KL(p\Vert q).
+\]
+Por la desigualdad de Gibbs (módulo~6; \cite[teorema~2.6.3]{ct}), $\KL(p\Vert q)\ge 0$ con igualdad si y solo si $p=q$.
+\end{proof}
+
+Si $p$ es la distribución real del token siguiente y $q$ la del modelo, la pérdida esperada no puede bajar de $H(p)$. El \cref{eje:4-condicional} extiende el resultado a distribuciones condicionadas al contexto, que es el caso de un modelo de lenguaje. En consecuencia, si la pérdida media de validación sale claramente por debajo de la entropía del proceso generador, hay una fuga de información. En texto humano no se conoce $H$, pero el mismo resultado explica por qué las curvas de los grandes modelos se aplanan: las leyes de escalado del módulo~16 incluyen un término constante que se interpreta como la entropía irreducible del texto.
+
+\begin{ejemplo}[Entropía del corpus sintético]\label{ej:entropia-corpus}
+Una línea de tipo «objeto» elige de forma uniforme e independiente uno de 6 objetos, 6 colores, 6 materiales y 6 usos; el resto de sus caracteres está determinado. Su entropía es $\ln 6^{4}=7{,}167$ nats, más $\ln 4=1{,}386$ nats por la elección del tipo de línea. Sumando la entropía de todas las líneas del corpus y dividiendo por el número de caracteres, el cuaderno obtiene $H\approx 0{,}125$ nats por carácter. El mini-GPT termina en $0{,}324$: queda margen.
+\end{ejemplo}
+
+\section{Lectura de las curvas de pérdida}
+
+Una curva de pérdida se interpreta respecto de tres referencias horizontales: $\ln K$, la pérdida de la predicción uniforme (\cref{prop:lnK}); la pérdida del modelo de bigramas, que es lo mínimo que hay que superar; y, cuando se conoce, la entropía $H$ del texto, que no puede superarse (\cref{teo:cota}). El \cref{tab:curva} recoge la curva de la práctica.
+
+\begin{table}[h]
+\centering\small
+\caption{Pérdidas del mini-GPT base de la práctica, en nats por carácter. Referencias: $\ln 46=3{,}829$; bigramas, $2{,}035$; entropía del corpus, $\approx 0{,}125$.}\label{tab:curva}
+\begin{tabularx}{\textwidth}{@{}lcc>{\raggedright\arraybackslash}X@{}}
+\toprule
+Momento & Entrenamiento & Validación & Lectura \\
+\midrule
+Paso 0 & $4{,}046$ (un lote) & --- & cerca de $\ln K$: predicción casi uniforme \\
+Paso 100 & $2{,}017$ & $2{,}046$ & alcanza el nivel del bigrama \\
+Paso 200 & $1{,}040$ & $1{,}154$ & aprende palabras y plantillas \\
+Paso 400 & $0{,}370$ & $0{,}425$ & usa el contexto largo \\
+Paso 800 & $0{,}264$ & $0{,}324$ & afinado final con tasa baja \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{La forma.} Hay una caída rápida hasta el nivel del bigrama (pasos 0--100), en la que el modelo aprende las frecuencias de pares de caracteres, y una segunda bajada larga (100--500), en la que aprende a usar el contexto: qué plantilla está escribiendo y qué palabras han aparecido ya. La pendiente final se suaviza a medida que el coseno reduce la tasa.
+
+\paragraph{La brecha.} Al final, la diferencia entre validación y entrenamiento es $0{,}06$ nats. Es un sobreajuste leve: el modelo ha memorizado algunas frases, lo que es esperable cuando cada token se ve unas 57 veces. Si la pérdida de validación empezara a subir mientras la de entrenamiento baja, habría que parar, usar más datos o regularizar más.
+
+\begin{table}[h]
+\centering\small
+\caption{Síntomas frecuentes en las curvas de pérdida y su diagnóstico probable.}\label{tab:sintomas}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Síntoma & Diagnóstico probable & Qué probar \\
+\midrule
+No baja de $\ln K$ & error de programación: objetivos desalineados, tasa nula & sobreajustar un solo lote \\
+Baja y después da NaN & tasa demasiado alta & bajar $\eta_{\max}$, alargar el calentamiento, recortar \\
+Baja muy despacio & tasa demasiado baja & subir $\eta_{\max}$ \\
+Validación sube y entrenamiento baja & sobreajuste & más datos, decaimiento de pesos, parar antes \\
+Pérdida casi nula en ambas & fuga del futuro & revisar la máscara causal (\cref{obs:fuga}) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+La primera prueba de la tercera columna es la estrategia de depuración más recomendada: un modelo correcto debe poder llevar a casi cero la pérdida de un conjunto de datos diminuto, como un único lote; si no lo consigue, el fallo está en el software y no en la capacidad del modelo~\cite[§11.5]{gbc}, \cite[§7.2.3]{cs336}. La misma sección de~\cite{gbc} recomienda razonar con los errores de entrenamiento y de prueba: error bajo en entrenamiento y alto en prueba indica sobreajuste; error alto en ambos deja abiertas la falta de capacidad y un defecto del programa.
+
+\begin{lecturas}
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §7.8 «Early Stopping» (algoritmo de parada temprana) y §11.5 «Debugging Strategies».
+\item Stanford CS336~\cite{cs336}, tarea~1, §5.2 «Checkpointing» y §7.2.3 «Tips and tricks for debugging model architectures».
+\item Cover y Thomas~\cite{ct}, §2.6 «Jensen's inequality and its consequences».
+\item Llama Team~\cite{llama3}, §3.3.4 «Reliability and Operational Challenges».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-estado}
+Explique por qué un punto de control debe incluir el estado del optimizador y el número de paso. ¿Qué se observaría en la curva de pérdida si se reanudara sin ellos?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:4-fijos}
+¿Por qué se evalúa siempre con los mismos lotes de validación? Relacione la respuesta con la \cref{prop:lotes-comunes}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-linea}
+Una línea de tipo «objeto» se genera eligiendo de forma uniforme uno de 6 objetos, 6 colores, 6 materiales y 6 usos, y mide 58 caracteres incluido el salto de línea. Contando $\ln 4$ nats por la elección del tipo de línea, ¿qué entropía mínima por carácter tiene? Compárela con la del corpus completo y con la pérdida final del modelo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-brecha}
+Con los datos del \cref{tab:curva} al final del entrenamiento: (a) calcule la perplejidad de entrenamiento y la de validación y el cociente entre ambas; (b) con el \cref{teo:cota} y la entropía del \cref{ej:entropia-corpus}, estime la divergencia media $\KL$ entre la distribución real y la del modelo en validación; (c) interprete la perplejidad correspondiente a la entropía del corpus.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-memoria}
+Suponga que todos los tensores están en precisión simple. (a) Calcule la memoria que ocupan los parámetros, los gradientes y el estado de AdamW de la variante del mini-GPT con $d=128$ y $L=3$, que tiene $609\,838$ parámetros, sin contar las activaciones. (b) Repita el cálculo para un modelo de $7\cdot 10^{9}$ parámetros. ¿Cuántas GPU de $80$~GB harían falta, como mínimo, solo para ese estado?
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §4.3, problema \emph{adamw\_accounting}, apartado (a) (se omiten las activaciones y se usan los tamaños del módulo).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-condicional}
+Sea $(C,X)$ un par aleatorio con distribución conjunta $p(c,x)$ sobre contextos y tokens, y sea $q(x\mid c)$ un modelo con $q(x\mid c)>0$ siempre que $p(c,x)>0$. Demuestre que
+\[
+\E_{p}\bigl[-\ln q(X\mid C)\bigr]\;\ge\;H(X\mid C)=-\sum_{c,x}p(c,x)\ln p(x\mid c),
+\]
+con igualdad si y solo si $q(\cdot\mid c)=p(\cdot\mid c)$ para todo $c$ con $p(c)>0$. Explique por qué este es el resultado que acota la pérdida esperada de un modelo de lenguaje.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Generación e hiperparámetros}
+\label{tema:5}
+% =====================================================================
+
+Generar texto es aplicar la regla de la cadena del módulo~1 con el modelo como calculadora de probabilidades condicionadas: se predice la distribución del token siguiente, se muestrea, se añade el token al contexto y se repite. Este tema formaliza el bucle de generación, estudia las tres transformaciones de la distribución que exponen las interfaces de los modelos actuales (temperatura, top-$k$ y top-$p$) y demuestra que la entropía de la distribución crece con la temperatura. Termina con el efecto de los hiperparámetros sobre el entrenamiento del mini-GPT. Se sigue el §6 de la tarea~1 de CS336~\cite{cs336}, el §9.5.5 de~\cite{d2l}, los artículos de Fan, Lewis y Dauphin~\cite{fan} y de Holtzman \emph{et al.}~\cite{holtzman}, y el §11.4 de~\cite{gbc}.
+
+\section{Generación autorregresiva}
+
+\begin{definicion}[Bucle de generación]\label{def:generacion}
+Sea un modelo con contexto máximo $T$, una secuencia inicial (\emph{prompt}) $w_{1:m}$, un número máximo de tokens nuevos $G$ y una transformación $\Phi$ que convierte unos logits en una distribución. Para $g=1,\dots,G$:
+\begin{enumerate}[label=\arabic*.]
+  \item recortar el contexto a sus últimos $T$ tokens, $c=w_{\max(1,\,m+g-T):\,m+g-1}$;
+  \item evaluar el modelo sobre $c$ y tomar los logits $z$ de la última posición;
+  \item muestrear $w_{m+g}\sim\Phi(z)$ y añadirlo a la secuencia;
+  \item detenerse si $w_{m+g}$ es el token delimitador.
+\end{enumerate}
+\end{definicion}
+
+Por el \cref{cor:una-pasada}, los logits de la última posición son los de la distribución $P_\theta(\cdot\mid c)$. Con $\Phi=\softmax$ se muestrea del propio modelo~\cite[§6, ecuaciones~(21)--(22)]{cs336}; si en cada paso se elige el token más probable, el procedimiento es la \emph{decodificación voraz}~\cite[§9.5.5]{d2l}. Cada paso exige una pasada completa del modelo sobre el contexto; el módulo~19 estudia cómo evitar recalcular lo ya calculado con la caché de claves y valores.
+
+\section{Temperatura}
+
+\begin{definicion}[Softmax con temperatura]\label{def:temperatura}
+Para $\tau>0$, $\softmax(z,\tau)_i=e^{z_i/\tau}\big/\sum_j e^{z_j/\tau}$. En este módulo la temperatura se escribe $\tau$ para no confundirla con la longitud de contexto $T$.
+\end{definicion}
+
+\begin{proposicion}[Límites]\label{prop:limites}
+Sea $z\in\R^{K}$ con un único máximo en el índice $i^{\star}$. Cuando $\tau\to 0^{+}$, $\softmax(z,\tau)\to e_{i^{\star}}$; cuando $\tau\to\infty$, $\softmax(z,\tau)\to(1/K,\dots,1/K)$.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:traslacion}, $\softmax(z,\tau)_i=e^{(z_i-z_{i^{\star}})/\tau}\big/\sum_j e^{(z_j-z_{i^{\star}})/\tau}$. Si $\tau\to 0^{+}$, cada exponente con $j\ne i^{\star}$ tiende a $-\infty$ y el de $i^{\star}$ es nulo, luego el denominador tiende a~1 y solo sobrevive el numerador de $i^{\star}$. Si $\tau\to\infty$, todos los exponentes tienden a~0, los numeradores a~1 y el denominador a~$K$.
+\end{proof}
+
+\begin{teorema}[La entropía crece con la temperatura]\label{teo:entropia-tau}
+Sea $z\in\R^{K}$ no constante y, para $b>0$, $p^{(b)}=\softmax(bz)$, de modo que $b=1/\tau$. Entonces
+\[
+\frac{d}{db}\,H\bigl(p^{(b)}\bigr)=-b\,\Var_{p^{(b)}}(z)<0,
+\]
+donde $\Var_{p}(z)=\sum_i p_iz_i^{2}-\bigl(\sum_i p_iz_i\bigr)^{2}$. En consecuencia, $H\bigl(\softmax(z,\tau)\bigr)$ es estrictamente creciente en $\tau$.
+\end{teorema}
+
+\begin{proof}
+Sea $Z(b)=\sum_j e^{bz_j}$. Como $\ln p^{(b)}_i=bz_i-\ln Z(b)$,
+\[
+H\bigl(p^{(b)}\bigr)=-\sum_i p^{(b)}_i\bigl(bz_i-\ln Z(b)\bigr)=-b\,\mu(b)+\ln Z(b),\qquad \mu(b)=\sum_i p^{(b)}_iz_i.
+\]
+Se tiene $\frac{d}{db}\ln Z(b)=\sum_j z_je^{bz_j}/Z(b)=\mu(b)$. Además, $\frac{d}{db}p^{(b)}_i=p^{(b)}_i\bigl(z_i-\mu(b)\bigr)$, luego $\mu'(b)=\sum_i p^{(b)}_iz_i\bigl(z_i-\mu(b)\bigr)=\Var_{p^{(b)}}(z)$. Derivando,
+$\frac{d}{db}H=-\mu(b)-b\,\mu'(b)+\mu(b)=-b\Var_{p^{(b)}}(z)$. Como todas las $p^{(b)}_i$ son positivas y $z$ no es constante, la varianza es positiva. Finalmente, $b=1/\tau$ es estrictamente decreciente en $\tau$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:temperatura}
+Con $z=(2;\allowbreak\,1;\allowbreak\,0{,}5;\allowbreak\,-1)$:
+\begin{center}\small
+\begin{tabular}{@{}cccccc@{}}
+\toprule
+$\tau$ & $p_1$ & $p_2$ & $p_3$ & $p_4$ & $H$ (nats) \\
+\midrule
+$0{,}5$ & $0{,}842$ & $0{,}114$ & $0{,}042$ & $0{,}002$ & $0{,}538$ \\
+$1$ & $0{,}609$ & $0{,}224$ & $0{,}136$ & $0{,}030$ & $1{,}014$ \\
+$2$ & $0{,}434$ & $0{,}263$ & $0{,}205$ & $0{,}097$ & $1{,}265$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+La entropía crece con $\tau$ hacia $\ln 4=1{,}386$, el valor de la distribución uniforme, como afirman la \cref{prop:limites} y el \cref{teo:entropia-tau}.
+\end{ejemplo}
+
+La temperatura es la misma que la de la distribución de Boltzmann de la física estadística (módulo~1). Holtzman \emph{et al.} observan que bajar la temperatura mejora la calidad del texto generado a costa de reducir su diversidad~\cite[§3.3]{holtzman}.
+
+\section{Muestreo top-\texorpdfstring{$k$}{k} y top-\texorpdfstring{$p$}{p}}
+
+\begin{definicion}[Top-$k$]\label{def:topk}
+Sea $1\le k\le K$ y sea $I_k(z)$ el conjunto de los índices de los $k$ mayores logits, con los empates resueltos por el índice menor. El \emph{muestreo top-$k$} usa la distribución $\softmax\bigl(\topk(z)\bigr)$, donde $\topk(z)_i=z_i$ si $i\in I_k(z)$ y $-\infty$ en otro caso.
+\end{definicion}
+
+Fan, Lewis y Dauphin introdujeron este procedimiento con $k=10$ para generar relatos y observaron que producía textos menos repetitivos que la búsqueda en haz~\cite[§5.4]{fan}. Con $k=1$ el muestreo coincide con la decodificación voraz; con $k=K$ no cambia nada. Con $z=(2;\allowbreak\,1;\allowbreak\,0{,}5;\allowbreak\,-1)$, $k=2$ y $\tau=1$, la distribución pasa a ser $(0{,}731;\allowbreak\,0{,}269;\allowbreak\,0;\allowbreak\,0)$: desaparece la cola de tokens improbables, que con 46 caracteres puede acumular una masa apreciable.
+
+\begin{definicion}[Muestreo de núcleo o top-$p$]\label{def:topp}
+Sea $q$ una distribución sobre $\V$ y $\rho\in(0,1]$. Sea $V(\rho)$ el menor conjunto de índices tal que $\sum_{j\in V(\rho)}q_j\ge\rho$. El \emph{muestreo de núcleo} usa la distribución
+\[
+\tilde q_i=\begin{cases} q_i\big/\sum_{j\in V(\rho)}q_j, & i\in V(\rho),\\ 0, & \text{en otro caso}.\end{cases}
+\]
+\end{definicion}
+
+Es la definición de Holtzman \emph{et al.}~\cite[§3.1, ecuaciones~(2) y~(3)]{holtzman}, reproducida por CS336~\cite[§6, ecuación~(24)]{cs336}, donde el umbral se denota $p$. La distribución $q$ suele ser ya la softmax con temperatura.
+
+\begin{proposicion}[Cálculo del núcleo]\label{prop:nucleo}
+Sean $q_{(1)}\ge q_{(2)}\ge\dots\ge q_{(K)}$ las probabilidades ordenadas y $m=\min\{j:\sum_{i\le j}q_{(i)}\ge\rho\}$. Todo conjunto de masa al menos $\rho$ tiene al menos $m$ elementos, y el conjunto $S_m$ de los $m$ índices más probables alcanza esa masa. Por tanto, los conjuntos mínimos tienen exactamente $m$ elementos y $S_m$ es, entre ellos, uno de masa máxima.
+\end{proposicion}
+
+\begin{proof}
+Un conjunto de $j$ índices tiene masa a lo sumo $\sum_{i\le j}q_{(i)}$, la suma de las $j$ mayores probabilidades. Si $j<m$, esa suma es menor que $\rho$ por la definición de $m$, luego ningún conjunto de menos de $m$ elementos alcanza la masa $\rho$. El conjunto $S_m$ la alcanza, también por la definición de $m$, y su masa es la máxima posible entre los conjuntos de $m$ elementos por la primera observación con $j=m$.
+\end{proof}
+
+\begin{observacion}\label{obs:nucleo}
+El conjunto mínimo no es único en general, aunque no haya empates: con $q=(0{,}5;\allowbreak\,0{,}3;\allowbreak\,0{,}2)$ y $\rho=0{,}6$, tanto $\{1,2\}$ como $\{1,3\}$ tienen dos elementos y masa al menos $0{,}6$. Por convenio, $V(\rho)$ designa el conjunto $S_m$, que es el que se obtiene al ordenar la distribución y acumular probabilidades hasta alcanzar $\rho$, como prescribe CS336~\cite[§6]{cs336}.
+\end{observacion}
+
+La ventaja de top-$p$ sobre top-$k$ es que el número de candidatos se adapta a la forma de la distribución. Con una distribución plana, un $k$ pequeño elimina continuaciones razonables; con una distribución muy concentrada, un $k$ grande deja entrar candidatos inapropiados, cuya probabilidad crece al renormalizar~\cite[§3.2]{holtzman}. Las interfaces de programación de modelos comerciales como Claude y Gemini exponen públicamente los parámetros de temperatura, top-$k$ y top-$p$.
+
+\paragraph{Muestras del mini-GPT.} Con $\tau=0{,}8$ y $k=10$, casi todas las líneas generadas son correctas:
+\begin{center}\small
+\begin{tabular}{@{}l@{}}
+\texttt{objeto. una lámpara azul de cristal. sirve para esperar sentado.}\\
+\texttt{objeto. una caja azul de tela. sirve para leer de noche.}\\
+\texttt{receta. hornea verde paperado.}
+\end{tabular}
+\end{center}
+La tercera muestra el límite del modelo: mezcla un color propio de los objetos en una receta. Con $\tau=3$ la salida se degrada a símbolos sueltos, porque la distribución se acerca a la uniforme y los dígitos y signos aparecen en cualquier lugar.
+
+\section{Efecto de los hiperparámetros}
+
+El \cref{tab:hiper} resume entrenamientos de 800 pasos sobre el mismo corpus y con la misma semilla, en los que solo cambia lo indicado.
+
+\begin{table}[h]
+\centering\small
+\caption{Efecto de los hiperparámetros en el mini-GPT (resultados del cuaderno de prácticas). Base: $d=64$, $L=2$, $n_h=4$, $T=32$, $\eta_{\max}=3\cdot 10^{-3}$. Pérdidas de validación en nats por carácter; tiempo relativo al modelo base.}\label{tab:hiper}
+\begin{tabularx}{\textwidth}{@{}lrccc>{\raggedright\arraybackslash}X@{}}
+\toprule
+Cambio & $N$ & Paso 100 & Final & Tiempo & Lectura \\
+\midrule
+Base & 107\,694 & $2{,}046$ & $0{,}324$ & 1 & referencia \\
+$\eta_{\max}=3\cdot 10^{-4}$ & 107\,694 & $2{,}959$ & $1{,}840$ & 1 & demasiado lenta \\
+$\eta_{\max}=3\cdot 10^{-2}$ & 107\,694 & $1{,}304$ & $0{,}297$ & 1 & mejor: tolera tasas altas \\
+ídem, sin calentamiento & 107\,694 & $1{,}232$ & $0{,}306$ & 1 & algo peor \\
+$\eta_{\max}=3\cdot 10^{-1}$ & 107\,694 & $2{,}863$ & $2{,}244$ & 1 & inestable \\
+Tasa constante & 107\,694 & $2{,}046$ & $0{,}337$ & 1 & falta el afinado final \\
+$d=32$ & 29\,294 & $2{,}308$ & $0{,}649$ & $0{,}5$ & poca capacidad \\
+$L=1$ & 57\,902 & $2{,}128$ & $0{,}392$ & $0{,}4$ & un bloque no basta \\
+$n_h=1$ & 107\,694 & $2{,}062$ & $0{,}336$ & $0{,}7$ & algo peor \\
+$T=8$ & 106\,158 & $2{,}068$ & $0{,}694$ & $0{,}3$ & no ve la etiqueta \\
+$d=128$, $L=3$ & 609\,838 & $1{,}441$ & $0{,}297$ & $2{,}4$ & mejor, más caro \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+La tasa de aprendizaje es el factor dominante: entre $3\cdot 10^{-4}$ y $3\cdot 10^{-2}$ la pérdida final pasa de $1{,}840$ a $0{,}297$, y con $3\cdot 10^{-1}$ el entrenamiento se rompe. Goodfellow, Bengio y Courville la señalan como el hiperparámetro más importante si solo se puede ajustar uno~\cite[§11.4.1]{gbc}, y CS336 pide localizar empíricamente la tasa a partir de la cual el entrenamiento diverge y relacionarla con la mejor~\cite[§7.2, problema \emph{learning\_rate}]{cs336}. El contexto es el segundo factor: con $T=8$ la pérdida se duplica, porque el modelo pierde la información que más reduce la incertidumbre, el tipo de línea (\cref{eje:5-contexto}). Multiplicar por $5{,}7$ los parámetros da la misma mejora que subir la tasa a $3\cdot 10^{-2}$ sin coste adicional. El calentamiento y el coseno aportan poco en este modelo (unas centésimas de nat cada uno), porque es pequeño y el recorte ya lo protege; en los modelos grandes son imprescindibles.
+
+\begin{observacion}[Reglas prácticas]\label{obs:reglas}
+De lo anterior se desprenden cuatro reglas: (i) ajustar primero la tasa de aprendizaje, barriendo potencias de 10 o de $\sqrt{10}$, y quedarse con la mayor que sea estable; (ii) antes de escalar, comprobar que el modelo sobreajusta un único lote hasta pérdida casi nula; (iii) elegir $T$ de modo que cubra la dependencia que se quiere capturar, aquí una línea completa de unos 60 a 80 caracteres; (iv) más parámetros solo ayudan si hay datos y pasos suficientes para entrenarlos, como precisan las leyes de escalado del módulo~16.
+\end{observacion}
+
+\begin{lecturas}
+\item Stanford CS336~\cite{cs336}, tarea~1, §6 «Generating text» (ecuaciones 21--24) y §7.2 «TinyStories».
+\item Holtzman \emph{et al.}~\cite{holtzman}, §3 «Language Model Decoding» (§3.1--3.3).
+\item Fan, Lewis y Dauphin~\cite{fan}, §5.4 «Generation».
+\item Zhang \emph{et al.}~\cite{d2l}, §9.5.5 «Decoding».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §11.4 «Selecting Hyperparameters», en particular §11.4.1.
+\item Karpathy~\cite{nanogpt}, archivos \texttt{sample.py} y \texttt{config/train\_shakespeare\_char.py}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-conceptos}
+Describa la distribución de muestreo en cada caso: (a) $k=1$; (b) $k=K$; (c) $\rho=1$; (d) $\tau\to 0^{+}$; (e) $\tau=3$ con 46 caracteres. ¿Cuáles de ellos son deterministas?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-topk}
+Con logits $z=(3,1,1,0)$, aplique top-$k$ con $k=2$ y $\tau=1$. El segundo y el tercer logit están empatados: obtenga la distribución con el convenio de la \cref{def:topk} y con el convenio alternativo que conserva todo logit mayor o igual que el $k$-ésimo mayor.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-temp}
+Con $z=(3,1,0)$, calcule $\softmax(z,\tau)$ y su entropía para $\tau=0{,}5$, $1$ y $2$, y compruebe que la entropía crece con $\tau$. Calcule $\Var_{p}(z)$ para $\tau=1$ y la derivada $dH/db$ en $b=1$ del \cref{teo:entropia-tau}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-topp}
+La distribución del token siguiente es $q=(0{,}5;\allowbreak\,0{,}2;\allowbreak\,0{,}15;\allowbreak\,0{,}1;\allowbreak\,0{,}05)$. (a) Aplique top-$p$ con $\rho=0{,}8$ y con $\rho=0{,}9$. (b) Aplique antes la temperatura $\tau=0{,}5$ a los logits $\ln q_i$ y después top-$p$ con $\rho=0{,}8$.
+\fuente{adaptado de Stanford CS336~\cite{cs336}, tarea~1, §6, problema \emph{decoding} y ecuaciones~(23)--(24) (datos numéricos añadidos).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-conmuta}
+(a) Demuestre que, para todo $\tau>0$, aplicar top-$k$ y después la temperatura da la misma distribución que aplicar la temperatura y después top-$k$. (b) Demuestre con un contraejemplo que la afirmación análoga para top-$p$ es falsa. (c) ¿Qué orden usa la \cref{def:topp} cuando $q$ es la softmax con temperatura?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-contexto}
+Con $T=8$, el mini-GPT termina con pérdida de validación $0{,}694$ frente a $0{,}324$ con $T=32$ (\cref{tab:hiper}). Use la estructura del corpus del \cref{ej:corpus} para explicar qué información le falta, qué partes de la línea siguen siendo predecibles y cuáles se vuelven inciertas. Cuantifique el exceso de pérdida por línea de 58 caracteres y compárelo con la entropía de la etiqueta.
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los resultados exactos se dan como fracción cuando existe.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-desplazada}
+\datos ventana $x=(x_1,\dots,x_T)$ y objetivo $y$; lote de forma $(B,T)$.
+\planteamiento en la posición $t$ el modelo ve $x_{1:t}$ y debe predecir el token que lo sigue en el corpus (\cref{def:ventana}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El token que sigue a $x_{1:t}$ en el corpus es $x_{t+1}$ (para $t<T$) o el siguiente al final de la ventana (para $t=T$). Definiendo $y_t$ como ese token, cada posición tiene su respuesta en el mismo índice.
+  \item Por tanto $y$ se obtiene recortando el corpus un token más tarde: es $x$ desplazada una posición.
+  \item Cada ventana aporta $T$ predicciones (\cref{prop:ventanas}) y el lote apila $B$ ventanas: $B\cdot T$ predicciones.
+  \item Con $B=T=32$: $32\cdot 32=1024$.
+\end{enumerate}
+\resultado \textbf{$y_t=x_{t+1}$; un lote $(B,T)$ contiene $B\cdot T$ predicciones, $1024$ con $B=T=32$.}
+\comprobacion en el \cref{ej:sal-y-sol}, las 6 ventanas con $T=4$ dan $6\cdot 4=24$ predicciones.
+\end{solucion}
+
+\begin{solucion}{eje:1-hola}
+\datos texto «hola\nl»: $n=5$ caracteres (\tok{h}, \tok{o}, \tok{l}, \tok{a}, \nl); $T=2$.
+\planteamiento por la \cref{prop:ventanas} hay $n-T$ ventanas, con inicios $i=1,\dots,n-T$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Número de ventanas: $5-2=3$.
+  \item Inicio 1: $x=\tok{ho}$, $y=\tok{ol}$.
+  \item Inicio 2: $x=\tok{ol}$, $y=\tok{la}$.
+  \item Inicio 3: $x=\tok{la}$, $y=\tok{a}$\nl.
+  \item Predicciones: $3\cdot 2=6$.
+  \item Un inicio en el cuarto carácter daría $x=\tok{a}$\nl\ y exigiría como último objetivo el sexto carácter, que no existe.
+\end{enumerate}
+\resultado \textbf{3 ventanas: $(\tok{ho},\tok{ol})$, $(\tok{ol},\tok{la})$, $(\tok{la},\tok{a}\nl)$; 6 predicciones.}
+\comprobacion cada ventana usa $T+1=3$ caracteres consecutivos, y en un texto de 5 hay exactamente $5-3+1=3$ bloques de 3.
+\end{solucion}
+
+\begin{solucion}{eje:1-d2l}
+\datos $n=10$ tokens $u_1,\dots,u_{10}$; $T=4$; la ventana que empieza en $i$ usa $u_i,\dots,u_{i+4}$.
+\planteamiento una ventana necesita $T+1=5$ tokens consecutivos; en el corte sin solape, los trozos empiezan en $k+1$, $k+1+T$, \dots
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Inicios válidos: $i=1,\dots,n-T=6$; hay 6 ventanas, que se denotan $w_1,\dots,w_6$ por su inicio.
+  \item (b) Tras descartar $k$ tokens quedan $10-k$; un trozo usa 4 de entrada y necesita uno más, luego caben $\lfloor(10-k-1)/4\rfloor$ trozos.
+  \item $k=0$: $\lfloor 9/4\rfloor=2$ trozos ($w_1$, $w_5$). $k=1$: $\lfloor 8/4\rfloor=2$ ($w_2$, $w_6$). $k=2$: $\lfloor 7/4\rfloor=1$ ($w_3$). $k=3$: $\lfloor 6/4\rfloor=1$ ($w_4$).
+  \item Probabilidades: $P(w_1)=P(w_5)=\frac14\cdot\frac12=\frac18$; $P(w_2)=P(w_6)=\frac18$; $P(w_3)=P(w_4)=\frac14\cdot 1=\frac14$.
+  \item No es uniforme: $w_3$ y $w_4$ salen con el doble de probabilidad que las demás. Sí lo es el procedimiento de la \cref{def:lote}: elegir el inicio uniformemente entre los 6 posibles, con probabilidad $\frac16$ cada uno.
+  \item (c) Las frases tienen longitudes distintas: para formar un lote rectangular habría que rellenar las cortas (cómputo desperdiciado) o descartar o cortar las largas. Con el corpus concatenado y un delimitador entre documentos, todas las ventanas tienen longitud $T$ y no hace falta relleno~\cite[§5.1]{cs336}.
+\end{enumerate}
+\resultado \textbf{(a) 6 ventanas; (b) 2, 2, 1 y 1 trozos para $k=0,1,2,3$, con probabilidades $\frac18,\frac18,\frac14,\frac14,\frac18,\frac18$ para $w_1,\dots,w_6$: no es uniforme, y sí lo es elegir el inicio al azar entre los 6; (c) las frases completas obligan a rellenar, y la concatenación lo evita.}
+\comprobacion las probabilidades suman $4\cdot\frac18+2\cdot\frac14=1$. En el \cref{ej:sal-y-sol}, también con $n=10$ y $T=4$, hay 6 ventanas.
+\end{solucion}
+
+\begin{solucion}{eje:1-estable}
+\datos $o=(1000,1001,999)$, objetivo el primer componente; pérdidas $(0{,}5;\allowbreak\,1{,}2;\allowbreak\,0{,}1;\allowbreak\,2{,}0)$.
+\planteamiento \cref{prop:traslacion} con $z^{\star}=1001$; perplejidad por la \cref{def:ppl}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $o-z^{\star}=(-1,0,-2)$.
+  \item $e^{-1}=0{,}3679$, $e^{0}=1$, $e^{-2}=0{,}1353$; suma $1{,}503$; $\ln 1{,}503=0{,}4076$.
+  \item $\ell=-(-1)+0{,}4076=1{,}408$ nats.
+  \item En precisión simple el máximo representable es $\approx 3{,}4\cdot 10^{38}\approx e^{88{,}7}$; $e^{1000}$ da infinito, el cociente $\infty/\infty$ es indefinido (NaN) y la pérdida no puede calcularse.
+  \item (b) Media: $(0{,}5+1{,}2+0{,}1+2{,}0)/4=3{,}8/4=0{,}95$; $\PPL=e^{0{,}95}=2{,}586$.
+\end{enumerate}
+\resultado \textbf{(a) $\ell=1{,}408$ nats, y el cálculo directo desborda; (b) $\PPL\approx 2{,}59$.}
+\comprobacion $o$ es una permutación de $(2,1,0)+999$ y el objetivo es el logit intermedio; con los logits del \cref{ej:gradiente}, $\ell=-1+\ln 11{,}107=-1+2{,}408=1{,}408$.
+\end{solucion}
+
+\begin{solucion}{eje:1-ppl}
+\datos $\mathcal{L}=0{,}7$ nats por carácter.
+\planteamiento $\PPL=e^{\mathcal{L}}$; bits $=$ nats $/\ln 2$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\PPL=e^{0{,}7}=2{,}014$.
+  \item $\ln 2=0{,}6931$; $0{,}7/0{,}6931=1{,}010$ bits por carácter.
+  \item En base 2: $2^{1{,}010}=2{,}014$.
+\end{enumerate}
+\resultado \textbf{$\PPL\approx 2{,}01$; $1{,}01$ bits por carácter.}
+\comprobacion $2^{\mathcal{L}/\ln 2}=e^{(\mathcal{L}/\ln 2)\ln 2}=e^{\mathcal{L}}$, luego la perplejidad no depende de la base.
+\end{solucion}
+
+\begin{solucion}{eje:1-cabeza-cero}
+\datos capa de salida $z=Wh+b$ con $W=0$, $b=0$; $K$ tokens; lote con $BT$ objetivos y frecuencias empíricas $\hat\pi$.
+\planteamiento calcular los logits, aplicar la \cref{prop:lnK} y, para el gradiente, la \cref{prop:gradiente} con $\partial z/\partial b=I$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Para cualquier representación $h$, $z=0\cdot h+0=\mathbf 0$: los logits no dependen de los demás parámetros.
+  \item Por la \cref{prop:lnK}, cada posición tiene $p=(1/K,\dots,1/K)$ y pérdida $\ln K$.
+  \item La pérdida del lote es la media de $BT$ valores iguales a $\ln K$, es decir, $\ln K$.
+  \item Gradiente respecto de $b$ en una posición: como $z=Wh+b$, $\partial\ell/\partial b=\nabla_z\ell=p-e_y=\tfrac1K\mathbf 1-e_y$.
+  \item Promediando sobre el lote: $\nabla_b\mathcal{L}=\tfrac1K\mathbf 1-\frac{1}{BT}\sum_{b,t}e_{Y_{b,t}}=\tfrac1K\mathbf 1-\hat\pi$.
+  \item Tras un paso de descenso con tasa $\eta$: $b=\eta\,(\hat\pi-\tfrac1K\mathbf 1)$. Los tokens más frecuentes que la media reciben un logit positivo y los menos frecuentes uno negativo.
+\end{enumerate}
+\resultado \textbf{$\mathcal{L}_0=\ln K$ exactamente ($3{,}829$ nats con $K=46$), y $\nabla_b\mathcal{L}=\tfrac1K\mathbf 1-\hat\pi$: el primer paso orienta el sesgo hacia las frecuencias de los tokens, es decir, hacia un modelo de unigramas.}
+\comprobacion las componentes de $\tfrac1K\mathbf 1-\hat\pi$ suman $1-1=0$, como las de todo gradiente respecto de los logits (\cref{ej:gradiente}). El mini-GPT de la práctica empieza en $4{,}046$, por encima de $\ln 46$, porque su cabeza no se inicializa a cero.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-sin-mascara}
+\datos modelo de dos o más bloques; máscara $\Mm$ de la \cref{def:mha}.
+\planteamiento separar el entrenamiento sin máscara (fuga de la respuesta) de la generación sin máscara (desajuste entre entrenamiento y uso).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sin máscara al entrenar, la posición $t$ puede atender a $x_{t+1}=y_t$. Una cabeza que copie la posición siguiente reduce la pérdida casi a cero sin aprender a predecir (\cref{obs:fuga}).
+  \item Ese modelo falla al generar: en la última posición no existe el token siguiente, y la pista de la que dependía desaparece.
+  \item Con máscara al entrenar y sin ella al generar: en el primer bloque, la última posición no cambia, porque no hay posiciones posteriores a las que atender.
+  \item Sí cambian las representaciones de las posiciones anteriores, que ahora atienden también a posiciones posteriores.
+  \item Desde el segundo bloque, la última posición lee esas representaciones distintas, que nunca vio durante el entrenamiento, y su predicción se degrada.
+\end{enumerate}
+\resultado \textbf{sin máscara al entrenar, el modelo copia la respuesta (pérdida casi nula que no generaliza); sin máscara solo al generar, el primer bloque de la última posición no cambia, pero los siguientes reciben entradas distintas de las del entrenamiento.}
+\comprobacion el \cref{tab:sintomas} asocia una pérdida casi nula en entrenamiento y validación con la fuga del futuro.
+\end{solucion}
+
+\begin{solucion}{eje:2-mascara}
+\datos puntuaciones $S$ por filas $(0,1,3)$, $(1,1,2)$, $(2,0,1)$; valores $v_1=(1,0)$, $v_2=(0,1)$, $v_3=(1,1)$.
+\planteamiento por el \cref{lem:mascara}, la fila $t$ es la softmax de $(S_{t1},\dots,S_{tt})$; la salida en $t$ es $\sum_{j\le t}a_{tj}v_j$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Fila 1: solo $j=1$; $a_{1\cdot}=(1,0,0)$.
+  \item Fila 2: $\softmax(1,1)=(0{,}5;\allowbreak\,0{,}5)$; $a_{2\cdot}=(0{,}5;\allowbreak\,0{,}5;\allowbreak\,0)$.
+  \item Fila 3: $e^{2}=7{,}389$, $e^{0}=1$, $e^{1}=2{,}718$; suma $11{,}107$; $a_{3\cdot}=(0{,}6652;\allowbreak\,0{,}0900;\allowbreak\,0{,}2447)$.
+  \item Salidas: $o_1=v_1=(1,0)$; $o_2=0{,}5\,(1,0)+0{,}5\,(0,1)=(0{,}5;\allowbreak\,0{,}5)$.
+  \item $o_3=0{,}6652\,(1,0)+0{,}0900\,(0,1)+0{,}2447\,(1,1)=(0{,}6652+0{,}2447;\;0{,}0900+0{,}2447)=(0{,}9100;\allowbreak\,0{,}3348)$.
+  \item No influyen las entradas por encima de la diagonal: $S_{12}=1$, $S_{13}=3$ y $S_{23}=2$.
+\end{enumerate}
+\resultado \textbf{pesos $\begin{psmallmatrix}1&0&0\\0{,}5&0{,}5&0\\0{,}6652&0{,}0900&0{,}2447\end{psmallmatrix}$; salidas $(1,0)$, $(0{,}5;\allowbreak\,0{,}5)$ y $(0{,}9100;\allowbreak\,0{,}3348)$; las puntuaciones $S_{12}$, $S_{13}$ y $S_{23}$ se ignoran.}
+\comprobacion cada fila suma~1 ($0{,}6652+0{,}0900+0{,}2447=0{,}9999$ por redondeo). La mayor puntuación de toda la matriz, $S_{13}=3$, no tiene ningún efecto, como exige la causalidad.
+\end{solucion}
+
+\begin{solucion}{eje:2-param32}
+\datos $K=46$, $T=32$, $d=32$, $L=2$.
+\planteamiento \cref{prop:parametros}: $N=Kd+Td+L(12d^{2}+10d)+2d+dK+K$; con atadura se resta $Kd$ (\cref{obs:atados}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Bloque: $12\cdot 32^{2}=12\cdot 1024=12\,288$; $10\cdot 32=320$; total $12\,608$.
+  \item Dos bloques: $2\cdot 12\,608=25\,216$.
+  \item Embeddings: $46\cdot 32=1472$ (token) y $32\cdot 32=1024$ (posición).
+  \item Normalización final: $2\cdot 32=64$. Cabeza: $32\cdot 46+46=1518$.
+  \item Total: $1472+1024+25\,216+64+1518=29\,294$.
+  \item Bloques: $25\,216/99\,584=0{,}2532$ de los del modelo base.
+  \item Con pesos atados: $29\,294-1472=27\,822$.
+\end{enumerate}
+\resultado \textbf{$N=29\,294$ (o $27\,822$ con pesos atados); los bloques tienen aproximadamente la cuarta parte de parámetros que con $d=64$.}
+\comprobacion el cociente $0{,}2532$ es cercano a $(32/64)^{2}=0{,}25$, porque el término dominante es $12d^{2}$; coincide con la fila $d=32$ del \cref{tab:hiper}.
+\end{solucion}
+
+\begin{solucion}{eje:2-cabezas}
+\datos modelo base con $d=64$ y $n_h=4$ frente a $n_h=1$; pérdidas finales $0{,}324$ y $0{,}336$.
+\planteamiento la \cref{prop:parametros} no depende de $n_h$; $d_k=d/n_h$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Ambos tienen $N=107\,694$ parámetros.
+  \item (b) Con $n_h=4$, $d_k=64/4=16$ y cada bloque calcula 4 matrices de pesos $T\times T$. Con $n_h=1$, $d_k=64$ y una sola matriz.
+  \item (c) Con el mismo número de parámetros, la diferencia está en la estructura: cada cabeza produce en cada posición \emph{una} combinación convexa de valores. Con una cabeza, la posición $t$ solo puede promediar; con cuatro, puede atender a la vez, por ejemplo, a la etiqueta de la línea y al carácter anterior, y combinar ambos resultados mediante $W_O$.
+\end{enumerate}
+\resultado \textbf{(a) 107\,694 en ambos casos; (b) 4 matrices de pesos con $d_k=16$ frente a una con $d_k=64$; (c) la mejora procede de poder atender a varias posiciones a la vez, no de tener más parámetros.}
+\comprobacion con los mismos parámetros, la variante de una cabeza es más rápida en la práctica (tiempo relativo $0{,}7$): el número de parámetros no mide el coste de calcular y aplicar varias matrices de atención.
+\end{solucion}
+
+\begin{solucion}{eje:2-gpt2}
+\datos $K=50\,257$, $T=1024$, $d=768$, $L=12$; sesgos en $Q$, $K$, $V$; cabeza atada a $E$ y sin sesgo.
+\planteamiento adaptar la \cref{prop:parametros}: el sesgo de $Q,K,V$ añade $3d$ por bloque, y la cabeza no añade nada.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Bloque: $3d^{2}+3d$ (QKV) $+\,d^{2}+d$ (salida) $+\,8d^{2}+5d$ (MLP) $+\,4d$ (normalizaciones) $=12d^{2}+13d$.
+  \item $d^{2}=589\,824$; $12d^{2}=7\,077\,888$; $13d=9984$; bloque $=7\,087\,872$.
+  \item Doce bloques: $12\cdot 7\,087\,872=85\,054\,464$.
+  \item Embeddings: $Kd=50\,257\cdot 768=38\,597\,376$; $Td=1024\cdot 768=786\,432$.
+  \item Normalización final: $2d=1536$. Total: $85\,054\,464+38\,597\,376+786\,432+1536=124\,439\,808$.
+  \item (b) Memoria: $124\,439\,808\cdot 4=497\,759\,232$ bytes $\approx 498$~MB.
+  \item (c) Fracciones:
+  \[
+  \frac{85\,054\,464}{124\,439\,808}=0{,}683\ \text{(bloques)},\qquad \frac{38\,597\,376+786\,432}{124\,439\,808}=0{,}316\ \text{(embeddings)}.
+  \]
+\end{enumerate}
+\resultado \textbf{$N=124\,439\,808$ ($\approx 124$ millones), $\approx 498$~MB en precisión simple; el 68~\% de los parámetros está en los bloques y el 32~\% en las tablas de embeddings, frente al 92~\% en bloques del mini-GPT.}
+\comprobacion el resultado coincide con el tamaño de 124 millones con que se suele citar GPT-2 \emph{small} (la tabla~2 de~\cite{gpt2} lo redondea a 117 millones). La fracción de embeddings es alta porque $K=50\,257$ es grande frente a $d=768$; con pesos sin atar habría $38\,597\,376$ parámetros más.
+\end{solucion}
+
+\begin{solucion}{eje:2-permutacion}
+\datos mini-GPT con $P=0$; permutación $\sigma$; $x^{\sigma}_t=x_{\sigma(t)}$.
+\planteamiento inducción sobre las capas, como en el \cref{teo:causal}, usando que una suma no depende del orden de sus términos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Base: $h^{0}_t(x^{\sigma})=E_{x_{\sigma(t)}}=h^{0}_{\sigma(t)}(x)$; las filas de $H^{0}(x^{\sigma})$ son las de $H^{0}(x)$ permutadas.
+  \item Paso: supóngase $h^{\ell-1}_t(x^{\sigma})=h^{\ell-1}_{\sigma(t)}(x)$ para todo $t$. Las operaciones fila a fila (normalización, proyecciones, MLP, residuales) conservan esta relación.
+  \item Sin máscara, la cabeza $r$ da en la fila $t$ la suma $\sum_{j=1}^{T}a_{tj}(\Vm_r)_j$, con $a_{tj}\propto\exp\bigl((\Qm_r)_t\cdot(\Km_r)_j/\sqrt{d_k}\bigr)$. Para $x^{\sigma}$, la consulta es la de la posición $\sigma(t)$ de $x$, y la suma recorre las claves y valores de todas las posiciones de $x$ en otro orden; su valor coincide con el de la fila $\sigma(t)$ para $x$. Por inducción, $z_t(x^{\sigma})=z_{\sigma(t)}(x)$.
+  \item (b) Con máscara y $L=1$, la posición $T$ atiende a todas las posiciones $j\le T$, es decir, a todas. Si $\sigma(T)=T$, su consulta no cambia ($h^{0}_T=E_{x_T}$), y el conjunto de pares (clave, valor) es el mismo, reordenado. La suma, y con ella $z_T$, no cambia.
+  \item (c) Con $L\ge 2$, la segunda capa en la posición $T$ lee las representaciones $h^{1}_j$ de la primera, y cada $h^{1}_j$ depende del prefijo $x_{1:j}$ por la máscara. Al permutar, los prefijos cambian como conjuntos (por ejemplo, $h^{1}_1$ pasa a depender de $x_{\sigma(1)}$ en lugar de $x_1$), de modo que el conjunto $\{h^{1}_j\}$ no es una reordenación del original.
+  \item La máscara rompe, por tanto, la simetría de permutación: la posición $j$ atiende a exactamente $j$ tokens, y esa asimetría permite al modelo inferir el orden sin codificación posicional. CS336 propone comprobarlo empíricamente con el experimento \emph{no\_pos\_emb} (NoPE) de su §7.3~\cite{cs336}.
+\end{enumerate}
+\resultado \textbf{(a) sin máscara y sin posiciones, el modelo es equivariante por permutaciones para todo $L$; (b) con máscara y un bloque, $z_T$ es invariante frente a las permutaciones que fijan $T$; (c) con dos o más bloques la máscara introduce información de orden, por lo que un decoder puede entrenarse sin codificación posicional.}
+\comprobacion para $T=2$ en (a): intercambiar $x_1$ y $x_2$ intercambia $z_1$ y $z_2$, y en (b) con $T=3$, intercambiar $x_1$ y $x_2$ deja invariante $z_3$ pero no $z_2$, que pasa de ver $\{x_1,x_2\}$ con consulta $x_2$ a verlo con consulta $x_1$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-orden}
+\planteamiento revisar qué hace cada paso de la \cref{def:paso} y qué cantidades modifica.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El recorte necesita el gradiente completo, luego va después de la retropropagación. Debe ir antes del paso del optimizador porque AdamW incorpora $g$ a sus medias móviles: un gradiente anómalo sin recortar contaminaría $m$ y $v$ durante muchos pasos (unos $1/(1-\beta_2)$ en el caso de $v$).
+  \item Con la norma global, el gradiente recortado es un múltiplo positivo del original y conserva la dirección de descenso (\cref{prop:recorte}); por tensor, la dirección cambia.
+  \item El calentamiento evita pasos grandes cuando los momentos de Adam se han estimado con pocos gradientes y estos son grandes e irregulares.
+  \item El decaimiento coseno reduce la tasa al final, lo que disminuye el exceso de pérdida debido al ruido del gradiente estocástico y permite afinar.
+\end{enumerate}
+\resultado \textbf{recorte entre \texttt{backward} y \texttt{step}, con norma global para no cambiar la dirección; el calentamiento protege el arranque y el coseno afina el final.}
+\comprobacion en el \cref{tab:hiper}, quitar el calentamiento empeora la pérdida final de $0{,}297$ a $0{,}306$ y quitar el coseno, de $0{,}324$ a $0{,}337$.
+\end{solucion}
+
+\begin{solucion}{eje:3-calendario}
+\datos $W=200$, $S=2000$, $\eta_{\max}=10^{-3}$, $\eta_{\min}=10^{-4}$; $s=9$ y $s=1000$.
+\planteamiento \cref{def:calendario}: rama lineal si $s<W$; rama coseno si no.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $s=9<200$: $\eta_9=10^{-3}\cdot 10/200=5\cdot 10^{-5}$.
+  \item $s=1000\ge 200$: progreso $(1000-200)/(2000-200)=800/1800=0{,}4444$.
+  \item Ángulo $\pi\cdot 0{,}4444=1{,}396$ rad; $\cos 1{,}396=0{,}1736$.
+  \item $\tfrac12(\eta_{\max}-\eta_{\min})=\tfrac12\cdot 9\cdot 10^{-4}=4{,}5\cdot 10^{-4}$; $1+0{,}1736=1{,}1736$.
+  \item $\eta_{1000}=10^{-4}+4{,}5\cdot 10^{-4}\cdot 1{,}1736=10^{-4}+5{,}281\cdot 10^{-4}=6{,}281\cdot 10^{-4}$.
+\end{enumerate}
+\resultado \textbf{$\eta_9=5\cdot 10^{-5}$ y $\eta_{1000}\approx 6{,}28\cdot 10^{-4}$.}
+\comprobacion el punto medio del coseno es $s=1100$, con $\eta=5{,}5\cdot 10^{-4}$; $s=1000$ está antes y su tasa es mayor. Por la \cref{prop:calendario}~(iv), $\eta_{1200}=1{,}1\cdot 10^{-3}-6{,}281\cdot 10^{-4}=4{,}719\cdot 10^{-4}$, que coincide con el cálculo directo.
+\end{solucion}
+
+\begin{solucion}{eje:3-cs336-cal}
+\datos $\alpha_{\max}=10^{-3}$, $\alpha_{\min}=10^{-4}$, $T_w=100$, $T_c=1000$; $\alpha_{\max}-\alpha_{\min}=9\cdot 10^{-4}$.
+\planteamiento aplicar cada rama de la \cref{obs:cs336-cal}; en el coseno, la fracción es $(t-100)/900$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $t=0$: $(0/100)\cdot 10^{-3}=0$. $t=50$: $(50/100)\cdot 10^{-3}=5\cdot 10^{-4}$.
+  \item $t=100$: fracción $0$, $\cos 0=1$; $\alpha=10^{-4}+\tfrac12\cdot 2\cdot 9\cdot 10^{-4}=10^{-3}$.
+  \item $t=325$: fracción $0{,}25$; $\cos(\pi/4)=0{,}7071$; $\tfrac12\cdot 1{,}7071\cdot 9\cdot 10^{-4}=7{,}682\cdot 10^{-4}$; $\alpha=8{,}682\cdot 10^{-4}$.
+  \item $t=550$: fracción $0{,}5$; $\cos(\pi/2)=0$; $\alpha=10^{-4}+4{,}5\cdot 10^{-4}=5{,}5\cdot 10^{-4}$.
+  \item $t=775$: fracción $0{,}75$; $\cos(3\pi/4)=-0{,}7071$; $\tfrac12\cdot 0{,}2929\cdot 9\cdot 10^{-4}=1{,}318\cdot 10^{-4}$; $\alpha=2{,}318\cdot 10^{-4}$.
+  \item $t=1000$: $\cos\pi=-1$; $\alpha=10^{-4}$. $t=1200>T_c$: $\alpha=\alpha_{\min}=10^{-4}$.
+\end{enumerate}
+\resultado \textbf{$0$; $5\cdot 10^{-4}$; $10^{-3}$; $8{,}682\cdot 10^{-4}$; $5{,}5\cdot 10^{-4}$; $2{,}318\cdot 10^{-4}$; $10^{-4}$; $10^{-4}$.} CS336 empieza en $\alpha_0=0$ y llega al pico en $t=T_w$, y mantiene $\alpha_{\min}$ después de $T_c$; el calendario del módulo empieza en $\eta_{\max}/W$, llega al pico en $s=W-1$ y termina en $s=S-1$.
+\comprobacion $t=325$ y $t=775$ son simétricos respecto del punto medio: $8{,}682\cdot 10^{-4}+2{,}318\cdot 10^{-4}=1{,}1\cdot 10^{-3}=\alpha_{\max}+\alpha_{\min}$, como en la \cref{prop:calendario}~(iv).
+\end{solucion}
+
+\begin{solucion}{eje:3-clip}
+\datos $c=1$, $\varepsilon=10^{-6}$.
+\planteamiento calcular $\norm{g}_2$; si es al menos $c$, multiplicar por $c/(\norm{g}_2+\varepsilon)$ (\cref{def:recorte}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\norm{(3,4,0)}_2=\sqrt{9+16}=5\ge 1$. Factor $1/(5+10^{-6})=0{,}2000$; $g'=(0{,}6;\allowbreak\,0{,}8;\allowbreak\,0)$, de norma $5/(5+10^{-6})=0{,}9999998$.
+  \item (b) $\norm{(0{,}3;\allowbreak\,0{,}4;\allowbreak\,0)}_2=\sqrt{0{,}09+0{,}16}=0{,}5<1$: no se modifica.
+  \item (c) Norma global: $\sqrt{3^{2}+4^{2}+12^{2}}=\sqrt{169}=13$. Factor $1/13=0{,}07692$: $(0{,}2308;\allowbreak\,0{,}3077)$ y $(0{,}9231)$.
+  \item Fracción de la norma del primer tensor: antes y después del recorte global, $5/13=0{,}3846$.
+  \item Por tensor: $(3,4)\to(0{,}6;\allowbreak\,0{,}8)$ con norma~1 y $(12)\to(1)$. Norma total $\sqrt 2=1{,}414$; la fracción del primer tensor pasa a $1/\sqrt2=0{,}7071$.
+\end{enumerate}
+\resultado \textbf{(a) $(0{,}6;\allowbreak\,0{,}8;\allowbreak\,0)$; (b) sin cambios; (c) $(0{,}2308;\allowbreak\,0{,}3077)$ y $(0{,}9231)$. El recorte global mantiene la fracción $0{,}385$ del primer tensor; el recorte por tensor la eleva a $0{,}707$ y cambia la dirección.}
+\comprobacion $0{,}2308^{2}+0{,}3077^{2}+0{,}9231^{2}=0{,}0533+0{,}0947+0{,}8521=1{,}000$.
+\end{solucion}
+
+\begin{solucion}{eje:3-sgd}
+\datos $L(w)=\frac1{100}\sum_i w_i^{2}$; tasa $\alpha/\sqrt{t+1}$ en el paso $t$.
+\planteamiento la actualización es lineal en $w$, y $L$ es cuadrática: si todos los pesos se multiplican por $f$, $L$ se multiplica por $f^{2}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\partial L/\partial w_i=2w_i/100=w_i/50$. Luego $w\leftarrow w-\frac{\alpha}{\sqrt{t+1}}\cdot\frac{w}{50}=\Bigl(1-\frac{\alpha}{50\sqrt{t+1}}\Bigr)w=f_t\,w$.
+  \item (b) $L_3/L_0=(f_0f_1f_2)^{2}$, con $\sqrt2=1{,}414$ y $\sqrt3=1{,}732$.
+  \item $\alpha=1$: $f=(0{,}98;\allowbreak\,0{,}9859;\allowbreak\,0{,}9885)$; producto $0{,}9551$; cociente $0{,}912$.
+  \item $\alpha=10$: $f=(0{,}8;\allowbreak\,0{,}8586;\allowbreak\,0{,}8845)$; producto $0{,}6075$; cociente $0{,}369$.
+  \item $\alpha=100$: $f=(-1;\allowbreak\,-0{,}4142;\allowbreak\,-0{,}1547)$; producto $-0{,}06408$; cociente $0{,}0041$.
+  \item $\alpha=1000$: $f=(-19;\allowbreak\,-13{,}14;\allowbreak\,-10{,}55)$; producto en valor absoluto $2634$; cociente $6{,}94\cdot 10^{6}$.
+\end{enumerate}
+\resultado \textbf{$L_3/L_0=0{,}912$, $0{,}369$, $0{,}0041$ y $6{,}9\cdot 10^{6}$: las tres primeras tasas hacen decrecer la pérdida (la tercera, tras un primer paso que no la cambia) y $\alpha=1000$ diverge.}
+\comprobacion la pérdida decrece en el paso $t$ si y solo si $\abs{f_t}<1$, es decir, $0<\alpha<100\sqrt{t+1}$. Con $\alpha=100$, $f_0=-1$: el peso cambia de signo y $L$ no varía; con $\alpha=1000$, $\abs{f_t}>1$ en los tres pasos.
+\end{solucion}
+
+\begin{solucion}{eje:3-flops}
+\datos $N=107\,694$; 2000 pasos; $B=T=32$; rendimiento efectivo $3\cdot 10^{10}$ FLOP/s.
+\planteamiento $C\approx 6ND$ con $D=\text{pasos}\cdot B\cdot T$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $D=2000\cdot 1024=2\,048\,000$ tokens.
+  \item $6N=646\,164$; $C=646\,164\cdot 2\,048\,000=1{,}323\cdot 10^{12}$ FLOP.
+  \item Tiempo: $1{,}323\cdot 10^{12}/(3\cdot 10^{10})=44{,}1$ s.
+\end{enumerate}
+\resultado \textbf{$C\approx 1{,}32\cdot 10^{12}$ FLOP; unos 44~s.}
+\comprobacion son $2000/800=2{,}5$ veces los pasos del \cref{ej:coste}: $2{,}5\cdot 5{,}29\cdot 10^{11}=1{,}32\cdot 10^{12}$ y $2{,}5\cdot 17{,}6=44$~s.
+\end{solucion}
+
+\begin{solucion}{eje:3-proyeccion}
+\datos $\mathcal{B}_c=\{u:\norm{u}_2\le c\}$; $g$ arbitrario.
+\planteamiento acotar $\norm{g-u}_2$ inferiormente con la desigualdad triangular y encontrar el punto que alcanza la cota.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Si $\norm{g}_2\le c$, entonces $g\in\mathcal{B}_c$ y su distancia a sí mismo es~0: $\Pi_c(g)=g$.
+  \item Si $\norm{g}_2>c$, para todo $u\in\mathcal{B}_c$: $\norm{g-u}_2\ge\norm{g}_2-\norm{u}_2\ge\norm{g}_2-c$.
+  \item El punto $u^{\star}=c\,g/\norm{g}_2$ está en $\mathcal{B}_c$ y $\norm{g-u^{\star}}_2=(1-c/\norm{g}_2)\norm{g}_2=\norm{g}_2-c$: alcanza la cota.
+  \item Unicidad: la igualdad en la primera desigualdad exige que $u$ sea un múltiplo no negativo de $g$, y en la segunda que $\norm{u}_2=c$; el único punto que cumple ambas es $u^{\star}$.
+  \item Con $\varepsilon=0$, la \cref{def:recorte} da $g$ si $\norm{g}_2<c$ y $c\,g/\norm{g}_2$ si $\norm{g}_2\ge c$ (en $\norm{g}_2=c$ ambas expresiones coinciden): es $\Pi_c$.
+  \item Por tensor: $\norm{g-u}_2^{2}=\sum_q\norm{g^{(q)}-u^{(q)}}_2^{2}$ es una suma de términos que dependen de bloques distintos, y cada uno se minimiza por separado proyectando $g^{(q)}$ sobre su bola.
+\end{enumerate}
+\resultado \textbf{el recorte global con $\varepsilon=0$ es la proyección euclídea sobre la bola $\mathcal{B}_c$; el recorte por tensor es la proyección sobre el producto cartesiano $\mathcal{B}^{(1)}_c\times\dots\times\mathcal{B}^{(P)}_c$ de una bola por tensor.}
+\comprobacion con $g=(3,4,12)$ y $c=1$, $u^{\star}=(3,4,12)/13$ está a distancia $13-1=12$ de $g$, mientras que el recorte por tensor $(0{,}6;\allowbreak\,0{,}8;\allowbreak\,1)$ está a distancia $\sqrt{2{,}4^{2}+3{,}2^{2}+11^{2}}=\sqrt{137}=11{,}70$, menor porque pertenece al producto de bolas, un conjunto mayor que $\mathcal{B}_1$, pero fuera de $\mathcal{B}_1$, ya que su norma es $\sqrt 2>1$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-estado}
+\datos AdamW guarda $m$, $v$ y el contador $t$; el calendario depende del paso $s$.
+\planteamiento analizar qué ocurre al reanudar si esos datos se pierden.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sin el estado del optimizador, $m=v=0$ y $t=0$: el primer paso usa momentos estimados con un único gradiente.
+  \item Ese paso tiene la magnitud de un paso de Adam normalizado sin la tasa reducida del calentamiento, y su dirección puede ser mala: la pérdida da un salto y tarda en recuperarse.
+  \item Sin el número de paso, el calendario vuelve a empezar: se repite el calentamiento y la tasa vuelve a subir hasta $\eta_{\max}$ cuando ya debería ser pequeña.
+\end{enumerate}
+\resultado \textbf{sin el estado del optimizador, el primer paso tras reanudar es anómalo y la curva da un salto; sin el número de paso, el calendario se reinicia.}
+\comprobacion el estado ocupa dos números por parámetro, el doble que el modelo, coherente con los $16N$ bytes de la \cref{prop:memoria} ($4N$ del modelo, $4N$ de los gradientes y $8N$ del estado).
+\end{solucion}
+
+\begin{solucion}{eje:4-fijos}
+\datos pérdida estimada como media de 20 lotes de validación fijos.
+\planteamiento \cref{prop:lotes-comunes}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La pérdida de un lote es una estimación ruidosa de la pérdida esperada.
+  \item Con lotes distintos en cada evaluación, la diferencia entre dos puntos de la curva mezcla el cambio del modelo con el azar del muestreo, y su varianza es $\Var(\hat{\mathcal{L}}_a)+\Var(\hat{\mathcal{L}}_b)$.
+  \item Con los mismos lotes, las dos estimaciones están positivamente correlacionadas (los lotes difíciles lo son para ambos estados) y el término $-2\Cov$ reduce la varianza de la diferencia.
+\end{enumerate}
+\resultado \textbf{con lotes fijos, la diferencia entre evaluaciones refleja sobre todo el cambio del modelo, porque el ruido común se cancela.}
+\comprobacion en el caso extremo $\theta_a=\theta_b$, con lotes comunes la diferencia es exactamente~0, mientras que con lotes independientes es una variable aleatoria de varianza $2\Var(\hat{\mathcal{L}}_a)$.
+\end{solucion}
+
+\begin{solucion}{eje:4-linea}
+\datos 4 elecciones uniformes de 6 opciones; 4 tipos de línea; 58 caracteres.
+\planteamiento las elecciones son uniformes e independientes y el resto de caracteres está determinado: la entropía de la línea es el logaritmo del número de posibilidades.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Posibilidades: $6^{4}=1296$; $\ln 1296=4\ln 6=4\cdot 1{,}792=7{,}167$ nats.
+  \item Tipo de línea: $\ln 4=1{,}386$ nats. Total: $7{,}167+1{,}386=8{,}553$ nats.
+  \item Por carácter: $8{,}553/58=0{,}1475$ nats.
+\end{enumerate}
+\resultado \textbf{$\approx 0{,}147$ nats por carácter.}
+\comprobacion es del mismo orden que la $H\approx 0{,}125$ del corpus completo (\cref{ej:entropia-corpus}) y muy inferior a los $0{,}324$ del modelo.
+\end{solucion}
+
+\begin{solucion}{eje:4-brecha}
+\datos entrenamiento $0{,}264$; validación $0{,}324$; $H\approx 0{,}125$ nats por carácter.
+\planteamiento $\PPL=e^{\mathcal{L}}$; por el \cref{teo:cota}, en media, $\mathcal{L}_{\mathrm{val}}=H+\KL$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $e^{0{,}264}=1{,}302$ y $e^{0{,}324}=1{,}383$; cociente $e^{0{,}324-0{,}264}=e^{0{,}06}=1{,}062$.
+  \item (b) $\KL\approx 0{,}324-0{,}125=0{,}199$ nats por carácter.
+  \item (c) $e^{0{,}125}=1{,}133$.
+\end{enumerate}
+\resultado \textbf{(a) perplejidades $1{,}30$ y $1{,}38$, con cociente $1{,}06$; (b) $\KL\approx 0{,}20$ nats por carácter; (c) un modelo perfecto dudaría en media entre $1{,}13$ opciones por carácter: casi todos los caracteres están determinados y la incertidumbre se concentra en unas pocas elecciones por línea.}
+\comprobacion la brecha de $0{,}06$ nats es pequeña frente a la distancia a la cota, $0{,}199$: el margen de mejora está más en la capacidad y el entrenamiento que en la regularización.
+\end{solucion}
+
+\begin{solucion}{eje:4-memoria}
+\datos $N=609\,838$ y $N=7\cdot 10^{9}$; 4 bytes por número; GPU de 80~GB.
+\planteamiento \cref{prop:memoria}: $16N$ bytes.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Parámetros: $4\cdot 609\,838=2\,439\,352$ bytes $=2{,}44$~MB; lo mismo los gradientes.
+  \item Estado de AdamW: $8\cdot 609\,838=4\,878\,704$ bytes $=4{,}88$~MB. Total: $16\cdot 609\,838=9\,757\,408$ bytes $\approx 9{,}76$~MB.
+  \item (b) $16\cdot 7\cdot 10^{9}=1{,}12\cdot 10^{11}$ bytes $=112$~GB.
+  \item GPU necesarias: $112/80=1{,}4$, luego al menos 2.
+\end{enumerate}
+\resultado \textbf{(a) $\approx 9{,}76$~MB; (b) $112$~GB, que exigen al menos 2 GPU de $80$~GB solo para parámetros, gradientes y estado del optimizador.}
+\comprobacion $9{,}76$~MB es $609\,838/107\,694=5{,}66$ veces el valor del modelo base, $1{,}72$~MB: $5{,}66\cdot 1{,}72=9{,}75$.
+\end{solucion}
+
+\begin{solucion}{eje:4-condicional}
+\datos distribución conjunta $p(c,x)$; modelo $q(x\mid c)$ positivo donde $p(c,x)>0$.
+\planteamiento descomponer la esperanza por contextos y aplicar el \cref{teo:cota} a cada uno.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\E_p[-\ln q(X\mid C)]=\sum_{c}p(c)\sum_x p(x\mid c)\bigl(-\ln q(x\mid c)\bigr)=\sum_c p(c)\,H\bigl(p(\cdot\mid c),q(\cdot\mid c)\bigr)$.
+  \item Por el \cref{teo:cota}, para cada $c$ con $p(c)>0$: $H\bigl(p(\cdot\mid c),q(\cdot\mid c)\bigr)=H\bigl(p(\cdot\mid c)\bigr)+\KL\bigl(p(\cdot\mid c)\Vert q(\cdot\mid c)\bigr)$.
+  \item Sumando: $\E_p[-\ln q(X\mid C)]=H(X\mid C)+\sum_c p(c)\,\KL\bigl(p(\cdot\mid c)\Vert q(\cdot\mid c)\bigr)$, porque $\sum_c p(c)H(p(\cdot\mid c))=H(X\mid C)$.
+  \item Cada divergencia es no negativa y el peso $p(c)$ también, luego la suma es no negativa: se obtiene la desigualdad.
+  \item Igualdad si y solo si cada término es nulo, es decir, $\KL\bigl(p(\cdot\mid c)\Vert q(\cdot\mid c)\bigr)=0$ para todo $c$ con $p(c)>0$, lo que ocurre si y solo si $q(\cdot\mid c)=p(\cdot\mid c)$.
+  \item En un modelo de lenguaje, $C$ es el contexto $x_{1:t}$ y $X$ el token siguiente; la pérdida esperada de la \cref{def:perdida} es exactamente $\E_p[-\ln q(X\mid C)]$.
+\end{enumerate}
+\resultado \textbf{$\E_p[-\ln q(X\mid C)]=H(X\mid C)+\E_{C}\bigl[\KL\bigl(p(\cdot\mid C)\Vert q(\cdot\mid C)\bigr)\bigr]\ge H(X\mid C)$, con igualdad si y solo si el modelo coincide con la distribución condicionada real en todo contexto posible.}
+\comprobacion si $C$ es constante, $H(X\mid C)=H(X)$ y se recupera el \cref{teo:cota}.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-conceptos}
+\planteamiento aplicar las \cref{def:topk,def:topp} y la \cref{prop:limites}.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item $k=1$: solo sobrevive el mayor logit; se elige siempre el token más probable (decodificación voraz).
+  \item $k=K$: no se elimina ningún logit; es el muestreo del modelo.
+  \item $\rho=1$: $V(1)$ es el menor conjunto de masa~1, el de los tokens con probabilidad positiva, que con la softmax son todos; no cambia nada.
+  \item $\tau\to 0^{+}$: la distribución tiende al vector \emph{one-hot} del mayor logit, como la voraz.
+  \item $\tau=3$: la distribución se acerca a la uniforme y los 46 caracteres, incluidos dígitos y signos, salen con probabilidades parecidas; el texto se degrada.
+\end{enumerate}
+\resultado \textbf{(a) y (d) son deterministas (salvo empates); (b) y (c) equivalen a muestrear del modelo; (e) aproxima el muestreo uniforme.}
+\comprobacion por el \cref{teo:entropia-tau}, la entropía con $\tau=3$ es mayor que con $\tau=1$, y está acotada por $\ln 46=3{,}829$.
+\end{solucion}
+
+\begin{solucion}{eje:5-topk}
+\datos $z=(3,1,1,0)$; $k=2$; $\tau=1$.
+\planteamiento quedarse con los índices de $I_2(z)$, poner el resto a $-\infty$ y aplicar la softmax.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Ordenados: $3,1,1,0$; el segundo y el tercero empatan.
+  \item Convenio de la \cref{def:topk} (empate al índice menor): $I_2=\{1,2\}$. $e^{3}=20{,}09$, $e^{1}=2{,}718$; suma $22{,}80$; $p=(0{,}8808;\allowbreak\,0{,}1192;\allowbreak\,0;\allowbreak\,0)$.
+  \item Convenio alternativo (todo logit $\ge 1$): sobreviven los índices 1, 2 y 3. Suma $20{,}09+2\cdot 2{,}718=25{,}52$; $p=(0{,}7870;\allowbreak\,0{,}1065;\allowbreak\,0{,}1065;\allowbreak\,0)$.
+\end{enumerate}
+\resultado \textbf{$(0{,}881;\allowbreak\,0{,}119;\allowbreak\,0;\allowbreak\,0)$ con desempate por índice y $(0{,}787;\allowbreak\,0{,}107;\allowbreak\,0{,}107;\allowbreak\,0)$ conservando los empatados.}
+\comprobacion ambas suman~1, y la primera coincide con la que devuelve una implementación que elige exactamente $k$ índices. Con logits reales, los empates exactos son raros.
+\end{solucion}
+
+\begin{solucion}{eje:5-temp}
+\datos $z=(3,1,0)$; $\tau=0{,}5$, $1$, $2$.
+\planteamiento $p=\softmax(z/\tau)$; $H=-\sum p_i\ln p_i$; $\Var_p(z)=\sum p_iz_i^{2}-(\sum p_iz_i)^{2}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\tau=0{,}5$: $z/\tau=(6,2,0)$; $e^{6}=403{,}4$, $e^{2}=7{,}389$, $1$; suma $411{,}8$; $p=(0{,}9796;\allowbreak\,0{,}0179;\allowbreak\,0{,}0024)$; $H=0{,}0202+0{,}0721+0{,}0146=0{,}1069$.
+  \item $\tau=1$: $e^{3}=20{,}09$, $e^{1}=2{,}718$, $1$; suma $23{,}80$; $p=(0{,}8438;\allowbreak\,0{,}1142;\allowbreak\,0{,}0420)$; $H=0{,}1433+0{,}2478+0{,}1332=0{,}5243$.
+  \item $\tau=2$: $z/\tau=(1{,}5;\allowbreak\,0{,}5;\allowbreak\,0)$; $e^{1{,}5}=4{,}482$, $e^{0{,}5}=1{,}649$, $1$; suma $7{,}130$; $p=(0{,}6285;\allowbreak\,0{,}2312;\allowbreak\,0{,}1402)$; $H=0{,}2919+0{,}3386+0{,}2755=0{,}9060$.
+  \item Varianza con $\tau=1$: $\mu=3\cdot 0{,}8438+1\cdot 0{,}1142=2{,}646$; $\sum p_iz_i^{2}=9\cdot 0{,}8438+0{,}1142=7{,}708$; $\Var=7{,}708-2{,}646^{2}=7{,}708-6{,}999=0{,}7093$.
+  \item Derivada en $b=1$: $dH/db=-1\cdot 0{,}7093=-0{,}7093$.
+\end{enumerate}
+\resultado \textbf{$H=0{,}107$, $0{,}524$ y $0{,}906$ nats para $\tau=0{,}5$, $1$ y $2$; $\Var_p(z)=0{,}709$ y $dH/db=-0{,}709$ en $b=1$.}
+\comprobacion la entropía crece con $\tau$ y queda por debajo de $\ln 3=1{,}099$. La derivada predice, al pasar de $b=1$ a $b=0{,}5$ ($\tau=2$), un aumento de unos $0{,}709\cdot 0{,}5=0{,}35$ nats en primera aproximación; el aumento real es $0{,}38$, mayor porque la varianza crece al disminuir $b$.
+\end{solucion}
+
+\begin{solucion}{eje:5-topp}
+\datos $q=(0{,}5;\allowbreak\,0{,}2;\allowbreak\,0{,}15;\allowbreak\,0{,}1;\allowbreak\,0{,}05)$, ya ordenada.
+\planteamiento \cref{prop:nucleo}: acumular hasta alcanzar $\rho$, conservar esos tokens y renormalizar. La temperatura $\tau=0{,}5$ sobre logits $\ln q_i$ eleva cada $q_i$ al cuadrado antes de normalizar.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Acumuladas: $0{,}5$; $0{,}7$; $0{,}85$; $0{,}95$; $1$.
+  \item $\rho=0{,}8$: la primera acumulada $\ge 0{,}8$ es $0{,}85$, con 3 tokens. Dividiendo por $0{,}85$: $(0{,}5882;\allowbreak\,0{,}2353;\allowbreak\,0{,}1765;\allowbreak\,0;\allowbreak\,0)$.
+  \item $\rho=0{,}9$: la primera $\ge 0{,}9$ es $0{,}95$, con 4 tokens. Dividiendo por $0{,}95$: $(0{,}5263;\allowbreak\,0{,}2105;\allowbreak\,0{,}1579;\allowbreak\,0{,}1053;\allowbreak\,0)$.
+  \item (b) $q_i^{2}=(0{,}25;\allowbreak\,0{,}04;\allowbreak\,0{,}0225;\allowbreak\,0{,}01;\allowbreak\,0{,}0025)$, de suma $0{,}325$; normalizada: $(0{,}7692;\allowbreak\,0{,}1231;\allowbreak\,0{,}0692;\allowbreak\,0{,}0308;\allowbreak\,0{,}0077)$.
+  \item Acumuladas: $0{,}7692$; $0{,}8923\ge 0{,}8$: 2 tokens. Dividiendo por $0{,}8923$: $(0{,}8621;\allowbreak\,0{,}1379;\allowbreak\,0;\allowbreak\,0;\allowbreak\,0)$.
+\end{enumerate}
+\resultado \textbf{$\rho=0{,}8$: $(0{,}588;\allowbreak\,0{,}235;\allowbreak\,0{,}176;\allowbreak\,0;\allowbreak\,0)$; $\rho=0{,}9$: $(0{,}526;\allowbreak\,0{,}211;\allowbreak\,0{,}158;\allowbreak\,0{,}105;\allowbreak\,0)$; con $\tau=0{,}5$ y $\rho=0{,}8$ quedan dos tokens: $(0{,}862;\allowbreak\,0{,}138;\allowbreak\,0;\allowbreak\,0;\allowbreak\,0)$.}
+\comprobacion cada resultado suma~1. Al bajar la temperatura la masa se concentra y el núcleo pasa de 3 a 2 tokens: el número de candidatos se adapta a la forma de la distribución.
+\end{solucion}
+
+\begin{solucion}{eje:5-conmuta}
+\datos $\tau>0$; logits $z$; para (b), la distribución $q$ del \cref{eje:5-topp} con $\rho=0{,}8$ y $\tau=0{,}5$.
+\planteamiento la división por $\tau>0$ conserva el orden de los logits; el núcleo, en cambio, depende de la forma de la distribución.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Como $\tau>0$, $z_i>z_j$ si y solo si $z_i/\tau>z_j/\tau$, y los empates se conservan; luego $I_k(z/\tau)=I_k(z)$.
+  \item Top-$k$ y después temperatura: $\softmax\bigl(\topk(z)/\tau\bigr)$, con $-\infty/\tau=-\infty$. Temperatura y después top-$k$: $\softmax\bigl(\topk(z/\tau)\bigr)$. En ambos casos el resultado es $e^{z_i/\tau}/\sum_{j\in I_k(z)}e^{z_j/\tau}$ en $I_k(z)$ y~0 fuera: coinciden.
+  \item (b) Temperatura y después top-$p$: por el \cref{eje:5-topp}, $(0{,}8621;\allowbreak\,0{,}1379;\allowbreak\,0;\allowbreak\,0;\allowbreak\,0)$.
+  \item Top-$p$ con $\tau=1$ y después temperatura: el núcleo es $\{1,2,3\}$; dentro de él, $q_i^{2}=(0{,}25;\allowbreak\,0{,}04;\allowbreak\,0{,}0225)$, de suma $0{,}3125$, y la distribución es $(0{,}8;\allowbreak\,0{,}128;\allowbreak\,0{,}072;\allowbreak\,0;\allowbreak\,0)$.
+  \item Las dos distribuciones son distintas: incluso el número de tokens con probabilidad positiva difiere (2 frente a 3).
+  \item (c) En la \cref{def:topp}, $q$ es la softmax con temperatura: primero se aplica la temperatura y después se calcula el núcleo, como en CS336~\cite[§6]{cs336}.
+\end{enumerate}
+\resultado \textbf{(a) top-$k$ y temperatura conmutan porque $\tau>0$ no altera el orden de los logits; (b) con top-$p$ no conmutan: $(0{,}862;\allowbreak\,0{,}138;\allowbreak\,0;\allowbreak\,0;\allowbreak\,0)$ frente a $(0{,}8;\allowbreak\,0{,}128;\allowbreak\,0{,}072;\allowbreak\,0;\allowbreak\,0)$; (c) temperatura primero.}
+\comprobacion $0{,}8+0{,}128+0{,}072=1$ y $0{,}8621+0{,}1379=1$.
+\end{solucion}
+
+\begin{solucion}{eje:5-contexto}
+\datos $T=8$ da $0{,}694$ nats y $T=32$ da $0{,}324$; las líneas miden entre unos 58 y 80 caracteres y empiezan por su etiqueta.
+\planteamiento identificar qué información útil queda a más de 8 caracteres de la posición que se predice.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La etiqueta («receta.», «objeto.», «diálogo.», «parte del tiempo.») está al principio de la línea; a partir del noveno carácter queda fuera de la ventana.
+  \item Sin la etiqueta, el modelo no sabe qué plantilla escribe: ante «sirve para» solo ve «e\vs para\vs» y no sabe si sigue el uso de un objeto o el final de una receta.
+  \item La concordancia de género depende del sustantivo («un reloj negro»), que suele estar a más de 8 caracteres del adjetivo.
+  \item Las partes fijas de las plantillas («grados y máxima de») se siguen prediciendo bien: 8 caracteres bastan para reconocerlas.
+  \item Exceso de pérdida: $0{,}694-0{,}324=0{,}370$ nats por carácter; en una línea de 58 caracteres, $0{,}370\cdot 58=21{,}5$ nats.
+  \item La etiqueta sola aporta $\ln 4=1{,}386$ nats; el exceso es unas 15 veces mayor, porque la incertidumbre sobre la plantilla reaparece en cada elección que depende de ella.
+\end{enumerate}
+\resultado \textbf{con $T=8$ el modelo pierde la etiqueta y el sustantivo del que dependen las elecciones: las palabras fijas de las plantillas siguen siendo predecibles, pero colores, materiales, usos y concordancias se vuelven inciertos; el exceso, unos $21{,}5$ nats por línea, supera con mucho los $1{,}386$ nats de la etiqueta.}
+\comprobacion la pérdida con $T=8$ sigue muy por debajo de la del bigrama ($2{,}035$): un contexto corto ya permite completar palabras.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{ct}
+T.~M. Cover y J.~A. Thomas.
+\newblock \emph{Elements of Information Theory}, 2.ª ed.
+\newblock Wiley, 2006.
+\newblock Cap.~2, «Entropy, Relative Entropy, and Mutual Information».
+
+\bibitem{fan}
+A.~Fan, M.~Lewis e Y.~Dauphin.
+\newblock Hierarchical neural story generation.
+\newblock En \emph{Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics (ACL)}, 2018.
+\newblock \url{https://arxiv.org/abs/1805.04833}
+
+\bibitem{gemini}
+Gemini Team, Google.
+\newblock Gemini: A family of highly capable multimodal models.
+\newblock Informe técnico, 2023.
+\newblock \url{https://arxiv.org/abs/2312.11805}
+
+\bibitem{gbc}
+I.~Goodfellow, Y.~Bengio y A.~Courville.
+\newblock \emph{Deep Learning}.
+\newblock MIT Press, 2016.
+\newblock Cap.~7, «Regularization for Deep Learning»; cap.~8, «Optimization for Training Deep Models»; cap.~11, «Practical Methodology».
+\newblock \url{https://www.deeplearningbook.org/}
+
+\bibitem{holtzman}
+A.~Holtzman, J.~Buys, L.~Du, M.~Forbes e Y.~Choi.
+\newblock The curious case of neural text degeneration.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2020.
+\newblock \url{https://arxiv.org/abs/1904.09751}
+
+\bibitem{nanogpt}
+A.~Karpathy.
+\newblock nanoGPT.
+\newblock Repositorio de software, GitHub, 2022--2025. Archivos \texttt{model.py}, \texttt{train.py}, \texttt{sample.py} y \texttt{config/train\_shakespeare\_char.py}. Desde noviembre de 2025 su autor lo declara obsoleto y remite a nanochat.
+\newblock \url{https://github.com/karpathy/nanoGPT}
+
+\bibitem{llama3}
+Llama Team, AI @ Meta.
+\newblock The Llama 3 herd of models.
+\newblock Informe técnico, 2024.
+\newblock \url{https://arxiv.org/abs/2407.21783}
+
+\bibitem{sgdr}
+I.~Loshchilov y F.~Hutter.
+\newblock SGDR: Stochastic gradient descent with warm restarts.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2017.
+\newblock \url{https://arxiv.org/abs/1608.03983}
+
+\bibitem{adamw}
+I.~Loshchilov y F.~Hutter.
+\newblock Decoupled weight decay regularization.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2019.
+\newblock \url{https://arxiv.org/abs/1711.05101}
+
+\bibitem{gpt2}
+A.~Radford, J.~Wu, R.~Child, D.~Luan, D.~Amodei e I.~Sutskever.
+\newblock Language models are unsupervised multitask learners.
+\newblock Informe técnico, OpenAI, 2019.
+
+\bibitem{cs336}
+Stanford CS336.
+\newblock Language Modeling from Scratch.
+\newblock Stanford University, primavera de 2026. Tarea~1 (\emph{basics}), «Building a Transformer LM», versión~26.0.3.
+\newblock \url{https://github.com/stanford-cs336/assignment1-basics}
+
+\bibitem{llama}
+H.~Touvron \emph{et al.}
+\newblock LLaMA: Open and efficient foundation language models.
+\newblock Prepublicación, 2023.
+\newblock \url{https://arxiv.org/abs/2302.13971}
+
+\bibitem{vaswani}
+A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N. Gomez, Ł.~Kaiser e I.~Polosukhin.
+\newblock Attention is all you need.
+\newblock En \emph{Advances in Neural Information Processing Systems 30 (NIPS)}, 2017.
+\newblock \url{https://arxiv.org/abs/1706.03762}
+
+\bibitem{grok1}
+xAI.
+\newblock Grok-1: pesos abiertos y código de ejemplo.
+\newblock Repositorio de software, GitHub, 2024.
+\newblock \url{https://github.com/xai-org/grok-1}
+
+\bibitem{cs224n}
+D.~Yang y Y.~Choi.
+\newblock CS224N: Natural Language Processing with Deep Learning.
+\newblock Stanford University, invierno de 2026. Clase~5, «Transformers»; clase~7, «Pretraining (Scaling, Systems, Data)».
+\newblock \url{https://web.stanford.edu/class/cs224n/}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock Cap.~9, «Recurrent Neural Networks» (§9.3 y §9.5); cap.~11, «Attention Mechanisms and Transformers» (§11.9).
+\newblock \url{https://d2l.ai/}
+
+\end{thebibliography}
+
+
+\end{document}

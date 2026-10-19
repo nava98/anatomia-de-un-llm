@@ -1,0 +1,1922 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase I — Módulo 3
+%  Álgebra lineal II: rango, autovalores, SVD y PCA
+%  Compilar: latexmk -r ../latexmkrc M03-algebra-lineal-2.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 3}
+
+% --- Notación propia del módulo --------------------------------------
+\DeclareMathOperator{\rango}{rango}
+\DeclareMathOperator{\traza}{tr}
+\DeclareMathOperator{\gen}{gen}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\Var}{Var}
+\newcommand{\Col}{\mathcal{C}}
+\newcommand{\Nuc}{\mathcal{N}}
+\newcommand{\T}{^{\top}}
+\newcommand{\dmodel}{d_{\mathrm{model}}}
+\usetikzlibrary{calc}
+\usepackage{xurl}
+
+\hypersetup{pdftitle={Módulo 3. Álgebra lineal II},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase I \textperiodcentered\ Fundamentos matemáticos}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 3\par}\vspace{0.3cm}
+{\LARGE Álgebra lineal II\par}\vspace{0.2cm}
+{\large Rango, autovalores, SVD y PCA\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+En el módulo~2 las matrices aparecieron como transformaciones lineales y los embeddings como vectores. Este módulo estudia la estructura interna de esas matrices: cuántas dimensiones usan realmente (rango), cuándo pueden invertirse, qué direcciones conservan (autovectores) y cómo se descomponen en una suma de piezas de rango~1 ordenadas por importancia (descomposición en valores singulares). Estas herramientas explican por qué el ajuste fino con LoRA entrena menos del 1\,\% de los parámetros de una capa, cómo se proyectan en el plano los embeddings de un modelo y qué limita la capacidad expresiva de la capa de salida de un modelo de lenguaje.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item decidir si una familia de vectores es linealmente independiente, calcular coordenadas en una base y obtener el rango y el núcleo de una matriz;
+  \item enunciar las caracterizaciones de la invertibilidad, calcular inversas y determinantes pequeños y utilizar las propiedades de las matrices ortogonales;
+  \item calcular autovalores y autovectores, diagonalizar y demostrar que una matriz real simétrica tiene autovalores reales y autovectores ortogonales;
+  \item enunciar y demostrar la existencia de la descomposición en valores singulares y calcularla a mano en matrices pequeñas;
+  \item aplicar el teorema de Eckart--Young a la compresión y al ajuste fino de bajo rango, y realizar un análisis de componentes principales mediante la SVD;
+  \item operar con tensores y con las reglas de \emph{broadcasting}, y razonar sobre las formas y los rangos de las matrices de un LLM.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Módulo~2: vectores, producto escalar, norma, producto matricial y matrices como transformaciones. Resolución de sistemas lineales pequeños y de ecuaciones de segundo grado. El tema~3 usa números complejos elementales (conjugado y módulo) en una sola demostración. El módulo~1 aporta la función softmax, que reaparece en el tema~6.
+
+\section*{Organización}
+\begin{center}
+\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Independencia lineal, bases y rango & \cite{strang-ila}, \cite{mit1806}, \cite{mml} \\
+2 & Inversa, determinante y matrices ortogonales & \cite{strang-ila}, \cite{mit1806}, \cite{mml} \\
+3 & Autovalores, autovectores y teorema espectral & \cite{strang-ila}, \cite{mit1806}, \cite{mml} \\
+4 & La descomposición en valores singulares & \cite{strang-ila}, \cite{mit18065}, \cite{mml} \\
+5 & Aproximación de bajo rango y PCA & \cite{eckart-young}, \cite{mit18065}, \cite{mml}, \cite{hu-lora} \\
+6 & Tensores, \emph{broadcasting} y formas de un LLM & \cite{d2l}, \cite{numpy-bc}, \cite{yang-softmax} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La secuencia de los temas~1 a~4 sigue los capítulos~3 a~7 del libro de Strang~\cite{strang-ila} y las clases correspondientes del curso 18.06 del MIT~\cite{mit1806}; los ejercicios de ese curso proceden de su versión de autoaprendizaje, 18.06SC~\cite{mit1806sc}. La SVD, el teorema de Eckart--Young y el análisis de componentes principales siguen las clases~6 y~7 del curso 18.065~\cite{mit18065} y los capítulos~4 y~10 de Deisenroth, Faisal y Ong~\cite{mml}. El tema~6 sigue los §2.1 y~§2.3 de Zhang \emph{et al.}~\cite{d2l} y la documentación de NumPy~\cite{numpy-bc}. Las aplicaciones a modelos de lenguaje remiten a los artículos originales: LoRA~\cite{hu-lora}, el cuello de botella de la softmax~\cite{yang-softmax}, GPT-2~\cite{gpt2} y Llama~2~\cite{llama2}.
+
+\section*{Notación}
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$A\in\R^{m\times n}$, $A\T$ & matriz de $m$ filas y $n$ columnas y su traspuesta \\
+$\gen\{v_1,\dots,v_k\}$ & subespacio generado por $v_1,\dots,v_k$ \\
+$\Col(A)$, $\Nuc(A)$ & espacio columna (imagen) y núcleo de $A$ \\
+$\rango(A)$, $\traza(A)$, $\det(A)$ & rango, traza y determinante \\
+$I_n$, $e_i$ & matriz identidad y $i$-ésimo vector de la base canónica \\
+$\lambda_i$, $\Lambda=\diag(\lambda_1,\dots,\lambda_n)$ & autovalores y matriz diagonal de autovalores \\
+$Q$ & matriz ortogonal, $Q\T Q=I$ \\
+$A=U\Sigma V\T$, $\sigma_1\ge\sigma_2\ge\dots\ge 0$ & descomposición en valores singulares y valores singulares \\
+$A_k=\sum_{i\le k}\sigma_i u_iv_i\T$ & truncamiento de rango $k$ de la SVD \\
+$\norm{A}_F$, $\norm{A}_2$ & norma de Frobenius y norma espectral \\
+$X\in\R^{n\times d}$, $C=X\T X/n$ & datos centrados (una fila por punto) y su covarianza \\
+$(B,T,\dmodel)$ & forma de las activaciones: lote, longitud, dimensión del modelo \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Los vectores son columnas: $v=(v_1,\dots,v_n)$ denota un vector de $\R^{n}$ escrito en horizontal por comodidad, y $u\T v$ es su producto escalar.
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Independencia lineal, bases y rango}
+\label{tema:1}
+% =====================================================================
+
+Este tema introduce los conceptos que permiten medir cuántas dimensiones utiliza realmente una matriz: independencia lineal, base, dimensión, rango y núcleo. La presentación sigue los §3.1, §3.4 y~§3.5 de Strang~\cite{strang-ila}, las clases~9 a~11 del curso 18.06~\cite{mit1806} y los §2.5 a~§2.7 de~\cite{mml}. Se trabaja siempre en $\R^{n}$, aunque las definiciones valen en cualquier espacio vectorial real.
+
+\section{Combinaciones lineales y subespacios}
+
+\begin{definicion}[Subespacio]
+Un subconjunto $W\subseteq\R^{n}$ es un \emph{subespacio vectorial} si contiene el vector nulo y es cerrado para la suma y el producto por escalares: si $u,v\in W$ y $c\in\R$, entonces $u+v\in W$ y $cu\in W$.
+\end{definicion}
+
+\begin{definicion}[Subespacio generado]
+Dados $v_1,\dots,v_k\in\R^{n}$, una \emph{combinación lineal} de ellos es un vector $c_1v_1+\dots+c_kv_k$ con $c_i\in\R$. El conjunto de todas las combinaciones lineales es un subespacio, que se denota $\gen\{v_1,\dots,v_k\}$ y se llama \emph{subespacio generado} por los $v_i$.
+\end{definicion}
+
+\begin{definicion}[Independencia lineal]\label{def:indep}
+Los vectores $v_1,\dots,v_k$ son \emph{linealmente independientes} si la única combinación lineal nula es la trivial:
+\[
+c_1v_1+\dots+c_kv_k=0\ \Longrightarrow\ c_1=\dots=c_k=0.
+\]
+En caso contrario se dicen \emph{linealmente dependientes}.
+\end{definicion}
+
+Si $V=[v_1\mid\cdots\mid v_k]\in\R^{n\times k}$ es la matriz cuyas columnas son los vectores, la condición equivale a que el sistema homogéneo $Vc=0$ tenga solo la solución $c=0$.
+
+\begin{proposicion}\label{prop:dependencia}
+Los vectores $v_1,\dots,v_k$ ($k\ge 2$) son linealmente dependientes si y solo si alguno de ellos es combinación lineal de los demás.
+\end{proposicion}
+
+\begin{proof}
+Si $\sum_i c_iv_i=0$ con algún $c_j\ne 0$, despejando se obtiene $v_j=-\sum_{i\ne j}(c_i/c_j)\,v_i$. Recíprocamente, si $v_j=\sum_{i\ne j}a_iv_i$, la combinación $\sum_{i\ne j}a_iv_i-v_j=0$ es nula y tiene el coeficiente $-1\ne 0$ en $v_j$.
+\end{proof}
+
+\section{Bases, dimensión y coordenadas}
+
+\begin{definicion}[Base]
+Una \emph{base} de un subespacio $W$ es una familia de vectores de $W$ linealmente independiente que genera $W$.
+\end{definicion}
+
+\begin{proposicion}[Coordenadas]\label{prop:coordenadas}
+Si $\{u_1,\dots,u_k\}$ es una base de $W$, todo $w\in W$ se escribe de forma única como $w=c_1u_1+\dots+c_ku_k$. Los números $c_1,\dots,c_k$ son las \emph{coordenadas} de $w$ en esa base.
+\end{proposicion}
+
+\begin{proof}
+La existencia se debe a que la base genera $W$. Si $w=\sum_i c_iu_i=\sum_i c'_iu_i$, restando se obtiene $\sum_i(c_i-c'_i)u_i=0$ y, por independencia, $c_i=c'_i$ para todo $i$.
+\end{proof}
+
+\begin{lema}\label{lem:steinitz}
+Si $W=\gen\{v_1,\dots,v_m\}$ y $w_1,\dots,w_p\in W$ con $p>m$, entonces $w_1,\dots,w_p$ son linealmente dependientes.
+\end{lema}
+
+\begin{proof}
+Cada $w_j$ es combinación de los $v_i$: $w_j=\sum_{i=1}^{m}a_{ij}v_i$. Sea $A=(a_{ij})\in\R^{m\times p}$. El sistema homogéneo $Ax=0$ tiene $m$ ecuaciones y $p>m$ incógnitas; la eliminación gaussiana deja al menos $p-m$ variables libres, luego existe $x\ne 0$ con $Ax=0$. Para ese $x$,
+\[
+\sum_{j=1}^{p}x_jw_j=\sum_{j=1}^{p}x_j\sum_{i=1}^{m}a_{ij}v_i=\sum_{i=1}^{m}\Bigl(\sum_{j=1}^{p}a_{ij}x_j\Bigr)v_i=\sum_{i=1}^{m}(Ax)_i\,v_i=0,
+\]
+que es una combinación lineal nula no trivial de los $w_j$.
+\end{proof}
+
+\begin{teorema}[Dimensión]\label{teo:dimension}
+Todas las bases de un subespacio $W$ tienen el mismo número de elementos. Ese número se llama \emph{dimensión} de $W$ y se denota $\dim W$. En particular, $\dim\R^{n}=n$.
+\end{teorema}
+
+\begin{proof}
+Sean $\{v_1,\dots,v_m\}$ y $\{w_1,\dots,w_p\}$ dos bases de $W$. Si fuera $p>m$, el \cref{lem:steinitz} aplicado a $W=\gen\{v_i\}$ haría dependientes a los $w_j$, lo que contradice que formen base; luego $p\le m$. Intercambiando los papeles, $m\le p$. La base canónica $e_1,\dots,e_n$ muestra que $\dim\R^{n}=n$.
+\end{proof}
+
+\begin{ejemplo}[Cambio de coordenadas]\label{ej:coordenadas}
+Sean $u_1=(1,1)$ y $u_2=(1,-1)$, que forman una base de $\R^{2}$. Para hallar las coordenadas de $b=(3,1)$ se resuelve $c_1u_1+c_2u_2=b$:
+\[
+\begin{cases} c_1+c_2=3,\\ c_1-c_2=1,\end{cases}\qquad\Longrightarrow\qquad c_1=2,\quad c_2=1.
+\]
+El mismo vector tiene coordenadas $(3,1)$ en la base canónica y $(2,1)$ en la base $\{u_1,u_2\}$. En forma matricial, si $U=[u_1\mid u_2]$, las coordenadas son $c=U^{-1}b$.
+\end{ejemplo}
+
+\begin{observacion}
+Las coordenadas de un embedding dependen de la base en la que se expresan. Un cambio de base invertible del espacio de activaciones de un modelo, compensado en las capas siguientes, no altera sus predicciones; por eso las coordenadas individuales de un embedding no tienen, en general, un significado propio. Esta observación es el punto de partida de los métodos de interpretabilidad del módulo~23, que buscan direcciones del espacio y no coordenadas.
+\end{observacion}
+
+\section{Espacio columna, núcleo y rango}
+
+\begin{definicion}[Espacio columna y núcleo]
+Sea $A\in\R^{m\times n}$. El \emph{espacio columna} (o imagen) de $A$ es $\Col(A)=\{Ax : x\in\R^{n}\}\subseteq\R^{m}$, el subespacio generado por sus columnas. El \emph{núcleo} de $A$ es $\Nuc(A)=\{x\in\R^{n}: Ax=0\}\subseteq\R^{n}$.
+\end{definicion}
+
+\begin{definicion}[Rango]
+El \emph{rango} de $A$ es $\rango(A)=\dim\Col(A)$, el número máximo de columnas linealmente independientes de~$A$.
+\end{definicion}
+
+\begin{teorema}[Rango de filas igual a rango de columnas]\label{teo:filas-columnas}
+Para toda $A\in\R^{m\times n}$, $\rango(A)=\rango(A\T)$: el número máximo de filas independientes coincide con el de columnas independientes.
+\end{teorema}
+
+\begin{proof}
+Sea $r=\rango(A)$ y sea $C\in\R^{m\times r}$ la matriz formada por $r$ columnas de $A$ que constituyen una base de $\Col(A)$. Cada columna $a_j$ de $A$ es combinación de las columnas de $C$, $a_j=Cr_j$ con $r_j\in\R^{r}$; agrupando, $A=CR$ con $R=[r_1\mid\cdots\mid r_n]\in\R^{r\times n}$. Leída por filas, esta igualdad dice que cada fila de $A$ es combinación lineal de las $r$ filas de $R$. Por el \cref{lem:steinitz}, a lo sumo $r$ filas de $A$ son independientes: $\rango(A\T)\le\rango(A)$. Aplicando el mismo argumento a $A\T$ se obtiene la desigualdad contraria.
+\end{proof}
+
+La factorización $A=CR$ de la demostración es la que Strang usa como punto de partida en~\cite[§1.4]{strang-ila}.
+
+\begin{teorema}[Rango y nulidad]\label{teo:rango-nulidad}
+Para toda $A\in\R^{m\times n}$,
+\[
+\rango(A)+\dim\Nuc(A)=n.
+\]
+\end{teorema}
+
+\begin{proof}
+Sea $\{k_1,\dots,k_p\}$ una base de $\Nuc(A)$ y complétese con $w_1,\dots,w_q$ hasta una base de $\R^{n}$, de modo que $p+q=n$. Se demuestra que $\{Aw_1,\dots,Aw_q\}$ es una base de $\Col(A)$, lo que da $\rango(A)=q=n-p$.
+
+\emph{Generan.} Todo $x\in\R^{n}$ se escribe $x=\sum_i a_ik_i+\sum_j b_jw_j$, y como $Ak_i=0$, $Ax=\sum_j b_j\,Aw_j$.
+
+\emph{Son independientes.} Si $\sum_j b_jAw_j=0$, entonces $A\bigl(\sum_j b_jw_j\bigr)=0$, luego $\sum_j b_jw_j\in\Nuc(A)$ y se escribe $\sum_j b_jw_j=\sum_i a_ik_i$. Como $\{k_i\}\cup\{w_j\}$ es una base de $\R^{n}$, todos los coeficientes son nulos; en particular, $b_j=0$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:M}
+Sea
+\[
+M=\begin{pmatrix}1&2&3\\2&4&6\\1&0&1\end{pmatrix}.
+\]
+La segunda fila es el doble de la primera, y las filas primera y tercera no son proporcionales; luego $\rango(M)=2$. Por el \cref{teo:rango-nulidad}, $\dim\Nuc(M)=3-2=1$. El vector $(1,1,-1)$ cumple $M(1,1,-1)=(1+2-3,\,2+4-6,\,1+0-1)=0$, luego $\Nuc(M)=\gen\{(1,1,-1)\}$. La matriz aplasta $\R^{3}$ sobre el plano $\Col(M)$ y anula la dirección $(1,1,-1)$.
+\end{ejemplo}
+
+\section{Matrices de rango 1 y rango de un producto}
+
+\begin{proposicion}\label{prop:rango1}
+Si $u\in\R^{m}$ y $v\in\R^{n}$ son no nulos, la matriz $uv\T\in\R^{m\times n}$ tiene rango~1. Recíprocamente, toda matriz de rango~1 es de esta forma.
+\end{proposicion}
+
+\begin{proof}
+La columna $j$ de $uv\T$ es $v_j\,u$: todas las columnas son múltiplos de $u$, y alguna es no nula porque algún $v_j\ne 0$. Luego $\Col(uv\T)=\gen\{u\}$ y el rango es~1. Si $\rango(A)=1$ y $u$ genera $\Col(A)$, cada columna es $a_j=v_ju$ para cierto $v_j\in\R$, y $A=uv\T$ con $v=(v_1,\dots,v_n)$.
+\end{proof}
+
+\begin{proposicion}[Rango de un producto]\label{prop:rango-producto}
+Si $B\in\R^{m\times r}$ y $A\in\R^{r\times n}$, entonces $\rango(BA)\le\min\{\rango(A),\rango(B)\}\le r$.
+\end{proposicion}
+
+La demostración se propone en el \cref{eje:1-producto}. De la factorización $A=CR$ del \cref{teo:filas-columnas} se deduce además que toda matriz de rango $r$ es suma de $r$ matrices de rango~1, $A=\sum_{i=1}^{r}c_i\,\rho_i\T$, donde $c_i$ es la columna $i$ de $C$ y $\rho_i\T$ la fila $i$ de $R$. El tema~4 obtiene una descomposición de este tipo con piezas ortogonales y ordenadas por importancia.
+
+\begin{observacion}[Matrices de bajo rango en un LLM]\label{obs:lora-rango}
+El ajuste fino LoRA~\cite{hu-lora}, que se estudia en el módulo~20, mantiene congelada una matriz de pesos $W_0\in\R^{d_{\text{out}}\times d_{\text{in}}}$ y aprende una corrección $\Delta W=BA$ con $B\in\R^{d_{\text{out}}\times r}$ y $A\in\R^{r\times d_{\text{in}}}$. Por la \cref{prop:rango-producto}, $\rango(\Delta W)\le r$, y el número de parámetros entrenables es $r(d_{\text{in}}+d_{\text{out}})$ en lugar de $d_{\text{in}}d_{\text{out}}$. Con $d_{\text{in}}=d_{\text{out}}=4096$ y $r=8$ se entrenan $65\,536$ parámetros, el $0{,}39\,\%$ de los $16\,777\,216$ de la matriz completa.
+\end{observacion}
+
+\begin{lecturas}
+\item Strang~\cite{strang-ila}, §3.4 «Independence, Basis, and Dimension», §3.5 «Dimensions of the Four Subspaces» y apéndice~1 «The Ranks of $AB$ and $A+B$».
+\item MIT 18.06~\cite{mit1806}, clases~9 «Independence, basis, and dimension», 10 «The four fundamental subspaces» y 11 «Matrix spaces; rank 1; small world graphs».
+\item Deisenroth, Faisal y Ong~\cite{mml}, §2.5 «Linear Independence», §2.6 «Basis and Rank» y §2.7.3 «Image and Kernel» (teorema~2.24).
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-vf}
+Justifique si son verdaderas o falsas: (a) tres vectores de $\R^{2}$ pueden ser linealmente independientes; (b) si las $n$ columnas de $A\in\R^{m\times n}$ son independientes, entonces $n\le m$; (c) una matriz de $5\times 3$ puede tener rango~4.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-rango1}
+Sean $u=(1,2,3)$ y $v=(1,-1)$. Escriba la matriz $uv\T$, calcule su rango y dé una base de su espacio columna y de su núcleo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-mml}
+(a) Decida si $x_1=(2,-1,3)$, $x_2=(1,1,-2)$ y $x_3=(3,-3,8)$ son linealmente independientes; si no lo son, escriba una relación de dependencia. (b) Escriba $y=(1,-2,5)$ como combinación lineal de $z_1=(1,1,1)$, $z_2=(1,2,3)$ y $z_3=(2,-1,1)$, y explique por qué los coeficientes son únicos.
+\fuente{adaptado de Deisenroth, Faisal y Ong~\cite{mml}, cap.~2, ejercicios~2.10(a) y~2.11.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-u4}
+Halle el mayor número de vectores linealmente independientes entre $v_1=(1,-1,0)$, $v_2=(1,0,-1)$, $v_3=(0,1,-1)$ y $v_4=(1,1,-2)$. Escriba las relaciones de dependencia, dé una base del subespacio que generan y obtenga una ecuación que cumplan todos sus vectores.
+\fuente{adaptado de MIT 18.06SC~\cite{mit1806sc}, sesión «Independence, Basis and Dimension», problema~9.1 (vectores de $\R^{3}$ en lugar de $\R^{4}$).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-nucleo}
+Sea
+\[
+A=\begin{pmatrix}1&2&0&1\\2&4&1&3\\3&6&1&4\end{pmatrix}.
+\]
+Calcule $\rango(A)$, una base de $\Col(A)$ y una base de $\Nuc(A)$, y compruebe el \cref{teo:rango-nulidad}.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-producto}
+Demuestre la \cref{prop:rango-producto}. Deduzca que una corrección LoRA $\Delta W=BA$ con $B\in\R^{d\times r}$ no puede igualar una matriz $\Delta W^{\star}\in\R^{d\times d}$ de rango mayor que $r$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Inversa, determinante y matrices ortogonales}
+\label{tema:2}
+% =====================================================================
+
+Este tema estudia cuándo una transformación lineal puede deshacerse, cómo lo detecta el determinante y por qué las matrices ortogonales, cuya inversa es su traspuesta, ocupan un lugar privilegiado. Se sigue a Strang~\cite[§2.2, cap.~5 y §4.4]{strang-ila}, las clases~3, 17, 18 y~20 de 18.06~\cite{mit1806} y el §4.1 de~\cite{mml}.
+
+\section{La matriz inversa}
+
+\begin{definicion}[Inversa]
+Una matriz cuadrada $A\in\R^{n\times n}$ es \emph{invertible} si existe $A^{-1}\in\R^{n\times n}$ tal que $AA^{-1}=A^{-1}A=I_n$. Una matriz no invertible se llama \emph{singular}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:inversa-props}
+Sean $A,B\in\R^{n\times n}$ invertibles.
+\begin{enumerate}
+  \item La inversa es única.
+  \item $AB$ es invertible y $(AB)^{-1}=B^{-1}A^{-1}$.
+  \item $A\T$ es invertible y $(A\T)^{-1}=(A^{-1})\T$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Si $B_1$ y $B_2$ son inversas de $A$, entonces $B_1=B_1(AB_2)=(B_1A)B_2=B_2$. (ii) $(AB)(B^{-1}A^{-1})=A(BB^{-1})A^{-1}=AA^{-1}=I$, y del mismo modo en el otro orden. (iii) Trasponiendo $AA^{-1}=I$ se obtiene $(A^{-1})\T A\T=I$, y análogamente $A\T(A^{-1})\T=I$.
+\end{proof}
+
+\begin{teorema}[Caracterizaciones de la invertibilidad]\label{teo:invertible}
+Para $A\in\R^{n\times n}$ son equivalentes:
+\begin{enumerate}
+  \item $A$ es invertible;
+  \item $\rango(A)=n$;
+  \item $\Nuc(A)=\{0\}$, es decir, $Ax=0$ solo si $x=0$;
+  \item $\det(A)\ne 0$;
+  \item $0$ no es autovalor de $A$.
+\end{enumerate}
+\end{teorema}
+
+\begin{proof}
+(i)$\Rightarrow$(iii): si $Ax=0$, entonces $x=A^{-1}Ax=0$. (iii)$\Leftrightarrow$(ii): por el \cref{teo:rango-nulidad}, $\rango(A)=n-\dim\Nuc(A)$. (ii)$\Rightarrow$(i): si $\rango(A)=n$, las columnas de $A$ son una base de $\R^{n}$, luego cada $e_j$ se escribe $e_j=Ab_j$ de forma única; la matriz $B=[b_1\mid\cdots\mid b_n]$ cumple $AB=I$. Para ver que también $BA=I$, obsérvese que $A(BA-I)=(AB)A-A=0$, luego cada columna de $BA-I$ está en $\Nuc(A)=\{0\}$. La equivalencia con (iv) se justifica en la \cref{sec:determinante} y la equivalencia con (v) es inmediata a partir de la definición de autovalor del \cref{tema:3}: $0$ es autovalor si y solo si existe $x\ne 0$ con $Ax=0$.
+\end{proof}
+
+\begin{proposicion}[Inversa de orden 2]\label{prop:inversa2}
+Sea $A=\begin{pmatrix}a&b\\c&d\end{pmatrix}$ con $ad-bc\ne 0$. Entonces
+\[
+A^{-1}=\frac{1}{ad-bc}\begin{pmatrix}d&-b\\-c&a\end{pmatrix}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Basta multiplicar: $\begin{pmatrix}a&b\\c&d\end{pmatrix}\begin{pmatrix}d&-b\\-c&a\end{pmatrix}=\begin{pmatrix}ad-bc&0\\0&ad-bc\end{pmatrix}=(ad-bc)\,I$, y lo mismo en el orden inverso.
+\end{proof}
+
+\begin{ejemplo}\label{ej:inversa}
+Para $A=\begin{pmatrix}2&1\\1&1\end{pmatrix}$, $ad-bc=2-1=1$ y $A^{-1}=\begin{pmatrix}1&-1\\-1&2\end{pmatrix}$. La primera fila de $AA^{-1}$ es $(2-1,\,-2+2)=(1,0)$ y la segunda, $(1-1,\,-1+2)=(0,1)$.
+\end{ejemplo}
+
+\begin{observacion}[Cálculo numérico]
+Para resolver $Ax=b$ no se calcula $A^{-1}$: se factoriza $A$ (por ejemplo, $A=LU$) y se resuelven dos sistemas triangulares, lo que es más rápido y numéricamente más estable. En NumPy, \texttt{np.linalg.solve(A, b)} es preferible a \texttt{np.linalg.inv(A) @ b}. En los modelos de lenguaje las matrices de pesos no se invierten; lo que sí aparece constantemente es la ortogonalidad (\cref{sec:ortogonales}).
+\end{observacion}
+
+\section{El determinante}\label{sec:determinante}
+
+Se adopta la presentación axiomática de~\cite[§5.1]{strang-ila} y de la clase~18 de~\cite{mit1806}.
+
+\begin{definicion}[Determinante]\label{def:det}
+El \emph{determinante} es la única función $\det\colon\R^{n\times n}\to\R$ que cumple:
+\begin{enumerate}
+  \item $\det(I_n)=1$;
+  \item cambia de signo al intercambiar dos filas;
+  \item es lineal en cada fila cuando las demás se mantienen fijas.
+\end{enumerate}
+\end{definicion}
+
+De estas tres propiedades se deducen todas las demás~\cite[§5.1]{strang-ila}: si dos filas son iguales, el determinante es nulo; restar a una fila un múltiplo de otra no lo cambia; el determinante de una matriz triangular es el producto de su diagonal; $\det(A\T)=\det(A)$; y
+\[
+\det(AB)=\det(A)\det(B).
+\]
+La eliminación gaussiana lleva $A$ a una matriz triangular $U$ mediante operaciones que, a lo sumo, cambian el signo del determinante. Por tanto, $\det(A)\ne 0$ si y solo si todos los pivotes son no nulos, es decir, si y solo si $\rango(A)=n$. Esto completa la equivalencia (ii)$\Leftrightarrow$(iv) del \cref{teo:invertible}. Además, de $AA^{-1}=I$ se obtiene $\det(A^{-1})=1/\det(A)$.
+
+\begin{proposicion}[Desarrollo por cofactores]\label{prop:laplace}
+Para $A\in\R^{n\times n}$ y cualquier fila $i$,
+\[
+\det(A)=\sum_{j=1}^{n}(-1)^{i+j}a_{ij}\det(A_{ij}),
+\]
+donde $A_{ij}$ es la submatriz de orden $n-1$ obtenida al suprimir la fila $i$ y la columna $j$. En particular, $\det\begin{pmatrix}a&b\\c&d\end{pmatrix}=ad-bc$.
+\end{proposicion}
+
+Esta fórmula es el desarrollo de Laplace~\cite[teorema~4.2]{mml}; su demostración, a partir de la linealidad en la fila~$i$, está en~\cite[§5.2]{strang-ila}. Para $n=3$ equivale a la regla de Sarrus.
+
+\begin{observacion}[Interpretación geométrica]
+$\abs{\det(A)}$ es el factor por el que $A$ multiplica volúmenes: el cubo unidad se transforma en un paralelepípedo de volumen $\abs{\det(A)}$~\cite[§5.3]{strang-ila}. Un determinante nulo indica que el paralelepípedo es plano, es decir, que $A$ aplasta alguna dimensión. Para la matriz $M$ del \cref{ej:M}, $\det(M)=0$.
+\end{observacion}
+
+\section{Bases ortonormales y matrices ortogonales}\label{sec:ortogonales}
+
+\begin{definicion}[Familia ortonormal]
+Los vectores $q_1,\dots,q_k\in\R^{n}$ son \emph{ortonormales} si $q_i\T q_j=\delta_{ij}$, donde $\delta_{ij}$ vale~1 si $i=j$ y~0 en otro caso.
+\end{definicion}
+
+Una familia ortonormal es linealmente independiente: si $\sum_i c_iq_i=0$, multiplicando por $q_j\T$ se obtiene $c_j=0$.
+
+\begin{proposicion}[Coordenadas en una base ortonormal]\label{prop:coord-ortonormal}
+Si $\{q_1,\dots,q_n\}$ es una base ortonormal de $\R^{n}$, todo $x\in\R^{n}$ cumple
+\[
+x=\sum_{j=1}^{n}(q_j\T x)\,q_j\qquad\text{y}\qquad \norm{x}^{2}=\sum_{j=1}^{n}(q_j\T x)^{2}.
+\]
+Si la base es solo ortogonal (con $q_j\ne 0$), la coordenada $j$ es $c_j=q_j\T x/q_j\T q_j$.
+\end{proposicion}
+
+\begin{proof}
+Escríbase $x=\sum_i c_iq_i$. Multiplicando por $q_j\T$, $q_j\T x=\sum_i c_i\,q_j\T q_i=c_j$. Además, $\norm{x}^{2}=x\T x=\sum_{i,j}c_ic_j\,q_i\T q_j=\sum_j c_j^{2}$. En el caso ortogonal, $q_j\T x=c_j\,q_j\T q_j$.
+\end{proof}
+
+La segunda igualdad es el teorema de Pitágoras en $\R^{n}$. Calcular coordenadas en una base ortonormal no requiere resolver ningún sistema: basta un producto escalar por coordenada.
+
+\begin{definicion}[Matriz ortogonal]
+Una matriz $Q\in\R^{n\times n}$ es \emph{ortogonal} si sus columnas forman una base ortonormal de $\R^{n}$, es decir, si $Q\T Q=I_n$. En ese caso, $Q^{-1}=Q\T$.
+\end{definicion}
+
+\begin{ejemplo}[Giros del plano]\label{ej:giro}
+Para cada ángulo $\theta$, la matriz
+\[
+Q_\theta=\begin{pmatrix}\cos\theta&-\sin\theta\\ \sin\theta&\cos\theta\end{pmatrix}
+\]
+es ortogonal: sus columnas tienen norma $\cos^{2}\theta+\sin^{2}\theta=1$ y su producto escalar es $-\cos\theta\sin\theta+\sin\theta\cos\theta=0$. Su inversa, $Q_\theta\T=Q_{-\theta}$, es el giro en sentido contrario, y $\det(Q_\theta)=1$. La reflexión $\begin{pmatrix}1&0\\0&-1\end{pmatrix}$ también es ortogonal, con determinante $-1$.
+\end{ejemplo}
+
+\begin{proposicion}\label{prop:ortogonal-isometria}
+Si $Q$ es ortogonal, entonces $(Qx)\T(Qy)=x\T y$ y $\norm{Qx}=\norm{x}$ para todos $x,y$, y $\det(Q)=\pm 1$.
+\end{proposicion}
+
+La demostración se propone en el \cref{eje:2-isometria}. Las matrices ortogonales son, por tanto, las transformaciones lineales que conservan longitudes y ángulos: giros y reflexiones.
+
+\begin{observacion}[Gram--Schmidt]
+A partir de cualquier base $a_1,\dots,a_n$ se obtiene una base ortonormal del mismo espacio restando a cada $a_k$ su proyección sobre los vectores ya construidos y normalizando: $w_k=a_k-\sum_{i<k}(q_i\T a_k)\,q_i$ y $q_k=w_k/\norm{w_k}$~\cite[§4.4]{strang-ila}. En forma matricial, el proceso da la factorización $A=QR$ con $R$ triangular superior.
+\end{observacion}
+
+\begin{observacion}[Ortogonalidad en un LLM]
+Las matrices ortogonales aparecen en varios puntos de un Transformer. La codificación posicional rotatoria (RoPE, módulo~14) aplica a cada par de coordenadas de las consultas y las claves un giro $Q_\theta$ cuyo ángulo depende de la posición; como los giros conservan la norma, solo cambian los ángulos entre vectores. Las matrices $U$ y $V$ de la SVD (\cref{tema:4}) son ortogonales, y algunas inicializaciones de pesos usan matrices ortogonales aleatorias porque conservan la norma de las activaciones.
+\end{observacion}
+
+\begin{lecturas}
+\item Strang~\cite{strang-ila}, §2.2 «Elimination Matrices and Inverse Matrices», cap.~5 «Determinants» y §4.4 «Orthonormal Bases and Gram-Schmidt».
+\item MIT 18.06~\cite{mit1806}, clases~3 «Multiplication and inverse matrices», 17 «Orthogonal matrices and Gram-Schmidt», 18 «Properties of determinants» y 20 «Cramer's rule, inverse matrix, and volume».
+\item Deisenroth, Faisal y Ong~\cite{mml}, §4.1 «Determinant and Trace».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §2.3 «Identity and Inverse Matrices» y §2.11 «The Determinant».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-equiv}
+Indique, sin calcular inversas, cuáles de las siguientes matrices son invertibles y qué condición del \cref{teo:invertible} lo justifica: (a) la matriz $M$ del \cref{ej:M}; (b) $Q_\theta$ del \cref{ej:giro}; (c) $\begin{pmatrix}1&2\\2&4\end{pmatrix}$; (d) una matriz $A\in\R^{4\times 4}$ que cumple $A(1,0,-1,2)=0$; (e) $\diag(3,\,0{,}5,\,-1)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-inversa}
+Calcule la inversa de $A=\begin{pmatrix}1&2\\3&4\end{pmatrix}$, compruebe que $AA^{-1}=I$ y verifique que $\det(A^{-1})=1/\det(A)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-mml}
+(a) Calcule el determinante de
+\[
+A=\begin{pmatrix}1&3&5\\2&4&6\\0&2&4\end{pmatrix}
+\]
+mediante el desarrollo por la primera fila y mediante la regla de Sarrus. (b) Determine, si existe, la inversa de $B=\begin{pmatrix}2&3&4\\3&4&5\\4&5&6\end{pmatrix}$. En caso de que no exista, dé un vector no nulo de $\Nuc(B)$.
+\fuente{adaptado de Deisenroth, Faisal y Ong~\cite{mml}, ejercicios~4.1 y~2.8(a).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-giros}
+(a) Compruebe que $Q_\alpha Q_\beta=Q_{\alpha+\beta}$. (b) Calcule $Q_{\pi/6}\,(2,0)$ y compruebe que su norma es~2. (c) Explique por qué el producto escalar $(Q_{\alpha}x)\T(Q_{\beta}y)$ depende de $\alpha$ y $\beta$ solo a través de $\beta-\alpha$. Esta es la propiedad que aprovecha RoPE para que la atención dependa de la posición relativa.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-haar}
+En $\R^{4}$, la base de Haar está formada por $h_1=(1,1,1,1)$, $h_2=(1,1,-1,-1)$, $h_3=(1,-1,0,0)$ y $h_4=(0,0,1,-1)$. (a) Compruebe que es ortogonal y normalícela. (b) Escriba la señal $x=(4,2,5,5)$ en esa base. (c) Comprima $x$ conservando solo los dos primeros coeficientes y calcule el error cuadrático. Justifique, mediante la \cref{prop:coord-ortonormal}, que el error es la suma de los cuadrados de los coeficientes descartados multiplicados por $\norm{h_j}^{2}$.
+\fuente{adaptado de MIT 18.06SC~\cite{mit1806sc}, sesión «Change of Basis; Image Compression», problema~31.1 (base de 8 vectores reducida a 4; apartados (b) y (c) añadidos).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-isometria}
+Demuestre la \cref{prop:ortogonal-isometria}. Demuestre además que el producto de dos matrices ortogonales es ortogonal.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Autovalores, autovectores y teorema espectral}
+\label{tema:3}
+% =====================================================================
+
+Un autovector de una matriz cuadrada es una dirección que la matriz no gira, solo estira o encoge. Este tema define autovalores y autovectores, estudia la diagonalización y demuestra el resultado central para las aplicaciones: las matrices reales simétricas tienen autovalores reales y una base ortonormal de autovectores. Se sigue a Strang~\cite[§6.1--6.3]{strang-ila}, las clases~21, 22 y~25 de 18.06~\cite{mit1806}, las clases~4 y~5 de 18.065~\cite{mit18065} y los §4.2 y~§4.4 de~\cite{mml}.
+
+\section{Definición y polinomio característico}
+
+\begin{definicion}[Autovalor y autovector]
+Sea $A\in\R^{n\times n}$. Un número $\lambda\in\mathbb{C}$ es un \emph{autovalor} de $A$ si existe $v\ne 0$ tal que
+\[
+Av=\lambda v.
+\]
+Todo $v\ne 0$ que cumple la igualdad es un \emph{autovector} asociado a $\lambda$. El conjunto $\Nuc(A-\lambda I)$, formado por los autovectores y el vector nulo, es el \emph{espacio propio} de $\lambda$.
+\end{definicion}
+
+\begin{proposicion}[Polinomio característico]\label{prop:polcar}
+$\lambda$ es autovalor de $A$ si y solo si $\det(A-\lambda I)=0$. La función $p_A(\lambda)=\det(A-\lambda I)$ es un polinomio de grado $n$ en $\lambda$, llamado \emph{polinomio característico}.
+\end{proposicion}
+
+\begin{proof}
+$Av=\lambda v$ con $v\ne 0$ equivale a $(A-\lambda I)v=0$ con $v\ne 0$, es decir, a que $A-\lambda I$ tenga núcleo no trivial. Por el \cref{teo:invertible}, esto ocurre si y solo si $\det(A-\lambda I)=0$. Que $p_A$ es un polinomio de grado $n$ se sigue del desarrollo por cofactores: el único término de grado $n$ procede del producto de la diagonal, $\prod_i(a_{ii}-\lambda)$.
+\end{proof}
+
+Por el teorema fundamental del álgebra, $p_A$ tiene $n$ raíces complejas contadas con multiplicidad: $p_A(\lambda)=\prod_{i=1}^{n}(\lambda_i-\lambda)$.
+
+\begin{ejemplo}\label{ej:S}
+Sea $S=\begin{pmatrix}2&1\\1&2\end{pmatrix}$. Entonces $p_S(\lambda)=(2-\lambda)^{2}-1=0$, luego $2-\lambda=\pm 1$ y los autovalores son $\lambda_1=3$ y $\lambda_2=1$.
+\begin{itemize}
+  \item $\lambda_1=3$: $(S-3I)v=0$ da $-v_1+v_2=0$, y un autovector unitario es $q_1=(1,1)/\sqrt{2}$.
+  \item $\lambda_2=1$: $(S-I)v=0$ da $v_1+v_2=0$, y un autovector unitario es $q_2=(1,-1)/\sqrt{2}$.
+\end{itemize}
+Los dos autovectores son ortogonales, $q_1\T q_2=0$. El \cref{teo:simetricas} muestra que no es casualidad.
+\end{ejemplo}
+
+\begin{proposicion}[Traza y determinante]\label{prop:traza-det}
+Si $\lambda_1,\dots,\lambda_n$ son los autovalores de $A$ contados con multiplicidad, entonces
+\[
+\det(A)=\prod_{i=1}^{n}\lambda_i,\qquad \traza(A)=\sum_{i=1}^{n}a_{ii}=\sum_{i=1}^{n}\lambda_i.
+\]
+\end{proposicion}
+
+\begin{proof}
+Evaluando $\det(A-\lambda I)=\prod_i(\lambda_i-\lambda)$ en $\lambda=0$ se obtiene la primera igualdad. Para la segunda se compara el coeficiente de $\lambda^{n-1}$ en ambos miembros. En el producto $\prod_i(\lambda_i-\lambda)$ vale $(-1)^{n-1}\sum_i\lambda_i$. En el desarrollo de $\det(A-\lambda I)$, todo término que no sea el producto de la diagonal omite al menos dos factores diagonales y tiene grado $\le n-2$; el producto $\prod_i(a_{ii}-\lambda)$ aporta $(-1)^{n-1}\sum_i a_{ii}$.
+\end{proof}
+
+En el \cref{ej:S}, $3+1=4=\traza(S)$ y $3\cdot 1=3=\det(S)$. Estas dos comprobaciones detectan la mayoría de los errores de cálculo.
+
+\begin{table}[h]
+\centering\small
+\caption{Autovalores de algunas matrices de orden 2.}\label{tab:autovalores}
+\begin{tabular}{@{}lcl@{}}
+\toprule
+Matriz & Autovalores & Interpretación \\
+\midrule
+$\begin{pmatrix}2&1\\1&2\end{pmatrix}$ & $3$ y $1$ & estira por~3 la diagonal y conserva la antidiagonal \\[6pt]
+$\begin{pmatrix}3&1\\0&2\end{pmatrix}$ & $3$ y $2$ & triangular: los autovalores son la diagonal \\[6pt]
+$\begin{pmatrix}1&0\\0&0\end{pmatrix}$ & $1$ y $0$ & proyección: conserva el eje $x$ y anula el eje $y$ \\[6pt]
+$\begin{pmatrix}0&-1\\1&0\end{pmatrix}$ & $\pm i$ & giro de $90^{\circ}$: ninguna dirección real se conserva \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Diagonalización}
+
+\begin{proposicion}\label{prop:indep-autovectores}
+Autovectores asociados a autovalores distintos son linealmente independientes.
+\end{proposicion}
+
+\begin{proof}
+Supóngase lo contrario y sea $k$ el menor número de autovectores $v_1,\dots,v_k$, con autovalores distintos $\lambda_1,\dots,\lambda_k$, que admiten una combinación nula $\sum_{i=1}^{k}c_iv_i=0$ con todos los $c_i\ne 0$ (por minimalidad, ninguno puede ser nulo; además $k\ge 2$, porque $v_1\ne 0$). Aplicando $A$ se obtiene $\sum_i c_i\lambda_iv_i=0$, y restando $\lambda_k$ veces la combinación original, $\sum_{i=1}^{k-1}c_i(\lambda_i-\lambda_k)v_i=0$. Los coeficientes $c_i(\lambda_i-\lambda_k)$ son no nulos, lo que da una combinación nula de $k-1$ autovectores y contradice la minimalidad de $k$.
+\end{proof}
+
+\begin{teorema}[Diagonalización]\label{teo:diagonalizacion}
+$A\in\R^{n\times n}$ admite una factorización $A=X\Lambda X^{-1}$, con $\Lambda$ diagonal y $X$ invertible, si y solo si $A$ tiene $n$ autovectores linealmente independientes. En ese caso, las columnas de $X$ son autovectores, la diagonal de $\Lambda$ contiene los autovalores correspondientes y $A^{k}=X\Lambda^{k}X^{-1}$ para todo $k\ge 1$.
+\end{teorema}
+
+\begin{proof}
+La igualdad $AX=X\Lambda$ significa, columna a columna, $Ax_i=\lambda_ix_i$. Si los $x_i$ son independientes, $X$ es invertible (\cref{teo:invertible}) y $A=X\Lambda X^{-1}$. Recíprocamente, si $A=X\Lambda X^{-1}$, entonces $AX=X\Lambda$ y las columnas de $X$, independientes por ser $X$ invertible, son autovectores. Finalmente, $A^{k}=X\Lambda X^{-1}X\Lambda X^{-1}\cdots X\Lambda X^{-1}=X\Lambda^{k}X^{-1}$.
+\end{proof}
+
+Por la \cref{prop:indep-autovectores}, una matriz con $n$ autovalores distintos es diagonalizable. Con autovalores repetidos puede no serlo: $\begin{pmatrix}1&1\\0&1\end{pmatrix}$ tiene el autovalor doble~1, pero su espacio propio es $\gen\{e_1\}$, de dimensión~1. La diagonalizabilidad no guarda relación con la invertibilidad (\cref{eje:3-mml}).
+
+\section{Matrices simétricas y teorema espectral}
+
+\begin{teorema}\label{teo:simetricas}
+Sea $S\in\R^{n\times n}$ simétrica, $S\T=S$. Entonces:
+\begin{enumerate}
+  \item todos los autovalores de $S$ son reales;
+  \item autovectores asociados a autovalores distintos son ortogonales.
+\end{enumerate}
+\end{teorema}
+
+\begin{proof}
+La parte (i) se demuestra en el \cref{eje:3-reales}. Para (ii), sean $Sv_1=\lambda_1v_1$ y $Sv_2=\lambda_2v_2$ con $\lambda_1\ne\lambda_2$. Se calcula $v_1\T Sv_2$ de dos formas:
+\[
+v_1\T Sv_2=v_1\T(\lambda_2v_2)=\lambda_2\,v_1\T v_2,\qquad
+v_1\T Sv_2=(S\T v_1)\T v_2=(Sv_1)\T v_2=\lambda_1\,v_1\T v_2.
+\]
+Restando, $(\lambda_1-\lambda_2)\,v_1\T v_2=0$ y, como $\lambda_1\ne\lambda_2$, $v_1\T v_2=0$.
+\end{proof}
+
+\begin{teorema}[Teorema espectral]\label{teo:espectral}
+Toda matriz real simétrica $S\in\R^{n\times n}$ se factoriza como
+\[
+S=Q\Lambda Q\T=\sum_{i=1}^{n}\lambda_i\,q_iq_i\T,
+\]
+donde $Q=[q_1\mid\cdots\mid q_n]$ es ortogonal y $\Lambda=\diag(\lambda_1,\dots,\lambda_n)$ es real.
+\end{teorema}
+
+\begin{proof}[Demostración en el caso de autovalores distintos]
+Por el \cref{teo:simetricas}, los autovalores son reales y los autovectores, que pueden tomarse reales y unitarios, son ortogonales dos a dos. Forman, pues, una base ortonormal, y el \cref{teo:diagonalizacion} con $X=Q$ y $X^{-1}=Q\T$ da $S=Q\Lambda Q\T$. La forma de suma se obtiene multiplicando $Q\Lambda$ por $Q\T$ como columnas por filas. El caso general, con autovalores repetidos, se demuestra mediante la factorización de Schur~\cite[§6.3]{strang-ila}: en cada espacio propio se elige una base ortonormal por Gram--Schmidt.
+\end{proof}
+
+Leída de derecha a izquierda, $S=Q\Lambda Q\T$ dice que $S$ expresa el vector en la base de autovectores ($Q\T$), estira cada eje por su autovalor ($\Lambda$) y vuelve a la base original ($Q$). Para el \cref{ej:S},
+\[
+S=3\,q_1q_1\T+1\,q_2q_2\T=\frac{3}{2}\begin{pmatrix}1&1\\1&1\end{pmatrix}+\frac{1}{2}\begin{pmatrix}1&-1\\-1&1\end{pmatrix}.
+\]
+
+\begin{definicion}[Matriz semidefinida positiva]
+Una matriz simétrica $S$ es \emph{semidefinida positiva} si $x\T Sx\ge 0$ para todo $x$, y \emph{definida positiva} si $x\T Sx>0$ para todo $x\ne 0$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:AtA}
+Para toda $A\in\R^{m\times n}$, la matriz $A\T A$ es simétrica y semidefinida positiva, y sus autovalores son mayores o iguales que cero.
+\end{proposicion}
+
+\begin{proof}
+$(A\T A)\T=A\T A$. Para todo $x$, $x\T A\T Ax=(Ax)\T(Ax)=\norm{Ax}^{2}\ge 0$. Si $A\T Aq=\lambda q$ con $\norm{q}=1$, entonces $\lambda=q\T A\T Aq=\norm{Aq}^{2}\ge 0$.
+\end{proof}
+
+\begin{proposicion}[Cociente de Rayleigh]\label{prop:rayleigh}
+Sea $S$ simétrica con autovalores $\lambda_1\ge\dots\ge\lambda_n$ y autovectores ortonormales $q_1,\dots,q_n$. Entonces
+\[
+\max_{\norm{x}=1}x\T Sx=\lambda_1,
+\]
+y el máximo se alcanza en $x=q_1$.
+\end{proposicion}
+
+\begin{proof}
+Escríbase $x=\sum_i c_iq_i$ con $\sum_i c_i^{2}=\norm{x}^{2}=1$ (\cref{prop:coord-ortonormal}). Por el \cref{teo:espectral}, $x\T Sx=\sum_i\lambda_ic_i^{2}\le\lambda_1\sum_i c_i^{2}=\lambda_1$. Con $x=q_1$ se obtiene $q_1\T Sq_1=\lambda_1$.
+\end{proof}
+
+Este resultado es la base del análisis de componentes principales (\cref{tema:5}): la dirección de máxima varianza de unos datos es el primer autovector de su matriz de covarianza.
+
+\section{El método de la potencia}
+
+Si $S$ es simétrica con $\abs{\lambda_1}>\abs{\lambda_2}\ge\dots\ge\abs{\lambda_n}$, la iteración
+\[
+x_{k+1}=\frac{Sx_k}{\norm{Sx_k}}
+\]
+converge, salvo signo, al autovector $q_1$ siempre que $x_0$ tenga componente no nula sobre $q_1$. El error decrece como $\abs{\lambda_2/\lambda_1}^{k}$ (\cref{eje:3-potencia}).
+
+\begin{ejemplo}\label{ej:potencia}
+Con la matriz $S$ del \cref{ej:S} y $x_0=(1,0)$: $Sx_0=(2,1)$, $S^{2}x_0=(5,4)$, $S^{3}x_0=(14,13)$, $S^{4}x_0=(41,40)$ y $S^{5}x_0=(122,121)$. Normalizado, $S^{5}x_0/\norm{S^{5}x_0}\approx(0{,}7100;\,0{,}7042)$, muy cerca de $q_1\approx(0{,}7071;\,0{,}7071)$. Como $\abs{\lambda_2/\lambda_1}=1/3$, cada iteración divide el error aproximadamente por~3.
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+El método de la potencia, y sus variantes por bloques, es la forma habitual de calcular unos pocos autovalores o valores singulares dominantes de matrices grandes~\cite[clase~12]{mit18065}: se usa, por ejemplo, para estimar la norma espectral de una matriz de pesos sin calcular su SVD completa. Las matrices de covarianza de los embeddings son simétricas y semidefinidas positivas (\cref{prop:AtA}), de modo que el \cref{teo:espectral} garantiza que tienen ejes principales ortogonales; esa es la idea del \cref{tema:5}.
+\end{observacion}
+
+\begin{lecturas}
+\item Strang~\cite{strang-ila}, §6.1 «Introduction to Eigenvalues», §6.2 «Diagonalizing a Matrix» y §6.3 «Symmetric Positive Definite Matrices».
+\item MIT 18.06~\cite{mit1806}, clases~21 «Eigenvalues and eigenvectors», 22 «Diagonalization and powers of $A$» y 25 «Symmetric matrices and positive definiteness».
+\item MIT 18.065~\cite{mit18065}, clases~4 «Eigenvalues and Eigenvectors» y 5 «Positive Definite and Semidefinite Matrices».
+\item Deisenroth, Faisal y Ong~\cite{mml}, §4.2 «Eigenvalues and Eigenvectors» (teorema espectral~4.15) y §4.4 «Eigendecomposition and Diagonalization».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-mml}
+Determine, para cada una de las matrices
+\[
+I_2=\begin{pmatrix}1&0\\0&1\end{pmatrix},\quad P=\begin{pmatrix}1&0\\0&0\end{pmatrix},\quad J=\begin{pmatrix}1&1\\0&1\end{pmatrix},\quad N=\begin{pmatrix}0&1\\0&0\end{pmatrix},
+\]
+si es diagonalizable y si es invertible. Concluya que ninguna de las dos propiedades implica la otra.
+\fuente{adaptado de Deisenroth, Faisal y Ong~\cite{mml}, ejercicio~4.5.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-autovec}
+Calcule los autovalores y autovectores de $B=\begin{pmatrix}4&1\\2&3\end{pmatrix}$. ¿Son ortogonales los autovectores? Relacione la respuesta con el \cref{teo:simetricas}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-u2}
+Calcule los autovalores de
+\[
+A=\begin{pmatrix}2&1&4\\0&3&5\\0&0&-1\end{pmatrix},\qquad
+B=\begin{pmatrix}0&0&2\\0&1&0\\8&0&0\end{pmatrix},\qquad
+C=\begin{pmatrix}3&3&3\\3&3&3\\3&3&3\end{pmatrix},
+\]
+y compruebe en cada caso la \cref{prop:traza-det}.
+\fuente{adaptado de MIT 18.06SC~\cite{mit1806sc}, sesión «Eigenvalues and Eigenvectors», problema~21.2 (matrices cambiadas).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-u3}
+Una matriz $B\in\R^{3\times 3}$ tiene autovalores $0$, $2$ y $3$. Calcule, si es posible: (a) $\rango(B)$; (b) $\det(B\T B)$; (c) los autovalores de $(B^{2}+I)^{-1}$. (d) ¿Pueden deducirse los autovalores de $B\T B$?
+\fuente{adaptado de MIT 18.06SC~\cite{mit1806sc}, sesión «Eigenvalues and Eigenvectors», problema~21.1 (autovalores cambiados).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-reales}
+Demuestre que todos los autovalores de una matriz real simétrica son reales. Indicación: si $Sv=\lambda v$ con $v\in\mathbb{C}^{n}$ no nulo, calcule $\bar v\T Sv$ de dos formas.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-potencia}
+Sea $S$ simétrica con autovectores ortonormales $q_1,\dots,q_n$ y autovalores $\abs{\lambda_1}>\abs{\lambda_2}\ge\dots\ge\abs{\lambda_n}$, y sea $x_0=\sum_i c_iq_i$ con $c_1\ne 0$. Demuestre que $S^{k}x_0/\norm{S^{k}x_0}$ tiende a $\pm q_1$ y que la distancia a la recta generada por $q_1$ es $O\bigl(\abs{\lambda_2/\lambda_1}^{k}\bigr)$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{La descomposición en valores singulares}
+\label{tema:4}
+% =====================================================================
+
+El teorema espectral solo se aplica a matrices cuadradas simétricas. La descomposición en valores singulares (SVD) extiende la misma idea a cualquier matriz rectangular: toda transformación lineal es un giro, seguido de un estiramiento a lo largo de ejes perpendiculares, seguido de otro giro. Este tema sigue a Strang~\cite[§7.1]{strang-ila}, la clase~29 de 18.06~\cite{mit1806}, las clases~6 y~8 de 18.065~\cite{mit18065} y el §4.5 de~\cite{mml}.
+
+\section{El teorema de la SVD}
+
+\begin{teorema}[Descomposición en valores singulares]\label{teo:svd}
+Sea $A\in\R^{m\times n}$ de rango $r$. Existen matrices ortogonales $U\in\R^{m\times m}$ y $V\in\R^{n\times n}$ y números $\sigma_1\ge\sigma_2\ge\dots\ge\sigma_r>0$ tales que
+\[
+A=U\Sigma V\T=\sum_{i=1}^{r}\sigma_i\,u_iv_i\T,
+\]
+donde $\Sigma\in\R^{m\times n}$ tiene $\Sigma_{ii}=\sigma_i$ para $i\le r$ y ceros en el resto, y $u_i$, $v_i$ son las columnas de $U$ y $V$. Los $\sigma_i$ son los \emph{valores singulares} de $A$, y los $u_i$ y $v_i$, sus \emph{vectores singulares} izquierdos y derechos. Además, $Av_i=\sigma_iu_i$ y $A\T u_i=\sigma_iv_i$ para $i\le r$.
+\end{teorema}
+
+\begin{proof}
+Por la \cref{prop:AtA} y el \cref{teo:espectral}, $A\T A\in\R^{n\times n}$ tiene una base ortonormal de autovectores $v_1,\dots,v_n$ con autovalores $\lambda_1\ge\dots\ge\lambda_n\ge 0$. Como $\Nuc(A\T A)=\Nuc(A)$ (si $A\T Ax=0$, entonces $\norm{Ax}^{2}=x\T A\T Ax=0$), el \cref{teo:rango-nulidad} da $\rango(A\T A)=\rango(A)=r$, de modo que exactamente $\lambda_1,\dots,\lambda_r$ son positivos. Se define $\sigma_i=\sqrt{\lambda_i}$ y, para $i\le r$,
+\[
+u_i=\frac{Av_i}{\sigma_i}.
+\]
+Estos vectores son ortonormales:
+\[
+u_i\T u_j=\frac{v_i\T A\T Av_j}{\sigma_i\sigma_j}=\frac{\lambda_j\,v_i\T v_j}{\sigma_i\sigma_j}=\delta_{ij}.
+\]
+Se completan $u_1,\dots,u_r$ con $u_{r+1},\dots,u_m$ hasta una base ortonormal de $\R^{m}$ (Gram--Schmidt). Para $i>r$, $\norm{Av_i}^{2}=\lambda_i=0$, luego $Av_i=0$. Por tanto, $Av_i=\sigma_iu_i$ para $i\le r$ y $Av_i=0$ para $i>r$, que en forma matricial es $AV=U\Sigma$. Multiplicando por $V\T$ a la derecha, $A=U\Sigma V\T$. Por último, $A\T u_i=A\T Av_i/\sigma_i=\lambda_iv_i/\sigma_i=\sigma_iv_i$.
+\end{proof}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[scale=0.78,>={Stealth[length=2mm]},font=\small]
+  % Panel 1: círculo unidad con v1, v2
+  \begin{scope}
+    \draw[gray!60] (-1.4,0)--(1.4,0) (0,-1.4)--(0,1.4);
+    \draw[thick] (0,0) circle (1);
+    \draw[->,thick] (0,0)--(45:1) node[above right=-2pt] {$v_1$};
+    \draw[->,thick] (0,0)--(-45:1) node[below right=-2pt] {$v_2$};
+    \node at (0,-1.9) {$x\in\R^{n}$, $\norm{x}=1$};
+  \end{scope}
+  \draw[->] (1.8,0)--(3.0,0) node[midway,above] {$V\T$};
+  % Panel 2: círculo con ejes canónicos
+  \begin{scope}[xshift=4.6cm]
+    \draw[gray!60] (-1.4,0)--(1.4,0) (0,-1.4)--(0,1.4);
+    \draw[thick] (0,0) circle (1);
+    \draw[->,thick] (0,0)--(1,0) node[above right=-2pt] {$e_1$};
+    \draw[->,thick] (0,0)--(0,1) node[above right=-2pt] {$e_2$};
+    \node at (0,-1.9) {girar};
+  \end{scope}
+  \draw[->] (6.4,0)--(7.6,0) node[midway,above] {$\Sigma$};
+  % Panel 3: elipse alineada con los ejes
+  \begin{scope}[xshift=9.6cm]
+    \draw[gray!60] (-1.8,0)--(1.8,0) (0,-1.4)--(0,1.4);
+    \draw[thick] (0,0) ellipse (1.6 and 0.6);
+    \draw[->,thick] (0,0)--(1.6,0) node[above right=-2pt] {$\sigma_1e_1$};
+    \draw[->,thick] (0,0)--(0,0.6) node[above left=-2pt] {$\sigma_2e_2$};
+    \node at (0,-1.9) {estirar};
+  \end{scope}
+  \draw[->] (11.6,0)--(12.8,0) node[midway,above] {$U$};
+  % Panel 4: elipse girada
+  \begin{scope}[xshift=14.6cm]
+    \draw[gray!60] (-1.8,0)--(1.8,0) (0,-1.4)--(0,1.4);
+    \draw[thick,rotate=30] (0,0) ellipse (1.6 and 0.6);
+    \draw[->,thick] (0,0)--(30:1.6) node[above right=-2pt] {$\sigma_1u_1$};
+    \draw[->,thick] (0,0)--(120:0.6) node[above left=-2pt] {$\sigma_2u_2$};
+    \node at (0,-1.9) {girar: $Ax$};
+  \end{scope}
+\end{tikzpicture}
+\caption{Interpretación geométrica de $A=U\Sigma V\T$ para $m=n=2$. La imagen de la circunferencia unidad es una elipse cuyos semiejes miden $\sigma_1$ y $\sigma_2$ y apuntan en las direcciones $u_1$ y $u_2$.}
+\label{fig:svd}
+\end{figure}
+
+\begin{observacion}[SVD reducida]
+Como las columnas $u_i$ y $v_i$ con $i>r$ se multiplican por ceros, también se cumple $A=U_r\Sigma_rV_r\T$, con $U_r\in\R^{m\times r}$, $\Sigma_r=\diag(\sigma_1,\dots,\sigma_r)$ y $V_r\in\R^{n\times r}$. Es la versión que se almacena en la práctica (\texttt{np.linalg.svd} con \texttt{full\_matrices=False}).
+\end{observacion}
+
+\begin{corolario}\label{cor:svd-props}
+Sea $A=U\Sigma V\T$ la SVD de $A\in\R^{m\times n}$.
+\begin{enumerate}
+  \item $\rango(A)$ es el número de valores singulares no nulos.
+  \item $\sigma_i(A)=\sqrt{\lambda_i(A\T A)}$, y $AA\T$ tiene los mismos autovalores no nulos que $A\T A$, con autovectores $u_i$.
+  \item $\{u_1,\dots,u_r\}$ es una base ortonormal de $\Col(A)$ y $\{v_{r+1},\dots,v_n\}$, una base ortonormal de $\Nuc(A)$.
+  \item Si $A$ es simétrica con autovalores $\lambda_i$, sus valores singulares son los $\abs{\lambda_i}$. Si además es semidefinida positiva, la SVD coincide con la descomposición espectral.
+\end{enumerate}
+\end{corolario}
+
+\begin{proof}
+(i) y (iii) se leen en la demostración del \cref{teo:svd}: $Av_i=\sigma_iu_i$ para $i\le r$ y $Av_i=0$ para $i>r$, y $\dim\Nuc(A)=n-r$. (ii) $AA\T=U\Sigma\Sigma\T U\T$ es una descomposición espectral con autovalores $\sigma_i^{2}$; la primera igualdad es la definición de $\sigma_i$. (iv) Si $A=Q\Lambda Q\T$, se toma $V=Q$ y $u_i=\operatorname{signo}(\lambda_i)\,q_i$ (con $u_i=q_i$ si $\lambda_i=0$), de modo que $A=U\abs{\Lambda}V\T$.
+\end{proof}
+
+\section{Cálculo a mano}
+
+El procedimiento de la demostración sirve también para calcular la SVD de matrices pequeñas: (1) se forma $A\T A$ o $AA\T$, la que sea de menor orden; (2) se calculan sus autovalores $\sigma_i^{2}$ y autovectores ortonormales; (3) se obtienen los vectores singulares del otro lado con $u_i=Av_i/\sigma_i$ o $v_i=A\T u_i/\sigma_i$.
+
+\begin{ejemplo}\label{ej:svd23}
+Sea $A=\begin{pmatrix}3&2&2\\2&3&-2\end{pmatrix}$, la matriz del ejercicio~4.8 de~\cite{mml}.
+\begin{enumerate}[label=\arabic*.]
+  \item Es más cómodo trabajar con $AA\T=\begin{pmatrix}17&8\\8&17\end{pmatrix}$, de orden~2. Sus autovalores cumplen $(17-\lambda)^{2}=64$, luego $\lambda=25$ y $\lambda=9$, y $\sigma_1=5$, $\sigma_2=3$.
+  \item Como en el \cref{ej:S}, los autovectores unitarios son $u_1=(1,1)/\sqrt{2}$ y $u_2=(1,-1)/\sqrt{2}$.
+  \item $v_1=A\T u_1/\sigma_1=(5,5,0)/(5\sqrt{2})=(1,1,0)/\sqrt{2}$ y $v_2=A\T u_2/\sigma_2=(1,-1,4)/(3\sqrt{2})$.
+\end{enumerate}
+Se comprueba que $\norm{v_2}^{2}=(1+1+16)/18=1$ y $v_1\T v_2=(1-1+0)/6=0$. El tercer vector singular derecho, $v_3$, genera $\Nuc(A)$: resolviendo $Av_3=0$ se obtiene $v_3=(2,-2,-1)/3$. La matriz tiene rango~2 y
+\[
+A=5\,u_1v_1\T+3\,u_2v_2\T.
+\]
+\end{ejemplo}
+
+\section{Normas matriciales}
+
+\begin{definicion}[Normas de Frobenius y espectral]
+Para $A\in\R^{m\times n}$ se definen la \emph{norma de Frobenius} y la \emph{norma espectral}
+\[
+\norm{A}_F=\Bigl(\sum_{i=1}^{m}\sum_{j=1}^{n}a_{ij}^{2}\Bigr)^{1/2},\qquad
+\norm{A}_2=\max_{x\ne 0}\frac{\norm{Ax}}{\norm{x}}.
+\]
+\end{definicion}
+
+\begin{proposicion}\label{prop:normas-svd}
+Para toda $A\in\R^{m\times n}$ con valores singulares $\sigma_1\ge\dots\ge\sigma_r>0$,
+\[
+\norm{A}_F^{2}=\traza(A\T A)=\sum_{i=1}^{r}\sigma_i^{2},\qquad \norm{A}_2=\sigma_1.
+\]
+En particular, $\norm{A}_2\le\norm{A}_F\le\sqrt{r}\,\norm{A}_2$.
+\end{proposicion}
+
+Las dos igualdades se demuestran en los \cref{eje:4-frobenius,eje:4-espectral}; la segunda es el teorema~4.24 de~\cite{mml}. Ambas normas son invariantes por transformaciones ortogonales: $\norm{Q_1AQ_2}=\norm{A}$ para $Q_1$, $Q_2$ ortogonales, porque los valores singulares no cambian. Las desigualdades finales se siguen de $\sigma_1^{2}\le\sum_i\sigma_i^{2}\le r\sigma_1^{2}$.
+
+\begin{ejemplo}
+Para la matriz del \cref{ej:svd23}, $\norm{A}_F^{2}=9+4+4+4+9+4=34=25+9$ y $\norm{A}_2=5$: ningún vector unitario se alarga más de 5 veces, y $v_1$ alcanza ese máximo.
+\end{ejemplo}
+
+\begin{observacion}[Conexión con los LLM]
+Los valores singulares de una matriz de pesos describen cuánto puede amplificar una capa cada dirección de entrada. Una norma espectral grande indica que pequeñas perturbaciones de la entrada pueden producir grandes cambios en la salida, y el espectro de los pesos se usa para diagnosticar entrenamientos (módulo~11). El \cref{tema:5} usa la SVD para la propiedad más importante en la práctica: truncar la suma $\sum_i\sigma_iu_iv_i\T$ da la mejor aproximación de rango bajo.
+\end{observacion}
+
+\begin{lecturas}
+\item Strang~\cite{strang-ila}, §7.1 «Singular Values and Singular Vectors».
+\item MIT 18.06~\cite{mit1806}, clase~29 «Singular value decomposition».
+\item MIT 18.065~\cite{mit18065}, clases~6 «Singular Value Decomposition (SVD)» y 8 «Norms of Vectors and Matrices»; lectura: Strang~\cite{strang-lafd}, §I.8.
+\item Deisenroth, Faisal y Ong~\cite{mml}, §4.5 «Singular Value Decomposition» (teorema~4.22) y §4.6 hasta el teorema~4.24.
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §2.8 «Singular Value Decomposition».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-vf}
+Justifique si son verdaderas o falsas: (a) la SVD solo existe para matrices cuadradas; (b) los valores singulares de una matriz pueden ser negativos; (c) si $A$ es simétrica, sus valores singulares coinciden con sus autovalores; (d) $A$ y $A\T$ tienen los mismos valores singulares.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-u1}
+Sea $A=\begin{pmatrix}1&1\\1&0\end{pmatrix}$. (a) Calcule $A\T A$ y $AA\T$. (b) Calcule sus autovalores y deduzca los valores singulares de $A$. (c) Compruebe que $\sigma_1=(1+\sqrt{5})/2$ y $\sigma_2=(\sqrt{5}-1)/2$, y explique por qué coinciden con los valores absolutos de los autovalores de $A$.
+\fuente{adaptado de MIT 18.06SC~\cite{mit1806sc}, sesión «Singular Value Decomposition», problema~29.1.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-u5}
+Sea $A$ una matriz cuyas columnas $w_1,\dots,w_n$ son ortogonales y no nulas, con $\norm{w_j}=s_j$. Calcule $A\T A$ y deduzca $U$, $\Sigma$ y $V$. Aplíquelo a $A=\begin{pmatrix}2&1\\1&0\\2&-1\end{pmatrix}$.
+\fuente{adaptado de MIT 18.06SC~\cite{mit1806sc}, sesión «Singular Value Decomposition», problema~29.2 (caso numérico añadido).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-mml}
+Calcule la descomposición en valores singulares de $A=\begin{pmatrix}2&2\\-1&1\end{pmatrix}$ y compruebe que $U\Sigma V\T=A$.
+\fuente{adaptado de Deisenroth, Faisal y Ong~\cite{mml}, ejercicio~4.9.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-frobenius}
+Demuestre que $\norm{A}_F^{2}=\traza(A\T A)=\sum_i\sigma_i^{2}$. Indicación: use que $\traza(XY)=\traza(YX)$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-autovalores}
+Demuestre que, para toda $A\in\R^{m\times n}$, las matrices $A\T A$ y $AA\T$ tienen los mismos autovalores no nulos, con las mismas multiplicidades, sin usar la SVD.
+\fuente{adaptado de Deisenroth, Faisal y Ong~\cite{mml}, ejercicio~4.11.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-espectral}
+Demuestre que $\max_{x\ne 0}\norm{Ax}/\norm{x}=\sigma_1$ y que el máximo se alcanza en $x=v_1$.
+\fuente{adaptado de Deisenroth, Faisal y Ong~\cite{mml}, ejercicio~4.12.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Aproximación de bajo rango y análisis de componentes principales}
+\label{tema:5}
+% =====================================================================
+
+La SVD escribe una matriz como suma de piezas de rango~1 ordenadas por su valor singular. Este tema demuestra que quedarse con las $k$ primeras piezas da la mejor aproximación posible de rango $k$ (teorema de Eckart--Young~\cite{eckart-young}) y extrae tres consecuencias: la compresión de matrices, el ajuste fino de bajo rango LoRA~\cite{hu-lora} y el análisis de componentes principales (PCA). Se sigue la clase~7 de 18.065~\cite{mit18065}, los §7.2 y~§7.3 de~\cite{strang-ila}, el §4.6 y el cap.~10 de~\cite{mml} y el tutorial de Shlens~\cite{shlens}.
+
+\section{El teorema de Eckart--Young}
+
+Sea $A=\sum_{i=1}^{r}\sigma_iu_iv_i\T$ la SVD de $A\in\R^{m\times n}$ y, para $k<r$, sea
+\[
+A_k=\sum_{i=1}^{k}\sigma_i\,u_iv_i\T,
+\]
+que tiene rango $k$ y cuya SVD es la de $A$ truncada. Como $A-A_k=\sum_{i>k}\sigma_iu_iv_i\T$ es a su vez una SVD, la \cref{prop:normas-svd} da
+\[
+\norm{A-A_k}_2=\sigma_{k+1},\qquad \norm{A-A_k}_F=\Bigl(\sum_{i=k+1}^{r}\sigma_i^{2}\Bigr)^{1/2}.
+\]
+
+\begin{lema}\label{lem:interseccion}
+Si $W_1$ y $W_2$ son subespacios de $\R^{n}$ con $\dim W_1+\dim W_2>n$, entonces $W_1\cap W_2$ contiene un vector no nulo.
+\end{lema}
+
+\begin{proof}
+Sean $\{a_1,\dots,a_p\}$ y $\{b_1,\dots,b_q\}$ bases de $W_1$ y $W_2$, con $p+q>n$. Por el \cref{lem:steinitz}, los $p+q$ vectores son dependientes: $\sum_i\alpha_ia_i=\sum_j\beta_jb_j$ con algún coeficiente no nulo. Ese vector común es no nulo, porque si lo fuera, la independencia de cada base anularía todos los coeficientes.
+\end{proof}
+
+\begin{teorema}[Eckart--Young]\label{teo:eckart-young}
+Sea $A\in\R^{m\times n}$ con valores singulares $\sigma_1\ge\sigma_2\ge\cdots$ y sea $k<\rango(A)$. Para toda $B\in\R^{m\times n}$ con $\rango(B)\le k$,
+\[
+\norm{A-B}_2\ge\sigma_{k+1}=\norm{A-A_k}_2
+\qquad\text{y}\qquad
+\norm{A-B}_F\ge\Bigl(\sum_{i>k}\sigma_i^{2}\Bigr)^{1/2}=\norm{A-A_k}_F.
+\]
+Es decir, $A_k$ es la mejor aproximación de rango a lo sumo $k$ de $A$ en ambas normas.
+\end{teorema}
+
+\begin{proof}
+\emph{Norma espectral.} Por el \cref{teo:rango-nulidad}, $\dim\Nuc(B)\ge n-k$. El subespacio $W=\gen\{v_1,\dots,v_{k+1}\}$ tiene dimensión $k+1$, y $(n-k)+(k+1)>n$. Por el \cref{lem:interseccion} existe un vector unitario $w\in\Nuc(B)\cap W$. Escribiendo $w=\sum_{i\le k+1}c_iv_i$ con $\sum_ic_i^{2}=1$,
+\[
+\norm{(A-B)w}^{2}=\norm{Aw}^{2}=\Bigl\|\sum_{i=1}^{k+1}c_i\sigma_iu_i\Bigr\|^{2}=\sum_{i=1}^{k+1}c_i^{2}\sigma_i^{2}\ge\sigma_{k+1}^{2}\sum_{i=1}^{k+1}c_i^{2}=\sigma_{k+1}^{2}.
+\]
+Como $\norm{w}=1$, se concluye $\norm{A-B}_2\ge\sigma_{k+1}$.
+
+\emph{Norma de Frobenius.} Sea $E=A-B$ con valores singulares $\tau_1\ge\tau_2\ge\cdots$ y truncamientos $E_{j}$ ($E_0=0$). Para cada $j\ge 1$, la matriz $B+E_{j-1}$ tiene rango a lo sumo $k+j-1$, y $A-(B+E_{j-1})=E-E_{j-1}$. Por la parte ya demostrada aplicada a $A$ con $k+j-1$ en lugar de $k$,
+\[
+\sigma_{k+j}\le\norm{E-E_{j-1}}_2=\tau_j
+\]
+(si $k+j-1\ge\rango(A)$, entonces $\sigma_{k+j}=0$ y la desigualdad es trivial).
+Sumando los cuadrados, $\norm{A-B}_F^{2}=\sum_j\tau_j^{2}\ge\sum_{j\ge 1}\sigma_{k+j}^{2}=\sum_{i>k}\sigma_i^{2}$.
+\end{proof}
+
+La parte espectral es el teorema~4.25 de~\cite{mml}; la de Frobenius es el enunciado original de Eckart y Young~\cite{eckart-young}. La desigualdad $\sigma_{k+j}(A)\le\sigma_j(A-B)$ usada en la segunda parte es un caso de la desigualdad de Weyl para valores singulares.
+
+\begin{ejemplo}\label{ej:A1}
+Con la matriz del \cref{ej:svd23} y $k=1$,
+\[
+A_1=5\cdot\frac{1}{\sqrt{2}}\begin{pmatrix}1\\1\end{pmatrix}\frac{1}{\sqrt{2}}\begin{pmatrix}1&1&0\end{pmatrix}=\begin{pmatrix}2{,}5&2{,}5&0\\2{,}5&2{,}5&0\end{pmatrix},
+\]
+y $\norm{A-A_1}_F=\norm{A-A_1}_2=\sigma_2=3$. La fracción de la norma de Frobenius al cuadrado que conserva $A_1$, llamada \emph{energía retenida}, es $\sigma_1^{2}/(\sigma_1^{2}+\sigma_2^{2})=25/34\approx 0{,}7353$.
+\end{ejemplo}
+
+\section{Compresión de matrices}
+
+Almacenar $A_k$ requiere $k$ columnas de $U$, $k$ filas de $V\T$ y $k$ valores singulares: $k(m+n+1)$ números frente a los $mn$ de $A$. La compresión compensa cuando $k(m+n+1)<mn$, y es eficaz cuando los valores singulares decrecen deprisa, pues entonces el error $(\sum_{i>k}\sigma_i^{2})^{1/2}$ es pequeño con $k$ pequeño.
+
+\begin{table}[h]
+\centering\small
+\caption{Coste de almacenamiento de la aproximación de rango $k$.}\label{tab:compresion}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Matriz & $mn$ & $k$ & $k(m+n+1)$ & Fracción \\
+\midrule
+Imagen de $512\times 512$ & $262\,144$ & 20 & $20\,500$ & $7{,}8\,\%$ \\
+Imagen de $1000\times 800$ & $800\,000$ & 50 & $90\,050$ & $11{,}3\,\%$ \\
+Pesos de $4096\times 4096$ & $16\,777\,216$ & 8 & $65\,544$ & $0{,}39\,\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Una imagen en escala de grises es una matriz de intensidades. Las regiones uniformes, los bordes horizontales y verticales y los degradados suaves tienen rango bajo; los bordes diagonales y el ruido requieren muchos términos~\cite[§7.2]{strang-ila}. La práctica del módulo aplica la SVD a una imagen sintética y muestra cómo decae el error con $k$.
+
+\section{Ajuste fino de bajo rango}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},font=\small,
+  caja/.style={draw,thick,minimum height=8mm,minimum width=24mm,align=center}]
+  \node (x) at (0,0) {$x\in\R^{d_{\text{in}}}$};
+  \node[caja] (W) at (3.6,0.9) {$W_0$ congelada\\ $d_{\text{out}}\times d_{\text{in}}$};
+  \node[caja] (A) at (3.0,-0.9) {$A$ entrenable\\ $r\times d_{\text{in}}$};
+  \node[caja] (B) at (6.2,-0.9) {$B$ entrenable\\ $d_{\text{out}}\times r$};
+  \node[draw,thick,circle,inner sep=1pt] (s) at (8.4,0) {$+$};
+  \node (h) at (10.6,0) {$h=W_0x+BAx$};
+  \draw[->] (x) |- (W);
+  \draw[->] (x) |- (A);
+  \draw[->] (A) -- node[above] {$\R^{r}$} (B);
+  \draw[->] (W) -| (s);
+  \draw[->] (B) -| (s);
+  \draw[->] (s) -- (h);
+\end{tikzpicture}
+\caption{Capa lineal con LoRA. La entrada atraviesa la matriz congelada $W_0$ y, en paralelo, el cuello de dimensión $r$ formado por $A$ y $B$; la corrección $\Delta W=BA$ tiene rango a lo sumo~$r$.}
+\label{fig:lora}
+\end{figure}
+
+LoRA~\cite{hu-lora} parte de la hipótesis de que la modificación que el ajuste fino introduce en los pesos de un modelo preentrenado tiene un \emph{rango intrínseco} bajo. En lugar de actualizar $W_0$, aprende $\Delta W=BA$ (\cref{fig:lora}), con $r(d_{\text{in}}+d_{\text{out}})$ parámetros (\cref{obs:lora-rango}). Al terminar, $BA$ puede sumarse a $W_0$, de modo que la inferencia no tiene coste adicional. El \cref{teo:eckart-young} cuantifica lo que se pierde: si la actualización ideal es $\Delta W^{\star}$, ninguna corrección de rango $r$ puede acercarse a ella más que $(\sum_{i>r}\sigma_i^{2}(\Delta W^{\star}))^{1/2}$ (\cref{eje:5-lora}). La apuesta de LoRA, respaldada empíricamente en~\cite{hu-lora}, es que el espectro de $\Delta W^{\star}$ decae deprisa.
+
+\section{Análisis de componentes principales}
+
+\begin{definicion}[Datos centrados y covarianza]
+Sean $n$ puntos $x_1,\dots,x_n\in\R^{d}$ con media $\mu=\frac1n\sum_ix_i$. La matriz de datos centrados $X\in\R^{n\times d}$ tiene por filas $(x_i-\mu)\T$. La \emph{matriz de covarianza} es
+\[
+C=\frac{1}{n}X\T X\in\R^{d\times d}.
+\]
+\end{definicion}
+
+$C$ es simétrica y semidefinida positiva (\cref{prop:AtA}). Algunos textos dividen por $n-1$ en lugar de $n$; el factor no cambia los autovectores. Para un vector unitario $w$, las proyecciones de los puntos sobre $w$ son las componentes de $Xw$, que tienen media cero, y su varianza es
+\[
+\frac1n\norm{Xw}^{2}=\frac1n w\T X\T Xw=w\T Cw.
+\]
+
+\begin{teorema}[Dirección de máxima varianza]\label{teo:pca}
+Sean $\lambda_1\ge\dots\ge\lambda_d\ge 0$ los autovalores de $C$ y $q_1,\dots,q_d$ autovectores ortonormales. La dirección unitaria $w$ que maximiza la varianza de las proyecciones es $w=q_1$, y la varianza máxima es $\lambda_1$. Más en general, entre todos los subespacios de dimensión $k$, el que maximiza la varianza total de las proyecciones es $\gen\{q_1,\dots,q_k\}$, con varianza $\lambda_1+\dots+\lambda_k$.
+\end{teorema}
+
+\begin{proof}[Demostración para $k=1$]
+La varianza es $w\T Cw$ y la \cref{prop:rayleigh} da su máximo, $\lambda_1$, en $w=q_1$. El caso general se demuestra por inducción, maximizando sobre los vectores ortogonales a $q_1,\dots,q_{k-1}$~\cite[§10.2.2]{mml}.
+\end{proof}
+
+Los vectores $q_i$ son las \emph{componentes principales}, y la \emph{varianza explicada} por la componente $i$ es $\lambda_i/\sum_j\lambda_j$.
+
+\begin{teorema}[PCA mediante la SVD]\label{teo:svd-pca}
+Sea $X=U\Sigma V\T$ la SVD de la matriz de datos centrados. Entonces las componentes principales son las columnas de $V$, los autovalores de la covarianza son $\lambda_i=\sigma_i^{2}/n$ y las coordenadas de los datos en las $k$ primeras componentes son
+\[
+Z_k=XV_k=U_k\Sigma_k\in\R^{n\times k},
+\]
+cuya columna $i$ tiene varianza $\lambda_i$.
+\end{teorema}
+
+\begin{proof}
+$C=\frac1nX\T X=\frac1nV\Sigma\T U\T U\Sigma V\T=V\,\frac{\Sigma\T\Sigma}{n}\,V\T$, que es una descomposición espectral de $C$ con autovectores $v_i$ y autovalores $\sigma_i^{2}/n$. Además, $XV=U\Sigma V\T V=U\Sigma$, y sus $k$ primeras columnas son $\sigma_iu_i$. Su varianza es $\norm{\sigma_iu_i}^{2}/n=\sigma_i^{2}/n$; la media es cero porque $X$ está centrada.
+\end{proof}
+
+La reconstrucción de los datos a partir de $k$ componentes es $Z_kV_k\T=U_k\Sigma_kV_k\T=X_k$, el truncamiento de la SVD de $X$. Por el \cref{teo:eckart-young}, PCA es la mejor aproximación de rango $k$ de los datos centrados, con error cuadrático total $\sum_{i>k}\sigma_i^{2}$: maximizar la varianza proyectada y minimizar el error de reconstrucción son el mismo problema~\cite[§10.3]{mml}.
+
+\begin{ejemplo}\label{ej:pca}
+Sean los puntos ya centrados $(2,2)$, $(-2,-2)$, $(1,-1)$ y $(-1,1)$. Entonces
+\[
+X\T X=\begin{pmatrix}4+4+1+1&4+4-1-1\\4+4-1-1&4+4+1+1\end{pmatrix}=\begin{pmatrix}10&6\\6&10\end{pmatrix},\qquad
+C=\frac14X\T X=\begin{pmatrix}2{,}5&1{,}5\\1{,}5&2{,}5\end{pmatrix}.
+\]
+Los autovalores de $C$ son $\lambda_1=4$ y $\lambda_2=1$, y la primera componente principal es $q_1=(1,1)/\sqrt{2}$, que explica $4/5=80\,\%$ de la varianza. Las proyecciones sobre $q_1$ son $2\sqrt{2}$, $-2\sqrt{2}$, $0$ y $0$, cuya varianza es $(8+8)/4=4=\lambda_1$. Con la SVD, los valores singulares de $X$ son $\sigma=(4,2)$ y $\sigma_i^{2}/4=(4,1)$.
+\end{ejemplo}
+
+\begin{observacion}[Cálculo numérico]
+En la práctica se calcula la SVD de $X$ y no la descomposición espectral de $X\T X$: formar $X\T X$ eleva al cuadrado el número de condición $\sigma_1/\sigma_r$ y pierde precisión en las componentes de varianza pequeña~\cite[§10.4]{mml}.
+\end{observacion}
+
+\begin{observacion}[Visualización de embeddings]
+Los embeddings de GPT-2 small tienen $\dmodel=768$ componentes~\cite{gpt2}. Proyectarlos sobre las dos primeras componentes principales da la imagen plana que conserva más varianza, y palabras de un mismo campo semántico suelen aparecer agrupadas. Conviene leer siempre la varianza explicada: una proyección ortogonal nunca alarga distancias, de modo que dos puntos alejados en el plano también lo están en $\R^{768}$, pero dos puntos cercanos en el plano pueden estar lejos en el espacio original (\cref{eje:5-varexp}). Los métodos de interpretabilidad del módulo~23 usan PCA para encontrar direcciones dominantes en las activaciones de un modelo.
+\end{observacion}
+
+\begin{lecturas}
+\item MIT 18.065~\cite{mit18065}, clase~7 «Eckart-Young: The Closest Rank $k$ Matrix to $A$»; lectura: Strang~\cite{strang-lafd}, §I.9.
+\item Strang~\cite{strang-ila}, §7.2 «Image Processing by Linear Algebra» y §7.3 «Principal Component Analysis (PCA by the SVD)».
+\item Deisenroth, Faisal y Ong~\cite{mml}, §4.6 «Matrix Approximation» (teorema~4.25) y cap.~10 «Dimensionality Reduction with Principal Component Analysis», §10.1--10.4.
+\item Shlens~\cite{shlens}, tutorial completo.
+\item Hu \emph{et al.}~\cite{hu-lora}, §4 «Our Method» (formulación de LoRA).
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-centrar}
+Explique por qué PCA exige centrar los datos. ¿Qué dirección obtendría como primera componente si aplicara la receta a datos sin centrar y muy alejados del origen? Indicación: desarrolle $\frac1n\sum_ix_ix_i\T$ en función de $C$ y de la media $\mu$.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:5-varexp}
+El PCA de unos embeddings de dimensión 768 da varianzas explicadas $0{,}12$ y $0{,}07$ para las dos primeras componentes. ¿Qué fracción de la varianza muestra el gráfico bidimensional? Si dos puntos aparecen lejos en el gráfico, ¿lo están en $\R^{768}$? ¿Y si aparecen cerca?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-svd}
+Sea $A=\begin{pmatrix}3&0\\4&5\end{pmatrix}$. Calcule (a) sus valores singulares; (b) el error $\norm{A-A_1}_F$; (c) la energía retenida por $A_1$; (d) la matriz $A_1$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-mml}
+Con la SVD obtenida en el \cref{eje:4-mml}, calcule la mejor aproximación de rango~1 de $A=\begin{pmatrix}2&2\\-1&1\end{pmatrix}$, su error en norma de Frobenius y en norma espectral y la energía retenida.
+\fuente{adaptado de Deisenroth, Faisal y Ong~\cite{mml}, ejercicio~4.10 (aplicado a la matriz del ejercicio~4.9).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-pca}
+Realice el PCA de los puntos centrados $(4,2)$, $(2,4)$, $(-2,-4)$ y $(-4,-2)$: matriz de covarianza, autovalores, primera componente principal, varianza explicada y proyecciones sobre ella. Compruebe el resultado con el \cref{teo:svd-pca}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-coste}
+(a) Una imagen de $1000\times 800$ se comprime con rango $k=50$. ¿Cuántos números se almacenan y qué fracción del original suponen? ¿A partir de qué $k$ deja de compensar? (b) Se aplica LoRA de rango $r=16$ a una matriz de $4096\times 4096$. ¿Cuántos parámetros se entrenan, qué porcentaje de la matriz suponen y cuál es el rango máximo de $\Delta W$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-lora}
+Sea $\Delta W^{\star}\in\R^{d\times n}$ con valores singulares $\sigma_1\ge\sigma_2\ge\cdots$. Demuestre que
+\[
+\min_{B\in\R^{d\times r},\,A\in\R^{r\times n}}\norm{\Delta W^{\star}-BA}_F=\Bigl(\sum_{i>r}\sigma_i^{2}\Bigr)^{1/2},
+\]
+dé matrices $B$ y $A$ que alcanzan el mínimo y calcule su valor para $\Delta W^{\star}=\diag(3,2,1)$ y $r=1$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Tensores, \emph{broadcasting} y formas de un LLM}
+\label{tema:6}
+% =====================================================================
+
+En el código de un modelo de lenguaje casi nunca aparecen vectores o matrices aislados, sino arrays de varios ejes que agrupan muchos vectores a la vez. Este tema formaliza esos arrays, el producto matricial por lotes y las reglas de \emph{broadcasting}, y las aplica a las formas de las matrices de un Transformer y al rango de su capa de salida. Se sigue a Zhang \emph{et al.}~\cite[§2.1 y §2.3]{d2l}, la documentación de NumPy~\cite{numpy-bc} y el apéndice~6 de~\cite{strang-ila}; la última sección, a Yang \emph{et al.}~\cite{yang-softmax}.
+
+\section{Tensores como arrays}
+
+\begin{definicion}[Tensor]
+Un \emph{tensor} de orden $k$ y forma $(n_1,\dots,n_k)$ es una familia de números reales $X[i_1,\dots,i_k]$ indexada por $0\le i_j<n_j$; contiene $n_1n_2\cdots n_k$ elementos. Cada índice recorre un \emph{eje}. Los escalares, vectores y matrices son tensores de orden 0, 1 y~2.
+\end{definicion}
+
+En física y en geometría diferencial, un tensor es una aplicación multilineal cuyas componentes cambian de una forma determinada al cambiar de base~\cite[apéndice~6]{strang-ila}. En aprendizaje automático el término designa simplemente un array multidimensional~\cite[§2.3.4]{d2l}, y es el sentido que se usa en este curso.
+
+\begin{definicion}[Reducción a lo largo de un eje]
+Sumar un tensor de forma $(n_1,\dots,n_k)$ a lo largo del eje $j$ produce un tensor de forma $(n_1,\dots,n_{j-1},n_{j+1},\dots,n_k)$:
+\[
+Y[i_1,\dots,\widehat{i_j},\dots,i_k]=\sum_{i_j=0}^{n_j-1}X[i_1,\dots,i_k],
+\]
+donde $\widehat{i_j}$ indica que el índice se suprime. Con la opción \texttt{keepdims=True}, el eje $j$ se conserva con tamaño~1.
+\end{definicion}
+
+La media, el máximo y la función $\LSE$ del módulo~1 se reducen del mismo modo. En un LLM, la softmax se aplica a lo largo del último eje de los logits y la normalización por capas calcula media y varianza a lo largo del eje de $\dmodel$.
+
+\section{Producto por lotes y notación de Einstein}
+
+\begin{definicion}[Producto matricial por lotes]
+Sean $X$ de forma $(\dots,m,p)$ e $Y$ de forma $(\dots,p,q)$, con los mismos ejes iniciales (o ejes compatibles por \emph{broadcasting}). El producto $X\,@\,Y$ tiene forma $(\dots,m,q)$ y se obtiene multiplicando como matrices los dos últimos ejes para cada valor de los índices iniciales, que actúan como índices de lote.
+\end{definicion}
+
+Multiplicar una matriz de $m\times p$ por otra de $p\times q$ requiere $mpq$ multiplicaciones. Por eso el orden en que se agrupa un producto de varias matrices afecta mucho al coste (\cref{eje:6-orden}).
+
+La notación de Einstein (\texttt{np.einsum}) describe estas operaciones nombrando los índices: los que aparecen en las entradas y no en la salida se suman. Por ejemplo, para $Q$ y $K$ de forma $(B,T,d)$, la expresión \texttt{einsum('bid,bjd->bij', Q, K)} calcula
+\[
+S[b,i,j]=\sum_{k}Q[b,i,k]\,K[b,j,k],
+\]
+es decir, $S=QK\T$ para cada elemento del lote, de forma $(B,T,T)$. Es el núcleo de la atención del módulo~13. Con \texttt{@}, el mismo cálculo exige trasponer solo los dos últimos ejes: \texttt{Q @ K.transpose(0, 2, 1)}.
+
+\section{Broadcasting}
+
+\begin{definicion}[Reglas de \emph{broadcasting}]\label{def:broadcasting}
+Dos tensores de formas $(a_1,\dots,a_p)$ y $(b_1,\dots,b_q)$ se combinan elemento a elemento del siguiente modo~\cite{numpy-bc}:
+\begin{enumerate}
+  \item se alinean las formas por la derecha y se completa la más corta con ejes de tamaño~1 por la izquierda;
+  \item en cada eje, los tamaños son \emph{compatibles} si son iguales o si uno de ellos vale~1; en otro caso la operación produce un error;
+  \item el resultado tiene, en cada eje, el mayor de los dos tamaños, y el tensor con tamaño~1 en ese eje se repite a lo largo de él.
+\end{enumerate}
+\end{definicion}
+
+\begin{table}[h]
+\centering\small
+\caption{Ejemplos de \emph{broadcasting} con activaciones de forma $(2,3,4)$.}\label{tab:broadcasting}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Operación & Formas & Resultado \\
+\midrule
+\texttt{x + b} & $(2,3,4)+(4,)$ & $(2,3,4)$: sesgo sumado a cada token \\
+\texttt{x - x.mean(-1, keepdims=True)} & $(2,3,4)-(2,3,1)$ & $(2,3,4)$: centra cada token \\
+\texttt{x @ W} & $(2,3,4)\,@\,(4,8)$ & $(2,3,8)$: misma capa en cada token \\
+\texttt{x + y} & $(2,3,4)+(3,)$ & error: $4\ne 3$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}
+El \emph{broadcasting} es la forma eficiente de escribir operaciones que en notación matemática llevan un vector de unos: si $X\in\R^{T\times d}$ y $b\in\R^{d}$, \texttt{X + b} calcula $X+\mathbf{1}b\T$ sin construir la matriz $\mathbf{1}b\T$. Su contrapartida es que algunas combinaciones de formas no producen error y dan un resultado no deseado; el \cref{eje:6-formas} muestra un caso típico. Comprobar las formas en cada paso es el hábito que más errores evita al programar un Transformer.
+\end{observacion}
+
+\section{Formas de un LLM}
+
+El \cref{tab:formas} recoge las formas de los tensores principales de un Transformer de tipo decodificador, con los valores de GPT-2 small~\cite{gpt2}: vocabulario de $V=50\,257$ tokens, $\dmodel=768$, 12 cabezas de atención y contexto de 1024 tokens. Se escribe $B$ para el tamaño del lote, $T$ para la longitud de la secuencia y $h$ para el número de cabezas. Las capas lineales se escriben aquí como en el código, $y=xW$ con $W$ de forma $(d_{\text{in}},d_{\text{out}})$.
+
+\begin{table}[h]
+\centering\small
+\caption{Formas de los tensores de un Transformer decodificador.}\label{tab:formas}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Objeto & Forma & GPT-2 small, $B=8$ \\
+\midrule
+Identificadores de tokens & $(B,T)$ & $(8,1024)$ \\
+Matriz de embeddings $E$ & $(V,\dmodel)$ & $(50\,257,768)$ \\
+Activaciones & $(B,T,\dmodel)$ & $(8,1024,768)$ \\
+Pesos de la primera capa del MLP & $(\dmodel,4\dmodel)$ & $(768,3072)$ \\
+Puntuaciones de atención & $(B,h,T,T)$ & $(8,12,1024,1024)$ \\
+Logits & $(B,T,V)$ & $(8,1024,50\,257)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},font=\small,
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=8mm,align=center}]
+  \node[caja] (ids) at (0,0) {ids\\$(B,T)$};
+  \node[caja] (x) at (3.4,0) {$x$\\$(B,T,d)$};
+  \node[caja] (y) at (9.0,1.9) {$(B,T,d')$};
+  \node[caja] (s) at (9.0,0) {puntuaciones\\$(B,T,T)$};
+  \node[caja] (l) at (9.0,-1.9) {logits\\$(B,T,V)$};
+  \draw[->] (ids) -- node[above] {$E[\text{ids}]$} (x);
+  \draw[->] (x.east) to[out=40,in=180] node[pos=0.55,above left] {$@\,W+b$} (y.west);
+  \draw[->] (x.east) -- node[above] {$QK\T/\sqrt{d}$} (s.west);
+  \draw[->] (x.east) to[out=-40,in=180] node[pos=0.55,below left] {$@\,E\T$} (l.west);
+\end{tikzpicture}
+\caption{Transformaciones de forma en un LLM: búsqueda en la tabla de embeddings, capa lineal, puntuaciones de atención y logits con pesos atados.}
+\label{fig:formas}
+\end{figure}
+
+\subsection*{La matriz de embeddings y el cuello de botella de la softmax}
+
+La matriz de embeddings $E\in\R^{V\times\dmodel}$ tiene muchas más filas que columnas. En GPT-2 small, $50\,257\cdot 768=38\,597\,376$ parámetros, cerca del 31\,\% de los $124$~millones del modelo; en Llama~2 7B~\cite{llama2}, $32\,000\cdot 4096=131\,072\,000$. GPT-2 \emph{ata} los pesos de entrada y salida: los logits del token siguiente se calculan como $z=hE\T$, donde $h\in\R^{\dmodel}$ es la última activación.
+
+\begin{proposicion}[Cuello de botella de la softmax]\label{prop:cuello}
+Sean $N$ contextos con activaciones finales $h_1,\dots,h_N\in\R^{d}$, apiladas en $H\in\R^{N\times d}$, y sea $W\in\R^{V\times d}$ la matriz de salida. La matriz de logits $Z=HW\T\in\R^{N\times V}$ tiene rango a lo sumo $d$, y la matriz de log-probabilidades $L$, con $L_{cj}=\ln\softmax(z_c)_j$, tiene rango a lo sumo $d+1$.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:rango-producto}, $\rango(Z)\le\rango(H)\le d$. Para cada contexto $c$, $\ln\softmax(z_c)_j=z_{cj}-\LSE(z_c)$, de modo que $L=Z-\ell\mathbf{1}\T$, con $\ell_c=\LSE(z_c)$ y $\mathbf{1}\in\R^{V}$. La matriz $\ell\mathbf{1}\T$ tiene rango a lo sumo~1 y, como $\Col(L)\subseteq\Col(Z)+\gen\{\ell\}$, $\rango(L)\le d+1$.
+\end{proof}
+
+Yang \emph{et al.}~\cite{yang-softmax} plantean el modelado del lenguaje como una factorización de la matriz de log-probabilidades verdaderas. Si esa matriz, sobre todos los contextos posibles, tiene rango muy superior a $d+1$, ningún modelo con salida softmax de dimensión $d$ puede reproducirla exactamente. Con $V=50\,257$ y $d=768$, la restricción es severa en principio; los autores proponen una mezcla de varias softmax para superarla.
+
+\begin{lecturas}
+\item Zhang \emph{et al.}~\cite{d2l}, §2.1.4 «Broadcasting», §2.3.4 «Tensors», §2.3.6 «Reduction» y §2.3.10 «Matrix--Matrix Multiplication».
+\item Documentación de NumPy~\cite{numpy-bc}, «Broadcasting», reglas generales.
+\item Strang~\cite{strang-ila}, apéndice~6 «Tensors».
+\item Yang \emph{et al.}~\cite{yang-softmax}, §2 (formulación como factorización de matrices).
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-formas}
+Indique la forma del resultado o si se produce un error: (a)~$(16,128,512)$ \texttt{@} $(512,2048)$; (b)~$(16,128,512)$ $+$ $(128,1)$; (c)~$(16,128,512)$ $+$ $(16,128)$. En el caso (b), ¿qué se ha sumado a cada rasgo? ¿Qué forma debería tener un sesgo por rasgo?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:6-d2l}
+(a) Sea \texttt{X} un tensor de forma $(2,3,4)$. ¿Qué forma tiene la suma a lo largo de los ejes 0, 1 y~2? ¿Y con \texttt{keepdims=True}? (b) Sea \texttt{A} de forma $(3,3)$. Explique qué calcula \texttt{A / A.sum(axis=1)} según la \cref{def:broadcasting} y por qué no normaliza las filas. Corrija la expresión para que cada fila sume~1. ¿Qué ocurriría si \texttt{A} fuera de forma $(2,3)$?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.3, ejercicios~6 y~8.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-embeddings}
+(a) Calcule el número de parámetros de la matriz de embeddings de GPT-2 small y qué fracción representa de sus $124\,439\,808$ parámetros. (b) Si GPT-2 no atara los pesos y tuviera una matriz de salida independiente de la misma forma, ¿cuántos parámetros tendría el modelo? (c) Llama~2 7B, con unos $6738$~millones de parámetros, no ata los pesos. Calcule el tamaño conjunto de sus matrices de entrada y de salida y su porcentaje del total.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-atencion}
+Con $B=8$, $h=12$ y $T=1024$, calcule el número de elementos del tensor de puntuaciones de atención de forma $(B,h,T,T)$ y la memoria que ocupa con 2~bytes por elemento. ¿Por qué factor se multiplica esa memoria si se duplica la longitud del contexto?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-orden}
+Sean $A\in\R^{2^{10}\times 2^{16}}$, $B\in\R^{2^{16}\times 2^{5}}$ y $C\in\R^{2^{5}\times 2^{14}}$. Calcule el número de multiplicaciones y el tamaño de la matriz intermedia al evaluar $(AB)C$ y $A(BC)$. ¿Qué orden conviene y por qué?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.3, ejercicio~10.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-cuello}
+(a) Demuestre que, si la capa de salida incluye un vector de sesgo $b\in\R^{V}$, de modo que $z_c=Wh_c+b$, la matriz de log-probabilidades de la \cref{prop:cuello} tiene rango a lo sumo $d+2$. (b) Sin sesgo, con $d=1$, $V=2$, $h_1=0$, $h_2=1$ y $W=(1,0)\T$, calcule la matriz de log-probabilidades y compruebe que tiene rango $2=d+1$, aunque los logits tengan rango~1. (c) Sean tres contextos cuyas distribuciones verdaderas sobre $V=3$ tokens son $(\tfrac12,\tfrac14,\tfrac14)$, $(\tfrac14,\tfrac12,\tfrac14)$ y $(\tfrac14,\tfrac14,\tfrac12)$. Demuestre que ningún modelo sin sesgo con $d=1$ puede representarlas exactamente.
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; las raíces exactas ($\sqrt{2}$, $\sqrt{5}$) se conservan hasta el final cuando es posible. En las demostraciones, la comprobación consiste en un caso numérico o en un contraejemplo que muestra que las hipótesis son necesarias.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-vf}
+\planteamiento aplicar el \cref{teo:dimension}, el \cref{lem:steinitz} y el \cref{teo:filas-columnas}.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Falsa.} $\R^{2}=\gen\{e_1,e_2\}$ y, por el \cref{lem:steinitz}, tres vectores de $\R^{2}$ son dependientes. Por ejemplo, $(1,1)=(1,0)+(0,1)$.
+  \item \textbf{Verdadera.} Las $n$ columnas son vectores independientes de $\R^{m}$, generado por $m$ vectores; si fuera $n>m$, el \cref{lem:steinitz} las haría dependientes.
+  \item \textbf{Falsa.} El rango es el número de columnas independientes, como mucho~3, y también el de filas independientes (\cref{teo:filas-columnas}). Luego $\rango(A)\le\min\{5,3\}=3<4$.
+\end{enumerate}
+\resultado \textbf{(a) falsa; (b) verdadera; (c) falsa.}
+\comprobacion en (c), una matriz de $5\times 3$ con columnas $e_1,e_2,e_3\in\R^{5}$ alcanza el rango máximo, que es~3.
+\end{solucion}
+
+\begin{solucion}{eje:1-rango1}
+\datos $u=(1,2,3)$, $v=(1,-1)$.
+\planteamiento $(uv\T)_{ij}=u_iv_j$; cada fila es $u_i\,v\T$ y cada columna es $v_j\,u$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Fila 1: $1\cdot(1,-1)=(1,-1)$; fila 2: $2\cdot(1,-1)=(2,-2)$; fila 3: $3\cdot(1,-1)=(3,-3)$.
+  \[
+  uv\T=\begin{pmatrix}1&-1\\2&-2\\3&-3\end{pmatrix}.
+  \]
+  \item La columna~2 es $-1$ veces la columna~1, que es no nula: $\rango(uv\T)=1$ y $\Col(uv\T)=\gen\{(1,2,3)\}$.
+  \item Núcleo: $(uv\T)x=u\,(v\T x)=0$ si y solo si $v\T x=x_1-x_2=0$. Luego $\Nuc(uv\T)=\gen\{(1,1)\}$.
+\end{enumerate}
+\resultado \textbf{$uv\T$ es de $3\times 2$, tiene rango~1; base de $\Col$: $\{(1,2,3)\}$; base de $\Nuc$: $\{(1,1)\}$.}
+\comprobacion rango y nulidad: $1+1=2$, el número de columnas (\cref{teo:rango-nulidad}). Además, $uv\T(1,1)=(1-1,\,2-2,\,3-3)=0$.
+\end{solucion}
+
+\begin{solucion}{eje:1-mml}
+\datos $x_1=(2,-1,3)$, $x_2=(1,1,-2)$, $x_3=(3,-3,8)$; $y=(1,-2,5)$, $z_1=(1,1,1)$, $z_2=(1,2,3)$, $z_3=(2,-1,1)$.
+\planteamiento (a) buscar $a,b$ con $x_3=ax_1+bx_2$, o probar que no existen; (b) resolver el sistema $c_1z_1+c_2z_2+c_3z_3=y$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Primeras dos componentes de $x_3=ax_1+bx_2$: $2a+b=3$ y $-a+b=-3$. Restando, $3a=6$, luego $a=2$ y $b=3-4=-1$.
+  \item Tercera componente: $3a-2b=6+2=8$, que coincide con la de $x_3$. Por tanto, $x_3=2x_1-x_2$: \textbf{son dependientes}, con relación $2x_1-x_2-x_3=0$.
+  \item (b) Sistema: $c_1+c_2+2c_3=1$, $c_1+2c_2-c_3=-2$, $c_1+3c_2+c_3=5$.
+  \item Restando la primera ecuación a la segunda y a la tercera: $c_2-3c_3=-3$ y $2c_2-c_3=4$.
+  \item De la primera de ellas, $c_2=3c_3-3$; sustituyendo, $6c_3-6-c_3=4$, luego $c_3=2$ y $c_2=3$.
+  \item $c_1=1-c_2-2c_3=1-3-4=-6$.
+  \item Unicidad: la matriz cuyas columnas son $z_1,z_2,z_3$ es $Z=\begin{pmatrix}1&1&2\\1&2&-1\\1&3&1\end{pmatrix}$. Desarrollando por la primera fila: $1\cdot(2\cdot 1-(-1)\cdot 3)-1\cdot(1\cdot 1-(-1)\cdot 1)+2\cdot(1\cdot 3-2\cdot 1)=5-2+2=5\ne 0$. Las $z_i$ son una base de $\R^{3}$ y las coordenadas son únicas (\cref{prop:coordenadas}).
+\end{enumerate}
+\resultado \textbf{(a) dependientes: $x_3=2x_1-x_2$. (b) $y=-6z_1+3z_2+2z_3$, de forma única porque $\det Z=5\ne 0$.}
+\comprobacion $-6(1,1,1)+3(1,2,3)+2(2,-1,1)=(-6+3+4,\,-6+6-2,\,-6+9+2)=(1,-2,5)$.
+\end{solucion}
+
+\begin{solucion}{eje:1-u4}
+\datos $v_1=(1,-1,0)$, $v_2=(1,0,-1)$, $v_3=(0,1,-1)$, $v_4=(1,1,-2)$.
+\planteamiento buscar relaciones de dependencia; el número de independientes es el rango de la matriz de $3\times 4$ con esas columnas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $v_2-v_1=(1-1,\,0+1,\,-1-0)=(0,1,-1)=v_3$. Relación: $v_1-v_2+v_3=0$.
+  \item $v_2+v_3=(1+0,\,0+1,\,-1-1)=(1,1,-2)=v_4$. Relación: $v_2+v_3-v_4=0$.
+  \item $v_1$ y $v_2$ son independientes: $c_1(1,-1,0)+c_2(1,0,-1)=0$ obliga a $c_1=0$ (segunda componente) y a $c_2=0$ (tercera componente).
+  \item Por los pasos 1 y 2, $v_3$ y $v_4$ son combinación de $v_1$ y $v_2$: el rango es~2 y $\{v_1,v_2\}$ es una base.
+  \item Las componentes de cada $v_i$ suman cero: $1-1+0$, $1+0-1$, $0+1-1$ y $1+1-2$. El subespacio es el plano $x+y+z=0$.
+\end{enumerate}
+\resultado \textbf{como máximo 2 independientes; base $\{v_1,v_2\}$; el subespacio es el plano $x+y+z=0$.}
+\comprobacion por el \cref{teo:rango-nulidad}, la matriz de $3\times 4$ tiene núcleo de dimensión $4-2=2$, generado por los coeficientes de las relaciones $(1,-1,1,0)$ y $(0,1,1,-1)$. El plano tiene dimensión $3-1=2$.
+\end{solucion}
+
+\begin{solucion}{eje:1-nucleo}
+\datos $A=\begin{pmatrix}1&2&0&1\\2&4&1&3\\3&6&1&4\end{pmatrix}$.
+\planteamiento eliminación gaussiana para obtener los pivotes; las columnas pivote de $A$ forman una base de $\Col(A)$ y cada variable libre da un vector de la base de $\Nuc(A)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $F_2\leftarrow F_2-2F_1$: $(0,0,1,1)$. $F_3\leftarrow F_3-3F_1$: $(0,0,1,1)$. $F_3\leftarrow F_3-F_2$: $(0,0,0,0)$.
+  \item Forma escalonada: $\begin{pmatrix}1&2&0&1\\0&0&1&1\\0&0&0&0\end{pmatrix}$. Pivotes en las columnas~1 y~3: $\rango(A)=2$.
+  \item Base de $\Col(A)$: columnas 1 y 3 de $A$, $\{(1,2,3),\,(0,1,1)\}$.
+  \item Núcleo: $x_3=-x_4$ y $x_1=-2x_2-x_4$, con $x_2$ y $x_4$ libres. Con $(x_2,x_4)=(1,0)$: $(-2,1,0,0)$. Con $(x_2,x_4)=(0,1)$: $(-1,0,-1,1)$.
+\end{enumerate}
+\resultado \textbf{$\rango(A)=2$.} Una base de $\Col(A)$ la forman $(1,2,3)$ y $(0,1,1)$, y una base de $\Nuc(A)$, los vectores $(-2,1,0,0)$ y $(-1,0,-1,1)$. Se cumple $2+2=4$, el número de columnas.
+\comprobacion $A(-2,1,0,0)=(-2+2,\,-4+4,\,-6+6)=0$ y $A(-1,0,-1,1)=(-1+0+1,\,-2-1+3,\,-3-1+4)=0$. La fila~3 de $A$ es la suma de las filas~1 y~2.
+\end{solucion}
+
+\begin{solucion}{eje:1-producto}
+\datos $B\in\R^{m\times r}$, $A\in\R^{r\times n}$; $\Delta W^{\star}\in\R^{d\times d}$ con $\rango(\Delta W^{\star})>r$.
+\planteamiento comparar el espacio columna de $BA$ con el de $B$, y el espacio de filas de $BA$ con el de $A$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Para todo $x$, $(BA)x=B(Ax)\in\Col(B)$. Luego $\Col(BA)\subseteq\Col(B)$ y $\rango(BA)\le\rango(B)$.
+  \item Cada fila de $BA$ es (fila de $B$)$\cdot A$, combinación lineal de las filas de $A$. Por tanto, $\Col((BA)\T)\subseteq\Col(A\T)$ y, por el \cref{teo:filas-columnas}, $\rango(BA)=\rango((BA)\T)\le\rango(A\T)=\rango(A)$.
+  \item Juntando, $\rango(BA)\le\min\{\rango(A),\rango(B)\}$.
+  \item $B$ tiene $r$ columnas, luego $\rango(B)\le r$ y $\rango(BA)\le r$.
+  \item Si fuera $BA=\Delta W^{\star}$, ambas matrices tendrían el mismo rango; pero $\rango(BA)\le r<\rango(\Delta W^{\star})$.
+\end{enumerate}
+\resultado \textbf{$\rango(BA)\le\min\{\rango A,\rango B\}\le r$, y ninguna corrección LoRA de rango $r$ iguala una matriz de rango mayor que $r$.} El error mínimo que se comete se calcula en el \cref{eje:5-lora}. \hfill$\blacksquare$
+\comprobacion $B=(1,2)\T$ y $A=(3,4)$ dan $BA=\begin{pmatrix}3&4\\6&8\end{pmatrix}$, de rango $1=r$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-equiv}
+\planteamiento identificar en cada caso una condición del \cref{teo:invertible} que se cumpla o falle.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item $M$ no es invertible: $\rango(M)=2<3$ y $M(1,1,-1)=0$ (\cref{ej:M}).
+  \item $Q_\theta$ es invertible: $\det(Q_\theta)=\cos^{2}\theta+\sin^{2}\theta=1\ne 0$; su inversa es $Q_\theta\T$.
+  \item No es invertible: la segunda fila es el doble de la primera, el rango es~1 y $\det=1\cdot 4-2\cdot 2=0$.
+  \item No es invertible: $(1,0,-1,2)\ne 0$ está en $\Nuc(A)$, de modo que falla la condición~(iii).
+  \item Es invertible: es diagonal y $\det=3\cdot 0{,}5\cdot(-1)=-1{,}5\ne 0$; su inversa es $\diag(1/3,\,2,\,-1)$.
+\end{enumerate}
+\resultado \textbf{invertibles: (b) y (e); singulares: (a), (c) y (d).}
+\comprobacion $\diag(3,\,0{,}5,\,-1)\cdot\diag(1/3,\,2,\,-1)=\diag(1,1,1)$.
+\end{solucion}
+
+\begin{solucion}{eje:2-inversa}
+\datos $A=\begin{pmatrix}1&2\\3&4\end{pmatrix}$.
+\planteamiento \cref{prop:inversa2}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\det A=1\cdot 4-2\cdot 3=-2\ne 0$: $A$ es invertible.
+  \item Matriz $\begin{pmatrix}d&-b\\-c&a\end{pmatrix}=\begin{pmatrix}4&-2\\-3&1\end{pmatrix}$.
+  \item Dividiendo por $-2$: $A^{-1}=\begin{pmatrix}-2&1\\1{,}5&-0{,}5\end{pmatrix}$.
+  \item Fila 1 de $AA^{-1}$: $(1\cdot(-2)+2\cdot 1{,}5;\ 1\cdot 1+2\cdot(-0{,}5))=(1,0)$.
+  \item Fila 2 de $AA^{-1}$: $(3\cdot(-2)+4\cdot 1{,}5;\ 3\cdot 1+4\cdot(-0{,}5))=(0,1)$.
+  \item $\det(A^{-1})=(-2)(-0{,}5)-1\cdot 1{,}5=1-1{,}5=-0{,}5$.
+\end{enumerate}
+\resultado \textbf{$A^{-1}=\begin{pmatrix}-2&1\\1{,}5&-0{,}5\end{pmatrix}$.}
+\comprobacion $AA^{-1}=I$ por los pasos 4 y 5, y $\det(A^{-1})=-0{,}5=1/(-2)=1/\det A$.
+\end{solucion}
+
+\begin{solucion}{eje:2-mml}
+\datos $A=\begin{pmatrix}1&3&5\\2&4&6\\0&2&4\end{pmatrix}$, $B=\begin{pmatrix}2&3&4\\3&4&5\\4&5&6\end{pmatrix}$.
+\planteamiento \cref{prop:laplace} y regla de Sarrus para $A$; para $B$, calcular el determinante y, si es nulo, buscar un vector del núcleo.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Laplace por la primera fila de $A$: $1\cdot(4\cdot 4-6\cdot 2)-3\cdot(2\cdot 4-6\cdot 0)+5\cdot(2\cdot 2-4\cdot 0)=1\cdot 4-3\cdot 8+5\cdot 4=4-24+20=0$.
+  \item Sarrus: diagonales descendentes $1\cdot 4\cdot 4+3\cdot 6\cdot 0+5\cdot 2\cdot 2=16+0+20=36$; ascendentes $5\cdot 4\cdot 0+1\cdot 6\cdot 2+3\cdot 2\cdot 4=0+12+24=36$. $\det A=36-36=0$.
+  \item $\det B$ por la primera fila: $2\cdot(4\cdot 6-5\cdot 5)-3\cdot(3\cdot 6-5\cdot 4)+4\cdot(3\cdot 5-4\cdot 4)=2\cdot(-1)-3\cdot(-2)+4\cdot(-1)=-2+6-4=0$.
+  \item $B$ no es invertible. Las filas están en progresión aritmética: $F_1-2F_2+F_3=(2-6+4,\,3-8+5,\,4-10+6)=0$. Lo mismo ocurre con las columnas, luego $B(1,-2,1)=0$.
+\end{enumerate}
+\resultado \textbf{(a) $\det A=0$ por ambos métodos. (b) $B$ no tiene inversa; $(1,-2,1)\in\Nuc(B)$.}
+\comprobacion $B(1,-2,1)=(2-6+4,\,3-8+5,\,4-10+6)=(0,0,0)$. En $A$, la segunda columna es la media de la primera y la tercera: $\tfrac12\bigl((1,2,0)+(5,6,4)\bigr)=(3,4,2)$, lo que explica que $\det A=0$.
+\end{solucion}
+
+\begin{solucion}{eje:2-giros}
+\datos $Q_\theta=\begin{pmatrix}\cos\theta&-\sin\theta\\ \sin\theta&\cos\theta\end{pmatrix}$.
+\planteamiento multiplicar y usar las fórmulas del coseno y del seno de una suma; para (c), $Q_\alpha\T=Q_{-\alpha}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Entrada $(1,1)$ de $Q_\alpha Q_\beta$: $\cos\alpha\cos\beta-\sin\alpha\sin\beta=\cos(\alpha+\beta)$. Entrada $(2,1)$: $\sin\alpha\cos\beta+\cos\alpha\sin\beta=\sin(\alpha+\beta)$.
+  \item Entrada $(1,2)$: $-\cos\alpha\sin\beta-\sin\alpha\cos\beta=-\sin(\alpha+\beta)$. Entrada $(2,2)$: $-\sin\alpha\sin\beta+\cos\alpha\cos\beta=\cos(\alpha+\beta)$. Luego $Q_\alpha Q_\beta=Q_{\alpha+\beta}$.
+  \item (b) $Q_{\pi/6}(2,0)=(2\cos 30^{\circ},\,2\sin 30^{\circ})=(\sqrt{3},\,1)\approx(1{,}732;\,1)$. Norma: $\sqrt{3+1}=2$.
+  \item (c) $(Q_\alpha x)\T(Q_\beta y)=x\T Q_\alpha\T Q_\beta y=x\T Q_{-\alpha}Q_\beta y=x\T Q_{\beta-\alpha}y$, por el apartado~(a).
+\end{enumerate}
+\resultado \textbf{$Q_\alpha Q_\beta=Q_{\alpha+\beta}$; $Q_{\pi/6}(2,0)=(\sqrt{3},1)$, de norma~2; el producto escalar depende solo de $\beta-\alpha$.} Si $\alpha$ y $\beta$ son proporcionales a las posiciones de la consulta y de la clave, la puntuación depende solo de su diferencia.
+\comprobacion con $\beta=-\alpha$, (a) da $Q_\alpha Q_{-\alpha}=Q_0=I$, coherente con $Q_\alpha^{-1}=Q_{-\alpha}$.
+\end{solucion}
+
+\begin{solucion}{eje:2-haar}
+\datos $h_1=(1,1,1,1)$, $h_2=(1,1,-1,-1)$, $h_3=(1,-1,0,0)$, $h_4=(0,0,1,-1)$; $x=(4,2,5,5)$.
+\planteamiento en una base ortogonal, $c_j=x\T h_j/h_j\T h_j$ (\cref{prop:coord-ortonormal}); el error de suprimir términos se calcula por Pitágoras.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $h_1\T h_2=1+1-1-1=0$; $h_1\T h_3=1-1=0$; $h_1\T h_4=1-1=0$; $h_2\T h_3=1-1=0$; $h_2\T h_4=-1+1=0$; $h_3\T h_4=0$.
+  \item Normas: $\norm{h_1}=\norm{h_2}=2$ y $\norm{h_3}=\norm{h_4}=\sqrt{2}$. Base ortonormal: $h_1/2$, $h_2/2$, $h_3/\sqrt{2}$, $h_4/\sqrt{2}$.
+  \item (b) $x\T h_1=4+2+5+5=16$, $c_1=16/4=4$ (la media de la señal).
+  \item $x\T h_2=4+2-5-5=-4$, $c_2=-4/4=-1$.
+  \item $x\T h_3=4-2=2$, $c_3=2/2=1$; $x\T h_4=5-5=0$, $c_4=0$. Luego $x=4h_1-h_2+h_3$.
+  \item (c) $\tilde x=4h_1-h_2=(4-1,\,4-1,\,4+1,\,4+1)=(3,3,5,5)$ y $x-\tilde x=(1,-1,0,0)$, con error cuadrático $1+1=2$.
+  \item Justificación: $x-\tilde x=c_3h_3+c_4h_4$ y, por ortogonalidad, $\norm{x-\tilde x}^{2}=c_3^{2}\norm{h_3}^{2}+c_4^{2}\norm{h_4}^{2}$.
+\end{enumerate}
+\resultado \textbf{$x=4h_1-h_2+h_3$; la versión comprimida es $(3,3,5,5)$, con error cuadrático~2.}
+\comprobacion $c_3^{2}\norm{h_3}^{2}+c_4^{2}\norm{h_4}^{2}=1\cdot 2+0\cdot 2=2$. Es la misma lógica del \cref{teo:eckart-young}: descartar términos cuesta exactamente su energía.
+\end{solucion}
+
+\begin{solucion}{eje:2-isometria}
+\datos $Q,Q_1,Q_2\in\R^{n\times n}$ con $Q\T Q=Q_1\T Q_1=Q_2\T Q_2=I$.
+\planteamiento usar $Q\T Q=I$ y las propiedades del determinante.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $(Qx)\T(Qy)=x\T Q\T Qy=x\T Iy=x\T y$.
+  \item Tomando $y=x$: $\norm{Qx}^{2}=\norm{x}^{2}$ y, como ambas normas son no negativas, $\norm{Qx}=\norm{x}$.
+  \item $1=\det(I)=\det(Q\T Q)=\det(Q\T)\det(Q)=\det(Q)^{2}$, luego $\det Q=\pm 1$.
+  \item $(Q_1Q_2)\T(Q_1Q_2)=Q_2\T Q_1\T Q_1Q_2=Q_2\T Q_2=I$: el producto es ortogonal.
+\end{enumerate}
+\resultado \textbf{las matrices ortogonales conservan productos escalares y normas, tienen determinante $\pm 1$ y forman un conjunto cerrado para el producto.} \hfill$\blacksquare$
+\comprobacion el recíproco de $\det Q=\pm1$ es falso: $\diag(2,\,0{,}5)$ tiene determinante~1 y no es ortogonal, porque $\norm{(2,0{,}5)e_1}=2\ne 1$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-mml}
+\datos $I_2$, $P=\diag(1,0)$, $J=\begin{pmatrix}1&1\\0&1\end{pmatrix}$, $N=\begin{pmatrix}0&1\\0&0\end{pmatrix}$.
+\planteamiento invertible si y solo si $\det\ne 0$; diagonalizable si y solo si hay dos autovectores independientes (\cref{teo:diagonalizacion}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $I_2$: ya es diagonal; $\det=1$. Diagonalizable e invertible.
+  \item $P$: ya es diagonal; $\det=0$. Diagonalizable y no invertible.
+  \item $J$: triangular con autovalor doble~1. $J-I=\begin{pmatrix}0&1\\0&0\end{pmatrix}$ da $v_2=0$, espacio propio $\gen\{e_1\}$ de dimensión~1. No diagonalizable; $\det=1$, invertible.
+  \item $N$: autovalor doble~0; $Nv=0$ da $v_2=0$, espacio propio $\gen\{e_1\}$. No diagonalizable; $\det=0$, no invertible.
+\end{enumerate}
+\resultado \textbf{$I_2$: diagonalizable e invertible; $P$: diagonalizable, no invertible; $J$: invertible, no diagonalizable; $N$: ni lo uno ni lo otro.} Las cuatro combinaciones aparecen, luego ninguna propiedad implica la otra.
+\comprobacion la invertibilidad depende de si $0$ es autovalor; la diagonalizabilidad, de cuántos autovectores independientes hay. Son preguntas distintas.
+\end{solucion}
+
+\begin{solucion}{eje:3-autovec}
+\datos $B=\begin{pmatrix}4&1\\2&3\end{pmatrix}$.
+\planteamiento resolver $\det(B-\lambda I)=0$ y, para cada raíz, $(B-\lambda I)v=0$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\det(B-\lambda I)=(4-\lambda)(3-\lambda)-2=\lambda^{2}-7\lambda+10$.
+  \item $\lambda=(7\pm\sqrt{49-40})/2=(7\pm 3)/2$: $\lambda_1=5$, $\lambda_2=2$.
+  \item $\lambda=5$: $B-5I=\begin{pmatrix}-1&1\\2&-2\end{pmatrix}$, ecuación $-v_1+v_2=0$, autovector $(1,1)$.
+  \item $\lambda=2$: $B-2I=\begin{pmatrix}2&1\\2&1\end{pmatrix}$, ecuación $2v_1+v_2=0$, autovector $(1,-2)$.
+  \item $(1,1)\T(1,-2)=1-2=-1\ne 0$: no son ortogonales.
+\end{enumerate}
+\resultado \textbf{$\lambda=5$ con $v=(1,1)$ y $\lambda=2$ con $v=(1,-2)$; los autovectores no son ortogonales porque $B$ no es simétrica ($b_{12}=1\ne b_{21}=2$)} y el \cref{teo:simetricas} no se aplica.
+\comprobacion $B(1,1)=(5,5)$ y $B(1,-2)=(2,-4)$. Traza: $4+3=7=5+2$; determinante: $12-2=10=5\cdot 2$.
+\end{solucion}
+
+\begin{solucion}{eje:3-u2}
+\datos las matrices $A$, $B$ y $C$ del enunciado.
+\planteamiento $A$ es triangular; para $B$ se desarrolla por la fila central; $C$ tiene rango~1.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $A$ triangular superior: $\det(A-\lambda I)=(2-\lambda)(3-\lambda)(-1-\lambda)$, autovalores $2$, $3$ y $-1$.
+  \item $B$: la fila~2 de $B-\lambda I$ es $(0,\,1-\lambda,\,0)$; desarrollando por ella, $\det(B-\lambda I)=(1-\lambda)\det\begin{pmatrix}-\lambda&2\\8&-\lambda\end{pmatrix}=(1-\lambda)(\lambda^{2}-16)$. Autovalores $1$, $4$ y $-4$.
+  \item $C=3\,\mathbf{1}\mathbf{1}\T$ con $\mathbf{1}=(1,1,1)$ tiene rango~1, luego $\dim\Nuc(C)=2$ y el autovalor~0 tiene dos autovectores independientes. El tercero es $C\mathbf{1}=(9,9,9)=9\cdot\mathbf{1}$. Autovalores $9$, $0$ y $0$.
+  \item Trazas: $A$: $2+3-1=4$; $B$: $0+1+0=1=1+4-4$; $C$: $3+3+3=9=9+0+0$.
+  \item Determinantes: $A$: $2\cdot 3\cdot(-1)=-6$; $B$: desarrollando por la fila~2, $1\cdot(0\cdot 0-2\cdot 8)=-16=1\cdot 4\cdot(-4)$; $C$: $0=9\cdot 0\cdot 0$.
+\end{enumerate}
+\resultado \textbf{$A$: $2$, $3$, $-1$. $B$: $1$, $4$, $-4$. $C$: $9$, $0$, $0$.}
+\comprobacion los pasos 4 y 5 verifican la \cref{prop:traza-det} en las tres matrices.
+\end{solucion}
+
+\begin{solucion}{eje:3-u3}
+\datos autovalores de $B$: $0$, $2$ y $3$, distintos.
+\planteamiento autovalores distintos implican diagonalizable (\cref{prop:indep-autovectores}); si $Bv=\lambda v$, entonces $p(B)v=p(\lambda)v$ para todo polinomio $p$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $B=X\Lambda X^{-1}$ con $\Lambda=\diag(0,2,3)$. Multiplicar por matrices invertibles no cambia el rango, luego $\rango(B)=\rango(\Lambda)=2$.
+  \item (b) $\det B=0\cdot 2\cdot 3=0$ y $\det(B\T B)=\det(B\T)\det(B)=0$.
+  \item (c) Si $Bv=\lambda v$: $(B^{2}+I)v=(\lambda^{2}+1)v$, luego $(B^{2}+I)^{-1}v=v/(\lambda^{2}+1)$.
+  \item Con $\lambda=0,2,3$: $1/1=1$, $1/5=0{,}2$ y $1/10=0{,}1$.
+  \item (d) No. $B_1=\diag(0,2,3)$ da $B_1\T B_1=\diag(0,4,9)$. La matriz triangular $B_2=\begin{pmatrix}0&1&0\\0&2&0\\0&0&3\end{pmatrix}$ tiene los mismos autovalores y $B_2\T B_2=\diag(0,5,9)$, con autovalores $0$, $5$ y $9$.
+\end{enumerate}
+\resultado \textbf{(a) rango~2; (b) 0; (c) $1$, $1/5$ y $1/10$; (d) no pueden deducirse.}
+\comprobacion $B^{2}+I$ es invertible porque $\lambda^{2}+1\ge 1$. En (d), $B_2$ no es simétrica; solo para matrices simétricas se cumple $\sigma_i=\abs{\lambda_i}$ (\cref{cor:svd-props}).
+\end{solucion}
+
+\begin{solucion}{eje:3-reales}
+\datos $S\in\R^{n\times n}$ con $S\T=S$; $Sv=\lambda v$ con $v\in\mathbb{C}^{n}$, $v\ne 0$.
+\planteamiento calcular el número $\bar v\T Sv$ de dos formas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Conjugando $Sv=\lambda v$ y usando que $S$ es real: $S\bar v=\bar\lambda\bar v$.
+  \item Primera forma: $\bar v\T(Sv)=\lambda\,\bar v\T v$.
+  \item Segunda forma: $\bar v\T Sv=(S\T\bar v)\T v=(S\bar v)\T v=\bar\lambda\,\bar v\T v$, por la simetría y el paso~1.
+  \item Restando: $(\lambda-\bar\lambda)\,\bar v\T v=0$.
+  \item $\bar v\T v=\sum_i\abs{v_i}^{2}>0$ porque $v\ne 0$, luego $\lambda=\bar\lambda$ y $\lambda\in\R$.
+\end{enumerate}
+\resultado \textbf{todo autovalor de una matriz real simétrica es real.} Como $S-\lambda I$ es entonces una matriz real singular, también pueden tomarse autovectores reales. \hfill$\blacksquare$
+\comprobacion sin simetría el resultado falla: el giro $\begin{pmatrix}0&-1\\1&0\end{pmatrix}$ tiene autovalores $\pm i$ (\cref{tab:autovalores}).
+\end{solucion}
+
+\begin{solucion}{eje:3-potencia}
+\datos $Sq_i=\lambda_iq_i$ con $q_i$ ortonormales; $\abs{\lambda_1}>\abs{\lambda_2}\ge\dots\ge\abs{\lambda_n}$; $x_0=\sum_ic_iq_i$ con $c_1\ne 0$.
+\planteamiento en la base de autovectores, $S^{k}$ multiplica cada coordenada por $\lambda_i^{k}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Por inducción, $S^{k}q_i=\lambda_i^{k}q_i$; por linealidad, $S^{k}x_0=\sum_ic_i\lambda_i^{k}q_i$.
+  \item Sacando factor común $c_1\lambda_1^{k}\ne 0$: $S^{k}x_0=c_1\lambda_1^{k}(q_1+e_k)$, con $e_k=\sum_{i\ge 2}(c_i/c_1)(\lambda_i/\lambda_1)^{k}q_i$.
+  \item Por ortonormalidad, $\norm{e_k}^{2}=\sum_{i\ge 2}(c_i/c_1)^{2}(\lambda_i/\lambda_1)^{2k}\le(\lambda_2/\lambda_1)^{2k}\sum_{i\ge 2}(c_i/c_1)^{2}$.
+  \item Luego $\norm{e_k}\le K\abs{\lambda_2/\lambda_1}^{k}\to 0$, con $K=\bigl(\sum_{i\ge 2}c_i^{2}\bigr)^{1/2}/\abs{c_1}$.
+  \item Normalizando: $S^{k}x_0/\norm{S^{k}x_0}=s_k\,(q_1+e_k)/\norm{q_1+e_k}$, con $s_k=\operatorname{signo}(c_1\lambda_1^{k})=\pm 1$. Como $e_k\perp q_1$, $\norm{q_1+e_k}=(1+\norm{e_k}^{2})^{1/2}\to 1$.
+  \item La componente de $x_k$ ortogonal a $q_1$ es $s_k\,e_k/\norm{q_1+e_k}$, de norma a lo sumo $\norm{e_k}\le K\abs{\lambda_2/\lambda_1}^{k}$.
+\end{enumerate}
+\resultado \textbf{$S^{k}x_0/\norm{S^{k}x_0}$ se aproxima a $\pm q_1$ (el signo alterna si $\lambda_1<0$), y su distancia a la recta $\gen\{q_1\}$ es $O(\abs{\lambda_2/\lambda_1}^{k})$.} \hfill$\blacksquare$
+\comprobacion en el \cref{ej:potencia}, $x_0=(q_1+q_2)/\sqrt{2}$, de modo que $c_1=c_2$ y $K=1$; tras 5 pasos, la cota es $3^{-5}\approx 0{,}004115$, y la componente de $S^{5}x_0/\norm{S^{5}x_0}$ sobre $q_2$ vale $(0{,}7100-0{,}7042)/\sqrt{2}\approx 0{,}0041$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-vf}
+\planteamiento contrastar cada afirmación con el \cref{teo:svd} y el \cref{cor:svd-props}.
+\pasos
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Falsa.} El \cref{teo:svd} vale para cualquier $A\in\R^{m\times n}$; el \cref{ej:svd23} trata una matriz de $2\times 3$.
+  \item \textbf{Falsa.} $\sigma_i=\sqrt{\lambda_i(A\T A)}\ge 0$ por definición. Un signo negativo puede trasladarse siempre a $u_i$.
+  \item \textbf{Falsa en general.} Son los valores absolutos de los autovalores: $\diag(1,-2)$ tiene autovalores $1$ y $-2$ y valores singulares $2$ y $1$. Es verdadera si además $A$ es semidefinida positiva.
+  \item \textbf{Verdadera.} Si $A=U\Sigma V\T$, entonces $A\T=V\Sigma\T U\T$ es una SVD de $A\T$ con los mismos $\sigma_i$.
+\end{enumerate}
+\resultado \textbf{(a) falsa; (b) falsa; (c) falsa salvo que $A$ sea semidefinida positiva; (d) verdadera.}
+\end{solucion}
+
+\begin{solucion}{eje:4-u1}
+\datos $A=\begin{pmatrix}1&1\\1&0\end{pmatrix}$.
+\planteamiento $\sigma_i=\sqrt{\lambda_i(A\T A)}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $A$ es simétrica, luego $A\T A=AA\T=A^{2}$. Fila 1: $(1+1,\,1+0)=(2,1)$; fila 2: $(1+0,\,1+0)=(1,1)$. $A\T A=\begin{pmatrix}2&1\\1&1\end{pmatrix}$.
+  \item (b) $\det(A\T A-\lambda I)=(2-\lambda)(1-\lambda)-1=\lambda^{2}-3\lambda+1$, con raíces $\lambda=(3\pm\sqrt{5})/2$, es decir, $2{,}618$ y $0{,}3820$.
+  \item $\sigma_1=\sqrt{2{,}618}=1{,}618$ y $\sigma_2=\sqrt{0{,}3820}=0{,}6180$.
+  \item (c) $\bigl((1+\sqrt{5})/2\bigr)^{2}=(6+2\sqrt{5})/4=(3+\sqrt{5})/2$ y $\bigl((\sqrt{5}-1)/2\bigr)^{2}=(6-2\sqrt{5})/4=(3-\sqrt{5})/2$.
+  \item Los autovalores de $A$ son las raíces de $\lambda^{2}-\lambda-1=0$, $(1\pm\sqrt{5})/2\approx 1{,}618$ y $-0{,}6180$. Como $A$ es simétrica, el \cref{cor:svd-props}(iv) da $\sigma_i=\abs{\lambda_i}$.
+\end{enumerate}
+\resultado \textbf{$\sigma_1=(1+\sqrt{5})/2\approx 1{,}618$ y $\sigma_2=(\sqrt{5}-1)/2\approx 0{,}6180$}, los valores absolutos de los autovalores de $A$, porque $A$ es simétrica.
+\comprobacion $\sigma_1\sigma_2=(5-1)/4=1=\abs{\det A}$ y $\sigma_1^{2}+\sigma_2^{2}=3=\norm{A}_F^{2}=1+1+1+0$.
+\end{solucion}
+
+\begin{solucion}{eje:4-u5}
+\datos columnas ortogonales $w_j$ con $\norm{w_j}=s_j>0$; $A=\begin{pmatrix}2&1\\1&0\\2&-1\end{pmatrix}$.
+\planteamiento $(A\T A)_{ij}=w_i\T w_j$; comparar con $A\T A=V\Sigma\T\Sigma V\T$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $(A\T A)_{ij}=w_i\T w_j$ vale $0$ si $i\ne j$ y $s_i^{2}$ si $i=j$: $A\T A=\diag(s_1^{2},\dots,s_n^{2})$.
+  \item $A\T A$ ya es diagonal: $V=I$ (con las columnas ordenadas de mayor a menor norma), $\Sigma=\diag(s_1,\dots,s_n)$ y, de $AV=U\Sigma$, $u_j=w_j/s_j$.
+  \item Caso numérico: $w_1=(2,1,2)$ y $w_2=(1,0,-1)$, con $w_1\T w_2=2+0-2=0$.
+  \item $s_1=\sqrt{4+1+4}=3$ y $s_2=\sqrt{1+0+1}=\sqrt{2}\approx 1{,}414$; $A\T A=\diag(9,2)$.
+  \item $u_1=(2,1,2)/3$ y $u_2=(1,0,-1)/\sqrt{2}$; para la SVD completa se añade $u_3$ unitario y ortogonal a ambos, $u_3=(1,-4,1)/\sqrt{18}$.
+\end{enumerate}
+\resultado \textbf{$A\T A=\diag(s_j^{2})$, $V=I$, $\Sigma=\diag(s_j)$ y $U$ tiene por columnas las $w_j$ normalizadas. En el ejemplo, $\sigma=(3,\sqrt{2})$.}
+\comprobacion $[\,3u_1\mid\sqrt{2}\,u_2\,]=[(2,1,2)\mid(1,0,-1)]=A$ y $\norm{A}_F^{2}=4+1+1+0+4+1=11=9+2$. Además, $u_3\T u_1=(2-4+2)/(3\sqrt{18})=0$ y $u_3\T u_2=(1-1)/6=0$.
+\end{solucion}
+
+\begin{solucion}{eje:4-mml}
+\datos $A=\begin{pmatrix}2&2\\-1&1\end{pmatrix}$.
+\planteamiento autovectores de $A\T A$ y $u_i=Av_i/\sigma_i$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $A\T A=\begin{pmatrix}2&-1\\2&1\end{pmatrix}\begin{pmatrix}2&2\\-1&1\end{pmatrix}=\begin{pmatrix}4+1&4-1\\4-1&4+1\end{pmatrix}=\begin{pmatrix}5&3\\3&5\end{pmatrix}$.
+  \item $(5-\lambda)^{2}=9$, luego $\lambda=8$ y $\lambda=2$: $\sigma_1=\sqrt{8}=2\sqrt{2}\approx 2{,}828$ y $\sigma_2=\sqrt{2}\approx 1{,}414$.
+  \item Autovectores: $v_1=(1,1)/\sqrt{2}$ para $\lambda=8$ y $v_2=(-1,1)/\sqrt{2}$ para $\lambda=2$.
+  \item $u_1=Av_1/\sigma_1=(4,0)/(\sqrt{2}\cdot 2\sqrt{2})=(1,0)$.
+  \item $u_2=Av_2/\sigma_2=(-2+2,\,1+1)/(\sqrt{2}\cdot\sqrt{2})=(0,2)/2=(0,1)$.
+\end{enumerate}
+\resultado \textbf{$U=I_2$, $\Sigma=\diag(2\sqrt{2},\sqrt{2})$, $V=\frac{1}{\sqrt{2}}\begin{pmatrix}1&-1\\1&1\end{pmatrix}$.}
+\comprobacion $U\Sigma V\T=\begin{pmatrix}2\sqrt{2}&0\\0&\sqrt{2}\end{pmatrix}\frac{1}{\sqrt{2}}\begin{pmatrix}1&1\\-1&1\end{pmatrix}=\begin{pmatrix}2&2\\-1&1\end{pmatrix}=A$. También $\sigma_1\sigma_2=4=\abs{\det A}=\abs{2+2}$.
+\end{solucion}
+
+\begin{solucion}{eje:4-frobenius}
+\datos $A\in\R^{m\times n}$ con SVD $A=U\Sigma V\T$.
+\planteamiento expresar $\norm{A}_F^{2}$ como una traza y usar $\traza(XY)=\traza(YX)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $(A\T A)_{jj}=\sum_ia_{ij}^{2}$; sumando en $j$, $\traza(A\T A)=\sum_{i,j}a_{ij}^{2}=\norm{A}_F^{2}$.
+  \item $A\T A=V\Sigma\T U\T U\Sigma V\T=V(\Sigma\T\Sigma)V\T$, porque $U\T U=I$.
+  \item $\traza(V(\Sigma\T\Sigma)V\T)=\traza((\Sigma\T\Sigma)V\T V)=\traza(\Sigma\T\Sigma)$, porque $V\T V=I$.
+  \item $\Sigma\T\Sigma=\diag(\sigma_1^{2},\dots,\sigma_r^{2},0,\dots,0)$, de traza $\sum_i\sigma_i^{2}$.
+\end{enumerate}
+\resultado \textbf{$\norm{A}_F^{2}=\traza(A\T A)=\sum_i\sigma_i^{2}$.} \hfill$\blacksquare$
+\comprobacion para el \cref{ej:svd23}: $9+4+4+4+9+4=34=25+9$.
+\end{solucion}
+
+\begin{solucion}{eje:4-autovalores}
+\datos $A\in\R^{m\times n}$.
+\planteamiento transportar autovectores de $A\T A$ a $AA\T$ mediante $v\mapsto Av$ y viceversa.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sea $A\T Av=\lambda v$ con $v\ne 0$ y $\lambda\ne 0$. Entonces $Av\ne 0$, pues en otro caso $\lambda v=A\T(Av)=0$.
+  \item $AA\T(Av)=A(A\T Av)=\lambda\,Av$: $\lambda$ es autovalor de $AA\T$ con autovector $Av$.
+  \item Multiplicidades: la aplicación $v\mapsto Av$ es inyectiva sobre el espacio propio $E_\lambda$ de $A\T A$, porque si $Av=0$ con $v\in E_\lambda$, entonces $\lambda v=0$ y $v=0$. Lleva $E_\lambda$ al espacio propio de $\lambda$ en $AA\T$, luego $\dim E_\lambda(A\T A)\le\dim E_\lambda(AA\T)$.
+  \item Intercambiando los papeles de $A$ y $A\T$ se obtiene la desigualdad contraria.
+  \item Ambas matrices son simétricas y, por tanto, diagonalizables (\cref{teo:espectral}): la multiplicidad de cada autovalor es la dimensión de su espacio propio.
+\end{enumerate}
+\resultado \textbf{$A\T A$ y $AA\T$ tienen los mismos autovalores no nulos con las mismas multiplicidades}; difieren solo en el número de ceros, $n-r$ frente a $m-r$. \hfill$\blacksquare$
+\comprobacion en el \cref{ej:svd23}, $AA\T$ tiene autovalores $25$ y $9$, y $A\T A$, de orden~3, tiene $25$, $9$ y $0$.
+\end{solucion}
+
+\begin{solucion}{eje:4-espectral}
+\datos $A\in\R^{m\times n}$ con SVD $A=\sum_i\sigma_iu_iv_i\T$.
+\planteamiento escribir $x$ en la base ortonormal $\{v_i\}$ de $\R^{n}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $x=\sum_{i=1}^{n}c_iv_i$ con $\norm{x}^{2}=\sum_ic_i^{2}$ (\cref{prop:coord-ortonormal}).
+  \item $Ax=\sum_{i\le r}c_i\sigma_iu_i$ y, por ortonormalidad de los $u_i$, $\norm{Ax}^{2}=\sum_{i\le r}c_i^{2}\sigma_i^{2}$.
+  \item $\sum_{i\le r}c_i^{2}\sigma_i^{2}\le\sigma_1^{2}\sum_ic_i^{2}=\sigma_1^{2}\norm{x}^{2}$, luego $\norm{Ax}/\norm{x}\le\sigma_1$.
+  \item Con $x=v_1$: $Av_1=\sigma_1u_1$ y $\norm{Av_1}/\norm{v_1}=\sigma_1$.
+\end{enumerate}
+\resultado \textbf{$\norm{A}_2=\max_{x\ne 0}\norm{Ax}/\norm{x}=\sigma_1$, alcanzado en $v_1$.} \hfill$\blacksquare$
+\comprobacion en el \cref{eje:4-mml}, $\norm{Av_1}=\norm{(4,0)/\sqrt{2}}=2\sqrt{2}=\sigma_1$, y $e_2$ da $\norm{Ae_2}=\norm{(2,1)}=\sqrt{5}\approx 2{,}236<2{,}828$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-centrar}
+\datos $n$ puntos $x_i$ con media $\mu$ y covarianza $C=\frac1n\sum_i(x_i-\mu)(x_i-\mu)\T$.
+\planteamiento PCA busca la dirección de mayor dispersión alrededor de la media; se compara $C$ con la matriz sin centrar $\frac1n\sum_ix_ix_i\T$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Escribiendo $x_i=(x_i-\mu)+\mu$: $\frac1n\sum_ix_ix_i\T=C+\frac1n\sum_i\bigl[(x_i-\mu)\mu\T+\mu(x_i-\mu)\T\bigr]+\mu\mu\T$.
+  \item Los términos cruzados se anulan porque $\sum_i(x_i-\mu)=0$: $\frac1n\sum_ix_ix_i\T=C+\mu\mu\T$.
+  \item Si los datos están lejos del origen, $\norm{\mu}^{2}$ domina sobre los autovalores de $C$, y $\mu\mu\T$ es de rango~1 con autovector $\mu/\norm{\mu}$.
+  \item La primera «componente» apunta entonces hacia la media, es decir, describe la posición de la nube y no la dirección en la que se estira.
+\end{enumerate}
+\resultado \textbf{hay que centrar porque PCA debe medir dispersión, no posición; sin centrar, la primera componente se aproxima a $\mu/\norm{\mu}$.}
+\comprobacion con los puntos $(101,99)$ y $(99,101)$, la nube se estira en la dirección $(1,-1)$: centrada, $C=\begin{pmatrix}1&-1\\-1&1\end{pmatrix}$, con autovector principal $(1,-1)/\sqrt{2}$. Sin centrar, $\frac12\sum_ix_ix_i\T=\begin{pmatrix}10\,001&9999\\9999&10\,001\end{pmatrix}$, cuyo autovector principal es $(1,1)/\sqrt{2}$, con autovalor $20\,000$.
+\end{solucion}
+
+\begin{solucion}{eje:5-varexp}
+\datos varianzas explicadas $0{,}12$ y $0{,}07$; dimensión $768$.
+\planteamiento las varianzas explicadas se suman; una proyección ortogonal no alarga distancias.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Fracción mostrada: $0{,}12+0{,}07=0{,}19$, el $19\,\%$. El $81\,\%$ restante queda oculto.
+  \item Sea $P$ la proyección ortogonal sobre el plano de las dos componentes. Por Pitágoras, $\norm{x-y}^{2}=\norm{P(x-y)}^{2}+\norm{(I-P)(x-y)}^{2}\ge\norm{P(x-y)}^{2}$.
+  \item Lejos en el gráfico implica lejos en $\R^{768}$: la distancia real es al menos la del gráfico.
+  \item Cerca en el gráfico no implica nada: los puntos pueden diferir mucho en las direcciones descartadas.
+\end{enumerate}
+\resultado \textbf{el gráfico muestra el $19\,\%$ de la varianza. Las separaciones son fiables; las cercanías, no.}
+\comprobacion $(0,0,5)$ y $(0,0,-5)$ se proyectan sobre el mismo punto del plano $xy$ y están a distancia~10.
+\end{solucion}
+
+\begin{solucion}{eje:5-svd}
+\datos $A=\begin{pmatrix}3&0\\4&5\end{pmatrix}$.
+\planteamiento $\sigma_i=\sqrt{\lambda_i(A\T A)}$; por el \cref{teo:eckart-young}, $\norm{A-A_1}_F=\sigma_2$; energía $\sigma_1^{2}/(\sigma_1^{2}+\sigma_2^{2})$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $A\T A$: entrada $(1,1)=9+16=25$, $(1,2)=0+20=20$, $(2,2)=0+25=25$. $A\T A=\begin{pmatrix}25&20\\20&25\end{pmatrix}$.
+  \item $(25-\lambda)^{2}=400$, luego $\lambda=45$ y $\lambda=5$.
+  \item (a) $\sigma_1=\sqrt{45}=3\sqrt{5}\approx 6{,}708$ y $\sigma_2=\sqrt{5}\approx 2{,}236$.
+  \item (b) $\norm{A-A_1}_F=\sigma_2=\sqrt{5}\approx 2{,}236$.
+  \item (c) Energía: $45/(45+5)=0{,}9$.
+  \item (d) $v_1=(1,1)/\sqrt{2}$; $Av_1=(3,9)/\sqrt{2}$; $u_1=Av_1/\sigma_1=(3,9)/(\sqrt{2}\cdot 3\sqrt{5})=(1,3)/\sqrt{10}$.
+  \item $A_1=\sigma_1u_1v_1\T=3\sqrt{5}\cdot\frac{1}{\sqrt{20}}\begin{pmatrix}1&1\\3&3\end{pmatrix}=\frac32\begin{pmatrix}1&1\\3&3\end{pmatrix}$.
+\end{enumerate}
+\resultado \textbf{(a) $\sigma_1=3\sqrt{5}\approx 6{,}708$, $\sigma_2=\sqrt{5}\approx 2{,}236$; (b) $\approx 2{,}236$; (c) $90\,\%$; (d) $A_1=\begin{pmatrix}1{,}5&1{,}5\\4{,}5&4{,}5\end{pmatrix}$.}
+\comprobacion $A-A_1=\begin{pmatrix}1{,}5&-1{,}5\\-0{,}5&0{,}5\end{pmatrix}$, con $\norm{A-A_1}_F^{2}=2{,}25+2{,}25+0{,}25+0{,}25=5$. Además, $\norm{A}_F^{2}=9+16+25=50=45+5$ y $\sigma_1\sigma_2=15=\abs{\det A}$.
+\end{solucion}
+
+\begin{solucion}{eje:5-mml}
+\datos SVD del \cref{eje:4-mml}: $\sigma_1=2\sqrt{2}$, $\sigma_2=\sqrt{2}$, $u_1=(1,0)$, $v_1=(1,1)/\sqrt{2}$.
+\planteamiento $A_1=\sigma_1u_1v_1\T$ y \cref{teo:eckart-young}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $A_1=2\sqrt{2}\begin{pmatrix}1\\0\end{pmatrix}\frac{1}{\sqrt{2}}\begin{pmatrix}1&1\end{pmatrix}=\begin{pmatrix}2&2\\0&0\end{pmatrix}$.
+  \item $A-A_1=\begin{pmatrix}0&0\\-1&1\end{pmatrix}$, con $\norm{A-A_1}_F=\sqrt{2}$.
+  \item $A-A_1=\sigma_2u_2v_2\T$ tiene un único valor singular, luego $\norm{A-A_1}_2=\sigma_2=\sqrt{2}$.
+  \item Energía retenida: $\sigma_1^{2}/(\sigma_1^{2}+\sigma_2^{2})=8/10=0{,}8$.
+\end{enumerate}
+\resultado \textbf{$A_1=\begin{pmatrix}2&2\\0&0\end{pmatrix}$; error $\sqrt{2}\approx 1{,}414$ en ambas normas; energía retenida $80\,\%$.}
+\comprobacion $\norm{A}_F^{2}=4+4+1+1=10=8+2$ y $\norm{A_1}_F^{2}=8=\sigma_1^{2}$.
+\end{solucion}
+
+\begin{solucion}{eje:5-pca}
+\datos puntos $(4,2)$, $(2,4)$, $(-2,-4)$, $(-4,-2)$; $n=4$.
+\planteamiento $C=X\T X/n$; autovalores y autovectores de $C$; proyecciones $z_i=x_i\T q_1$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Media: $\bigl((4+2-2-4)/4,\,(2+4-4-2)/4\bigr)=(0,0)$; los datos ya están centrados.
+  \item $\sum x_i^{2}=16+4+4+16=40$, $\sum y_i^{2}=4+16+16+4=40$ y $\sum x_iy_i=8+8+8+8=32$.
+  \item $C=\frac14\begin{pmatrix}40&32\\32&40\end{pmatrix}=\begin{pmatrix}10&8\\8&10\end{pmatrix}$.
+  \item $(10-\lambda)^{2}=64$: $\lambda_1=18$ y $\lambda_2=2$.
+  \item $\lambda_1=18$: $C-18I=\begin{pmatrix}-8&8\\8&-8\end{pmatrix}$, luego $q_1=(1,1)/\sqrt{2}$. Varianza explicada: $18/20=0{,}9$.
+  \item Proyecciones $z=(x+y)/\sqrt{2}$: $6/\sqrt{2}=3\sqrt{2}\approx 4{,}243$ para los dos primeros puntos y $-3\sqrt{2}\approx -4{,}243$ para los dos últimos.
+\end{enumerate}
+\resultado \textbf{$C=\begin{pmatrix}10&8\\8&10\end{pmatrix}$; $\lambda=18$ y $2$; $q_1=(1,1)/\sqrt{2}$ explica el $90\,\%$; proyecciones $(4{,}243;\,4{,}243;\,-4{,}243;\,-4{,}243)$.}
+\comprobacion varianza de las proyecciones: $4\cdot 18/4=18=\lambda_1$. Por el \cref{teo:svd-pca}, los valores singulares de $X$ deben ser $\sqrt{4\cdot 18}=\sqrt{72}\approx 8{,}485$ y $\sqrt{4\cdot 2}=\sqrt{8}\approx 2{,}828$, como confirma el cálculo numérico.
+\end{solucion}
+
+\begin{solucion}{eje:5-coste}
+\datos (a) $m\times n=1000\times 800$, $k=50$; (b) $d_{\text{in}}=d_{\text{out}}=4096$, $r=16$.
+\planteamiento $A_k$ cuesta $k(m+n+1)$ números; LoRA entrena $r(d_{\text{in}}+d_{\text{out}})$ parámetros.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $50\cdot(1000+800+1)=50\cdot 1801=90\,050$ números.
+  \item Original: $1000\cdot 800=800\,000$. Fracción: $90\,050/800\,000=0{,}1126\approx 11{,}3\,\%$.
+  \item Umbral: $1801\,k<800\,000\iff k<444{,}2$. Con $k=444$: $799\,644<800\,000$; con $k=445$: $801\,445>800\,000$.
+  \item (b) $16\cdot(4096+4096)=16\cdot 8192=131\,072$ parámetros.
+  \item $4096^{2}=16\,777\,216$; porcentaje: $131\,072/16\,777\,216=0{,}0078125=0{,}78\,\%$.
+  \item Por la \cref{prop:rango-producto}, $\rango(\Delta W)=\rango(BA)\le 16$.
+\end{enumerate}
+\resultado \textbf{(a) $90\,050$ números ($11{,}3\,\%$); deja de compensar a partir de $k=445$. (b) $131\,072$ parámetros ($0{,}78\,\%$); $\rango(\Delta W)\le 16$.}
+\comprobacion (b) duplica los valores de la \cref{obs:lora-rango} ($65\,536$ y $0{,}39\,\%$ con $r=8$), como corresponde a duplicar $r$. En (a), el rango máximo de la imagen es $800>445$: la compresión deja de compensar antes de ser exacta.
+\end{solucion}
+
+\begin{solucion}{eje:5-lora}
+\datos $\Delta W^{\star}=\sum_i\sigma_iu_iv_i\T$; matrices $B\in\R^{d\times r}$, $A\in\R^{r\times n}$.
+\planteamiento el conjunto de productos $BA$ coincide con el de matrices de rango a lo sumo $r$; después se aplica el \cref{teo:eckart-young}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Por la \cref{prop:rango-producto}, todo producto $BA$ tiene rango $\le r$.
+  \item Por el \cref{teo:eckart-young}, para toda matriz de rango $\le r$, $\norm{\Delta W^{\star}-BA}_F\ge(\sum_{i>r}\sigma_i^{2})^{1/2}$.
+  \item La cota se alcanza: $B=U_r\Sigma_r=[\sigma_1u_1\mid\cdots\mid\sigma_ru_r]$ y $A=V_r\T$ dan $BA=\sum_{i\le r}\sigma_iu_iv_i\T=\Delta W^{\star}_r$.
+  \item Caso numérico: $\diag(3,2,1)$ tiene valores singulares $3$, $2$ y $1$ con $u_i=v_i=e_i$. Con $r=1$, $B=3e_1$, $A=e_1\T$, $BA=\diag(3,0,0)$.
+  \item Error: $\norm{\diag(0,2,1)}_F=\sqrt{4+1}=\sqrt{5}\approx 2{,}236$.
+\end{enumerate}
+\resultado \textbf{el mínimo es $(\sum_{i>r}\sigma_i^{2})^{1/2}$, alcanzado por $B=U_r\Sigma_r$, $A=V_r\T$; es nulo solo si $\rango(\Delta W^{\star})\le r$. En el ejemplo, $\sqrt{5}\approx 2{,}236$.} \hfill$\blacksquare$
+\comprobacion la factorización no es única: $B=U_r$ y $A=\Sigma_rV_r\T$, o $BG$ y $G^{-1}A$ con cualquier $G\in\R^{r\times r}$ invertible, dan el mismo producto. En el ejemplo, $B=e_1$ y $A=3e_1\T$ también alcanzan el mínimo.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-formas}
+\planteamiento \texttt{@} contrae el último eje del primer operando con el penúltimo del segundo; el \emph{broadcasting} alinea por la derecha (\cref{def:broadcasting}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $512=512$: el resultado es $(16,128,2048)$.
+  \item (b) Se alinea $(16,128,512)$ con $(\cdot,128,1)$. Último eje: $512$ frente a $1$, se repite. Penúltimo: $128=128$. Primero: falta, se trata como~1 y se repite 16 veces. Resultado $(16,128,512)$.
+  \item (c) Se alinea $(16,128,512)$ con $(\cdot,16,128)$. Último eje: $512$ frente a $128$, ni iguales ni~1: error.
+  \item En (b), cada posición $t$ recibe un único número, el mismo para sus 512 rasgos. Un sesgo por rasgo debe tener forma $(512,)$.
+\end{enumerate}
+\resultado \textbf{(a) $(16,128,2048)$; (b) $(16,128,512)$, pero suma un valor por posición, no por rasgo; (c) error.}
+\comprobacion en NumPy, (a) y (b) dan esas formas y (c) produce el error «operands could not be broadcast together».
+\end{solucion}
+
+\begin{solucion}{eje:6-d2l}
+\datos \texttt{X} de forma $(2,3,4)$; \texttt{A} de forma $(3,3)$ o $(2,3)$.
+\planteamiento una suma a lo largo de un eje lo elimina (o lo deja con tamaño~1 con \texttt{keepdims}); después se aplica la \cref{def:broadcasting}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Eje 0: $(3,4)$; eje 1: $(2,4)$; eje 2: $(2,3)$. Con \texttt{keepdims=True}: $(1,3,4)$, $(2,1,4)$ y $(2,3,1)$.
+  \item (b) \texttt{A.sum(axis=1)} tiene forma $(3,)$ y contiene las sumas de las filas, $s_i=\sum_ja_{ij}$.
+  \item Al dividir, $(3,3)/(3,)$ alinea el vector con el \emph{último} eje: el elemento $(i,j)$ se divide por $s_j$, la suma de la fila $j$, no por $s_i$.
+  \item Corrección: \texttt{A / A.sum(axis=1, keepdims=True)}, de forma $(3,3)/(3,1)$, divide el elemento $(i,j)$ por $s_i$.
+  \item Si \texttt{A} es de $(2,3)$, \texttt{A.sum(axis=1)} es de $(2,)$ y $(2,3)/(2,)$ compara $3$ con $2$ en el último eje: error.
+\end{enumerate}
+\resultado \textbf{(a) $(3,4)$, $(2,4)$, $(2,3)$. (b) divide cada columna $j$ por la suma de la fila $j$; la versión correcta conserva el eje con tamaño~1; con forma $(2,3)$ se produce un error.}
+\comprobacion con $A=\begin{pmatrix}1&1&0\\0&2&2\\1&1&1\end{pmatrix}$, las sumas de filas son $(2,4,3)$; la versión correcta da la primera fila $(0{,}5;\,0{,}5;\,0)$, que suma~1, y la incorrecta da $(1/2,\,1/4,\,0)$, que suma $0{,}75$.
+\end{solucion}
+
+\begin{solucion}{eje:6-embeddings}
+\datos GPT-2 small: $V=50\,257$, $\dmodel=768$, $124\,439\,808$ parámetros. Llama~2 7B: $V=32\,000$, $\dmodel=4096$, unos $6738$~millones de parámetros.
+\planteamiento la matriz de embeddings tiene $V\cdot\dmodel$ parámetros; sin pesos atados hay dos matrices de esa forma.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $50\,257\cdot 768=38\,597\,376$; fracción: $38\,597\,376/124\,439\,808=0{,}3102\approx 31{,}0\,\%$.
+  \item (b) $124\,439\,808+38\,597\,376=163\,037\,184$ parámetros.
+  \item (c) Una matriz: $32\,000\cdot 4096=131\,072\,000$; dos: $262\,144\,000$.
+  \item Porcentaje: $262\,144\,000/(6738\cdot 10^{6})\approx 0{,}0389=3{,}89\,\%$.
+\end{enumerate}
+\resultado \textbf{(a) $38\,597\,376$ ($31\,\%$); (b) $163\,037\,184$; (c) $262\,144\,000$, alrededor del $3{,}9\,\%$ de Llama~2 7B.}
+\comprobacion en un modelo pequeño la tabla de embeddings es una fracción grande del total; al crecer $\dmodel$ y el número de capas, el resto de parámetros crece más deprisa que $V\dmodel$, y la fracción disminuye.
+\end{solucion}
+
+\begin{solucion}{eje:6-atencion}
+\datos forma $(8,12,1024,1024)$; 2 bytes por elemento.
+\planteamiento número de elementos $=$ producto de los tamaños de los ejes.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $8\cdot 12=96$; $1024\cdot 1024=1\,048\,576$; $96\cdot 1\,048\,576=100\,663\,296$ elementos.
+  \item Memoria: $100\,663\,296\cdot 2=201\,326\,592$ bytes $\approx 201{,}3$~MB ($192$~MiB).
+  \item Con $T=2048$, el factor $T^{2}$ pasa de $1024^{2}$ a $2048^{2}=4\cdot 1024^{2}$: la memoria se multiplica por~4.
+\end{enumerate}
+\resultado \textbf{$100\,663\,296$ elementos, unos $201$~MB por capa; duplicar el contexto cuadruplica la memoria.}
+\comprobacion $201\,326\,592/2^{20}=192$ exactamente, porque $96\cdot 2^{20}\cdot 2/2^{20}=192$. El crecimiento cuadrático con $T$ es la razón de ser de las implementaciones de atención que no almacenan la matriz completa (módulo~17).
+\end{solucion}
+
+\begin{solucion}{eje:6-orden}
+\datos $A\in\R^{2^{10}\times 2^{16}}$, $B\in\R^{2^{16}\times 2^{5}}$, $C\in\R^{2^{5}\times 2^{14}}$.
+\planteamiento un producto de $m\times p$ por $p\times q$ cuesta $mpq$ multiplicaciones y produce $mq$ elementos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $(AB)C$: $AB$ cuesta $2^{10}\cdot 2^{16}\cdot 2^{5}=2^{31}$ y es de $2^{10}\times 2^{5}$ ($2^{15}=32\,768$ elementos). Después, $(AB)C$ cuesta $2^{10}\cdot 2^{5}\cdot 2^{14}=2^{29}$.
+  \item Total: $2^{31}+2^{29}=5\cdot 2^{29}=2\,684\,354\,560\approx 2{,}68\cdot 10^{9}$.
+  \item $A(BC)$: $BC$ cuesta $2^{16}\cdot 2^{5}\cdot 2^{14}=2^{35}$ y es de $2^{16}\times 2^{14}$ ($2^{30}\approx 1{,}07\cdot 10^{9}$ elementos, 4~GiB en 32~bits). Después, $A(BC)$ cuesta $2^{10}\cdot 2^{16}\cdot 2^{14}=2^{40}$.
+  \item Total: $2^{40}+2^{35}=33\cdot 2^{35}\approx 1{,}134\cdot 10^{12}$.
+  \item Cociente: $(33\cdot 2^{35})/(5\cdot 2^{29})=33\cdot 64/5=422{,}4$.
+\end{enumerate}
+\resultado \textbf{conviene $(AB)C$: unas 422 veces menos operaciones y una matriz intermedia de $32\,768$ elementos frente a $2^{30}$.} El motivo es que $B$ estrecha la dimensión intermedia a $2^{5}$: conviene aplicarla primero.
+\comprobacion ambos órdenes dan el mismo resultado de $2^{10}\times 2^{14}$, por la asociatividad del producto. Es la misma razón por la que LoRA calcula $B(Ax)$ y no $(BA)x$: con $r\ll d$, el primero cuesta $r(d_{\text{in}}+d_{\text{out}})$ multiplicaciones por token.
+\end{solucion}
+
+\begin{solucion}{eje:6-cuello}
+\datos $Z=HW\T$ (con sesgo, $Z=HW\T+\mathbf{1}_Nb\T$); $L=Z-\ell\mathbf{1}_V\T$ con $\ell_c=\LSE(z_c)$.
+\planteamiento cada término de rango~1 añadido aumenta el rango como mucho en~1, porque $\rango(X+Y)\le\rango(X)+\rango(Y)$ (el espacio columna de $X+Y$ está contenido en $\Col(X)+\Col(Y)$).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\rango(HW\T)\le d$ (\cref{prop:rango-producto}); $\mathbf{1}_Nb\T$ y $\ell\mathbf{1}_V\T$ tienen rango $\le 1$. Luego $\rango(L)\le d+1+1=d+2$.
+  \item (b) $z_1=W h_1=(0,0)$ y $z_2=Wh_2=(1,0)$. $\LSE(0,0)=\ln 2$ y $\LSE(1,0)=\ln(1+e)\approx 1{,}313$.
+  \item $L=\begin{pmatrix}-\ln 2&-\ln 2\\1-\ln(1+e)&-\ln(1+e)\end{pmatrix}\approx\begin{pmatrix}-0{,}6931&-0{,}6931\\-0{,}3133&-1{,}313\end{pmatrix}$.
+  \item $\det L=(-\ln 2)(-\ln(1+e))-(-\ln 2)(1-\ln(1+e))=\ln 2\ne 0$: $\rango(L)=2$, mientras que $\rango(Z)=1$.
+  \item (c) La matriz verdadera es $L^{\star}=-2\ln 2\,J+\ln 2\,I$, con $J$ la matriz de unos: la diagonal vale $\ln\tfrac12=-\ln 2$ y el resto $\ln\tfrac14=-2\ln 2$.
+  \item $J$ tiene autovalores $3$, $0$, $0$; luego $L^{\star}$ tiene autovalores $-6\ln 2+\ln 2=-5\ln 2$ y $\ln 2$ (doble), todos no nulos: $\rango(L^{\star})=3$.
+  \item Un modelo sin sesgo con $d=1$ produce matrices de log-probabilidades de rango $\le d+1=2$ (\cref{prop:cuello}), que no pueden ser iguales a $L^{\star}$.
+\end{enumerate}
+\resultado \textbf{(a) $\rango(L)\le d+2$ con sesgo. (b) $\det L=\ln 2$, rango $2=d+1$. (c) $\rango(L^{\star})=3>2$: esas distribuciones no son representables con $d=1$.} \hfill$\blacksquare$
+\comprobacion $\det L^{\star}=(-5\ln 2)(\ln 2)^{2}=-5(\ln 2)^{3}\approx -1{,}665$, que coincide con el valor numérico. Con sesgo, la cota del apartado~(a) sería $3$ y el argumento de~(c) ya no se aplicaría: el sesgo añade un grado de libertad de rango~1.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{mml}
+M.~P. Deisenroth, A.~A. Faisal y C.~S. Ong.
+\newblock \emph{Mathematics for Machine Learning}.
+\newblock Cambridge University Press, 2020. Versión en línea del 15 de enero de 2024.
+\newblock Cap.~2 «Linear Algebra», cap.~4 «Matrix Decompositions» y cap.~10 «Dimensionality Reduction with Principal Component Analysis».
+\newblock \url{https://mml-book.github.io/}
+
+\bibitem{eckart-young}
+C.~Eckart y G.~Young.
+\newblock The approximation of one matrix by another of lower rank.
+\newblock \emph{Psychometrika}, 1(3):211--218, 1936.
+
+\bibitem{gbc}
+I.~Goodfellow, Y.~Bengio y A.~Courville.
+\newblock \emph{Deep Learning}.
+\newblock MIT Press, 2016. Cap.~2 «Linear Algebra».
+\newblock \url{https://www.deeplearningbook.org/}
+
+\bibitem{hu-lora}
+E.~J. Hu, Y.~Shen, P.~Wallis, Z.~Allen-Zhu, Y.~Li, S.~Wang, L.~Wang y W.~Chen.
+\newblock LoRA: Low-rank adaptation of large language models.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2022.
+\newblock \url{https://arxiv.org/abs/2106.09685}
+
+\bibitem{numpy-bc}
+NumPy Developers.
+\newblock Broadcasting. \emph{NumPy User Guide}, versión~2.5.
+\newblock \url{https://numpy.org/doc/stable/user/basics.broadcasting.html}
+
+\bibitem{gpt2}
+A.~Radford, J.~Wu, R.~Child, D.~Luan, D.~Amodei e I.~Sutskever.
+\newblock Language models are unsupervised multitask learners.
+\newblock Informe técnico, OpenAI, 2019.
+
+\bibitem{shlens}
+J.~Shlens.
+\newblock A tutorial on principal component analysis.
+\newblock arXiv:1404.1100, 2014.
+\newblock \url{https://arxiv.org/abs/1404.1100}
+
+\bibitem{strang-ila}
+G.~Strang.
+\newblock \emph{Introduction to Linear Algebra}, 6.ª ed.
+\newblock Wellesley-Cambridge Press, 2023.
+\newblock \url{https://math.mit.edu/~gs/linearalgebra/ila6/}
+
+\bibitem{strang-lafd}
+G.~Strang.
+\newblock \emph{Linear Algebra and Learning from Data}.
+\newblock Wellesley-Cambridge Press, 2019.
+\newblock Texto del curso 18.065 del MIT.
+
+\bibitem{mit1806}
+G.~Strang.
+\newblock 18.06: Linear Algebra.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, primavera de 2010.
+\newblock \url{https://ocw.mit.edu/courses/18-06-linear-algebra-spring-2010/}
+
+\bibitem{mit1806sc}
+G.~Strang.
+\newblock 18.06SC: Linear Algebra.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, otoño de 2011.
+\newblock \url{https://ocw.mit.edu/courses/18-06sc-linear-algebra-fall-2011/}
+
+\bibitem{mit18065}
+G.~Strang.
+\newblock 18.065: Matrix Methods in Data Analysis, Signal Processing, and Machine Learning.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, primavera de 2018.
+\newblock \url{https://ocw.mit.edu/courses/18-065-matrix-methods-in-data-analysis-signal-processing-and-machine-learning-spring-2018/}
+
+\bibitem{llama2}
+H.~Touvron \emph{et al.}
+\newblock Llama 2: Open foundation and fine-tuned chat models.
+\newblock arXiv:2307.09288, 2023.
+\newblock \url{https://arxiv.org/abs/2307.09288}
+
+\bibitem{yang-softmax}
+Z.~Yang, Z.~Dai, R.~Salakhutdinov y W.~W. Cohen.
+\newblock Breaking the softmax bottleneck: A high-rank RNN language model.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2018.
+\newblock \url{https://arxiv.org/abs/1711.03953}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock \url{https://d2l.ai/}
+
+\end{thebibliography}
+
+
+\end{document}

@@ -1,0 +1,139 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase IV — Módulo 19
+%  Inferencia y generación
+%  Compilar: latexmk -r ../latexmkrc M19-inferencia.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 19}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\argmax}{\operatorname*{arg\,max}}
+\newcommand{\TV}{\operatorname{TV}}
+\newcommand{\rnd}{\operatorname{round}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\quant}{\operatorname{quant}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Bmem}{B_{\mathrm{mem}}}
+\newcommand{\Ppico}{P_{\mathrm{pico}}}
+\newcommand{\Icrit}{I^{\ast}}
+\newcommand{\nkv}{n_{\mathrm{kv}}}
+\newcommand{\dhd}{d_{\mathrm{h}}}
+\newcommand{\TTFT}{\mathrm{TTFT}}
+\newcommand{\TPOT}{\mathrm{TPOT}}
+\usetikzlibrary{patterns}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 19. Inferencia y generación},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase IV \textperiodcentered\ Escala, sistemas y arquitecturas modernas}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 19\par}\vspace{0.3cm}
+{\LARGE Inferencia y generación\par}
+\vspace{0.2cm}
+{\large Decodificación, caché KV, decodificación especulativa, cuantización y servicio a escala\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Un modelo de lenguaje entrenado es una distribución condicionada $P(x_t\mid x_{<t})$; para producir texto hay que decidir qué token se emite en cada paso y hacerlo deprisa, para miles de usuarios a la vez y con una memoria limitada. Este módulo estudia ambas cuestiones. La primera es estadística: qué regla de decodificación se aplica a la distribución del modelo (búsqueda voraz, búsqueda en haz, muestreo con temperatura, \emph{top-k} o núcleo) y qué propiedades tiene cada una. La segunda es de sistemas: por qué la generación token a token está limitada por el ancho de banda de memoria y no por el cómputo, cómo la caché de claves y valores evita recalcular el pasado, cómo la decodificación especulativa emite varios tokens por pasada sin alterar la distribución, cómo la cuantización reduce los bytes que hay que leer y cómo se organiza un servidor que atiende muchas peticiones simultáneas. Sobre la inferencia de Claude, Gemini y Grok solo se usa información pública: sus API documentan parámetros de muestreo, pero los formatos numéricos, el hardware y los planificadores con los que se sirven no son públicos.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item formular la decodificación como búsqueda o como muestreo, demostrar las propiedades de la temperatura, de \emph{top-k} y del muestreo de núcleo, y aplicar la búsqueda en haz con normalización por longitud;
+  \item distinguir las fases de \emph{prefill} y de decodificación, demostrar que la caché KV no altera la salida, calcular su tamaño y deducir con el modelo \emph{roofline} la cota de velocidad de la generación y el efecto del tamaño del lote;
+  \item enunciar el algoritmo de decodificación especulativa, demostrar que preserva exactamente la distribución del modelo objetivo y calcular el número esperado de tokens por pasada y la aceleración;
+  \item definir la cuantización afín y la simétrica, acotar su error, relacionar bits y relación señal-ruido y analizar el efecto de la granularidad y de los valores atípicos;
+  \item explicar y justificar los métodos de cuantización de LLM (LLM.int8(), SmoothQuant, GPTQ, AWQ y QLoRA) y la destilación de conocimiento;
+  \item razonar sobre latencia y rendimiento de un servidor, y analizar el \emph{batching} continuo y la gestión paginada de la caché KV.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~1 se usan la regla de la cadena, la función softmax con temperatura y los métodos de muestreo elementales; del módulo~5, esperanza, varianza y distribuciones discretas; del módulo~6, entropía y entropía cruzada; del módulo~11, los formatos de coma flotante; de los módulos~13 a~15, la atención causal, el bloque Transformer y el mini-GPT; del módulo~16, el coste de unas $2N$ operaciones por token en la pasada hacia delante; del módulo~17, la intensidad aritmética y el modelo \emph{roofline}, y del módulo~18, la atención con consultas agrupadas (GQA).
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Decodificación: búsqueda y muestreo & \cite{jm3}, \cite{d2l}, \cite{holtzman}, \cite{fan} \\
+2 & Coste de la inferencia y caché KV & \cite{cs336}, \cite{pope}, \cite{kwon}, \cite{shazeer} \\
+3 & Decodificación especulativa & \cite{leviathan}, \cite{chen}, \cite{cs336} \\
+4 & Fundamentos de la cuantización & \cite{grayneuhoff}, \cite{jacob}, \cite{mit65940}, \cite{smoothquant} \\
+5 & Cuantización de LLM y destilación & \cite{llmint8}, \cite{smoothquant}, \cite{gptq}, \cite{awq}, \cite{qlora}, \cite{hinton} \\
+6 & Servicio a escala: latencia, rendimiento y memoria & \cite{cs336}, \cite{orca}, \cite{kwon}, \cite{pope} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La organización sigue la clase~10 («Inference») del curso CS336 de Stanford, «Language Modeling from Scratch»~\cite{cs336}, que recorre la intensidad aritmética de la inferencia, la caché KV, la cuantización, la decodificación especulativa, el \emph{batching} continuo y PagedAttention, y la sección~6 de su tarea~1~\cite{cs336a1}, dedicada a la generación. La decodificación sigue el §7.6 y el §13.4 de Jurafsky y Martin~\cite{jm3} y el §10.8 de Zhang \emph{et al.}~\cite{d2l}. La cuantización sigue las clases~5 y~6 («Quantization»), 9 («Knowledge Distillation») y~13 («Efficient LLM Deployment») del curso 6.5940 del MIT~\cite{mit65940}, el estudio clásico de Gray y Neuhoff~\cite{grayneuhoff} y el esquema de aritmética entera de Jacob \emph{et al.}~\cite{jacob}. Los métodos se toman de sus artículos originales: Holtzman \emph{et al.}~\cite{holtzman} y Fan \emph{et al.}~\cite{fan} para el muestreo; Pope \emph{et al.}~\cite{pope} y Shazeer~\cite{shazeer} para el coste de la inferencia; Leviathan \emph{et al.}~\cite{leviathan} y Chen \emph{et al.}~\cite{chen} para la decodificación especulativa; Dettmers \emph{et al.}~\cite{llmint8,qlora}, Xiao \emph{et al.}~\cite{smoothquant}, Frantar \emph{et al.}~\cite{gptq} y Lin \emph{et al.}~\cite{awq} para la cuantización; Hinton \emph{et al.}~\cite{hinton} para la destilación, y Yu \emph{et al.}~\cite{orca} y Kwon \emph{et al.}~\cite{kwon} para el servicio. Las arquitecturas que se usan como ejemplo (Llama~2, Llama~3, OPT) son públicas; sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\V$, $K=\abs{\V}$ & vocabulario y su tamaño \\
+$x_{<t}=(x_1,\dots,x_{t-1})$ & prefijo (contexto) en el paso $t$ \\
+$z\in\R^{K}$, $\tau>0$ & vector de logits y temperatura (la letra $T$ se reserva para longitudes) \\
+$p_\tau=\softmax(z/\tau)$ & distribución con temperatura \\
+$k$, $p$, $m$ & parámetros de \emph{top-k}, del muestreo de núcleo y anchura del haz \\
+$N$, $n$ & parámetros del modelo y longitud del prompt \\
+$L$, $\nkv$, $\dhd$ & capas, cabezas de clave y valor, y dimensión de cada cabeza \\
+$s$ & bytes por número (2 en fp16 y bf16, 1 en int8) \\
+$B$, $\Bmem$, $\Ppico$ & tamaño del lote, ancho de banda de memoria y rendimiento máximo \\
+$p$, $q$ & en el tema~3, distribución del modelo objetivo y del borrador \\
+$\gamma$, $\beta$, $\alpha$, $c$ & tokens propuestos, tasa de aceptación, su valor esperado y coste relativo del borrador \\
+$\TV(p,q)$ & distancia de variación total, $\frac12\sum_x\abs{p(x)-q(x)}$ \\
+$b$, $\Delta$, $Z$ & bits, paso (escala) y punto cero de un cuantizador \\
+$H=2XX\T$ & matriz hessiana del error cuadrático de una capa (tema~5) \\
+$\TTFT$, $\TPOT$ & tiempo hasta el primer token y tiempo por token de salida \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

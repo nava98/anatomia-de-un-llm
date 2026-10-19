@@ -1,0 +1,171 @@
+% =====================================================================
+\chapter{Circuitos e intervenciones causales}
+\label{tema:5}
+% =====================================================================
+
+Las sondas y los diccionarios dicen qué información hay en las activaciones; este tema estudia cómo se procesa y cómo se demuestra que un mecanismo es causal. Un \emph{circuito} es un subgrafo de componentes y pesos que implementa un algoritmo identificable~\cite{olah-zoom}. Se estudian cuatro casos publicados: las cabezas de inducción de Elhage \emph{et al.}~\cite[«Two-Layer Attention-Only Transformers»]{elhage21} y Olsson \emph{et al.}~\cite{olsson}, también tratadas en el §10.6 de Jurafsky y Martin~\cite{jm3}; el circuito de identificación del objeto indirecto de Wang \emph{et al.}~\cite{wang-ioi}; la localización y edición de hechos de Meng \emph{et al.}~\cite{meng}, y el algoritmo de Fourier del \emph{grokking} de Nanda \emph{et al.}~\cite{nanda}. El tema termina con los vectores de dirección~\cite{turner,arditi} y el trazado de circuitos en Claude~3.5 Haiku~\cite{lindsey}. La deducción de la actualización de ROME usa el problema de mínimos cuadrados con restricciones de la clase~16 del curso ENGR108 de Stanford~\cite{engr108}.
+
+\section{Composición de cabezas y cabezas de inducción}
+
+En un Transformer de dos capas, la cabeza de la segunda capa lee un flujo que ya contiene la salida de la primera. Con $x_j=x_{0,j}+h^{1}_j$, sus puntuaciones son
+\[
+\sqrt{d_h}\,s^{2}_{ij}=x_{0,i}\T\WQK^{2}x_{0,j}+\underbrace{x_{0,i}\T\WQK^{2}h^{1}_j}_{\text{composición K}}+\underbrace{(h^{1}_i)\T\WQK^{2}x_{0,j}}_{\text{composición Q}}+(h^{1}_i)\T\WQK^{2}h^{1}_j,
+\]
+y su salida contiene el término $\WOV^{2}h^{1}_j$ (\emph{composición V}; \cref{eje:1-dos-cabezas}). Elhage \emph{et al.} llaman a estas tres vías las tres clases de composición~\cite[«Three Kinds of Composition»]{elhage21}. La composición Q y K permite patrones de atención que dependen de algo más que de los tokens de origen y destino.
+
+\begin{definicion}[Cabeza de inducción]\label{def:induccion}
+Una \emph{cabeza de inducción} es una cabeza de atención que, sobre secuencias de la forma $\ldots[A][B]\ldots[A]$, atiende desde la última $[A]$ a la posición de $[B]$ (\emph{coincidencia de prefijo}) y aumenta el logit de $[B]$ (\emph{copia})~\cite{olsson}.
+\end{definicion}
+
+\begin{proposicion}[Un circuito de inducción explícito]\label{prop:induccion}
+Sean $u_t=\WE e_t$ los embeddings de los tokens, ortonormales, y sean $u'_t$ otros vectores ortonormales, ortogonales a todos los $u_t$. Sea $\Pi=\sum_tu'_tu_t\T$, de modo que $\Pi u_t=u'_t$. Supóngase:
+\begin{enumerate}
+  \item la cabeza~1 atiende siempre a la posición anterior ($A^{1}_{j,j-1}=1$) y tiene $\WOV^{1}=\Pi$, de modo que $h^{1}_j=u'_{t_{j-1}}$ y el flujo tras la capa~1 es $x_j=u_{t_j}+u'_{t_{j-1}}$;
+  \item la cabeza~2 tiene $\WQK^{2}=\beta\sqrt{d_h}\,\Pi\T$, con $\beta>0$, y su circuito OV copia: $\WU\WOV^{2}u_t=\gamma\,e_t$ con $\gamma>0$ y $\WOV^{2}u'_t=0$.
+\end{enumerate}
+Entonces la puntuación de la cabeza~2 desde la posición $i$ hacia la posición $j$ es $s^{2}_{ij}=\beta\,[t_{j-1}=t_i]$, y su aportación a los logits en la posición $i$ es $\gamma\sum_jA^{2}_{ij}e_{t_j}$. Cuando $\beta\to\infty$, la atención se reparte por igual entre las posiciones $j$ con $t_{j-1}=t_i$; en particular, si $t_i$ ha aparecido antes una sola vez, seguido del token $t_j$, el logit de $t_j$ aumenta en $\gamma$.
+\end{proposicion}
+
+\begin{proof}
+Como $\Pi x_i=\Pi u_{t_i}+\Pi u'_{t_{i-1}}=u'_{t_i}$ (porque $u_t\T u'_{t'}=0$ para todo $t,t'$),
+\[
+s^{2}_{ij}=\frac{x_i\T\WQK^{2}x_j}{\sqrt{d_h}}=\beta\,(\Pi x_i)\T x_j=\beta\,(u'_{t_i})\T\bigl(u_{t_j}+u'_{t_{j-1}}\bigr)=\beta\,[t_{j-1}=t_i],
+\]
+por la ortonormalidad de los $u'_t$ y su ortogonalidad con los $u_t$. Por la \cref{prop:qkov}(ii), la aportación a los logits es $\sum_jA^{2}_{ij}\WU\WOV^{2}(u_{t_j}+u'_{t_{j-1}})=\gamma\sum_jA^{2}_{ij}e_{t_j}$. Si $\beta\to\infty$, la softmax concentra la masa por igual en las posiciones con puntuación máxima, que son las $j$ con $t_{j-1}=t_i$ cuando existen; si solo hay una, recibe peso~1 y el logit de $t_j$ aumenta en $\gamma$.
+\end{proof}
+
+La proposición muestra por qué hace falta una cabeza previa: la clave de una posición contiene, de entrada, solo su propio token, y alguien debe escribir en ella cuál era el token anterior. La cabeza~2 lee esa información a través de la composición~K.
+
+Las cabezas de inducción reducen drásticamente la pérdida en texto repetido. Sobre una secuencia aleatoria de tokens de un vocabulario de $K=50\,000$ que se repite, sin inducción la mejor predicción es la uniforme, con pérdida $\ln 50\,000=10{,}82$ nats por token; si en la repetición se copia el token correcto con probabilidad $0{,}9$, la pérdida en esa parte baja a $-\ln 0{,}9=0{,}105$ nats.
+
+Olsson \emph{et al.} definen la \emph{puntuación de aprendizaje en contexto} como la pérdida en el token~500 del contexto menos la pérdida media en el token~50, y observan que, en un intervalo corto del entrenamiento, esta puntuación cae bruscamente al mismo tiempo que se forman las cabezas de inducción y aparece un pequeño saliente en la curva de pérdida~\cite{olsson}. Los modelos de una sola capa no presentan ni las cabezas ni el salto. El trabajo reúne seis argumentos para sostener que las cabezas de inducción son responsables de buena parte del aprendizaje en contexto (módulo~22); los propios autores advierten que, para los modelos grandes, la evidencia es indirecta.
+
+\section{Intervenciones: ablación y parcheo de activaciones}
+
+\begin{definicion}[Ablación y parcheo]\label{def:parcheo}
+Sea $M$ un modelo, $c$ un componente (una cabeza, un MLP o una activación concreta) y $\mu$ una métrica de la salida, por ejemplo la diferencia de logits entre la respuesta correcta y una alternativa.
+\begin{enumerate}
+  \item La \emph{ablación} de $c$ sustituye su salida por cero (\emph{ablación nula}) o por su media sobre un conjunto de datos (\emph{ablación por la media}).
+  \item Dadas una entrada \emph{limpia} $u$ y una entrada \emph{corrupta} $u'$ que solo difiere en la información relevante, el \emph{parcheo de activaciones} ejecuta el modelo sobre $u'$ sustituyendo la salida de $c$ por la que tenía sobre $u$, y mide $\mu$.
+  \item La \emph{fracción recuperada} es $\bigl(\mu_{\mathrm{parcheo}}-\mu_{\mathrm{corrupta}}\bigr)/\bigl(\mu_{\mathrm{limpia}}-\mu_{\mathrm{corrupta}}\bigr)$.
+\end{enumerate}
+\end{definicion}
+
+Meng \emph{et al.} llaman \emph{efecto total} a $\mu_{\mathrm{limpia}}-\mu_{\mathrm{corrupta}}$ y \emph{efecto indirecto} de un estado oculto a la mejora que se obtiene restaurándolo~\cite[§2.1]{meng}. El parcheo distingue lo necesario de lo suficiente: si restaurar $c$ recupera la conducta, $c$ transporta la información decisiva. El \emph{parcheo de caminos} de Wang \emph{et al.} restaura solo el efecto de $c$ a través de ciertos caminos (por ejemplo, el camino directo a los logits) y deja los demás corruptos~\cite[§3.1]{wang-ioi}.
+
+\begin{ejemplo}[El circuito IOI]\label{ej:ioi}
+En la tarea de identificación del objeto indirecto (IOI), GPT-2 \emph{small} debe completar «When Mary and John went to the store, John gave a drink to» con «Mary», y no con el sujeto repetido, «John». La métrica es la diferencia de logits entre ambos nombres, que vale de media $3{,}56$. Wang \emph{et al.} identifican mediante parcheo de caminos un circuito de 26 cabezas agrupadas en siete clases: cabezas de token duplicado, de inhibición del sujeto y de movimiento de nombres, además de cabezas de movimiento negativo, de token previo, de inducción y de movimiento de reserva~\cite[§3]{wang-ioi}. Proponen tres criterios para validar un circuito: \emph{fidelidad} (el circuito solo reproduce el rendimiento del modelo), \emph{completitud} y \emph{minimalidad}. Su circuito recupera el $87\,\%$ del rendimiento, pero no supera todas las pruebas de completitud~\cite[§4]{wang-ioi}.
+\end{ejemplo}
+
+\section{Localización y edición de hechos: ROME}
+
+Meng \emph{et al.} aplican el parcheo a enunciados de hechos («La Torre Eiffel está en…») corrompiendo con ruido gaussiano los embeddings del sujeto. En GPT-2 XL, el efecto indirecto medio es máximo en los MLP de las capas intermedias, en el último token del sujeto~\cite[§2.2]{meng}. Proponen entonces que esos MLP funcionan como una \emph{memoria asociativa} lineal: la matriz de salida $W$ del MLP asocia una \emph{clave} $k$ (la activación oculta, que codifica el sujeto) con un \emph{valor} $v=Wk$ (que codifica la relación y el objeto).
+
+\begin{teorema}[Actualización de rango uno]\label{teo:rome}
+Sean $K\in\R^{p\times N}$ y $V\in\R^{q\times N}$ matrices de claves y valores, con $C=KK\T$ definida positiva, y sea $W$ la solución de mínimos cuadrados $\min_W\norm{WK-V}_F^{2}$. Dada una nueva asociación $(k_*,v_*)$, la solución de
+\[
+\min_{\hat W}\ \norm{\hat WK-V}_F^{2}\quad\text{sujeto a}\quad \hat Wk_*=v_*
+\]
+es
+\[
+\hat W=W+\Lambda\,(C^{-1}k_*)\T,\qquad \Lambda=\frac{v_*-Wk_*}{(C^{-1}k_*)\T k_*}.
+\]
+\end{teorema}
+
+\begin{proof}
+Las ecuaciones normales del problema sin restricciones son $(WK-V)K\T=0$. Sea $\hat W=W+\Delta$. Desarrollando el cuadrado de la norma de Frobenius,
+\[
+\norm{\hat WK-V}_F^{2}=\norm{WK-V}_F^{2}+2\tr\bigl(\Delta K(WK-V)\T\bigr)+\tr\bigl(\Delta KK\T\Delta\T\bigr).
+\]
+El término central es $2\tr\bigl(\Delta\,[(WK-V)K\T]\T\bigr)=0$. El problema se reduce a minimizar $\tr(\Delta C\Delta\T)=\sum_i\delta_i\T C\delta_i$, donde $\delta_i\T$ es la fila $i$ de $\Delta$, sujeto a $\Delta k_*=r$ con $r=v_*-Wk_*$, es decir, a $\delta_i\T k_*=r_i$ para cada $i$. Las filas se desacoplan. Para cada una, el lagrangiano $\delta_i\T C\delta_i-2\nu_i(\delta_i\T k_*-r_i)$ tiene gradiente nulo cuando $C\delta_i=\nu_ik_*$, es decir, $\delta_i=\nu_iC^{-1}k_*$; la restricción da $\nu_i\,k_*\T C^{-1}k_*=r_i$. Como $C^{-1}$ es definida positiva y $k_*\neq 0$, el denominador es positivo y $\delta_i=r_iC^{-1}k_*/(k_*\T C^{-1}k_*)$. Este punto es el mínimo, porque el objetivo es estrictamente convexo y la restricción es afín. Reuniendo las filas, $\Delta=r\,(C^{-1}k_*)\T/(k_*\T C^{-1}k_*)$, y como $C$ es simétrica, $k_*\T C^{-1}k_*=(C^{-1}k_*)\T k_*$.
+\end{proof}
+
+Es la ecuación~(2) de Meng \emph{et al.}~\cite[§3.1]{meng}, que estiman $C$ con una muestra de texto de Wikipedia. El cambio tiene rango uno y es mínimo en la métrica que define $C$: no altera las claves $k$ con $k\T C^{-1}k_*=0$ (\cref{eje:5-rome}). Meng \emph{et al.} evalúan las ediciones con su conjunto CounterFact, que mide a la vez si la edición generaliza a paráfrasis y si es específica del sujeto~\cite[§3.3]{meng}.
+
+\begin{ejemplo}[Una edición en dimensión~2]\label{ej:rome}
+Sean $W=I_2$, $C=\diag(4,1)$, $k_*=(1,1)$ y $v_*=(2,0)$. Entonces $C^{-1}k_*=(0{,}25;\allowbreak\ 1)$, $(C^{-1}k_*)\T k_*=1{,}25$, $Wk_*=(1,1)$ y $\Lambda=(1,-1)/1{,}25=(0{,}8;\allowbreak\ -0{,}8)$. Por tanto,
+\[
+\hat W=I_2+\begin{pmatrix}0{,}8\\-0{,}8\end{pmatrix}(0{,}25\ \ 1)=\begin{pmatrix}1{,}2&0{,}8\\-0{,}2&0{,}2\end{pmatrix},\qquad \hat Wk_*=(2,0)=v_*.
+\]
+\end{ejemplo}
+
+\section{\emph{Grokking} y el algoritmo de Fourier}
+
+Nanda \emph{et al.} entrenan un Transformer de una capa para la suma modular: dados $a,b\in\{0,\dots,p-1\}$ con $p=113$, predecir $c=(a+b)\bmod p$. Con el $30\,\%$ de los pares como entrenamiento y decaimiento de pesos, la red memoriza primero y generaliza mucho después (\emph{grokking}). La ingeniería inversa muestra que implementa el algoritmo siguiente~\cite[§3.1 y §4]{nanda}: los embeddings representan cada entrada mediante $\cos(\omega_ka)$ y $\sin(\omega_ka)$ para unas pocas frecuencias $\omega_k=2\pi k/p$; la atención y el MLP calculan $\cos(\omega_k(a+b))$ y $\sin(\omega_k(a+b))$ con las identidades trigonométricas
+\[
+\cos(\omega(a+b))=\cos\omega a\cos\omega b-\sin\omega a\sin\omega b,\qquad \sin(\omega(a+b))=\sin\omega a\cos\omega b+\cos\omega a\sin\omega b;
+\]
+y la matriz de salida produce el logit
+\[
+\ell(c)=\sum_k\cos(\omega_k(a+b-c))=\sum_k\bigl[\cos(\omega_k(a+b))\cos(\omega_kc)+\sin(\omega_k(a+b))\sin(\omega_kc)\bigr],
+\]
+que es lineal en las cantidades anteriores. El modelo estudiado usa cinco frecuencias clave, $k\in\{14,35,41,42,52\}$.
+
+\begin{proposicion}[Interferencia constructiva]\label{prop:fourier}
+Sea $p$ primo y sea $\mathcal{K}\subseteq\{1,\dots,p-1\}$ no vacío. La función $\ell(c)=\sum_{k\in\mathcal{K}}\cos\bigl(2\pi k(a+b-c)/p\bigr)$, para $c\in\{0,\dots,p-1\}$, alcanza su máximo, igual a $\abs{\mathcal{K}}$, únicamente en $c\equiv a+b\pmod p$.
+\end{proposicion}
+
+\begin{proof}
+Sea $s=a+b-c$. Cada sumando es a lo sumo~1, con igualdad si y solo si $ks/p\in\mathbb{Z}$, es decir, si $p$ divide a $ks$. Como $p$ es primo y no divide a $k$ (porque $1\le k\le p-1$), $p$ divide a $ks$ si y solo si divide a $s$. Si $c\equiv a+b$, todos los sumandos valen~1 y $\ell(c)=\abs{\mathcal{K}}$. Si $c\not\equiv a+b$, ningún sumando vale~1 y $\ell(c)<\abs{\mathcal{K}}$. Como $c$ recorre un sistema completo de restos, hay exactamente un maximizador.
+\end{proof}
+
+Nanda \emph{et al.} definen además medidas de progreso que evolucionan de forma continua antes del salto en la exactitud de prueba, y distinguen tres fases: memorización, formación del circuito y limpieza, en la que el decaimiento de pesos elimina los componentes que memorizan~\cite[§5]{nanda}. El \emph{grokking} no es, por tanto, un cambio súbito del mecanismo, sino la culminación de un proceso gradual.
+
+\section{Vectores de dirección}
+
+\begin{definicion}[Dirección por adición de activaciones]\label{def:steering}
+Sean $P$ y $N$ conjuntos de entradas con y sin un concepto, y $x_\ell(u)$ el flujo de la capa $\ell$. El \emph{vector de dirección} es la diferencia de medias
+\[
+v=\frac{1}{\abs{P}}\sum_{u\in P}x_\ell(u)-\frac{1}{\abs{N}}\sum_{u\in N}x_\ell(u),
+\]
+y \emph{dirigir} el modelo consiste en sustituir $x_\ell\leftarrow x_\ell+\alpha v$ durante la generación~\cite{turner}.
+\end{definicion}
+
+Si la dirección se suma justo antes de $\WU$ y no hay normalización, los logits cambian en $\alpha\WU v$, de modo que la log-probabilidad de cada token se desplaza en $\alpha(\WU v)_t$ menos una constante común. En capas anteriores el efecto pasa por las capas posteriores y solo puede medirse experimentalmente. Con $\alpha$ excesivo, el flujo sale de la distribución que el modelo ha visto en el entrenamiento y la generación degenera.
+
+\begin{ejemplo}[Dirección en el modelo del \cref{ej:atribucion}]\label{ej:steering}
+Con activaciones positivas $(2,1)$ y $(3,1)$ y negativas $(0,1)$ y $(1,1)$, $v=(2{,}5;\allowbreak\ 1)-(0{,}5;\allowbreak\ 1)=(2,0)$. Sumar $0{,}5\,v$ al flujo final $(1;\allowbreak\ 1{,}5)$ da $(2;\allowbreak\ 1{,}5)$; los logits cambian en $0{,}5\,\WU v=(1,0,-1)$ y las probabilidades pasan de $(0{,}307;\allowbreak\ 0{,}507;\allowbreak\ 0{,}186)$ a $(0{,}592;\allowbreak\ 0{,}359;\allowbreak\ 0{,}049)$.
+\end{ejemplo}
+
+La operación inversa, la \emph{ablación de una dirección}, sustituye $x\leftarrow x-(\hat v\T x)\hat v$ con $\hat v=v/\norm v$, y elimina del flujo la componente según $\hat v$. Arditi \emph{et al.} muestran que en varios modelos abiertos con ajuste de seguridad la negativa a responder peticiones dañinas está mediada por una sola dirección: al eliminarla, el modelo deja de negarse, y al sumarla, se niega incluso ante peticiones inocuas~\cite{arditi}. El resultado ilustra a la vez la potencia de las intervenciones y la fragilidad de algunas salvaguardas. Li \emph{et al.} usan intervenciones de este tipo en cabezas de atención para aumentar la veracidad de las respuestas~\cite{li-iti}, y \emph{Golden Gate Claude} (\cref{tema:4}) es una intervención sobre una característica de un SAE.
+
+\section{Trazado de circuitos en un modelo comercial}
+
+En 2025, Anthropic publicó el análisis de Claude~3.5 Haiku mediante \emph{grafos de atribución}~\cite{lindsey}. Se sustituyen los MLP por un \emph{transcodificador} entre capas, con unos 30 millones de características interpretables, que forma un modelo de reemplazo; se calcula qué características influyen en cuáles para una entrada concreta, y las hipótesis se validan con intervenciones sobre el modelo original. Entre los casos documentados figuran el razonamiento en varios pasos (de «Dallas» a «Texas» y de ahí a «Austin»), la elección de la palabra que rimará antes de escribir un verso, circuitos compartidos entre idiomas y un circuito de «no puedo responder» que se inhibe al reconocer una entidad conocida y cuyo fallo produce alucinaciones. Es información pública de Anthropic; sobre los mecanismos internos de Gemini o de Grok no constan, en la información pública consultada, análisis equivalentes.
+
+\begin{lecturas}
+\item Elhage \emph{et al.}~\cite{elhage21}, «Two-Layer Attention-Only Transformers», y Olsson \emph{et al.}~\cite{olsson}.
+\item Jurafsky y Martin~\cite{jm3}, §10.6 «In-Context Learning and Induction Heads».
+\item Wang \emph{et al.}~\cite{wang-ioi}, §2 a §4; Meng \emph{et al.}~\cite{meng}, §2 y §3; Nanda \emph{et al.}~\cite{nanda}, §3 a §5.
+\item Turner \emph{et al.}~\cite{turner} y Arditi \emph{et al.}~\cite{arditi}, sobre vectores de dirección.
+\item Lindsey \emph{et al.}~\cite{lindsey}, \emph{On the Biology of a Large Language Model}.
+\item Stanford ENGR108~\cite{engr108}, clase~16 «Constrained least squares».
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-induccion}
+Describa paso a paso cómo un circuito de inducción predice «Potter» en «\ldots{} Harry Potter \ldots{} Harry». ¿Qué tipo de composición usa? ¿Qué predeciría una única cabeza que buscara el mismo token que el actual?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-perdida}
+Una secuencia de $T$ tokens aleatorios uniformes sobre un vocabulario de $K=32\,000$ se repite una vez, de modo que el contexto tiene $2T$ tokens. (a) Calcule la pérdida media por token de un modelo sin inducción. (b) Calcule la de un modelo que, en la segunda mitad, asigna probabilidad $0{,}8$ al token correcto y predice de forma uniforme en la primera. (c) ¿Qué signo tiene la puntuación de aprendizaje en contexto del segundo modelo si el token~50 está en la primera mitad y el token~500 en la segunda?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-parcheo}
+En un modelo lineal de juguete, la primera capa escribe $a\in\R^{2}$, la segunda escribe $m=Ma$ con $M=\begin{pmatrix}1&0\\0&0\end{pmatrix}$, y la métrica es $\mu=u\T(a+m)$ con $u=(1,1)$. En la entrada limpia $a=(2,1)$ y en la corrupta $a'=(0,1)$. (a) Calcule $\mu$ limpia y corrupta. (b) Calcule la fracción recuperada al parchear $a$ (recalculando $m$), al parchear solo $m$ y al parchear $a$ solo en su camino directo a la métrica. (c) Compruebe que las dos últimas fracciones suman la primera y explique por qué.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-ablacion}
+Con el $\WU$ del \cref{ej:atribucion}, el flujo final $x=(2,1)$ y la dirección unitaria $\hat v=(0{,}6;\allowbreak\ 0{,}8)$: (a) calcule la componente de $x$ según $\hat v$ y el flujo tras la ablación; (b) compruebe que el nuevo flujo es ortogonal a $\hat v$; (c) calcule las probabilidades antes y después de la ablación; (d) ¿qué valor de $\alpha$ en $x+\alpha\hat v$ reproduce la ablación para este $x$? ¿Sirve el mismo $\alpha$ para cualquier flujo?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-rome}
+(a) El problema de norma mínima $\min\norm{\delta}^{2}$ sujeto a $A\delta=r$, con $A$ de filas linealmente independientes, tiene solución $\hat\delta=A\T(AA\T)^{-1}r$. Deduzca de esta fórmula que, para una sola restricción $k\T\delta=r$, $\hat\delta=r\,k/\norm{k}^{2}$. (b) Con el cambio de variable $\eta=C^{1/2}\delta$, deduzca que la solución de $\min\delta\T C\delta$ sujeto a $k\T\delta=r$ es $\delta=r\,C^{-1}k/(k\T C^{-1}k)$, y relaciónelo con el \cref{teo:rome}. (c) Calcule $\hat W$ con $W=I_2$, $C=\diag(1,4)$, $k_*=(2,1)$ y $v_*=(1,1)$, y compruebe $\hat Wk_*=v_*$. (d) Demuestre que $\hat Wk=Wk$ para toda clave $k$ con $k\T C^{-1}k_*=0$ y compruébelo con $k=(1,-8)$.
+\fuente{adaptado de Stanford ENGR108~\cite{engr108}, clase~16 «Constrained least squares», problema de norma mínima y su solución (se añade la métrica de $C$ y la aplicación a ROME).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-fourier}
+Sea $p=5$, $a=2$ y $b=4$. (a) Con una sola frecuencia, $\mathcal{K}=\{1\}$, calcule $\ell(c)=\cos(2\pi(a+b-c)/5)$ para $c=0,\dots,4$ y compruebe la \cref{prop:fourier}. (b) Repita el cálculo con $\mathcal{K}=\{1,2\}$. (c) Demuestre que, con $\mathcal{K}=\{1,\dots,p-1\}$, $\ell(c)=p-1$ si $c\equiv a+b$ y $\ell(c)=-1$ en otro caso. Indicación: use $\sum_{k=0}^{p-1}e^{2\pi\mathrm{i}ks/p}=0$ si $p\nmid s$.
+\end{ejercicio}

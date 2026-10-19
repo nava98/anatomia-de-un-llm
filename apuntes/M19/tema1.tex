@@ -1,0 +1,244 @@
+% =====================================================================
+\chapter{Decodificación: búsqueda y muestreo}
+\label{tema:1}
+% =====================================================================
+
+Un modelo de lenguaje autorregresivo proporciona, en cada paso, una distribución $P(\cdot\mid x_{<t})$ sobre el vocabulario; la \emph{decodificación} es la regla que convierte esa sucesión de distribuciones en un texto concreto. Este tema presenta las dos familias de reglas: las de \emph{maximización} (búsqueda voraz y búsqueda en haz), que intentan encontrar la secuencia más probable, y las de \emph{muestreo} (temperatura, \emph{top-k} y núcleo), que extraen una secuencia aleatoria de una versión modificada de la distribución. Se siguen el §7.6 y el §13.4 de Jurafsky y Martin~\cite{jm3}, el §10.8 de Zhang \emph{et al.}~\cite{d2l}, la sección~3 de Holtzman \emph{et al.}~\cite{holtzman}, el §5.4 de Fan \emph{et al.}~\cite{fan} y la sección~6 de la tarea~1 de CS336~\cite{cs336a1}.
+
+\section{El problema de la decodificación}
+
+Sea $P$ un modelo de lenguaje sobre $\V$ con símbolo de fin \fin\ (módulo~1). Por la regla de la cadena, la probabilidad de una continuación $y=(y_1,\dots,y_T)$ de un prompt $x$ es
+\[
+P(y\mid x)=\prod_{t=1}^{T}P(y_t\mid x,y_{<t}),\qquad
+\ln P(y\mid x)=\sum_{t=1}^{T}\ln P(y_t\mid x,y_{<t}).
+\]
+
+\begin{definicion}[Regla de decodificación]\label{def:decodificacion}
+Una \emph{regla de decodificación} es un procedimiento que, a partir del prompt $x$ y del acceso a las distribuciones condicionadas $P(\cdot\mid x,y_{<t})$, produce una continuación $y$, de forma determinista o aleatoria. La \emph{decodificación de máxima probabilidad} (MAP) busca
+\[
+y^{\ast}=\argmax_{y}\ P(y\mid x),
+\]
+donde el máximo se toma sobre las secuencias terminadas en \fin.
+\end{definicion}
+
+\begin{proposicion}\label{prop:exhaustiva}
+Con un vocabulario de $K$ tokens, el número de continuaciones de longitud exactamente $T$ es $K^{T}$. En consecuencia, la búsqueda exhaustiva del máximo entre las secuencias de longitud $T$ requiere evaluar $K^{T}$ secuencias.
+\end{proposicion}
+
+\begin{proof}
+Cada una de las $T$ posiciones admite $K$ tokens de forma independiente; por el principio del producto hay $K^{T}$ secuencias (módulo~1).
+\end{proof}
+
+Con $K=5\cdot 10^{4}$ y $T=20$, $K^{T}\approx 9{,}5\cdot 10^{93}$: la decodificación MAP exacta es inabordable y se aproxima con búsquedas locales~\cite[§10.8.2]{d2l}.
+
+\section{Búsqueda voraz y búsqueda en haz}
+
+\begin{definicion}[Búsqueda voraz]
+La \emph{búsqueda voraz} (\emph{greedy}) elige en cada paso el token más probable, $y_t=\argmax_{v\in\V}P(v\mid x,y_{<t})$, hasta emitir \fin\ o alcanzar una longitud máxima~\cite[§7.6.1]{jm3}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:voraz-no-optima}
+La búsqueda voraz no encuentra, en general, la secuencia de máxima probabilidad.
+\end{proposicion}
+
+\begin{proof}
+Basta un contraejemplo. Sea un modelo con primer token $A$, $B$ o $C$, con probabilidades $0{,}5$, $0{,}4$ y $0{,}1$, y segundo token $\mathrm{x}$, $\mathrm{y}$ o $\mathrm{z}$ seguido de \fin. Tras $A$ el segundo token tiene distribución $(0{,}4;\allowbreak\,0{,}3;\allowbreak\,0{,}3)$ y tras $B$, $(0{,}9;\allowbreak\,0{,}05;\allowbreak\,0{,}05)$. La búsqueda voraz elige $A$ y luego $\mathrm{x}$, con probabilidad $0{,}5\cdot 0{,}4=0{,}20$, mientras que la secuencia $B\mathrm{x}$ tiene probabilidad $0{,}4\cdot 0{,}9=0{,}36>0{,}20$.
+\end{proof}
+
+\begin{definicion}[Búsqueda en haz]\label{def:haz}
+Sea $m\ge 1$ la \emph{anchura del haz}. La \emph{búsqueda en haz} mantiene un conjunto $\mathcal{H}_t$ de, a lo sumo, $m$ prefijos de longitud $t$. En el paso $t+1$ forma todas las extensiones $(h,v)$ con $h\in\mathcal{H}_t$ y $v\in\V$, las puntúa con $\ln P(h,v\mid x)=\ln P(h\mid x)+\ln P(v\mid x,h)$ y conserva las $m$ de mayor puntuación. Las extensiones que terminan en \fin\ se retiran del haz como candidatas finales; al acabar se devuelve la candidata de mayor puntuación~\cite[§13.4]{jm3}, \cite[§10.8.3]{d2l}.
+\end{definicion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,
+  nodo/.style={draw,rounded corners=2pt,minimum width=9mm,minimum height=6mm},
+  poda/.style={nodo,dashed,draw=regla,text=regla},
+  level distance=1.9cm]
+  \node[nodo] (r) at (0,0) {\fin};
+  \node[nodo] (A) at (2.6,1.4) {$A$};
+  \node[nodo] (B) at (2.6,0) {$B$};
+  \node[poda] (C) at (2.6,-1.4) {$C$};
+  \draw[->] (r) -- node[above,sloped] {$0{,}5$} (A);
+  \draw[->] (r) -- node[above] {$0{,}4$} (B);
+  \draw[->,regla] (r) -- node[below,sloped] {$0{,}1$} (C);
+  \node[nodo] (Ax) at (6.2,2.1) {$A\mathrm{x}$: $0{,}20$};
+  \node[poda] (Ay) at (6.2,1.4) {$A\mathrm{y}$: $0{,}15$};
+  \node[nodo] (Bx) at (6.2,0.35) {$B\mathrm{x}$: $0{,}36$};
+  \node[poda] (By) at (6.2,-0.35) {$B\mathrm{y}$: $0{,}02$};
+  \draw[->] (A) -- (Ax); \draw[->,regla] (A) -- (Ay);
+  \draw[->] (B) -- (Bx); \draw[->,regla] (B) -- (By);
+  \node[align=left,font=\footnotesize,anchor=west] at (8.0,1.0) {haz $m=2$:\\ se conservan $A\mathrm{x}$ y $B\mathrm{x}$;\\ gana $B\mathrm{x}$};
+\end{tikzpicture}
+\caption{Búsqueda en haz con $m=2$ en el ejemplo de la \cref{prop:voraz-no-optima}. Los nodos discontinuos se podan (no se dibujan las extensiones con $\mathrm{z}$). La búsqueda voraz se queda con $A\mathrm{x}$ ($0{,}20$); el haz encuentra $B\mathrm{x}$ ($0{,}36$).}
+\label{fig:haz}
+\end{figure}
+
+\begin{proposicion}[Coste y casos extremos]\label{prop:coste-haz}
+Para una salida de longitud $T$ y vocabulario de tamaño $K$, la búsqueda en haz de anchura $m$ evalúa a lo sumo $mKT$ extensiones. Con $m=1$ coincide con la búsqueda voraz, y con $m\ge K^{T-1}$ no poda ningún prefijo y coincide con la búsqueda exhaustiva entre las secuencias de longitud~$T$.
+\end{proposicion}
+
+\begin{proof}
+En cada uno de los $T$ pasos se extienden a lo sumo $m$ prefijos con $K$ tokens. Si $m=1$, conservar la mejor extensión del único prefijo es elegir el $\argmax$ del paso, que es la regla voraz. En el paso $t$ hay a lo sumo $K^{t}\le K^{T-1}$ prefijos posibles para $t\le T-1$; si $m\ge K^{T-1}$, ninguno se descarta y en el último paso se puntúan las $K^{T}$ secuencias.
+\end{proof}
+
+\begin{observacion}[Sesgo hacia las secuencias cortas]\label{obs:longitud}
+Cada término $\ln P(y_t\mid x,y_{<t})$ es menor o igual que cero, de modo que la puntuación $\ln P(y\mid x)$ no aumenta al alargar la secuencia. La búsqueda en haz tiende entonces a preferir candidatas cortas. La corrección habitual divide por una potencia de la longitud,
+\[
+\mathrm{punt}(y)=\frac{1}{L^{a}}\ln P(y\mid x),\qquad L=\abs{y},\ a\in[0,1],
+\]
+con $a=0{,}75$ en el ejemplo de~\cite[§10.8.3]{d2l}; con $a=1$ se obtiene la log-probabilidad media por token de~\cite[§13.4]{jm3}.
+\end{observacion}
+
+\begin{observacion}[Degeneración]
+La búsqueda en haz es la regla habitual en traducción automática, donde la salida está muy determinada por la entrada. En la generación abierta produce textos repetitivos: Holtzman \emph{et al.} muestran que el texto humano tiene una probabilidad por token claramente menor que la del texto obtenido por maximización y que las repeticiones se refuerzan a sí mismas, porque cada repetición aumenta la probabilidad de la siguiente~\cite[§4.3]{holtzman}. Por eso los asistentes conversacionales muestrean.
+\end{observacion}
+
+\section{Muestreo con temperatura}
+
+\begin{definicion}[Softmax con temperatura]\label{def:temperatura}
+Sea $z\in\R^{K}$ el vector de logits y sea $\tau>0$. La \emph{distribución con temperatura} $\tau$ es
+\[
+p_\tau(i)=\frac{e^{z_i/\tau}}{\sum_{j=1}^{K}e^{z_j/\tau}},\qquad i=1,\dots,K.
+\]
+El \emph{muestreo con temperatura} extrae cada token de $p_\tau$~\cite[§7.6.3]{jm3}, \cite[§3.3]{holtzman}. Con $\tau=1$ se recupera la distribución del modelo.
+\end{definicion}
+
+\begin{proposicion}[Temperatura como potencia]\label{prop:potencia}
+Sea $p=p_1$ la distribución del modelo. Entonces $p_\tau(i)\propto p(i)^{1/\tau}$. En particular, elevar las probabilidades a una potencia $a>0$ y renormalizar equivale a muestrear con temperatura $\tau=1/a$.
+\end{proposicion}
+
+\begin{proof}
+Como $p(i)=e^{z_i}/\sum_j e^{z_j}$, se tiene $p(i)^{1/\tau}=e^{z_i/\tau}\bigl(\sum_j e^{z_j}\bigr)^{-1/\tau}$. El segundo factor no depende de $i$ y desaparece al normalizar, luego $p(i)^{1/\tau}\big/\sum_j p(j)^{1/\tau}=p_\tau(i)$.
+\end{proof}
+
+\begin{proposicion}[Límites de la temperatura]\label{prop:limites-tau}
+Sea $M=\{i:z_i=\max_j z_j\}$ el conjunto de logits máximos. Entonces
+\[
+\lim_{\tau\to 0^{+}}p_\tau(i)=\begin{cases}1/\abs{M}, & i\in M,\\ 0,& i\notin M,\end{cases}
+\qquad
+\lim_{\tau\to\infty}p_\tau(i)=\frac{1}{K}.
+\]
+Si el máximo es único, el límite $\tau\to 0^{+}$ es la búsqueda voraz.
+\end{proposicion}
+
+\begin{proof}
+Sea $z^{\ast}=\max_j z_j$. Multiplicando numerador y denominador por $e^{-z^{\ast}/\tau}$,
+\[
+p_\tau(i)=\frac{e^{(z_i-z^{\ast})/\tau}}{\sum_{j}e^{(z_j-z^{\ast})/\tau}}.
+\]
+Cuando $\tau\to 0^{+}$, cada exponente $(z_j-z^{\ast})/\tau$ vale $0$ si $j\in M$ y tiende a $-\infty$ si $j\notin M$; el denominador tiende a $\abs{M}$ y el numerador a $1$ o a $0$. Cuando $\tau\to\infty$, todos los exponentes tienden a $0$, el numerador a $1$ y el denominador a $K$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:muestreo}
+Sean los logits $z=(2,1,0,-1)$ de los tokens $A,B,C,D$. Con $\tau=1$, $p_1=(0{,}6439;\allowbreak\,0{,}2369;\allowbreak\,0{,}0871;\allowbreak\,0{,}0321)$. Con $\tau=0{,}5$ la distribución se afila, $p_{0{,}5}=(0{,}8650;\allowbreak\,0{,}1171;\allowbreak\,0{,}0158;\allowbreak\,0{,}0021)$, y con $\tau=2$ se aplana, $p_{2}=(0{,}4551;\allowbreak\,0{,}2760;\allowbreak\,0{,}1674;\allowbreak\,0{,}1015)$.
+\end{ejemplo}
+
+La temperatura reescala todos los logits por igual y nunca anula un token: la cola de tokens improbables conserva masa positiva para cualquier $\tau>0$. Los métodos de truncamiento la eliminan.
+
+\section{Truncamiento: \emph{top-k} y muestreo de núcleo}
+
+\begin{definicion}[Distribución truncada]\label{def:truncada}
+Sea $p$ una distribución sobre $\V$ y sea $S\subseteq\V$ con $p(S)=\sum_{i\in S}p(i)>0$. La \emph{distribución truncada} a $S$ es $p_S(i)=p(i)/p(S)$ si $i\in S$ y $p_S(i)=0$ en otro caso.
+\end{definicion}
+
+\begin{definicion}[\emph{Top-k} y núcleo]\label{def:topk-topp}
+Sea $p_{(1)}\ge p_{(2)}\ge\dots\ge p_{(K)}$ la ordenación decreciente de las probabilidades.
+\begin{enumerate}[label=(\alph*)]
+  \item El muestreo \emph{top-k}~\cite[§5.4]{fan} trunca $p$ al conjunto $V^{(k)}$ de los $k$ tokens más probables.
+  \item El \emph{muestreo de núcleo} o \emph{top-p}~\cite[§3.1]{holtzman}, con umbral $p\in(0,1]$, trunca al menor conjunto $V^{(p)}$ tal que $\sum_{i\in V^{(p)}}p(i)\ge p$.
+\end{enumerate}
+\end{definicion}
+
+\begin{proposicion}[El núcleo está formado por los más probables]\label{prop:nucleo}
+Sea $k^{\ast}=\min\{k:\sum_{i=1}^{k}p_{(i)}\ge p\}$. Entonces el tamaño mínimo de un conjunto con masa al menos $p$ es $k^{\ast}$, y el conjunto de los $k^{\ast}$ tokens más probables lo alcanza. Es decir, el muestreo de núcleo coincide con \emph{top-k} con $k=k^{\ast}$, donde $k^{\ast}$ depende de la distribución de cada paso.
+\end{proposicion}
+
+\begin{proof}
+Para cualquier conjunto $S$ con $\abs{S}=k$ se cumple $p(S)\le\sum_{i=1}^{k}p_{(i)}$, porque la suma de $k$ probabilidades cualesquiera no supera la suma de las $k$ mayores. Si $k<k^{\ast}$, por la definición de $k^{\ast}$, $p(S)\le\sum_{i\le k}p_{(i)}<p$; luego ningún conjunto con menos de $k^{\ast}$ elementos alcanza la masa $p$. El conjunto de los $k^{\ast}$ más probables tiene masa $\sum_{i\le k^{\ast}}p_{(i)}\ge p$, de modo que el mínimo es $k^{\ast}$.
+\end{proof}
+
+\begin{proposicion}[Distorsión del truncamiento]\label{prop:tv-truncada}
+Para cualquier $S$ con $p(S)>0$, la distancia de variación total entre la distribución truncada y la original es la masa eliminada:
+\[
+\TV(p_S,p)=\tfrac12\sum_{i\in\V}\abs{p_S(i)-p(i)}=1-p(S).
+\]
+\end{proposicion}
+
+\begin{proof}
+Para $i\in S$, $p_S(i)-p(i)=p(i)\bigl(1/p(S)-1\bigr)\ge 0$, y sumando sobre $S$ se obtiene $1-p(S)$. Para $i\notin S$, $\abs{p_S(i)-p(i)}=p(i)$, y sumando sobre el complementario se obtiene $1-p(S)$. La mitad de la suma total es $1-p(S)$.
+\end{proof}
+
+Así, el muestreo de núcleo con umbral $p$ garantiza $\TV(p_S,p)\le 1-p$ en cada paso, mientras que \emph{top-k} con $k$ fijo no controla la masa eliminada: si el modelo duda entre muchas opciones razonables, $k$ fijo descarta masa grande; si está seguro, conserva tokens de cola~\cite[§3.2]{holtzman}.
+
+\begin{ejemplo}\label{ej:truncamiento}
+Con la distribución $p_1$ del \cref{ej:muestreo}, las probabilidades acumuladas son $0{,}6439$, $0{,}8808$, $0{,}9679$ y $1$. \emph{Top-k} con $k=2$ conserva $A$ y $B$ con $(0{,}7311;\allowbreak\,0{,}2689)$ y elimina una masa $0{,}1192$. El núcleo con $p=0{,}9$ necesita tres tokens ($0{,}8808<0{,}9\le 0{,}9679$) y da $(0{,}6652;\allowbreak\,0{,}2447;\allowbreak\,0{,}0900)$; la masa eliminada, y por tanto la distancia de variación total, es $0{,}0321$.
+\end{ejemplo}
+
+\begin{observacion}[Combinación y uso práctico]
+Las reglas se componen en el orden de la \cref{fig:cadena-muestreo}: los logits se dividen por $\tau$, se aplica la softmax, se trunca con \emph{top-k} y luego con el núcleo, se renormaliza y se muestrea~\cite[§7.6.4]{jm3}. Las API públicas de Anthropic, Google y xAI exponen la temperatura y el umbral del núcleo como parámetros de la petición; los valores que usan por defecto sus aplicaciones de chat no son públicos.
+\end{observacion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,node distance=4mm,
+  caja/.style={draw,rounded corners=2pt,minimum height=7mm,inner sep=3pt,align=center}]
+  \node[caja] (z) {logits\\$z$};
+  \node[caja,right=of z] (t) {$z/\tau$};
+  \node[caja,right=of t] (s) {softmax};
+  \node[caja,right=of s] (k) {\emph{top-k}};
+  \node[caja,right=of k] (p) {núcleo};
+  \node[caja,right=of p] (r) {renormalizar};
+  \node[caja,right=of r] (m) {muestrear};
+  \foreach \a/\b in {z/t,t/s,s/k,k/p,p/r,r/m} \draw[->] (\a) -- (\b);
+\end{tikzpicture}
+\caption{Cadena habitual de muestreo. Con $\tau\to 0$ o con $k=1$ se recupera la búsqueda voraz.}
+\label{fig:cadena-muestreo}
+\end{figure}
+
+\begin{lecturas}
+\item Jurafsky y Martin~\cite{jm3}, §7.6 «Decoding» (voraz, muestreo, temperatura, \emph{top-k} y \emph{top-p}) y §13.4 «Decoding in MT: Beam Search».
+\item Zhang \emph{et al.}~\cite{d2l}, §10.8 «Beam Search».
+\item Holtzman \emph{et al.}~\cite{holtzman}, secciones~3 («Language Model Decoding») y~4.3.
+\item Fan \emph{et al.}~\cite{fan}, §5.4 «Generation».
+\item CS336~\cite{cs336a1}, tarea~1, sección~6 «Generating text».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-topk-topp}
+Compare \emph{top-k} con $k=50$ y el núcleo con $p=0{,}9$ en dos situaciones: (a) el modelo está muy seguro, con un token de probabilidad $0{,}95$; (b) el modelo duda entre 200 opciones de probabilidad $0{,}005$ cada una. ¿Cuántos tokens conserva cada método y qué masa elimina?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-logits}
+Sean los logits $z=(1,0,-1)$ de los tokens $A,B,C$. Calcule $p_1$ y $p_{0{,}5}$, la distribución \emph{top-k} con $k=2$ (sobre $p_1$) y los tokens que conserva el núcleo con $p=0{,}9$. Compruebe que la distribución \emph{top-2} solo depende de la diferencia entre los dos primeros logits.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-slp}
+Un modelo da los logits $u=(1{,}2;\allowbreak\ 0{,}9;\allowbreak\ 0{,}1;\allowbreak\ -0{,}5)$ para cuatro palabras. (a) Calcule la softmax con $\tau=1$, $\tau=0{,}2$ y $\tau=2$, y compruebe que cada distribución suma~1. (b) Describa qué ocurre cuando $\tau\to 0$ y cuando $\tau\to\infty$, y justifíquelo con la \cref{prop:limites-tau}.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.5 (logits de la figura~7.17).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-nucleo}
+Un modelo da logits $v=(1;\allowbreak\ 0{,}5;\allowbreak\ 0;\allowbreak\ -1)$. (a) Calcule la softmax con $\tau=1$ y con $\tau=0{,}5$. (b) Aplique el núcleo con $p=0{,}8$ en ambos casos y dé la distribución renormalizada. (c) ¿Qué ocurre cuando $\tau\to 0$?
+\fuente{adaptado de CS336~\cite{cs336a1}, tarea~1, sección~6 «Generating text», problema \texttt{decoding} (temperatura y muestreo de núcleo).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-haz}
+Vocabulario de $\abs{\V}=50\,000$ tokens y salida de $T=20$ tokens. (a) Calcule cuántas extensiones evalúan la búsqueda voraz, la búsqueda en haz con $m=4$ y la búsqueda exhaustiva. (b) Dos candidatas terminadas: una de 3 tokens con probabilidad $0{,}12$ y otra de 5 tokens con $0{,}08$. Puntúelas con $L^{-a}\ln P$, $a=0{,}75$. ¿Cuál gana? ¿Y sin normalizar? (c) ¿Es la búsqueda exhaustiva un caso particular de la búsqueda en haz?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §10.8 «Beam Search», costes de §10.8.1–10.8.3 y ejercicio~1 de §10.8.5.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-potencia}
+Una distribución $P=(0{,}6;\allowbreak\ 0{,}3;\allowbreak\ 0{,}1)$ se transforma en $Q(i)\propto P(i)^{a}$. (a) ¿Qué $a$ corresponde a duplicar la temperatura y cuál a reducirla a la mitad? (b) Calcule $Q$ en ambos casos. (c) ¿Qué ocurre si la temperatura tiende a~0 o a~$\infty$?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §4.1 «Softmax Regression», ejercicio~7 de §4.1.5.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-entropia}
+Sea $H(\tau)=-\sum_i p_\tau(i)\ln p_\tau(i)$ la entropía de la distribución con temperatura. (a) Demuestre que
+\[
+\frac{\mathrm{d}H}{\mathrm{d}\tau}=\frac{1}{\tau^{3}}\Var_{p_\tau}(z)\ \ge\ 0,
+\]
+donde $\Var_{p_\tau}(z)=\sum_i p_\tau(i)z_i^{2}-\bigl(\sum_i p_\tau(i)z_i\bigr)^{2}$, de modo que la entropía crece con la temperatura. (b) ¿Cuándo es la derivada nula? (c) Compruebe la fórmula con $z=(1,0,-1)$ en $\tau=1$, calculando el miembro derecho.
+\end{ejercicio}

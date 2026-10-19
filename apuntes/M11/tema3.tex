@@ -1,0 +1,194 @@
+% =====================================================================
+\chapter{Normalización: LayerNorm, RMSNorm y pre-norm}
+\label{tema:3}
+% =====================================================================
+
+Normalizar una capa consiste en reescalar cada vector de activaciones con estadísticos calculados sobre él mismo, de modo que su escala no derive de una capa a otra. Este tema define la normalización por lotes, la normalización por capa (LayerNorm) y su simplificación RMSNorm, demuestra sus propiedades de invariancia, calcula el jacobiano de RMSNorm y analiza dónde debe colocarse la normalización respecto de la conexión residual. Se sigue~\cite[§7.4]{bishopdl}, \cite[§8.5]{d2l} y \cite[§8.7.1]{gbc}, junto con los artículos de Ioffe y Szegedy~\cite{ioffe}, Ba, Kiros y Hinton~\cite{layernorm}, Zhang y Sennrich~\cite{rmsnorm} y Xiong \emph{et al.}~\cite{xiong}.
+
+\section{Normalización por lotes y por capa}
+
+\begin{definicion}[Normalización por lotes]\label{def:batchnorm}
+Sea un minibatch de $B$ vectores $x^{(1)},\dots,x^{(B)}\in\R^{d}$. La \emph{normalización por lotes} (BatchNorm) normaliza cada \emph{componente} $i$ con la media y la varianza de esa componente sobre el lote:
+\[
+\hat x^{(b)}_i=\frac{x^{(b)}_i-\mu_i}{\sqrt{\sigma_i^{2}+\epsilon}},\qquad
+\mu_i=\frac1B\sum_{b=1}^{B}x^{(b)}_i,\quad \sigma_i^{2}=\frac1B\sum_{b=1}^{B}\bigl(x^{(b)}_i-\mu_i\bigr)^{2},
+\]
+y después aplica una ganancia y un sesgo aprendidos por componente~\cite{ioffe}.
+\end{definicion}
+
+La salida de BatchNorm para un ejemplo depende de los demás ejemplos del lote; en inferencia se sustituyen $\mu_i$ y $\sigma_i^{2}$ por medias móviles estimadas durante el entrenamiento~\cite[§8.5.2]{d2l}. Para secuencias de longitud variable y para la generación token a token, esta dependencia es un inconveniente. La normalización por capa la elimina normalizando sobre las componentes de cada vector.
+
+\begin{definicion}[LayerNorm]\label{def:layernorm}
+Sea $x\in\R^{d}$, y sean $\gamma,\beta\in\R^{d}$ parámetros y $\epsilon\ge 0$. Con
+\[
+\mu=\frac1d\sum_{i=1}^{d}x_i,\qquad \sigma^{2}=\frac1d\sum_{i=1}^{d}(x_i-\mu)^{2},
+\]
+la \emph{normalización por capa} es
+\[
+\LN(x)_i=\gamma_i\,\frac{x_i-\mu}{\sqrt{\sigma^{2}+\epsilon}}+\beta_i,\qquad i=1,\dots,d~\cite{layernorm}.
+\]
+\end{definicion}
+
+\begin{definicion}[RMSNorm]\label{def:rmsnorm}
+Sea $x\in\R^{d}$, $g\in\R^{d}$ y $\epsilon\ge 0$. Con $\RMS(x)=\sqrt{\frac1d\sum_{i=1}^{d}x_i^{2}+\epsilon}$, se define
+\[
+\RMSNorm(x)_i=g_i\,\frac{x_i}{\RMS(x)},\qquad i=1,\dots,d~\cite{rmsnorm}.
+\]
+\end{definicion}
+
+RMSNorm suprime el centrado y el sesgo $\beta$: solo fija la escala. En un Transformer ambas se aplican por separado al vector de cada token, por lo que funcionan igual en entrenamiento y en inferencia y con lotes de cualquier tamaño.
+
+\begin{ejemplo}\label{ej:normas}
+Sea $x=(2,4,6)$ con $\gamma=g=\uno$, $\beta=0$ y $\epsilon=0$. Para LayerNorm, $\mu=4$, $\sigma^{2}=(4+0+4)/3=8/3$ y $\sigma=1{,}633$, luego $\LN(x)=(-1{,}225;\,0;\,1{,}225)$. Para RMSNorm, $\RMS(x)=\sqrt{(4+16+36)/3}=\sqrt{56/3}=4{,}320$, luego $\RMSNorm(x)=(0{,}463;\,0{,}926;\,1{,}389)$.
+\end{ejemplo}
+
+\begin{proposicion}[Estadísticos de la salida]\label{prop:estad-salida}
+Sea $\epsilon=0$, $\gamma=g=\uno$ y $\beta=0$.
+\begin{enumerate}
+  \item Si $x$ no es constante, $y=\LN(x)$ cumple $\frac1d\sum_iy_i=0$ y $\frac1d\sum_iy_i^{2}=1$.
+  \item Si $x\ne 0$, $y=\RMSNorm(x)$ cumple $\frac1d\sum_iy_i^{2}=1$, es decir, $\norm{y}=\sqrt d$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $\sum_i(x_i-\mu)=\sum_ix_i-d\mu=0$, y $\frac1d\sum_i(x_i-\mu)^{2}/\sigma^{2}=\sigma^{2}/\sigma^{2}=1$. (ii) $\frac1d\sum_ix_i^{2}/\RMS(x)^{2}=\RMS(x)^{2}/\RMS(x)^{2}=1$.
+\end{proof}
+
+\section{Invariancias}
+
+\begin{proposicion}[Invariancias]\label{prop:invariancias}
+Sea $\epsilon=0$, $\alpha>0$ y $c\in\R$.
+\begin{enumerate}
+  \item $\LN(\alpha x+c\uno)=\LN(x)$ para todo $x$ no constante.
+  \item $\RMSNorm(\alpha x)=\RMSNorm(x)$ para todo $x\ne 0$, pero en general $\RMSNorm(x+c\uno)\ne\RMSNorm(x)$.
+  \item Si la entrada de la normalización es $x=Wu$ con $W\in\R^{d\times n}$, la salida no cambia al sustituir $W$ por $\alpha W$, para LayerNorm y para RMSNorm.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) La media de $\alpha x+c\uno$ es $\alpha\mu+c$ y su varianza $\alpha^{2}\sigma^{2}$; el cociente $(\alpha x_i+c-\alpha\mu-c)/(\alpha\sigma)$ es $(x_i-\mu)/\sigma$. (ii) $\RMS(\alpha x)=\alpha\RMS(x)$ y el cociente no cambia. Para el contraejemplo, con $x=(1,3)$ se tiene $\RMS(x)=\sqrt5$ y $\RMSNorm(x)=(0{,}447;\,1{,}342)$, mientras que $x+\uno=(2,4)$ tiene $\RMS=\sqrt{10}$ y $\RMSNorm(x+\uno)=(0{,}632;\,1{,}265)$. (iii) Es (i) o (ii) aplicado a $\alpha Wu=\alpha x$.
+\end{proof}
+
+La propiedad (iii) figura en la tabla de invariancias de Ba \emph{et al.}~\cite[§5.1]{layernorm}: la salida no depende de la escala de los pesos de la capa anterior. Zhang y Sennrich~\cite{rmsnorm} conservan esta invariancia de escala, que consideran la responsable del buen comportamiento de LayerNorm, y renuncian a la de traslación, con lo que se ahorra el cálculo de la media.
+
+\begin{teorema}[Jacobiano de RMSNorm]\label{teo:jac-rms}
+Sea $\epsilon=0$, $x\ne 0$ y $r=\RMS(x)$. El jacobiano de $y=\RMSNorm(x)$ es
+\[
+J=\frac{\partial y}{\partial x}=\frac1r\diag(g)\Bigl(I-\frac{xx\T}{d\,r^{2}}\Bigr)
+=\frac1r\diag(g)\Bigl(I-\frac{xx\T}{\norm{x}^{2}}\Bigr).
+\]
+En consecuencia, $Jx=0$ y, para todo $v\in\R^{d}$, $x\T(J\T v)=0$: el gradiente que atraviesa RMSNorm hacia atrás es ortogonal a $x$, y su norma es a lo sumo $\max_i\abs{g_i}\,\norm{v}/r$.
+\end{teorema}
+
+\begin{proof}
+Como $r^{2}=\frac1d\sum_kx_k^{2}$, se tiene $\partial r/\partial x_j=x_j/(d\,r)$. Derivando $y_i=g_ix_i/r$,
+\[
+\frac{\partial y_i}{\partial x_j}=g_i\Bigl(\frac{\delta_{ij}}{r}-\frac{x_i}{r^{2}}\frac{x_j}{d\,r}\Bigr)=\frac{g_i}{r}\Bigl(\delta_{ij}-\frac{x_ix_j}{d\,r^{2}}\Bigr),
+\]
+que es la expresión matricial del enunciado, con $d\,r^{2}=\norm{x}^{2}$. La matriz $P=I-xx\T/\norm{x}^{2}$ es la proyección ortogonal sobre el complemento de $x$, luego $Px=0$ y $Jx=0$. Además $J\T v=\frac1rP\diag(g)v$ y $x\T P=(Px)\T=0$. Por último, $\norm{P}_2=1$ y $\norm{\diag(g)}_2=\max_i\abs{g_i}$.
+\end{proof}
+
+La identidad $Jx=0$ es la versión infinitesimal de la invariancia de escala: al derivar $\RMSNorm((1+t)x)=\RMSNorm(x)$ en $t=0$ se obtiene $Jx=0$. La cota $\norm{v}/r$ muestra el efecto estabilizador: si una capa anterior infla sus activaciones, $r$ crece y el gradiente que se le devuelve se reduce en la misma proporción.
+
+\begin{observacion}
+Un cálculo análogo, con $\hat y=(x-\mu\uno)/\sigma$, da para LayerNorm con $\gamma=\uno$, $\beta=0$ y $\epsilon=0$
+\[
+\frac{\partial\hat y}{\partial x}=\frac1\sigma\Bigl(I-\frac{\uno\uno\T}{d}-\frac{\hat y\hat y\T}{d}\Bigr),
+\]
+que anula tanto $\uno$ como $x-\mu\uno$, de acuerdo con la invariancia (i) de la \cref{prop:invariancias}.
+\end{observacion}
+
+\section{Post-norm y pre-norm}
+
+\begin{definicion}[Posición de la normalización]\label{def:pre-post}
+Sea $\Norm$ una normalización (LayerNorm o RMSNorm) y $F$ una rama residual. Un bloque es
+\[
+\text{\emph{post-norm} si } h_\ell=\Norm\bigl(h_{\ell-1}+F(h_{\ell-1})\bigr),\qquad
+\text{\emph{pre-norm} si } h_\ell=h_{\ell-1}+F\bigl(\Norm(h_{\ell-1})\bigr).
+\]
+\end{definicion}
+
+El Transformer original~\cite{vaswani} es post-norm. GPT-2~\cite[§2.3]{gpt2} trasladó la normalización a la entrada de cada subbloque y añadió una normalización final tras el último bloque; LLaMA~\cite{llama} usa pre-norm con RMSNorm, y la mayoría de los modelos abiertos posteriores la han adoptado.
+
+\begin{proposicion}[Jacobianos de ambas posiciones]\label{prop:jac-pre-post}
+Sea $N_\ell$ el jacobiano de la normalización del bloque $\ell$ y $J_\ell$ el de la rama $F_\ell$, cada uno evaluado en su argumento. Entonces
+\[
+\text{post-norm: }\frac{\partial h_L}{\partial h_0}=\prod_{\ell=L}^{1}N_\ell\,(I+J_\ell),\qquad
+\text{pre-norm: }\frac{\partial h_L}{\partial h_0}=\prod_{\ell=L}^{1}\bigl(I+J_\ell N_\ell\bigr),
+\]
+donde los productos se escriben con los índices en orden decreciente. Solo el desarrollo de pre-norm contiene el término $I$.
+\end{proposicion}
+
+\begin{proof}
+Regla de la cadena aplicada a cada definición: en post-norm el bloque es $\Norm\circ(\mathrm{id}+F)$; en pre-norm, $\mathrm{id}+F\circ\Norm$. En post-norm, todo término del desarrollo contiene los $L$ factores $N_\ell$, que no son la identidad (por el \cref{teo:jac-rms}, cada uno anula una dirección). En pre-norm, eligiendo $I$ en cada factor se obtiene $I$, como en el \cref{teo:jac-residual}.
+\end{proof}
+
+En pre-norm, el flujo residual no pasa por ninguna normalización y conserva el camino identidad. A cambio, su norma crece con la profundidad (\cref{prop:crecimiento}), y hace falta una normalización final antes de la proyección a logits. Xiong \emph{et al.}~\cite{xiong} demuestran, con argumentos de campo medio, que en post-norm el gradiente esperado de los parámetros próximos a la salida es grande en la inicialización, lo que obliga a un calentamiento largo de la tasa de aprendizaje (módulo~7); en pre-norm los gradientes están acotados y el calentamiento puede acortarse o suprimirse.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=7mm,minimum width=13mm,align=center},
+  suma/.style={draw,thick,circle,inner sep=1pt}]
+  \node (in) at (0,0) {$h$};
+  \node[caja] (n1) at (1.9,1.1) {RMSNorm};
+  \node[caja] (a) at (3.9,1.1) {Atención};
+  \node[suma] (s1) at (5.3,0) {$+$};
+  \node[caja] (n2) at (7.0,1.1) {RMSNorm};
+  \node[caja] (m) at (8.9,1.1) {MLP};
+  \node[suma] (s2) at (10.2,0) {$+$};
+  \node (out) at (11.4,0) {$h'$};
+  \draw[->,thick] (in) -- (s1);
+  \draw[->,thick] (0.7,0) |- (n1);
+  \draw[->,thick] (n1) -- (a);
+  \draw[->,thick] (a) -| (s1);
+  \draw[->,thick] (s1) -- (s2);
+  \draw[->,thick] (5.9,0) |- (n2);
+  \draw[->,thick] (n2) -- (m);
+  \draw[->,thick] (m) -| (s2);
+  \draw[->,thick] (s2) -- (out);
+  \draw[decorate,decoration={brace,mirror,amplitude=4pt}] (0.3,-0.35) -- (10.9,-0.35) node[midway,below=5pt,font=\footnotesize] {flujo residual: no atraviesa ninguna normalización};
+\end{tikzpicture}
+\caption{Bloque decodificador pre-norm, el que se construye en el módulo~14. Cada subbloque normaliza su entrada y suma su salida al flujo residual.}
+\label{fig:prenorm}
+\end{figure}
+
+\begin{observacion}[Sobre los modelos comerciales]
+Anthropic y Google no han hecho pública la normalización que usan Claude y Gemini. El código publicado de Grok-1~\cite{grok1} incluye capas RMSNorm.
+\end{observacion}
+
+\begin{lecturas}
+\item Bishop y Bishop~\cite{bishopdl}, §7.4.2 «Batch normalization» y §7.4.3 «Layer normalization».
+\item Zhang \emph{et al.}~\cite{d2l}, §8.5 «Batch Normalization», en particular §8.5.2.3 «Layer Normalization».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §8.7.1 «Batch Normalization».
+\item Ba, Kiros y Hinton~\cite{layernorm}, §3 y §5.1 «Invariance under weights and data transformations».
+\item Zhang y Sennrich~\cite{rmsnorm}; Xiong \emph{et al.}~\cite{xiong}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-clasificar}
+Clasifique como pre-norm o post-norm: (a) $h+\operatorname{Attn}(\LN(h))$; (b) $\LN(h+\operatorname{MLP}(h))$. ¿Cuál conserva la identidad en el camino residual? Justifíquelo con la \cref{prop:jac-pre-post}.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:3-preactivacion}
+En una versión posterior de las ResNet, cada rama pasó de aplicar «convolución, normalización, activación» seguidas de la suma y una activación a aplicar «normalización, activación, convolución» antes de la suma, sin nada después. Explique por qué la segunda ordenación deja un camino identidad limpio entre bloques y qué relación guarda con pre-norm.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §8.6, ejercicio~4 (véase también~\cite{resnet-id}).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-calculo}
+Calcule $\LN(x)$ y $\RMSNorm(x)$ para $x=(1,2,3,6)$ con $\gamma=g=\uno$, $\beta=0$ y $\epsilon=0$, y compruebe la \cref{prop:estad-salida}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-invariancia}
+Con $x=(1,2,3,6)$: (a) calcule $\LN(2x+10\cdot\uno)$ y compruebe que coincide con $\LN(x)$; (b) calcule $\RMSNorm(x+3\cdot\uno)$ y compárelo con $\RMSNorm(x)$. ¿Qué parte de la \cref{prop:invariancias} ilustra cada apartado?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-jacobiano}
+Calcule el jacobiano de RMSNorm en $x=(3,4)$ con $g=\uno$ y $\epsilon=0$ usando el \cref{teo:jac-rms}, y compruebe que $Jx=0$ y que $J$ es simétrica.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-ortogonal}
+(a) Demuestre que $\RMSNorm(\alpha x)=\RMSNorm(x)$ para $\alpha>0$ y $\epsilon=0$, y deduzca $Jx=0$ derivando respecto de $\alpha$. (b) Sea $\Loss$ una pérdida que depende de $x$ solo a través de $y=\RMSNorm(x)$. Demuestre que $x\T\nabla_x\Loss=0$. (c) Demuestre que a lo largo del flujo del gradiente $\dot x=-\nabla_x\Loss$ la norma $\norm{x}$ es constante, y que un paso discreto $x\leftarrow x-\eta\nabla_x\Loss$ con $\eta>0$ la aumenta salvo que el gradiente sea nulo. (d) ¿Qué ocurre con $\epsilon>0$?
+\end{ejercicio}

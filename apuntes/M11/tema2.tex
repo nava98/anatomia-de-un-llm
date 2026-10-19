@@ -1,0 +1,147 @@
+% =====================================================================
+\chapter{Conexiones residuales}
+\label{tema:2}
+% =====================================================================
+
+Una conexión residual suma a la salida de un bloque su propia entrada. Con este cambio mínimo, el jacobiano de cada bloque pasa a ser la identidad más una corrección, y el producto de jacobianos del \cref{tema:1} contiene siempre un término que no se atenúa con la profundidad. Este tema define las redes residuales, demuestra sus propiedades de propagación hacia delante y hacia atrás, y describe el flujo residual de un Transformer. Se sigue el artículo original de He \emph{et al.}~\cite{resnet}, su continuación sobre aplicaciones identidad~\cite{resnet-id}, \cite[§8.6]{d2l} y \cite[§9.5]{bishopdl}.
+
+\section{Clases de funciones anidadas}
+
+Zhang \emph{et al.}~\cite[§8.6.1]{d2l} motivan las redes residuales con un argumento sobre clases de funciones. Sea $\mathcal{F}_L$ el conjunto de funciones que puede representar una arquitectura de $L$ bloques. Al añadir un bloque se esperaría $\mathcal{F}_L\subseteq\mathcal{F}_{L+1}$: una red más profunda debería poder imitar a la menos profunda. En una red plana esto exige que el bloque nuevo aprenda exactamente la identidad, lo que no es fácil con capas no lineales; empíricamente, las redes planas muy profundas obtienen \emph{mayor} error de entrenamiento que otras menos profundas~\cite{resnet}.
+
+\begin{definicion}[Bloque y red residual]\label{def:residual}
+Un \emph{bloque residual} es una aplicación $\R^{d}\to\R^{d}$ de la forma
+\[
+h\longmapsto h+F(h;\theta),
+\]
+donde $F$, la \emph{rama residual}, es una red diferenciable con parámetros $\theta$. Una \emph{red residual} de $L$ bloques calcula $h_\ell=h_{\ell-1}+F_\ell(h_{\ell-1})$ para $\ell=1,\dots,L$.
+\end{definicion}
+
+\begin{proposicion}[Anidamiento]\label{prop:anidamiento}
+Si cada rama $F_\ell$ termina en una capa lineal $u\mapsto Vu$, la red residual de $L+1$ bloques puede representar cualquier función que represente la de $L$ bloques.
+\end{proposicion}
+
+\begin{proof}
+Basta tomar $V=0$ en la última capa de $F_{L+1}$. Entonces $F_{L+1}\equiv 0$ y el bloque añadido es la identidad, de modo que $h_{L+1}=h_L$.
+\end{proof}
+
+La proposición explica también la idea de \emph{residuo}: el bloque no tiene que aprender la transformación deseada $H(h)$, sino la diferencia $F(h)=H(h)-h$, que es pequeña cuando $H$ se parece a la identidad.
+
+\section{Propagación en una red residual}
+
+\begin{proposicion}[Propagación hacia delante]\label{prop:adelante}
+En una red residual, para $0\le\ell<L$,
+\[
+h_L=h_\ell+\sum_{k=\ell+1}^{L}F_k(h_{k-1}).
+\]
+\end{proposicion}
+
+\begin{proof}
+Por inducción sobre $L-\ell$. Si $L=\ell+1$ es la \cref{def:residual}. Si es cierto para $L-1$, entonces $h_L=h_{L-1}+F_L(h_{L-1})=h_\ell+\sum_{k=\ell+1}^{L-1}F_k(h_{k-1})+F_L(h_{L-1})$.
+\end{proof}
+
+La salida es la entrada de cualquier bloque más la suma de las aportaciones de los bloques posteriores. Esta lectura aditiva, destacada en~\cite[§2]{resnet-id}, contrasta con la composición $f_L\circ\cdots\circ f_1$ de una red plana.
+
+\begin{teorema}[Jacobiano de una red residual]\label{teo:jac-residual}
+Sea $J_\ell=\partial F_\ell/\partial h_{\ell-1}$, evaluado en $h_{\ell-1}$. Entonces
+\[
+\frac{\partial h_L}{\partial h_0}=(I+J_L)(I+J_{L-1})\cdots(I+J_1)
+=I+\sum_{\ell=1}^{L}J_\ell+\sum_{1\le\ell<k\le L}J_kJ_\ell+\cdots+J_L\cdots J_1,
+\]
+donde el desarrollo tiene $2^{L}$ términos, uno por cada subconjunto de bloques, con los factores en orden decreciente de índice. En particular, contiene el término $I$.
+\end{teorema}
+
+\begin{proof}
+El jacobiano de $h\mapsto h+F_\ell(h)$ es $I+J_\ell$, porque la derivada de la identidad es $I$. La regla de la cadena da el producto. Al desarrollarlo, cada término se obtiene eligiendo en cada factor $(I+J_\ell)$ o bien $I$ o bien $J_\ell$; hay $2^{L}$ elecciones, y la que elige $I$ en los $L$ factores produce $I$. Como el producto de matrices no es conmutativo, en cada término se conserva el orden original de los factores.
+\end{proof}
+
+\begin{corolario}\label{cor:grad-residual}
+$\nabla_{h_0}\Loss=\nabla_{h_L}\Loss+\Bigl(\sum_{\ell}J_\ell+\sum_{\ell<k}J_kJ_\ell+\cdots\Bigr)\T\nabla_{h_L}\Loss$. El gradiente de la salida llega a la entrada sin atenuar, sumado a correcciones.
+\end{corolario}
+
+Cada término del desarrollo corresponde a un camino por la red que atraviesa un subconjunto de ramas y salta las demás. Una red plana solo dispone del camino $J_L\cdots J_1$, que es el último término.
+
+\begin{ejemplo}[Dos bloques escalares]\label{ej:dos-bloques}
+Con $J_1=-0{,}3$ y $J_2=0{,}2$, la red residual da $(1-0{,}3)(1+0{,}2)=0{,}84$, que es $1+(-0{,}3+0{,}2)+(0{,}2)(-0{,}3)=1-0{,}1-0{,}06$. La red plana con los mismos jacobianos daría solo $J_2J_1=-0{,}06$.
+\end{ejemplo}
+
+\begin{proposicion}[Cota inferior]\label{prop:cota-residual}
+Si $\norm{J_\ell}_2\le a<1$ para todo $\ell$, entonces
+\[
+\smin\Bigl(\frac{\partial h_L}{\partial h_0}\Bigr)\ge(1-a)^{L}>0 .
+\]
+En particular, ningún vector de gradiente no nulo en la salida se anula en la entrada.
+\end{proposicion}
+
+\begin{proof}
+Para $\norm{x}=1$, la desigualdad triangular inversa da $\norm{(I+J_\ell)x}\ge\norm{x}-\norm{J_\ell x}\ge 1-a$, luego $\smin(I+J_\ell)\ge 1-a$. Por el \cref{lem:producto}, el menor valor singular del producto es al menos $(1-a)^{L}$. La segunda afirmación se sigue del \cref{cor:grad-residual} y de que $\smin$ no cambia al trasponer.
+\end{proof}
+
+En una red plana, en cambio, basta un $J_\ell$ con núcleo no trivial (una capa ReLU con unidades apagadas, por ejemplo) para que algún gradiente se anule. La cota de la \cref{prop:cota-residual} no impide el desvanecimiento si $a$ es grande, pero al inicio del entrenamiento las ramas tienen jacobianos pequeños y $(1\pm a)^{L}$ queda cerca de~1: con $a=0{,}01$ y $L=24$, entre $0{,}99^{24}=0{,}786$ y $1{,}01^{24}=1{,}27$.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=7mm,minimum width=14mm,align=center},
+  suma/.style={draw,thick,circle,inner sep=1pt}]
+  \node (in) at (0,0) {$h_{\ell-1}$};
+  \node[caja] (F) at (3,1.1) {$F_\ell$};
+  \node[suma] (s) at (6,0) {$+$};
+  \node (out) at (8,0) {$h_\ell$};
+  \draw[->,thick] (in) -- node[below] {identidad} (s);
+  \draw[->,thick] (1.2,0) |- (F);
+  \draw[->,thick] (F) -| (s);
+  \draw[->,thick] (s) -- (out);
+\end{tikzpicture}
+\caption{Bloque residual. El camino inferior aporta el término $I$ del \cref{teo:jac-residual}; la rama superior aporta $J_\ell$.}
+\label{fig:bloque-residual}
+\end{figure}
+
+\section{El flujo residual de un Transformer}
+
+En un Transformer, el vector $h_\ell\in\R^{d}$ asociado a cada token recorre todos los bloques. Cada subbloque de atención o de perceptrón multicapa lee de él y le suma su aportación; por eso se le llama \emph{flujo residual}. La \cref{prop:adelante} dice que el flujo de la última capa es la suma del embedding inicial y de todas las aportaciones. En el módulo~23 se usará esta descomposición para interpretar qué escribe cada bloque.
+
+\begin{proposicion}[Crecimiento del flujo residual]\label{prop:crecimiento}
+Supóngase que, al inicio del entrenamiento, las aportaciones $F_k(h_{k-1})$ de una componente del flujo son variables aleatorias de media nula, incorreladas entre sí y con $h_0$, y con varianza $v$ cada una. Entonces $\Var\bigl((h_L)_i\bigr)=\Var\bigl((h_0)_i\bigr)+Lv$: la desviación típica del flujo crece como $\sqrt{L}$.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:adelante}, $(h_L)_i=(h_0)_i+\sum_{k=1}^{L}F_k(h_{k-1})_i$. La varianza de una suma de variables incorreladas es la suma de sus varianzas.
+\end{proof}
+
+Este crecimiento motiva dos prácticas de los modelos de lenguaje. GPT-2~\cite[§2.3]{gpt2} multiplica en la inicialización los pesos de las capas que escriben en el flujo por $1/\sqrt{N}$, con $N$ el número de capas residuales, lo que reduce cada varianza $v$ en un factor $N$. Y los Transformer pre-norm añaden una normalización final antes de la capa de salida (\cref{tema:3}).
+
+\begin{observacion}[Conexión con los LLM]
+Todos los Transformer abiertos que se estudian en el curso (GPT-2, LLaMA, Grok-1) usan conexiones residuales en torno a cada subbloque. Las ResNet se introdujeron en visión para entrenar redes de 152 capas~\cite{resnet}; en los modelos de lenguaje, la misma idea permite apilar decenas de bloques.
+\end{observacion}
+
+\begin{lecturas}
+\item He, Zhang, Ren y Sun~\cite{resnet}, §3 «Deep Residual Learning», y~\cite{resnet-id}, §2 (propagación con atajos identidad).
+\item Zhang \emph{et al.}~\cite{d2l}, §8.6.1 «Function Classes» y §8.6.2 «Residual Blocks».
+\item Bishop y Bishop~\cite{bishopdl}, §9.5 «Residual Connections».
+\item Radford \emph{et al.}~\cite{gpt2}, §2.3 «Model» (inicialización escalada de las capas residuales).
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-anidadas}
+La \cref{prop:anidamiento} garantiza que añadir bloques residuales no reduce la clase de funciones representables. ¿Por qué no basta entonces con aumentar sin límite la profundidad? Dé dos razones, una estadística y otra computacional.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §8.6, ejercicio~5.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-factor}
+En una red residual escalar de 24 bloques, calcule el factor $\prod_\ell(1+J_\ell)$ si (a) $J_\ell=0{,}01$ para todo $\ell$; (b) $J_\ell=-0{,}01$ para todo $\ell$. (c) Compárelos con la red plana de 24 capas con factor $0{,}5$ y explique por qué la red residual con $J_\ell=-0{,}5$ sería igual de mala.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-matrices}
+Sean $J_1=\begin{psmallmatrix}0{,}2&0\\0{,}1&-0{,}1\end{psmallmatrix}$ y $J_2=\begin{psmallmatrix}-0{,}1&0{,}3\\0&0{,}2\end{psmallmatrix}$. Calcule el jacobiano $(I+J_2)(I+J_1)$ de una red residual de dos bloques, compruebe que es igual a $I+J_1+J_2+J_2J_1$ y compárelo con el jacobiano $J_2J_1$ de la red plana.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-flujo}
+Un Transformer tiene $N=48$ capas residuales. Al inicio, el flujo tiene varianza~1 por componente y cada capa aporta una variable incorrelada de varianza $v=0{,}5$. (a) Calcule la varianza y la desviación típica del flujo a la salida. (b) Repita el cálculo si los pesos de salida de cada capa se multiplican por $1/\sqrt{N}$, como en GPT-2.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cota}
+(a) Demuestre que el desarrollo del \cref{teo:jac-residual} contiene el término $I$. (b) En el caso escalar con $\abs{J_\ell}\le a<1$, demuestre que $\prod_\ell(1+J_\ell)\ge(1-a)^{L}>0$. (c) Muestre con un ejemplo de dos capas que en una red plana el factor $\prod_\ell J_\ell$ puede anularse aunque solo una capa tenga jacobiano nulo.
+\end{ejercicio}

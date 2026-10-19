@@ -1,0 +1,70 @@
+% =====================================================================
+\chapter{Proyecto de fase}
+\label{cap:proyecto}
+% =====================================================================
+
+\section*{Un mini-GPT en español con preentrenamiento, SFT y DPO}
+
+\paragraph{Objetivo.} Entrenar de principio a fin un modelo de lenguaje pequeño en español que siga instrucciones y prefiera respuestas útiles, recorriendo las tres etapas del curso: preentrenamiento con entropía cruzada, ajuste supervisado con LoRA y pérdida enmascarada, y optimización directa de preferencias frente a un modelo de referencia. El proyecto integra la tokenización BPE (M12), el Transformer y su recuento de parámetros (M14 y M15), las leyes de escalado (M16), el ajuste fino (M20, §2.2, §3.1 y §5.1), DPO (M21, §3.4 y §5.3) y la evaluación con incertidumbre (M22, §3.3; M23, §6.1). Debe poder ejecutarse en CPU o en una GPU modesta en pocas horas.
+
+\paragraph{Datos.} Todo el material lo escribe el estudiante o se genera con plantillas propias; no se usan textos literarios existentes ni conjuntos descargados. Se necesitan: un corpus de preentrenamiento (del orden de $10^{6}$ caracteres), unas 300 parejas instrucción--respuesta y unos 300 pares de preferencias $(x,y_w,y_l)$, con particiones separadas de validación y de prueba en cada etapa.
+
+\paragraph{Plazo.} Tres semanas desde la realización del examen. El proyecto cuenta en la nota de la fase, no en la del examen.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=4mm and 5mm,
+  caja/.style={draw,rounded corners=2pt,align=center,font=\small,minimum height=10mm,inner sep=3pt},
+  flecha/.style={-{Stealth[length=2mm]}}]
+\node[caja] (c) {Corpus\\propio};
+\node[caja,right=of c] (t) {BPE\\(M12)};
+\node[caja,right=of t] (p) {Preentre-\\namiento\\(M15, M16)};
+\node[caja,right=of p] (s) {SFT con\\LoRA\\(M20)};
+\node[caja,right=of s] (d) {DPO con\\$\piref=$ SFT\\(M21)};
+\node[caja,right=of d] (e) {Evaluación\\e informe\\(M22, M23)};
+\draw[flecha] (c)--(t); \draw[flecha] (t)--(p); \draw[flecha] (p)--(s); \draw[flecha] (s)--(d); \draw[flecha] (d)--(e);
+\end{tikzpicture}
+\par\smallskip{\small Flujo de trabajo del proyecto de fase.}
+\end{figure}
+
+\paragraph{Entregables.}
+\begin{enumerate}[label=\arabic*.]
+  \item Código en PyTorch (tokenizador, modelo, los tres bucles de entrenamiento y la evaluación) que se ejecute de principio a fin con una sola orden, con semillas fijas y el tiempo de ejecución indicado.
+  \item El corpus propio y los conjuntos de instrucciones y de preferencias, con sus particiones.
+  \item Los puntos de control de las tres etapas y una tabla con las respuestas de cada etapa a los mismos 10 \emph{prompts}.
+  \item Un informe de 8 a 12 páginas que justifique cada decisión con las matemáticas del curso y con números propios.
+\end{enumerate}
+
+\paragraph{Pasos.}
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Tokenizador.} Entrene un BPE de 512 tokens, con los tokens especiales de la plantilla de chat (M20, §2.4), y mida los bytes por token en validación (M12; M06).
+  \item \emph{Tamaño y presupuesto.} Elija el número de capas $L$, la dimensión $d$ y la de la red de alimentación; cuente los parámetros y estime el cómputo con $C\approx 6ND$. Fije el número de tokens con una regla de tipo Chinchilla, $D\approx 20N$~\cite{hoffmann}, y justifique cualquier desviación (M14; M16).
+  \item \emph{Preentrenamiento.} AdamW con calentamiento y decaimiento coseno, recorte de la norma del gradiente y log-suma-exp estable. Represente las pérdidas de entrenamiento y de validación e informe de la perplejidad y de los bits por byte (M07; M11; M15).
+  \item \emph{SFT con LoRA.} Rango $r\in\{4,8,16\}$, pérdida solo en la respuesta y en el token de fin de turno. Mida el olvido como la perplejidad sobre la validación del preentrenamiento antes y después del ajuste, y compare con un ajuste completo si el presupuesto lo permite (M20, §2.2, §3.1 y §5.5).
+  \item \emph{DPO.} Con $\piref$ igual al modelo SFT, pruebe al menos dos valores de $\beta$ e informe de la pérdida, la precisión de preferencias en validación, el margen implícito medio y una estimación de $\KL(\pi_\theta\,\|\,\piref)$ (M21, §3.3, §3.4 y §5.3).
+  \item \emph{Evaluación.} Use un conjunto de preferencias separado y dé intervalos del $95\,\%$ para la tasa de victoria y la precisión de preferencias, con un análisis emparejado cuando las comparaciones compartan instrucciones (M22, §3.3; M23, §6.1). Analice al menos diez errores.
+  \item \emph{Mejora opcional} (necesaria para la calificación de excelente en el informe). Busque con la diferencia de medias una dirección del flujo residual asociada a un rasgo de las respuestas preferidas, por ejemplo su longitud o su cortesía, y mida el efecto de sumarla o eliminarla (M23, §5.5).
+\end{enumerate}
+
+\section*{Criterios de evaluación}
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.7cm}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Criterio & Peso & Excelente & Suficiente & Insuficiente \\
+\midrule
+Preentrenamiento & 20\,\% & Curvas de entrenamiento y validación, perplejidad y bits por byte; tamaño justificado con $6ND$ y la regla de Chinchilla. & El modelo converge y genera texto plausible; métricas básicas. & No converge o faltan las métricas. \\
+\addlinespace
+SFT con LoRA & 20\,\% & Pérdida enmascarada comprobada, rango justificado con la SVD de la actualización, olvido medido y discutido. & SFT funcional con mejora visible en las respuestas. & Sin máscara o sin comparación con el modelo base. \\
+\addlinespace
+DPO & 20\,\% & Dos o más valores de $\beta$, con KL y margen; relación con $\pi^{*}\propto\piref\,e^{r/\beta}$ explicada. & DPO que mejora la precisión de preferencias en validación. & La pérdida no baja o falta el modelo de referencia. \\
+\addlinespace
+Evaluación & 15\,\% & Conjuntos separados, intervalos del $95\,\%$, análisis emparejado y de errores. & Métricas en validación sin incertidumbre. & Solo se evalúa en entrenamiento. \\
+\addlinespace
+Informe matemático & 20\,\% & Cada decisión se deriva de una fórmula del curso aplicada a números propios. & Explica las decisiones principales. & Descriptivo, sin matemáticas. \\
+\addlinespace
+Código y reproducibilidad & 5\,\% & Una sola orden, semillas fijas, tiempo de ejecución indicado. & Se ejecuta con ajustes menores. & No se ejecuta. \\
+\bottomrule
+\end{tabularx}
+\end{center}

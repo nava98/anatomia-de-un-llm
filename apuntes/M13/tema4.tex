@@ -1,0 +1,165 @@
+% =====================================================================
+\chapter{Atención multi-cabeza y coste computacional}
+\label{tema:4}
+% =====================================================================
+
+Una sola cabeza de atención define una única noción de parecido entre posiciones. La atención multi-cabeza ejecuta varias en paralelo, cada una en un subespacio de dimensión $d/h$, y combina sus resultados con una proyección lineal. Este tema la define, demuestra que su número de parámetros no depende del número de cabezas, muestra que cada cabeza tiene una forma bilineal de rango acotado, cuenta las operaciones de coma flotante de la capa y estudia la memoria de la matriz de atención, que es el obstáculo principal para los contextos largos. Se siguen la §3.2.2 y la §4 de~\cite{vaswani}, las §3.4.5 y §3.5 de la tarea~1 de CS336~\cite{cs336}, las §11.5 y §11.6.2 de~\cite{d2l} y las §7.1.1 y §7.3 de~\cite{jm3}.
+
+\section{Definición}
+
+\begin{definicion}[Atención multi-cabeza]\label{def:mha}
+Sean $d$ la dimensión del modelo, $h$ un divisor de $d$ y $d_k=d_v=d/h$. Para cada cabeza $r=1,\dots,h$ se toman matrices $\WQ^{(r)},\WK^{(r)},\WV^{(r)}\in\R^{d\times d/h}$, y además $\WO\in\R^{d\times d}$. La \emph{atención multi-cabeza} de $X\in\R^{n\times d}$ es
+\[
+\MHA(X)=\Concat\bigl(H_1,\dots,H_h\bigr)\,\WO,\qquad
+H_r=\Att\bigl(X\WQ^{(r)},X\WK^{(r)},X\WV^{(r)}\bigr)\in\R^{n\times d/h},
+\]
+donde $\Concat$ yuxtapone las $h$ matrices por columnas y la atención de cada cabeza puede llevar máscara causal.
+\end{definicion}
+
+Vaswani \emph{et al.} usan $d=512$ y $h=8$, de modo que $d_k=d_v=64$, y observan que el coste total es similar al de una sola cabeza de dimensión completa~\cite[§3.2.2]{vaswani}. Zhang \emph{et al.} dan la definición con dimensiones generales y la misma elección~\cite[§11.5.1]{d2l}.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,thick,rounded corners=2pt,minimum height=7mm,minimum width=20mm,inner sep=3pt,align=center}]
+  \node[caja] (x) {$X$\\[-1pt]{\scriptsize $n\times d$}};
+  \node[caja,right=1.3cm of x,yshift=13mm] (h1) {cabeza 1\\[-1pt]{\scriptsize $n\times d/h$}};
+  \node[caja,right=1.3cm of x] (h2) {cabeza 2\\[-1pt]{\scriptsize $n\times d/h$}};
+  \node[right=1.3cm of x,yshift=-10mm] (hd) {$\vdots$};
+  \node[caja,right=1.3cm of x,yshift=-19mm] (hh) {cabeza $h$\\[-1pt]{\scriptsize $n\times d/h$}};
+  \node[caja,right=1.3cm of h2] (c) {$\Concat$\\[-1pt]{\scriptsize $n\times d$}};
+  \node[caja,right=0.9cm of c] (wo) {$\cdot\,\WO$\\[-1pt]{\scriptsize $d\times d$}};
+  \node[caja,right=0.9cm of wo] (y) {$\MHA(X)$\\[-1pt]{\scriptsize $n\times d$}};
+  \foreach \t in {h1,h2,hh}{\draw[->] (x.east) -- (\t.west); \draw[->] (\t.east) -- (c.west);}
+  \draw[->] (c) -- (wo); \draw[->] (wo) -- (y);
+\end{tikzpicture}
+\caption{Atención multi-cabeza: $h$ atenciones independientes en subespacios de dimensión $d/h$, concatenadas y mezcladas por $\WO$.}
+\label{fig:mha}
+\end{figure}
+
+\begin{observacion}[Implementación]
+No se calculan $h$ productos pequeños. Se apilan las matrices de las cabezas en $\WQ=\bigl(\WQ^{(1)}\ \cdots\ \WQ^{(h)}\bigr)\in\R^{d\times d}$, se calcula $Q=X\WQ$ con un único producto y se reordena el resultado de forma $(n,d)$ a $(h,n,d/h)$; la fórmula de la atención se aplica entonces con un eje adicional de cabezas, que se trata como un eje de lote (módulo~3). La tarea~1 de CS336 pide calcular así las tres proyecciones con tres productos de matrices, o con uno solo concatenando las tres matrices~\cite[§3.4.5]{cs336}.
+\end{observacion}
+
+\section{Parámetros y estructura}
+
+\begin{proposicion}[Parámetros]\label{prop:param}
+Sin sesgos, la atención multi-cabeza tiene $4d^{2}$ parámetros, cualquiera que sea $h$.
+\end{proposicion}
+
+\begin{proof}
+Cada una de las $3h$ matrices $\WQ^{(r)},\WK^{(r)},\WV^{(r)}$ tiene $d\cdot d/h$ entradas; en total, $3h\cdot d^{2}/h=3d^{2}$. La matriz $\WO$ aporta $d^{2}$ más.
+\end{proof}
+
+Con $d=768$, la capa tiene $4\cdot 768^{2}=2\,359\,296$ parámetros; con $d=512$, $1\,048\,576$. En el módulo~14 se suman los $8d^{2}$ de la red de alimentación hacia delante con $d_{ff}=4d$ y se obtiene que la atención es un tercio de los parámetros de cada bloque.
+
+\begin{proposicion}[Descomposición por cabezas]\label{prop:descomp}
+Sea $\WO^{(r)}\in\R^{d/h\times d}$ el bloque de filas $(r-1)d/h+1,\dots,rd/h$ de $\WO$. Entonces
+\[
+\MHA(X)=\sum_{r=1}^{h}H_r\,\WO^{(r)}=\sum_{r=1}^{h}A_r\,X\,\WV^{(r)}\WO^{(r)},
+\]
+donde $A_r$ es la matriz de atención de la cabeza $r$. Además, las puntuaciones de la cabeza $r$ son $s^{(r)}_{ij}=x_i\,\WQ^{(r)}\WK^{(r)\top}x_j\T$, una forma bilineal cuya matriz $W_{QK}^{(r)}=\WQ^{(r)}\WK^{(r)\top}\in\R^{d\times d}$ tiene rango a lo sumo $d/h$.
+\end{proposicion}
+
+\begin{proof}
+El producto de una matriz particionada por columnas en bloques $H_1,\dots,H_h$ por otra particionada por filas en los bloques correspondientes es la suma de los productos de los bloques: $\bigl(H_1\cdots H_h\bigr)\WO=\sum_rH_r\WO^{(r)}$. Sustituyendo $H_r=A_r(X\WV^{(r)})$ se obtiene la segunda igualdad. Para las puntuaciones, $s^{(r)}_{ij}=q^{(r)}_i\cdot k^{(r)}_j=x_i\WQ^{(r)}\bigl(x_j\WK^{(r)}\bigr)\T$. Por último, el rango de un producto no supera el de ninguno de sus factores (módulo~3), y $\WQ^{(r)}$ tiene $d/h$ columnas, luego $\rg W_{QK}^{(r)}\le d/h$.
+\end{proof}
+
+La proposición muestra que la multi-cabeza no es una sola atención grande cortada en trozos: es una \emph{suma} de $h$ atenciones, cada una con su propia matriz de pesos $A_r$, una forma bilineal de rango $\le d/h$ que decide a dónde mirar y una aplicación $\WV^{(r)}\WO^{(r)}$ que decide qué escribir. Esta lectura es la base del análisis de circuitos del \cref{tema:5}. La tarea~3 de CS224N ilustra con un ejemplo de claves ruidosas por qué promediar dos cabezas puede ser más robusto que una sola~\cite[tarea~3, pregunta~1]{cs224n}.
+
+\begin{observacion}[Variantes]
+Muchos modelos abiertos comparten las claves y los valores entre grupos de cabezas (atención \emph{multi-query} y \emph{grouped-query}) para reducir la memoria de inferencia; se estudian en el módulo~18. Qué variante usan Claude, Gemini o Grok en sus versiones actuales no se ha publicado en detalle.
+\end{observacion}
+
+\section{Coste en operaciones}
+
+Se cuenta en operaciones de coma flotante (FLOP), con el convenio de CS336 de que una multiplicación seguida de una suma cuenta como dos~\cite[§3.5]{cs336}.
+
+\begin{lema}\label{lem:flops}
+El producto de una matriz $a\times b$ por una $b\times c$ requiere $2abc$ FLOP.
+\end{lema}
+
+\begin{proof}
+Cada una de las $ac$ entradas del resultado es un producto escalar de longitud $b$: $b$ multiplicaciones y $b-1$ sumas, unas $2b$ operaciones (exactamente $2b$ si se acumula sobre un cero inicial).
+\end{proof}
+
+\begin{proposicion}[Coste de la capa]\label{prop:coste}
+Con $h$ cabezas de dimensión $d/h$, una pasada de la atención multi-cabeza sobre $n$ posiciones requiere
+\begin{align*}
+\FLOP_{\text{proy}}&=8nd^{2} &&\text{(proyecciones $Q,K,V$ y $\WO$)},\\
+\FLOP_{\text{at}}&=4n^{2}d &&\text{(productos $QK\T$ y $AV$)},
+\end{align*}
+sin contar la softmax, que es de orden $hn^{2}$. La parte cuadrática domina si y solo si $n>2d$.
+\end{proposicion}
+
+\begin{proof}
+Por el \cref{lem:flops}, cada una de las cuatro proyecciones $(n\times d)(d\times d)$ cuesta $2nd^{2}$, en total $8nd^{2}$. En cada cabeza, $QK\T$ es $(n\times d/h)(d/h\times n)$ y cuesta $2n^{2}d/h$; $AV$ es $(n\times n)(n\times d/h)$ y cuesta lo mismo. Sumando las $h$ cabezas: $h\cdot 4n^{2}d/h=4n^{2}d$. Finalmente, $4n^{2}d>8nd^{2}$ equivale, dividiendo por $4nd>0$, a $n>2d$.
+\end{proof}
+
+Con $d=512$, la atención propiamente dicha domina a partir de $1024$ tokens. Vaswani \emph{et al.} resumen esta comparación en su tabla~1: complejidad por capa $O(n^{2}d)$ para la autoatención frente a $O(nd^{2})$ para una red recurrente, a cambio de $O(1)$ operaciones secuenciales y longitud máxima de camino $O(1)$ entre dos posiciones~\cite[§4]{vaswani}. Zhang \emph{et al.} hacen el mismo análisis en~\cite[§11.6.2]{d2l}.
+
+\section{Memoria y contexto largo}
+
+La matriz de atención tiene $n^{2}$ entradas por cabeza y por capa. En fp16, con dos bytes por número (módulo~11), ocupa $2n^{2}$ bytes.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}rr@{}}
+\toprule
+$n$ (tokens) & Memoria de $A$ (una cabeza, una capa, fp16) \\
+\midrule
+$4096$ & $0{,}034$ GB \\
+$10^{5}$ & $20$ GB \\
+$10^{6}$ & $2000$ GB \\
+\bottomrule
+\end{tabular}
+\caption{Memoria de una matriz de atención completa ($1\text{ GB}=10^{9}$ bytes).}
+\label{tab:memoria}
+\end{table}
+
+Multiplicar el contexto por $k$ multiplica esta memoria y los $4n^{2}d$ FLOP por $k^{2}$. Las técnicas que lo mitigan se estudian en módulos posteriores: FlashAttention~\cite{dao} calcula la softmax por bloques sin almacenar $A$ completa, de modo que la memoria adicional pasa a ser lineal en $n$ mientras el número de FLOP sigue siendo $O(n^{2}d)$ (módulo~17); las ventanas deslizantes y la atención dispersa reducen el conjunto permitido $\mathcal{P}$; y en inferencia la caché de claves y valores evita recalcular las del pasado (módulo~19).
+
+\begin{observacion}[Contexto largo en modelos comerciales]
+El informe técnico de Gemini~1.5~\cite{gemini15} documenta recuperación casi perfecta en experimentos con contextos de hasta diez millones de tokens, y Anthropic ofrece para Claude ventanas de cientos de miles de tokens. Ninguna de las dos empresas ha publicado cómo resuelven internamente el coste cuadrático.
+\end{observacion}
+
+\begin{lecturas}
+\item Vaswani \emph{et al.}~\cite{vaswani}, §3.2.2 «Multi-Head Attention» y §4 «Why Self-Attention», tabla~1.
+\item CS336~\cite{cs336}, tarea~1, §3.4.5 y §3.5 «The Full Transformer LM», problema \emph{transformer\_accounting}.
+\item Zhang \emph{et al.}~\cite{d2l}, §11.5 «Multi-Head Attention» y §11.6.2 «Comparing CNNs, RNNs, and Self-Attention».
+\item Jurafsky y Martin~\cite{jm3}, §7.1.1 y §7.3.
+\item Dao \emph{et al.}~\cite{dao}, para una primera lectura de FlashAttention.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-vf}
+Justifique si son verdaderas o falsas: (a) duplicar el número de cabezas con $d$ fijo duplica los parámetros de la atención; (b) la autoatención sin máscara ni información de posición da el mismo resultado, salvo el orden de las filas, si se barajan los tokens; (c) la máscara causal impide entrenar en paralelo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-param}
+Cuente los parámetros sin sesgos de una atención multi-cabeza con $d=512$ y $h=8$. ¿Cuántos tiene cada $\WQ^{(r)}$? Compruebe que las ocho juntas forman una matriz $d\times d$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-flops}
+(a) Calcule los FLOP de $QK\T$ para una cabeza con $n=2048$ y $d_k=128$, y los de $QK\T$ y $AV$ juntos. (b) Con $d=512$ y $n=2048$, compare $8nd^{2}$ con $4n^{2}d$ y compruebe el criterio $n>2d$ de la \cref{prop:coste}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-mem}
+¿Cuánta memoria ocupa la matriz de atención de una cabeza y una capa en fp16 con $n=10^{5}$? ¿Y con $n=10^{6}$? ¿Por qué factor se multiplica el coste de la atención al pasar de $1024$ a $8192$ tokens?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-jm}
+Un Transformer tiene $L=6$ capas, $d=512$, $A=8$ cabezas con $d_k=d_v=d/A$ y una red de alimentación hacia delante con $d_{ff}=4d$ (dos matrices). Sin sesgos ni normalizaciones: (a) cuente los parámetros de $\WQ$, $\WK$, $\WV$ y $\WO$ de una capa y diga si dependen de $A$; (b) cuente los de la red de alimentación; (c) demuestre que la pila tiene unos $12Ld^{2}$ parámetros y calcúlelos.
+\fuente{adaptado de Jurafsky y Martin~\cite{jm3}, cap.~7, ejercicio~7.1 (con valores numéricos).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-cs336}
+Considérese un modelo del tamaño de GPT-2 pequeño: $L=12$, $d=768$, vocabulario $\abs{\V}=50\,257$, red de alimentación con $d_{ff}=4d$ y contexto $n=1024$. Por capa, las proyecciones $Q,K,V$ cuestan $6nd^{2}$ FLOP, la salida $\WO$ $2nd^{2}$, la atención $4n^{2}d$ y la red de alimentación $16nd^{2}$; la capa de salida, una sola vez, $2nd\abs{\V}$. (a) Calcule los FLOP de cada componente y su porcentaje del total. (b) Repita el cálculo con $n=16\,384$: ¿por qué factor crece el total y qué componente pasa a dominar? (c) Deduzca de la \cref{prop:coste} a partir de qué $n$ la atención supera a la red de alimentación.
+\fuente{adaptado de CS336~\cite{cs336}, tarea~1, §3.5, problema \emph{transformer\_accounting}, apartados (b) a (e) (con GPT-2 pequeño en lugar de GPT-2 XL).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-rango}
+(a) Demuestre que una cabeza con $d_k<d$ no puede representar una forma bilineal $x_iBx_j\T$ arbitraria: existe $B\in\R^{d\times d}$ que no se escribe como $\WQ\WK\T$ con $\WQ,\WK\in\R^{d\times d_k}$. (b) Demuestre, en cambio, que toda $B$ de rango $\le d_k$ sí se escribe así. (c) Con $d=512$ y $h=8$, ¿cuál es el rango máximo de la matriz $\sum_{r}W_{QK}^{(r)}$ que se obtendría sumando las ocho formas bilineales, y por qué esa suma no describe la atención multi-cabeza?
+\end{ejercicio}

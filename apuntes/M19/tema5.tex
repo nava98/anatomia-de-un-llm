@@ -1,0 +1,205 @@
+% =====================================================================
+\chapter{Cuantización de LLM y destilación}
+\label{tema:5}
+% =====================================================================
+
+Los cuantizadores del \cref{tema:4} funcionan bien en redes pequeñas, pero en los LLM aparecen dos dificultades: activaciones con unos pocos canales de magnitud muy grande y la pérdida de precisión al bajar a 4 bits o menos. Este tema estudia los métodos que las resuelven: la descomposición en precisión mixta de LLM.int8(), la migración de la dificultad de SmoothQuant, la corrección de segundo orden de GPTQ, el escalado según las activaciones de AWQ y el formato NF4 de QLoRA. Termina con la destilación de conocimiento, que comprime el modelo cambiando su tamaño en lugar de su formato. Se siguen los artículos originales~\cite{llmint8,smoothquant,gptq,awq,qlora,hinton}, las clases~6 («Quantization, Part~II»), 9 («Knowledge Distillation») y~13 («Efficient LLM Deployment») de MIT 6.5940~\cite{mit65940} y la clase~10 de CS336~\cite{cs336}.
+
+\section{Rasgos atípicos y LLM.int8()}
+
+Dettmers \emph{et al.} observan que, a partir de unos $6{,}7\cdot 10^{9}$ parámetros, las activaciones de los Transformer presentan \emph{rasgos atípicos}: unas pocas dimensiones ocultas con valores de magnitud mayor o igual que~6, presentes de forma sistemática en casi todas las capas~\cite[§4]{llmint8}. Por la \cref{prop:atipico}, una escala por token se ve dominada por ellos y destruye la precisión del resto.
+
+\begin{definicion}[Descomposición en precisión mixta]\label{def:llmint8}
+Sean $X\in\R^{B\times n}$ y $W\in\R^{n\times d}$ y sea $\alpha_0>0$ un umbral. Sea $O\subseteq\{1,\dots,n\}$ el conjunto de dimensiones internas $h$ en las que alguna entrada de la columna $X^{h}$ supera $\alpha_0$ en valor absoluto. \emph{LLM.int8()} calcula
+\[
+XW\approx\sum_{h\in O}X^{h}W_{h}\;+\;S\cdot\sum_{h\notin O}Q(X^{h})\,Q(W_{h}),
+\]
+donde $X^{h}$ es la columna $h$ de $X$, $W_{h}$ la fila $h$ de $W$, el primer término se calcula en fp16 y el segundo en int8 con cuantización vectorial (escala por fila de $X$ y por columna de $W$, \cref{prop:factorizar}) y reescalado $S$~\cite[§3.2]{llmint8}.
+\end{definicion}
+
+Con $\alpha_0=6$, los atípicos ocupan del orden del $0{,}1\,\%$ de las dimensiones, de modo que el $99{,}9\,\%$ de los productos se hace en 8 bits; en modelos de hasta $13\cdot 10^{9}$ parámetros hay como mucho 7 dimensiones atípicas~\cite[§3.2]{llmint8}.
+
+\begin{proposicion}[Exactitud de la descomposición]\label{prop:descomp}
+La descomposición de la \cref{def:llmint8} es exacta salvo por el error de cuantización del segundo término: $XW=\sum_{h\in O}X^{h}W_{h}+\sum_{h\notin O}X^{h}W_{h}$.
+\end{proposicion}
+
+\begin{proof}
+El producto de matrices es la suma de los productos exteriores de columnas de $X$ por filas de $W$, $XW=\sum_{h=1}^{n}X^{h}W_{h}$, y basta separar los índices de $O$ de los demás.
+\end{proof}
+
+\section{SmoothQuant: migrar la dificultad a los pesos}
+
+Los pesos son fáciles de cuantizar y las activaciones no. SmoothQuant traslada parte de la magnitud de cada canal de entrada de las activaciones a la fila correspondiente de los pesos mediante una transformación exacta~\cite[§4]{smoothquant}.
+
+\begin{proposicion}[Equivalencia del suavizado]\label{prop:smooth}
+Para todo vector $s\in\R^{n}$ con componentes positivas, $XW=\bigl(X\diag(s)^{-1}\bigr)\bigl(\diag(s)W\bigr)$.
+\end{proposicion}
+
+\begin{proof}
+$\diag(s)^{-1}\diag(s)=I$ y el producto de matrices es asociativo.
+\end{proof}
+
+\begin{definicion}[Factores de suavizado]\label{def:smooth}
+Sea $\alpha\in[0,1]$ la \emph{intensidad de migración}. SmoothQuant toma, para cada canal $j$,
+\[
+s_j=\frac{\max_i\abs{X_{ij}}^{\alpha}}{\max_k\abs{W_{jk}}^{1-\alpha}},
+\]
+con estadísticas de $X$ obtenidas en un conjunto de calibración~\cite[ec.~4]{smoothquant}.
+\end{definicion}
+
+\begin{proposicion}[Equilibrio con $\alpha=\tfrac12$]\label{prop:alfa-medio}
+Sean $\hat X=X\diag(s)^{-1}$ y $\hat W=\diag(s)W$, y sean $m^{X}_{j}=\max_i\abs{X_{ij}}$ y $m^{W}_{j}=\max_k\abs{W_{jk}}$. Con los factores de la \cref{def:smooth},
+\[
+\max_i\abs{\hat X_{ij}}=(m^{X}_{j})^{1-\alpha}(m^{W}_{j})^{1-\alpha},\qquad
+\max_k\abs{\hat W_{jk}}=(m^{X}_{j})^{\alpha}(m^{W}_{j})^{\alpha}.
+\]
+En particular, con $\alpha=\tfrac12$ ambos máximos valen $\sqrt{m^{X}_{j}m^{W}_{j}}$.
+\end{proposicion}
+
+\begin{proof}
+$\hat X_{ij}=X_{ij}/s_j$, luego $\max_i\abs{\hat X_{ij}}=m^{X}_{j}/s_j=m^{X}_{j}(m^{W}_{j})^{1-\alpha}/(m^{X}_{j})^{\alpha}=(m^{X}_{j})^{1-\alpha}(m^{W}_{j})^{1-\alpha}$. Del mismo modo, $\max_k\abs{\hat W_{jk}}=s_jm^{W}_{j}=(m^{X}_{j})^{\alpha}(m^{W}_{j})^{\alpha}$. Con $\alpha=\tfrac12$, ambas expresiones coinciden.
+\end{proof}
+
+El factor $\diag(s)^{-1}$ puede incorporarse de antemano a la capa anterior (por ejemplo, a los parámetros de la normalización), de modo que la transformación no cuesta nada en inferencia y permite cuantizar pesos y activaciones a int8. Los autores proponen $\alpha=0{,}5$ como punto de equilibrio para OPT y BLOOM y otros valores para otros modelos~\cite[§4]{smoothquant}.
+
+\section{GPTQ: cuantización con información de segundo orden}
+
+Redondear cada peso a su nivel más próximo (RTN, \emph{round-to-nearest}) ignora que los errores de pesos distintos pueden compensarse en la salida de la capa. GPTQ minimiza directamente el error de salida.
+
+\begin{definicion}[Problema de cuantización por capas]\label{def:capas}
+Sea una capa lineal con pesos $W\in\R^{d_{\mathrm{row}}\times d_{\mathrm{col}}}$ y sea $X\in\R^{d_{\mathrm{col}}\times m}$ una matriz con $m$ entradas de calibración. Se busca la matriz cuantizada $\hat W$ que minimiza $\norm{WX-\hat WX}_F^{2}$~\cite[§3, ec.~1]{gptq}.
+\end{definicion}
+
+El objetivo se separa por filas: para una fila $w$ y su cuantizada $\hat w=w+\delta$, el error es $\norm{\delta X}^{2}=\delta XX\T\delta\T=\tfrac12\,\delta H\delta\T$, con $H=2XX\T$. Al ser la capa lineal, esta forma cuadrática es exacta y no una aproximación de Taylor.
+
+\begin{teorema}[Actualización óptima tras cuantizar un peso]\label{teo:obs}
+Sea $H$ simétrica definida positiva y sea $E(\delta)=\tfrac12\delta H\delta\T$. Si se fija la componente $q$ de la perturbación al error de redondeo, $\delta_q=\quant(w_q)-w_q$, la perturbación de los demás pesos que minimiza $E$ es
+\[
+\delta=-\frac{w_q-\quant(w_q)}{[H^{-1}]_{qq}}\,(H^{-1})_{q,:},
+\qquad\text{con error mínimo}\qquad E=\frac{\bigl(w_q-\quant(w_q)\bigr)^{2}}{2\,[H^{-1}]_{qq}}.
+\]
+\end{teorema}
+
+\begin{proof}
+Sea $\varepsilon=\quant(w_q)-w_q$. Se minimiza $\tfrac12\delta H\delta\T$ con la restricción lineal $\delta e_q=\varepsilon$, donde $e_q$ es el $q$-ésimo vector de la base canónica (como columna). El lagrangiano es $\mathcal{L}=\tfrac12\delta H\delta\T+\lambda(\varepsilon-\delta e_q)$, y su gradiente respecto a $\delta$ se anula si $\delta H=\lambda e_q\T$, es decir, $\delta=\lambda e_q\T H^{-1}=\lambda(H^{-1})_{q,:}$ (usando la simetría de $H^{-1}$). Imponiendo la restricción, $\lambda[H^{-1}]_{qq}=\varepsilon$, luego $\lambda=\varepsilon/[H^{-1}]_{qq}$ y se obtiene la fórmula de $\delta$, ya que $\varepsilon=-(w_q-\quant(w_q))$. Como $E$ es convexa y la restricción lineal, este punto crítico es el mínimo. El error vale
+\[
+E=\tfrac12\lambda^{2}(H^{-1})_{q,:}H(H^{-1})_{:,q}=\tfrac12\lambda^{2}[H^{-1}]_{qq}=\frac{\varepsilon^{2}}{2[H^{-1}]_{qq}}.\qedhere
+\]
+\end{proof}
+
+Este resultado es la fórmula del \emph{Optimal Brain Surgeon} que usa el método OBQ~\cite[§3, ec.~2]{gptq}. GPTQ lo hace aplicable a modelos de cientos de miles de millones de parámetros con tres ideas~\cite[§4]{gptq}: cuantizar las columnas en un orden fijo, igual para todas las filas, en lugar de elegir en cada paso el peso de menor error; aplicar las actualizaciones por bloques de 128 columnas para reducir el tráfico de memoria, y obtener las filas necesarias de $H^{-1}$ con una factorización de Cholesky, más estable numéricamente, añadiendo a $H$ un pequeño múltiplo de la identidad. Así cuantiza modelos de unos $175\cdot 10^{9}$ parámetros a 3 o 4 bits en unas cuatro horas de una GPU, con pérdida de precisión pequeña~\cite{gptq}.
+
+\section{AWQ: proteger los canales importantes}
+
+Lin \emph{et al.} observan que conservar en fp16 alrededor del $1\,\%$ de los pesos reduce mucho el error de cuantización si esos pesos se eligen por la magnitud de las \emph{activaciones} que los multiplican, y no por la de los propios pesos~\cite[§3.1]{awq}. Como la precisión mixta es incómoda para el hardware, AWQ consigue el mismo efecto con un escalado.
+
+\begin{proposicion}[Efecto del escalado de un canal]\label{prop:awq}
+Sea un peso $w$ que multiplica a una entrada $x$, cuantizado con el cuantizador simétrico $Q(w)=\Delta\rnd(w/\Delta)$. Si se escala el peso por $s>1$ y la entrada por $1/s$, el error de la salida es
+\[
+Q(ws)\,\frac{x}{s}-wx=\frac{\Delta'}{s}\Bigl(\rnd\Bigl(\frac{ws}{\Delta'}\Bigr)-\frac{ws}{\Delta'}\Bigr)x,
+\]
+donde $\Delta'$ es el paso del grupo tras el escalado. Si $\Delta'\approx\Delta$ y el error de redondeo relativo al paso tiene la misma distribución en ambos casos, el error esperado de ese canal se divide aproximadamente por $s$~\cite[§3.2, ecs.~2 y~3]{awq}.
+\end{proposicion}
+
+\begin{proof}
+$Q(ws)\,x/s=\Delta'\rnd(ws/\Delta')\,x/s$ y $wx=\Delta'(ws/\Delta')\,x/s$; restando se obtiene la expresión. El factor $\rnd(u)-u$ está en $[-\frac12,\frac12]$; si su distribución no cambia y $\Delta'\approx\Delta$, el error queda multiplicado por $1/s$ respecto al caso sin escalar.
+\end{proof}
+
+La hipótesis $\Delta'\approx\Delta$ es razonable si se escala un solo canal y no es el de mayor módulo del grupo; si $s$ es demasiado grande, el paso del grupo aumenta y empeoran los demás canales. AWQ elige $s=s_X^{\alpha}$, con $s_X$ la magnitud media de cada canal de activación y $\alpha\in[0,1]$ obtenido por búsqueda en un conjunto de calibración~\cite[§3.2, ec.~5]{awq}. El método solo cuantiza pesos y no necesita retropropagación.
+
+\section{QLoRA: cuantizar a 4 bits para ajustar}
+
+QLoRA ajusta un modelo congelado en 4 bits con adaptadores de bajo rango (módulo~20) e introduce dos técnicas de cuantización~\cite[§3]{qlora}.
+
+\begin{definicion}[NormalFloat de 4 bits]\label{def:nf4}
+Sea $Q_{\mathcal{N}}$ la función cuantil de la normal estándar. El formato NF4 toma como niveles los valores
+\[
+q_i=\tfrac12\Bigl(Q_{\mathcal{N}}\Bigl(\frac{i}{2^{k}+1}\Bigr)+Q_{\mathcal{N}}\Bigl(\frac{i+1}{2^{k}+1}\Bigr)\Bigr),
+\]
+con $k=4$, ajustados para que el $0$ se represente exactamente y normalizados al intervalo $[-1,1]$; cada bloque de 64 pesos se divide por su máximo absoluto antes de cuantizarse~\cite[§3, ec.~4]{qlora}.
+\end{definicion}
+
+Los pesos entrenados tienen una distribución aproximadamente normal; al situar los niveles en cuantiles de la normal, cada nivel recibe una fracción parecida de los pesos, cosa que no ocurre con una rejilla uniforme.
+
+\begin{proposicion}[Doble cuantización]\label{prop:doble}
+Con bloques de 64 pesos y una constante fp32 por bloque, las constantes cuestan $32/64=0{,}5$ bits por peso. Si esas constantes se cuantizan a su vez en 8 bits, en bloques de 256 con una constante fp32 por bloque, el coste baja a $8/64+32/(64\cdot 256)\approx 0{,}127$ bits por peso, un ahorro de unos $0{,}373$ bits por peso~\cite[§3]{qlora}.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{prop:bits-grupo}, una constante de 32 bits por cada 64 pesos añade $32/64$ bits. Tras la doble cuantización, cada bloque de 64 pesos lleva una constante de 8 bits ($8/64$ bits por peso) y cada grupo de 256 constantes, que cubre $64\cdot 256$ pesos, lleva una de 32 bits ($32/(64\cdot 256)$ bits por peso). La suma es $0{,}125+0{,}00195=0{,}127$ y la diferencia con $0{,}5$ es $0{,}373$.
+\end{proof}
+
+Con estas técnicas y optimizadores paginados, QLoRA ajusta un modelo de $65\cdot 10^{9}$ parámetros en una sola GPU de 48~GB~\cite{qlora}.
+
+\section{Destilación de conocimiento}
+
+La destilación entrena un modelo pequeño (el \emph{estudiante}) para imitar las distribuciones de salida de uno grande (el \emph{profesor}), que contienen más información que las etiquetas: las probabilidades relativas de las respuestas incorrectas~\cite[§2]{hinton}.
+
+\begin{definicion}[Pérdida de destilación]\label{def:destilacion}
+Sean $v\in\R^{K}$ los logits del profesor y $z\in\R^{K}$ los del estudiante para una misma entrada, y sea $\tau>0$. Sean $p=\softmax(v/\tau)$ los \emph{objetivos blandos} y $q=\softmax(z/\tau)$. La pérdida de destilación es la entropía cruzada $C=-\sum_{i}p_i\ln q_i$, que en la práctica se combina con la entropía cruzada respecto a las etiquetas a temperatura~1~\cite[§2, ec.~1]{hinton}.
+\end{definicion}
+
+\begin{proposicion}[Gradiente de la pérdida de destilación]\label{prop:grad-destilacion}
+$\dfrac{\partial C}{\partial z_i}=\dfrac{1}{\tau}\bigl(q_i-p_i\bigr)$.
+\end{proposicion}
+
+\begin{proof}
+$\ln q_j=z_j/\tau-\ln\sum_k e^{z_k/\tau}$, de modo que $\partial\ln q_j/\partial z_i=\frac1\tau(\mathbb{1}[i=j]-q_i)$. Entonces
+\[
+\frac{\partial C}{\partial z_i}=-\sum_j p_j\,\frac{1}{\tau}\bigl(\mathbb{1}[i=j]-q_i\bigr)=-\frac{1}{\tau}\Bigl(p_i-q_i\sum_j p_j\Bigr)=\frac{1}{\tau}(q_i-p_i),
+\]
+porque $\sum_jp_j=1$~\cite[§2, ec.~2]{hinton}.
+\end{proof}
+
+Para temperaturas altas y logits de media nula, el gradiente se aproxima por $(z_i-v_i)/(K\tau^{2})$: destilar equivale entonces a igualar logits por mínimos cuadrados, y los gradientes de los objetivos blandos escalan como $1/\tau^{2}$, por lo que se multiplican por $\tau^{2}$ al combinarlos con los de las etiquetas~\cite[§2.1]{hinton}; la demostración se pide en el \cref{eje:5-altaT}.
+
+\begin{observacion}[Destilación e inferencia]
+La clase~10 de CS336 describe una receta para obtener modelos más baratos: definir una arquitectura menor (por ejemplo, podando capas, cabezas o dimensiones del original), inicializarla con los pesos del original y reparar la pérdida de calidad por destilación~\cite{cs336}. La destilación también se usa para obtener borradores próximos al objetivo en la decodificación especulativa (\cref{tema:3}). Si los modelos de las familias Claude, Gemini o Grok que se ofrecen en tamaños menores se obtienen por destilación es, en general, información no pública salvo que el fabricante lo haya declarado.
+\end{observacion}
+
+\begin{lecturas}
+\item Dettmers \emph{et al.}~\cite{llmint8}, secciones~3 («Int8 Matrix Multiplication at Scale») y~4 («Emergent Large Magnitude Features»).
+\item Xiao \emph{et al.}~\cite{smoothquant}, secciones~3 y~4.
+\item Frantar \emph{et al.}~\cite{gptq}, secciones~3 («Background») y~4 («The GPTQ Algorithm»).
+\item Lin \emph{et al.}~\cite{awq}, sección~3.
+\item Dettmers \emph{et al.}~\cite{qlora}, sección~3 («QLoRA Finetuning»).
+\item Hinton, Vinyals y Dean~\cite{hinton}, sección~2 y §2.1.
+\item MIT 6.5940~\cite{mit65940}, clases~6, 9 y~13.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-conceptos}
+(a) ¿Por qué un único rasgo atípico de magnitud~60 en una fila de activaciones arruina la cuantización int8 por token de esa fila? (b) ¿Por qué el suavizado de SmoothQuant no cambia el resultado del producto ni cuesta tiempo en inferencia? (c) ¿Qué información usa GPTQ que el redondeo al más próximo ignora?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-absmax}
+Se quiere calcular $x\cdot w$ con $x=(3;\allowbreak\ -8;\allowbreak\ 5)$ y $w=(0{,}6;\allowbreak\ 2{,}2;\allowbreak\ -4)$ en int8 simétrico con escala absmax por vector, $s=127/\norm{\cdot}_\infty$, como en LLM.int8(). Cuantice ambos vectores, calcule el producto en enteros, descuantice y compare con el valor exacto.
+\fuente{adaptado de University of Washington, CSE 493G1/599G1~\cite{uwcse493}, sección~4 «Quantization», ejemplo de producto escalar absmax en int8.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-smooth}
+Sean
+\[
+X=\begin{pmatrix}1 & -16 & 0{,}5\\ -0{,}5 & 8 & 1\end{pmatrix},\qquad
+W=\begin{pmatrix}0{,}25 & -0{,}1\\ 0{,}05 & 0{,}25\\ -0{,}5 & 1\end{pmatrix}.
+\]
+(a) Calcule los factores de SmoothQuant con $\alpha=\tfrac12$. (b) Calcule $\hat X$ y $\hat W$, y compruebe la \cref{prop:alfa-medio}. (c) Compruebe que $\hat X\hat W=XW$. (d) Compare el cociente entre el mayor y el menor máximo por canal de las activaciones antes y después.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-gptq}
+Una fila de pesos $w=(0{,}7;\allowbreak\ 0{,}3)$ se cuantiza a la rejilla de paso $0{,}5$ (múltiplos de $0{,}5$) con entradas de calibración $X=\begin{pmatrix}1 & 1\\ -1 & 0\end{pmatrix}$ (cada columna es una entrada). (a) Calcule $H=2XX\T$ y $H^{-1}$. (b) Cuantice por redondeo al más próximo y calcule el error $\norm{\delta X}^{2}$. (c) Aplique el \cref{teo:obs}: cuantice $w_1$, actualice $w_2$, cuantícelo y calcule el error final. Compare.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-qlora}
+Un modelo de $65\cdot 10^{9}$ parámetros se guarda en (a) fp16, (b) NF4 con una constante fp32 por bloque de 64 y (c) NF4 con doble cuantización. Calcule la memoria de los pesos en cada caso y el ahorro de la doble cuantización.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-destila}
+Un profesor da logits $v=(3,1,0)$ y un estudiante $z=(2,1,1)$. (a) Calcule los objetivos blandos $p$ y la distribución del estudiante $q$ con $\tau=1$ y con $\tau=4$. (b) Calcule el gradiente $\partial C/\partial z$ en ambos casos. (c) Multiplique el de $\tau=4$ por $\tau^{2}$ y compárelo con el de $\tau=1$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-altaT}
+(a) Usando $e^{u}\approx 1+u$ para $\abs{u}$ pequeño, demuestre que, si $\tau$ es grande frente a los logits y estos tienen media nula ($\sum_i z_i=\sum_i v_i=0$), entonces $\partial C/\partial z_i\approx(z_i-v_i)/(K\tau^{2})$. (b) Deduzca que, en ese régimen, minimizar $C$ equivale a minimizar $\frac{1}{2K\tau^{2}}\sum_i(z_i-v_i)^{2}$. (c) Explique por qué conviene multiplicar la pérdida blanda por $\tau^{2}$. (d) Compruebe la aproximación con los datos del \cref{eje:5-destila} y $\tau=10$, centrando antes los logits.
+\end{ejercicio}

@@ -1,0 +1,243 @@
+% =====================================================================
+\chapter{Aprendizaje en contexto y razonamiento}
+\label{tema:1}
+% =====================================================================
+
+Un modelo de lenguaje preentrenado puede resolver tareas nuevas a partir de unos pocos ejemplos escritos en su entrada, sin que se modifique ninguno de sus parámetros. Este tema define este aprendizaje en contexto, describe el circuito de atención que lo explica en parte, demuestra dos resultados que lo relacionan con algoritmos clásicos de aprendizaje (la regresión por núcleos y el descenso de gradiente) y estudia el razonamiento escrito paso a paso y su coste. Se siguen el artículo de GPT-3 de Brown \emph{et al.}~\cite{brown}, el de las cabezas de inducción de Olsson \emph{et al.}~\cite{olsson}, el de von Oswald \emph{et al.}~\cite{vonoswald}, la §11.2 de Zhang \emph{et al.}~\cite{d2l}, los artículos de la cadena de pensamiento~\cite{wei-cot,kojima} y de la autoconsistencia~\cite{wang-sc}, y la clase~9 de CS224N~\cite{cs224n}.
+
+\section{Adaptación mediante el contexto}
+
+\begin{definicion}[Demostraciones y aprendizaje en contexto]\label{def:icl}
+Sea $p_\theta$ un modelo de lenguaje autorregresivo con parámetros fijos $\theta$ y sea una tarea definida por pares de entrada y salida $(x,y)$. Un \emph{prompt} con $k$ \emph{demostraciones} es la secuencia
+\[
+C_k=\bigl(I,\;x_1,\;y_1,\;\dots,\;x_k,\;y_k\bigr),
+\]
+formada por una instrucción $I$, posiblemente vacía, y $k$ pares de la tarea, concatenados con separadores fijos. Ante una entrada nueva $x$, el modelo responde con $\hat y=\arg\max_y p_\theta(y\mid C_k,x)$ o con una muestra de esa distribución. Se habla de \emph{cero ejemplos} (\emph{zero-shot}) si $k=0$ y de \emph{pocos ejemplos} (\emph{few-shot}) si $k\ge 1$. Hay \emph{aprendizaje en contexto} cuando la calidad de $\hat y$ mejora al aumentar $k$, con $\theta$ fijo.
+\end{definicion}
+
+La \cref{def:icl} es la de Brown \emph{et al.}~\cite[§2]{brown}, que contraponen tres regímenes (\cref{tab:regimenes}). En el aprendizaje en contexto, la información de la tarea entra solo por el condicionamiento: la distribución $p_\theta(\cdot\mid C_k,x)$ cambia porque cambia $C_k$, no porque cambie $\theta$. Al borrar el \emph{prompt}, la adaptación desaparece.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Régimen & Contenido del contexto & Parámetros \\
+\midrule
+Cero ejemplos & Solo la instrucción $I$ & Fijos \\
+Pocos ejemplos & $I$ y $k$ demostraciones (de una a unas decenas) & Fijos \\
+Ajuste fino (módulo~20) & Nada específico de la tarea & Se actualizan con miles de ejemplos \\
+\bottomrule
+\end{tabularx}
+\caption{Tres formas de adaptar un modelo a una tarea~\cite[§2]{brown}.}
+\label{tab:regimenes}
+\end{table}
+
+\begin{observacion}
+Brown \emph{et al.} observan que la ganancia de pasar de cero a pocos ejemplos crece con el tamaño del modelo~\cite{brown}. Una explicación intuitiva es que el preentrenamiento consiste en predecir el token siguiente en textos que contienen listas, tablas y pares de pregunta y respuesta: continuar un patrón presente en el contexto reduce la pérdida, y el modelo aprende a hacerlo. Los dos apartados siguientes formalizan dos mecanismos concretos que lo permiten.
+\end{observacion}
+
+\section{Cabezas de inducción}
+
+Olsson \emph{et al.}~\cite{olsson} identifican en los Transformers un circuito de dos cabezas de atención que completa el patrón $[A][B]\dots[A]\to[B]$: si el token actual ya apareció antes, se predice el token que lo siguió entonces.
+
+\begin{definicion}[Circuito de inducción idealizado]\label{def:induccion}
+Sea $x_{1:t}$ una secuencia sobre un vocabulario $\V$ y sea $e(v)$, $v\in\V$, una base ortonormal de incrustaciones. El circuito consta de dos cabezas en capas consecutivas:
+\begin{enumerate}
+  \item una \emph{cabeza de token previo}, que en cada posición $j\ge 2$ atiende a la posición $j-1$ y escribe $e(x_{j-1})$ en un subespacio propio del flujo residual, de modo que el estado de la posición $j$ contiene $e(x_j)$ y $e(x_{j-1})$;
+  \item una \emph{cabeza de inducción}, cuya consulta en la posición $t$ es $\beta\,e(x_t)$, con $\beta>0$, cuya clave en la posición $j$ es $e(x_{j-1})$ y cuyo valor en $j$ es $e(x_j)$.
+\end{enumerate}
+\end{definicion}
+
+\begin{proposicion}[Qué calcula el circuito]\label{prop:induccion}
+Sea $J=\{\,j\in\{2,\dots,t\}:x_{j-1}=x_t\,\}$, el conjunto de posiciones que siguen a una aparición anterior del token actual. Si $J\ne\varnothing$, cuando $\beta\to\infty$ la salida de la cabeza de inducción en la posición $t$ tiende a
+\[
+o_t=\frac{1}{\abs{J}}\sum_{j\in J}e(x_j),
+\]
+cuya coordenada en $e(v)$ es la frecuencia relativa con que $v$ ha seguido a $x_t$ en el contexto.
+\end{proposicion}
+
+\begin{proof}
+Por ortonormalidad, la puntuación de la posición $j$ es $\beta\,e(x_t)\cdot e(x_{j-1})=\beta\,\mathbb{1}[x_{j-1}=x_t]$: vale $\beta$ en $J$ y~$0$ fuera. Los pesos de la softmax son $e^{\beta}/(\abs{J}e^{\beta}+m)$ en $J$ y $1/(\abs{J}e^{\beta}+m)$ fuera, donde $m$ es el número de posiciones fuera de $J$. Cuando $\beta\to\infty$, los primeros tienden a $1/\abs{J}$ y los segundos a~$0$. La salida es la media ponderada de los valores $e(x_j)$, que tiende a la expresión del enunciado. Su coordenada en $e(v)$ es $\abs{\{j\in J:x_j=v\}}/\abs{J}$, por ortonormalidad.
+\end{proof}
+
+Si la proyección de salida lleva $o_t$ a los logits del vocabulario, el token más probable es el sucesor más frecuente de $x_t$ en el contexto. Es la regla de un modelo de bigramas (módulo~1) estimado \emph{sobre el propio contexto}, no sobre el corpus de entrenamiento.
+
+\begin{ejemplo}\label{ej:induccion}
+En la secuencia «Harry Potter fue a Hogwarts . Harry», el token actual es $x_7=\text{Harry}$ y $J=\{2\}$, porque $x_1=\text{Harry}$. La cabeza copia $x_2=\text{Potter}$, que es la predicción (\cref{fig:induccion}). El nombre propio puede no haber aparecido nunca junto a «Harry» en el entrenamiento: el circuito copia del contexto, no recuerda.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,
+  tok/.style={draw,rounded corners=2pt,minimum width=1.25cm,minimum height=6mm,inner sep=2pt},>={Stealth[length=2mm]}]
+  \foreach \w/\i in {Harry/1,Potter/2,fue/3,a/4,Hogwarts/5,./6,Harry/7}{
+    \node[tok] (t\i) at (1.5*\i,0) {\w};
+    \node[font=\scriptsize,regla] at (1.5*\i,-0.55) {$\i$};
+  }
+  \draw[->,thick] (t2.north) to[bend right=50] node[above,font=\scriptsize]{token previo} (t1.north);
+  \draw[->,thick,dashed] (t7.north) to[bend right=25] node[above,font=\scriptsize]{consulta «Harry» = clave de~2} (t2.north);
+  \node[tok,fill=black!6] (p) at (1.5*8.9,0) {Potter};
+  \draw[->,thick] (t7) -- node[above,font=\scriptsize]{copia} (p);
+\end{tikzpicture}
+\caption{Circuito de inducción del \cref{ej:induccion}. La cabeza de token previo escribe en la posición~2 que la precede «Harry»; la consulta de la posición~7 encuentra esa clave y copia el valor «Potter».}
+\label{fig:induccion}
+\end{figure}
+
+\begin{observacion}
+Olsson \emph{et al.} observan que estas cabezas se forman de manera abrupta durante el entrenamiento, al mismo tiempo que mejora bruscamente la pérdida en los tokens alejados del principio del contexto, y proponen que versiones «borrosas» del mismo mecanismo (que copian patrones parecidos y no solo idénticos) explican una parte importante del aprendizaje en contexto~\cite{olsson}. Es una hipótesis apoyada por experimentos, no un teorema.
+\end{observacion}
+
+\section{La atención como aprendizaje sobre las demostraciones}
+
+Las demostraciones $(x_i,y_i)$ de un \emph{prompt} son un pequeño conjunto de entrenamiento. Dos resultados muestran que una capa de atención puede aplicarles un algoritmo de aprendizaje clásico.
+
+\subsection{Regresión por núcleos}
+
+En el módulo~13 se vio que la agrupación por atención generaliza el estimador de Nadaraya--Watson, $\hat f(q)=\sum_i\kappa(q,k_i)v_i/\sum_l\kappa(q,k_l)$~\cite[§11.2]{d2l}. El caso de claves normalizadas es el que conecta con la atención de los Transformers.
+
+\begin{proposicion}[Núcleo gaussiano sobre la esfera]\label{prop:nw-esfera}
+Sean $q,k_1,\dots,k_n\in\R^{d}$ con $\norm{q}=\norm{k_i}=1$, valores $v_i$ y el núcleo gaussiano de anchura $\sigma>0$, $\kappa_\sigma(q,k)=\exp\bigl(-\norm{q-k}^{2}/(2\sigma^{2})\bigr)$. Entonces
+\[
+\hat f(q)=\sum_{i=1}^{n}\softmax\Bigl(\frac{q\cdot k_1}{\sigma^{2}},\dots,\frac{q\cdot k_n}{\sigma^{2}}\Bigr)_i\,v_i ,
+\]
+es decir, el estimador es una atención de producto escalar con temperatura $\sigma^{2}$.
+\end{proposicion}
+
+\begin{proof}
+Como las normas valen~1, $\norm{q-k_i}^{2}=\norm{q}^{2}-2q\cdot k_i+\norm{k_i}^{2}=2-2q\cdot k_i$. Por tanto $\kappa_\sigma(q,k_i)=e^{-1/\sigma^{2}}\exp(q\cdot k_i/\sigma^{2})$. El factor $e^{-1/\sigma^{2}}$ es común al numerador y al denominador del estimador y se cancela, y lo que queda es la definición de la softmax.
+\end{proof}
+
+\begin{ejemplo}\label{ej:nw}
+Sean $k_1=(1,0)$, $k_2=(0,1)$ y $k_3=(0{,}6;\,0{,}8)$, con valores $v=(2,\,-1,\,1)$, y la consulta $q=(0{,}8;\,0{,}6)$, todos de norma~1. Los productos escalares son $0{,}8$, $0{,}6$ y $0{,}96$. Con $\sigma=1$, la softmax da los pesos $(0{,}3342;\,0{,}2736;\,0{,}3922)$ y $\hat f(q)=2\cdot 0{,}3342-0{,}2736+0{,}3922=0{,}7870$. El núcleo gaussiano, calculado directamente con $\exp(-\norm{q-k_i}^{2}/2)=(0{,}8187;\,0{,}6703;\,0{,}9608)$, da los mismos pesos tras normalizar.
+\end{ejemplo}
+
+\subsection{Un paso de descenso de gradiente}
+
+\begin{teorema}[Atención lineal y descenso de gradiente~\cite{vonoswald}]\label{teo:icl-gd}
+Sean demostraciones $(x_i,y_i)$, $i=1,\dots,n$, con $x_i\in\R^{d}$ e $y_i\in\R$, y la pérdida cuadrática $L(w)=\tfrac12\sum_i(w^{\top}x_i-y_i)^{2}$. Un paso de descenso de gradiente desde $w_0=0$ con tasa $\eta$ produce, para una consulta $x_q$, la predicción
+\[
+\hat y_q=w_1^{\top}x_q=\eta\sum_{i=1}^{n}y_i\,(x_i^{\top}x_q),
+\]
+que coincide con la salida de una atención lineal (sin softmax) con consulta $x_q$, claves $x_i$, valores $y_i$ y factor de escala $\eta$.
+\end{teorema}
+
+\begin{proof}
+Por la regla de la cadena, el gradiente de $\tfrac12(w^{\top}x_i-y_i)^{2}$ es $(w^{\top}x_i-y_i)\,x_i$, luego $\nabla L(w)=\sum_i(w^{\top}x_i-y_i)\,x_i$ y $\nabla L(0)=-\sum_i y_i x_i$. El paso da $w_1=w_0-\eta\nabla L(w_0)=\eta\sum_i y_ix_i$, y por linealidad del producto escalar $w_1^{\top}x_q=\eta\sum_i y_i\,(x_i^{\top}x_q)$. Una atención lineal calcula $\sum_i(q^{\top}k_i)\,v_i$; con $q=x_q$, $k_i=x_i$, $v_i=y_i$ y el factor $\eta$, es la misma suma.
+\end{proof}
+
+\begin{ejemplo}\label{ej:icl-gd}
+Con $x_1=(1,0)$, $y_1=2$, $x_2=(0,1)$, $y_2=-1$, $x_q=(1,1)$ y $\eta=0{,}5$: $w_1=0{,}5\,(2,-1)=(1;\,-0{,}5)$ y $\hat y_q=1-0{,}5=0{,}5$. Por la vía de la atención, $x_1^{\top}x_q=x_2^{\top}x_q=1$ y $0{,}5\,(2\cdot 1-1\cdot 1)=0{,}5$.
+\end{ejemplo}
+
+\begin{observacion}
+Von Oswald \emph{et al.} construyen pesos de atención lineal que implementan varios pasos de este tipo y observan que Transformers entrenados sobre tareas de regresión lineal en contexto llegan a soluciones próximas a esa construcción~\cite{vonoswald}. El resultado ofrece una intuición sobre el mecanismo; no demuestra que los modelos de lenguaje hagan esto con texto, donde intervienen la softmax, las proyecciones aprendidas y muchas capas.
+\end{observacion}
+
+\section{Cadena de pensamiento y autoconsistencia}
+
+\begin{definicion}[Cadena de pensamiento]\label{def:cot}
+Un \emph{prompt de cadena de pensamiento} incluye demostraciones de la forma $(x_i,r_i,y_i)$, donde $r_i$ es un razonamiento intermedio escrito en lenguaje natural~\cite{wei-cot}. Ante $x$, el modelo genera primero un razonamiento $r\sim p_\theta(\cdot\mid C,x)$ y después la respuesta $y\sim p_\theta(\cdot\mid C,x,r)$. La distribución de la respuesta es la marginal
+\[
+p_\theta(y\mid C,x)=\sum_{r}p_\theta(r\mid C,x)\,p_\theta(y\mid C,x,r).
+\]
+\end{definicion}
+
+Wei \emph{et al.} mostraron que este tipo de \emph{prompt} mejora mucho los problemas aritméticos y de razonamiento simbólico en modelos grandes~\cite{wei-cot}, y Kojima \emph{et al.} obtuvieron un efecto parecido sin demostraciones, con solo añadir la frase «pensemos paso a paso» (en inglés)~\cite{kojima}.
+
+\begin{observacion}[Cómputo por token]\label{obs:computo}
+Un Transformer de $L$ capas realiza una cantidad fija de operaciones por token generado, unas $2N$ para un modelo de $N$ parámetros (módulo~14). Si un problema requiere más pasos de cálculo de los que caben en una pasada, escribirlos como tokens le concede más cómputo, y cada token escrito queda disponible como memoria de trabajo para los siguientes. Con $N=7\cdot 10^{9}$, 200 tokens de razonamiento cuestan $2\cdot 7\cdot 10^{9}\cdot 200=2{,}8\cdot 10^{12}$ operaciones adicionales. Los modelos de razonamiento del módulo~21 se entrenan con aprendizaje por refuerzo para generar razonamientos más largos y útiles.
+\end{observacion}
+
+\begin{definicion}[Autoconsistencia]\label{def:sc}
+Dado $x$, se muestrean $m$ razonamientos independientes $r^{(1)},\dots,r^{(m)}$ con temperatura positiva, se extrae la respuesta final $a^{(j)}$ de cada uno y se devuelve la más frecuente~\cite{wang-sc}.
+\end{definicion}
+
+\begin{proposicion}[La autoconsistencia aproxima la moda de la marginal]\label{prop:sc-moda}
+Si cada par $(r^{(j)},a^{(j)})$ se muestrea de $p_\theta(r,y\mid C,x)$, la frecuencia relativa de cada respuesta $y$ converge casi seguramente a $p_\theta(y\mid C,x)$ cuando $m\to\infty$. En consecuencia, si la moda de la marginal es única, la respuesta devuelta coincide con ella para $m$ suficientemente grande.
+\end{proposicion}
+
+\begin{proof}
+Las variables $\mathbb{1}[a^{(j)}=y]$ son independientes y de Bernoulli con media $\sum_r p_\theta(r\mid C,x)\,p_\theta(y\mid C,x,r)=p_\theta(y\mid C,x)$. La ley fuerte de los grandes números (módulo~5) da la convergencia de su media. Si la moda $y^\ast$ supera a la segunda respuesta en $\delta>0$, a partir de cierto $m$ todas las frecuencias distan menos de $\delta/2$ de su límite, y la de $y^\ast$ es la mayor.
+\end{proof}
+
+La respuesta elegida con un único razonamiento voraz maximiza $p_\theta(y\mid C,x,r)$ para un $r$ concreto; la autoconsistencia, en cambio, apunta a la respuesta más probable una vez promediados todos los razonamientos. El caso binario admite una cota explícita, que usa la desigualdad de Hoeffding~\cite{hoeffding}: si $X_1,\dots,X_m$ son independientes con valores en $[0,1]$ y media $\mu$, entonces $P(\bar X-\mu\le -\varepsilon)\le e^{-2m\varepsilon^{2}}$ para todo $\varepsilon>0$.
+
+\begin{proposicion}[Voto mayoritario]\label{prop:voto}
+Supóngase que cada razonamiento conduce a la respuesta correcta con probabilidad $p>1/2$, de forma independiente, y que $m$ es impar. La probabilidad de que la mayoría de las $m$ respuestas sea incorrecta es
+\[
+\sum_{j=0}^{(m-1)/2}\binom{m}{j}p^{j}(1-p)^{m-j}\;\le\;e^{-2m(p-1/2)^{2}}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Sea $X_j$ el indicador de que la respuesta $j$ es correcta. El número de aciertos es binomial de parámetros $(m,p)$; la mayoría es incorrecta si hay a lo sumo $(m-1)/2$ aciertos, lo que da la suma. Ese suceso equivale a $\bar X<1/2$, es decir, a $\bar X-p<-(p-1/2)$, y la desigualdad de Hoeffding con $\varepsilon=p-1/2>0$ da la cota.
+\end{proof}
+
+\begin{ejemplo}\label{ej:voto}
+Con $p=0{,}6$, la probabilidad de acierto del voto es $0{,}6$ con $m=1$, $0{,}648$ con $m=3$, $0{,}6826$ con $m=5$ y $0{,}7535$ con $m=11$. La cota de Hoeffding es poco informativa para $m$ pequeño ($e^{-0{,}1}=0{,}905$ con $m=5$) y útil para $m$ grande ($e^{-2{,}02}=0{,}133$ con $m=101$, frente al valor exacto $0{,}021$). En la práctica, los errores de los razonamientos muestreados están correlacionados y se reparten entre varias respuestas incorrectas, de modo que la ganancia real es menor que la que predice la independencia, pero el voto por pluralidad sigue favoreciendo a la respuesta correcta si es la más probable.
+\end{ejemplo}
+
+\begin{observacion}[Árbol de pensamientos]
+Yao \emph{et al.} generalizan la cadena a una búsqueda: el razonamiento se divide en pasos («pensamientos»), el modelo propone varias continuaciones de cada estado parcial y el propio modelo, con otro \emph{prompt}, evalúa cada una; una búsqueda en anchura que conserva los $b$ mejores estados por nivel, o una búsqueda en profundidad con retroceso, decide cuáles se expanden~\cite{yao-tot}. El coste es el de generar y evaluar todos los estados explorados.
+\end{observacion}
+
+\section{El coste del contexto}
+
+El contexto no es gratuito. Tiene un coste en memoria, en cómputo y en calidad.
+
+\begin{proposicion}[Memoria de la caché KV]\label{prop:kv}
+Un Transformer de $n_{\mathrm{capas}}$ capas que guarda claves y valores de dimensión total $d_{kv}$ por capa, con $\beta$ bytes por número, ocupa $2\,n_{\mathrm{capas}}\,d_{kv}\,\beta$ bytes por token de contexto (módulo~19).
+\end{proposicion}
+
+\begin{proof}
+En cada capa se guardan dos vectores (clave y valor) de $d_{kv}$ componentes por token, a $\beta$ bytes cada componente.
+\end{proof}
+
+Con la configuración pública de Llama~2 7B (32 capas, $d=4096$, sin atención de consultas agrupadas) en 16 bits, son $2\cdot 32\cdot 4096\cdot 2=524\,288$ bytes, es decir, $0{,}5$~MiB por token: 2~GiB para 4096 tokens y $52{,}4$~GB para $10^{5}$, más que los 14~GB de los pesos. En cómputo, la matriz de puntuaciones de la atención tiene $n^{2}$ entradas (módulo~13): multiplicar el contexto por~10 multiplica por~100 esas puntuaciones y solo por~10 el coste de los bloques MLP.
+
+\begin{observacion}[Ventanas largas y uso del contexto]\label{obs:lost}
+Las ventanas de contexto públicas han crecido mucho: Anthropic documentó 200\,000 tokens para la familia Claude~3~\cite{claude3}, y el informe técnico de Gemini~1.5 evalúa contextos de hasta 10 millones de tokens en experimentos~\cite{gemini15}. Pero disponer de la información no garantiza usarla: Liu \emph{et al.} observaron que varios modelos aprovechan peor la información situada en mitad de un contexto largo que la situada al principio o al final~\cite{liu-lost}.
+\end{observacion}
+
+La consecuencia práctica motiva el resto del módulo. En lugar de pegar 8000 tokens de apuntes en el contexto, pueden recuperarse 3 fragmentos de 200 tokens y añadir 50 tokens de pregunta: 650 tokens, $8000/650=12{,}3$ veces menos, y unas $12{,}3^{2}\approx 151$ veces menos puntuaciones de atención. Elegir bien esos fragmentos es el problema de la recuperación de información (temas~2 a~4).
+
+\begin{lecturas}
+\item Brown \emph{et al.}~\cite{brown}, §2 «Approach» (cero, uno y pocos ejemplos) y §3 (resultados).
+\item Olsson \emph{et al.}~\cite{olsson}, sobre las cabezas de inducción.
+\item Zhang \emph{et al.}~\cite{d2l}, §11.2 «Attention Pooling by Similarity».
+\item Von Oswald \emph{et al.}~\cite{vonoswald}, construcción de la atención lineal como descenso de gradiente.
+\item Wei \emph{et al.}~\cite{wei-cot}, Kojima \emph{et al.}~\cite{kojima} y Wang \emph{et al.}~\cite{wang-sc}, sobre cadena de pensamiento y autoconsistencia.
+\item CS224N~\cite{cs224n}, clase~9, «Efficient Adaptation (Prompting + PEFT)».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-tres}
+Explique qué cambia en el modelo cuando se usan pocos ejemplos, cuando se usa recuperación de documentos (RAG) y cuando se ajusta con LoRA (módulo~20). ¿Cuál de los tres puede aprovechar un documento publicado ayer sin entrenar?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-induccion}
+Aplique el circuito idealizado de la \cref{prop:induccion} a la secuencia de tokens «a b c a d a». (a) Determine $J$ y la salida $o_6$ en el límite $\beta\to\infty$. (b) Repita el cálculo si el último token fuera «c» en lugar de «a». (c) ¿Qué ocurre si el token actual no ha aparecido antes?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-coste}
+Un modelo de $N=7\cdot 10^{9}$ parámetros responde 1000 consultas. (a) ¿Cuántas operaciones adicionales cuesta generar 200 tokens de razonamiento por consulta? (b) ¿Y si se usa autoconsistencia con $m=10$ razonamientos por consulta? (c) Si el \emph{prompt} incluye 5 demostraciones de 40 tokens, ¿cuántos tokens de entrada suman en total y cuántas operaciones cuesta procesarlos a $2N$ por token?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-voto}
+Cada razonamiento muestreado acierta con probabilidad $p=0{,}6$, de forma independiente. (a) Calcule la probabilidad de que acierte el voto mayoritario con $m=3$ y con $m=5$. (b) Use la \cref{prop:voto} para hallar un $m$ impar que garantice una probabilidad de error del voto no mayor que $0{,}05$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-kv}
+Un modelo tiene 40 capas, $d=5120$ y caché KV en 16 bits sin atención de consultas agrupadas. Calcule los bytes por token y la memoria de la caché con 32\,000 tokens. Repita el cálculo si se usan 8 cabezas de clave y valor para las 40 cabezas de consulta.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-gd}
+Demuestre el \cref{teo:icl-gd} justificando cada paso y aplíquelo a $x_1=(1,0)$, $y_1=2$, $x_2=(0,1)$, $y_2=-1$, $x_q=(1,1)$ y $\eta=0{,}5$. Enumere qué elementos de la atención de un Transformer real faltan en esta construcción.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-esfera}
+Sea el estimador de Nadaraya--Watson con núcleo gaussiano de anchura $\sigma$ y todos los puntos sobre la esfera unidad. (a) Simplifique el término $\norm{q-k_i}^{2}$ del exponente y deduzca la \cref{prop:nw-esfera}. (b) Demuestre que, si hay una única clave $k_{i^\ast}$ con producto escalar máximo, $\hat f(q)\to v_{i^\ast}$ cuando $\sigma\to 0$, y que $\hat f(q)$ tiende a la media de los valores cuando $\sigma\to\infty$. (c) Interprete ambos límites cuando las claves y los valores son las demostraciones de un \emph{prompt}.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §11.2.5, ejercicio~3 (con la anchura $\sigma$ y los límites añadidos).}
+\end{ejercicio}

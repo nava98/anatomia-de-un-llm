@@ -1,0 +1,1883 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase II — Módulo 10
+%  Diferenciación automática
+%  Compilar: latexmk -r ../latexmkrc M10-autograd.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 10}
+
+% Notación propia del módulo
+\newcommand{\sen}{\operatorname{sen}}
+\newcommand{\Du}{\mathbb{D}}
+\newcommand{\ops}{\operatorname{ops}}
+\newcommand{\ind}{\mathbb{1}}
+\newcommand{\T}{^{\top}}
+\newcommand{\pre}{\prec}
+\newcommand{\uep}{\mathbf{u}}
+
+\hypersetup{pdftitle={Módulo 10. Diferenciación automática},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase II \textperiodcentered\ Aprendizaje automático y redes neuronales}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 10\par}\vspace{0.3cm}
+{\LARGE Diferenciación automática\par}
+\vspace{0.2cm}
+{\large De la regla de la cadena a \texttt{loss.backward()}\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Un paso de entrenamiento de un modelo de lenguaje exige la derivada de la pérdida respecto a cada uno de sus parámetros. El modelo Grok-1, cuyos pesos publicó xAI en 2024, tiene $314\,000$ millones; calcular cada derivada por diferencias finitas requeriría otras tantas evaluaciones de la red. En el módulo~9 se obtuvieron a mano las ecuaciones de la retropropagación de un perceptrón de dos capas, pero ese procedimiento no escala: cada cambio de arquitectura obligaría a deducirlas de nuevo. La \emph{diferenciación automática} convierte la regla de la cadena en un algoritmo que se aplica a cualquier programa compuesto de operaciones elementales y que devuelve el gradiente exacto, salvo errores de redondeo, con un coste comparable al de evaluar la función una sola vez. Este módulo estudia sus dos modos, demuestra por qué el modo inverso es el adecuado para entrenar redes, analiza su coste en operaciones y en memoria, y termina con la implementación de un pequeño sistema de diferenciación automática y con su contrapartida industrial, PyTorch.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item representar un cálculo como un grafo computacional y como una traza de evaluación, y distinguir la diferenciación automática de la numérica y de la simbólica, acotando el error de las diferencias finitas;
+  \item definir los números duales, demostrar que propagan exactamente la derivada y aplicar el modo directo para obtener productos jacobiano-vector;
+  \item enunciar y demostrar la corrección del modo inverso, construir un orden topológico y retropropagar a mano por un grafo arbitrario;
+  \item demostrar el principio del gradiente barato, comparar el coste de los dos modos mediante la asociatividad del producto de jacobianos y deducir los productos vector-jacobiano de la capa lineal y de la softmax, así como la regla $C\approx 6ND$;
+  \item analizar la memoria del modo inverso y el recálculo por puntos de control, obtener productos hessiana-vector e interpretar los adjuntos como multiplicadores de Lagrange;
+  \item describir la estructura de un sistema de diferenciación automática escalar y de PyTorch, y usar correctamente tensores, \texttt{backward}, \texttt{nn.Module} y los optimizadores.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~4 se usan la regla de la cadena multivariable, el jacobiano, el hessiano, el desarrollo de Taylor y las diferencias centradas; del módulo~7, el descenso de gradiente, el decaimiento de pesos y los multiplicadores de Lagrange; del módulo~8, la entropía cruzada con softmax, y del módulo~9, el perceptrón multicapa, su contador de parámetros y las ecuaciones de la retropropagación. Del módulo~1 se usa la softmax y su gradiente. Se suponen nociones básicas de programación en Python.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Grafos computacionales y métodos de diferenciación & \cite{baydin}, \cite{gw}, \cite{gbc}, \cite{mit18337} \\
+2 & El modo directo y los números duales & \cite{baydin}, \cite{gw}, \cite{mit18337}, \cite{mit18s096} \\
+3 & El modo inverso y la retropropagación & \cite{baydin}, \cite{gw}, \cite{gbc}, \cite{cs231n}, \cite{d2l} \\
+4 & Coste del gradiente y productos vector-jacobiano & \cite{gw}, \cite{baydin}, \cite{grosse}, \cite{kaplan} \\
+5 & Memoria, segundo orden y método adjunto & \cite{gw}, \cite{chen}, \cite{pearlmutter}, \cite{cs336a2} \\
+6 & Implementación: un autograd escalar y PyTorch & \cite{karpathy}, \cite{paszke}, \cite{pytorch}, \cite{cmu11785} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ cálculo y $\star\star\star$ demostración. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La estructura general sigue el artículo de revisión de Baydin, Pearlmutter, Radul y Siskind~\cite{baydin}, en particular sus secciones~2 y~3, y la notación de la traza de evaluación es la del libro de Griewank y Walther~\cite{gw}, texto de referencia de la disciplina, del que se toman también las cotas de coste (cap.~4) y el recálculo por puntos de control (cap.~12). El punto de vista de las redes neuronales procede de la §6.5 de Goodfellow, Bengio y Courville~\cite{gbc}, de las notas «Backpropagation, Intuitions» de CS231n~\cite{cs231n}, de las §2.5 y §5.3 de Zhang \emph{et al.}~\cite{d2l} y de la lección~6 del curso CSC421 de Toronto~\cite{grosse}. Los números duales se presentan como en las notas del curso 18.337 del MIT~\cite{mit18337} y en las clases de 18.S096~\cite{mit18s096}. Los problemas de coste y de memoria de los temas~4 y~5 están adaptados de las tareas~1 y~2 del curso CS336 de Stanford~\cite{cs336a1,cs336a2}, y la implementación del tema~6 sigue a micrograd~\cite{karpathy}, a la tarea complementaria de autograd del curso 11-785 de Carnegie Mellon~\cite{cmu11785}, al artículo de PyTorch~\cite{paszke} y a su documentación~\cite{pytorch}. Sobre los modelos comerciales (Claude, Gemini, Grok) solo se usa información pública.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$f\colon\R^{n}\to\R^{m}$ & función que se deriva, con $n$ entradas y $m$ salidas \\
+$v_{1-n},\dots,v_0$ & variables de entrada de la traza de evaluación \\
+$v_1,\dots,v_\ell$ & variables intermedias, $v_i=\varphi_i(v_j)_{j\pre i}$ \\
+$j\pre i$ & $v_j$ es un argumento de la operación elemental $\varphi_i$ \\
+$\dot v_i$ & tangente: derivada de $v_i$ en una dirección fijada de las entradas \\
+$\bar v_i=\partial y/\partial v_i$ & adjunto de $v_i$ respecto a la salida escalar $y$ \\
+$J_f(x)\in\R^{m\times n}$ & jacobiano de $f$ en $x$ \\
+$\Du$, $a+b\varepsilon$ & números duales, con $\varepsilon^{2}=0$ \\
+$\ops(f)$ & número de operaciones aritméticas para evaluar $f$ \\
+$N$, $D$ & número de parámetros de un modelo y de tokens de entrenamiento \\
+$\uep$ & unidad de redondeo de la aritmética en coma flotante \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Como en el módulo~9, los vectores que fluyen por una red se escriben como \emph{filas} y las capas actúan por la derecha, $X\mapsto XW$; los gradientes respecto a una matriz tienen la forma de la matriz. En los temas~2 y~3, en cambio, el jacobiano actúa sobre vectores columna, $\dot y=J\dot x$, como en~\cite{baydin} y~\cite{gw}. El código se escribe en Python y los nombres de PyTorch aparecen en \texttt{letra mecanográfica}.
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Grafos computacionales y métodos de diferenciación}
+\label{tema:1}
+% =====================================================================
+
+Este tema fija el objeto que se deriva: un programa que calcula una función a partir de operaciones elementales. Se formaliza como traza de evaluación y como grafo dirigido acíclico, y se comparan las tres maneras de obtener derivadas con un ordenador: diferencias finitas, derivación simbólica y diferenciación automática. Se siguen las secciones~2 y~3 de~\cite{baydin}, el capítulo~2 de~\cite{gw}, la §6.5.1 de~\cite{gbc} y las notas de la clase~8 de MIT 18.337~\cite{mit18337}.
+
+\section{Trazas de evaluación}
+
+Todo programa que calcula un número real a partir de otros sin bifurcaciones que dependan de los datos ejecuta una sucesión finita de operaciones aritméticas y de funciones de biblioteca ($\exp$, $\ln$, $\sen$, $\tanh$\dots). Cuando hay bifurcaciones o bucles, cada ejecución concreta recorre una sucesión de este tipo, que depende de la entrada; las derivadas se toman respecto a esa sucesión.
+
+\begin{definicion}[Operaciones elementales]\label{def:elementales}
+Un conjunto de \emph{operaciones elementales} es una colección finita $\Phi$ de funciones $\varphi\colon U_\varphi\subseteq\R^{k_\varphi}\to\R$, con $U_\varphi$ abierto y $k_\varphi\le k$ argumentos, de clase $C^{1}$ y cuyas derivadas parciales $\partial\varphi/\partial u_j$ se pueden evaluar con un número acotado de operaciones. En este módulo $\Phi$ contiene la suma, la resta, el producto, la división, las potencias de exponente fijo, $\exp$, $\ln$, $\sen$, $\cos$ y $\tanh$.
+\end{definicion}
+
+\begin{definicion}[Traza de evaluación]\label{def:traza}
+Sea $f\colon\R^{n}\to\R^{m}$. Una \emph{traza de evaluación} de $f$ es una sucesión de variables
+\[
+v_{1-n},\dots,v_0,\;v_1,\dots,v_\ell
+\]
+tal que $v_{i-n}=x_i$ para $i=1,\dots,n$, cada variable intermedia se obtiene como $v_i=\varphi_i\bigl((v_j)_{j\pre i}\bigr)$ con $\varphi_i\in\Phi$ y $j\pre i\Rightarrow j<i$, y las salidas son $y_{m-i}=v_{\ell-i}$ para $i=0,\dots,m-1$. La relación $j\pre i$ se lee «$v_j$ es un argumento de $\varphi_i$».
+\end{definicion}
+
+La condición $j<i$ expresa que cada variable se calcula a partir de variables ya calculadas. Es la notación de Griewank y Walther~\cite[cap.~2]{gw}, que Baydin \emph{et al.} adoptan en~\cite[§3]{baydin}: las entradas llevan índices no positivos, las intermedias, positivos, y las salidas son las últimas variables.
+
+\begin{definicion}[Grafo computacional]\label{def:grafo}
+El \emph{grafo computacional} de una traza es el grafo dirigido $G=(V,E)$ con un nodo por variable y una arista $v_j\to v_i$ por cada par $j\pre i$. Los nodos sin aristas entrantes son las entradas.
+\end{definicion}
+
+\begin{proposicion}\label{prop:aciclico}
+El grafo computacional de una traza es acíclico, y el orden de la traza es un \emph{orden topológico}: toda arista va de un índice menor a uno mayor.
+\end{proposicion}
+
+\begin{proof}
+Por la \cref{def:traza}, toda arista $v_j\to v_i$ cumple $j<i$. Un ciclo $v_{i_1}\to v_{i_2}\to\dots\to v_{i_1}$ daría $i_1<i_2<\dots<i_1$, lo cual es imposible.
+\end{proof}
+
+\begin{ejemplo}[El ejemplo de Baydin \emph{et al.}]\label{ej:baydin}
+Sea $f(x_1,x_2)=\ln x_1+x_1x_2-\sen x_2$, evaluada en $(x_1,x_2)=(2,5)$~\cite[§3, fig.~4 y tabla~2]{baydin}. Su traza es
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Variable & Definición & Valor \\
+\midrule
+$v_{-1}$ & $x_1$ & $2$ \\
+$v_0$ & $x_2$ & $5$ \\
+$v_1$ & $\ln v_{-1}$ & $0{,}6931$ \\
+$v_2$ & $v_{-1}\cdot v_0$ & $10$ \\
+$v_3$ & $\sen v_0$ & $-0{,}9589$ \\
+$v_4$ & $v_1+v_2$ & $10{,}6931$ \\
+$v_5$ & $v_4-v_3$ & $11{,}6521$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+y $y=v_5$. La \cref{fig:grafo-baydin} muestra el grafo: $v_{-1}$ alimenta a dos operaciones ($v_1$ y $v_2$), igual que $v_0$ ($v_2$ y $v_3$).
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},
+  n/.style={draw,circle,minimum size=9mm,inner sep=0pt,font=\small},
+  lab/.style={font=\scriptsize,text=black!70}]
+  \node[n] (vm1) at (0,1.2) {$v_{-1}$};
+  \node[n] (v0)  at (0,-1.2) {$v_{0}$};
+  \node[n] (v1)  at (2.4,2.0) {$v_{1}$};
+  \node[n] (v2)  at (2.4,0) {$v_{2}$};
+  \node[n] (v3)  at (2.4,-2.0) {$v_{3}$};
+  \node[n] (v4)  at (4.8,1.0) {$v_{4}$};
+  \node[n] (v5)  at (7.2,0) {$v_{5}$};
+  \node[lab,above=0pt of v1] {$\ln$};
+  \node[lab,above=0pt of v2] {$\times$};
+  \node[lab,below=0pt of v3] {$\sen$};
+  \node[lab,above=0pt of v4] {$+$};
+  \node[lab,above=0pt of v5] {$-$};
+  \node[lab,left=2pt of vm1] {$x_1$};
+  \node[lab,left=2pt of v0] {$x_2$};
+  \node[lab,right=2pt of v5] {$y$};
+  \draw[->] (vm1)--(v1); \draw[->] (vm1)--(v2); \draw[->] (v0)--(v2); \draw[->] (v0)--(v3);
+  \draw[->] (v1)--(v4); \draw[->] (v2)--(v4); \draw[->] (v4)--(v5); \draw[->] (v3)--(v5);
+\end{tikzpicture}
+\caption{Grafo computacional de la traza del \cref{ej:baydin}. Cada nodo interior lleva la operación elemental que lo calcula.}
+\label{fig:grafo-baydin}
+\end{figure}
+
+\begin{observacion}
+En un modelo de lenguaje, la traza de una pasada hacia delante tiene miles de millones de operaciones escalares, pero se organiza en unas pocas operaciones sobre tensores: productos de matrices, softmax, normalizaciones. El grafo que construyen los sistemas reales tiene un nodo por operación tensorial (\cref{tema:6}); la teoría de los temas~2 a~5 se formula con escalares y se extiende sin cambios a bloques.
+\end{observacion}
+
+\section{Tres maneras de derivar}
+
+\subsection{Diferencias finitas}
+
+La aproximación más directa sustituye la derivada por un cociente incremental. Para $f\colon\R^{n}\to\R$ y la base canónica $e_1,\dots,e_n$,
+\[
+\frac{\partial f}{\partial x_i}(x)\approx\frac{f(x+he_i)-f(x)}{h}
+\qquad\text{o}\qquad
+\frac{\partial f}{\partial x_i}(x)\approx\frac{f(x+he_i)-f(x-he_i)}{2h}.
+\]
+En el módulo~4 (tema~6) se demostró que el error de truncamiento es $O(h)$ en la primera fórmula y $O(h^{2})$ en la segunda, y que el redondeo añade un error de orden $\uep\abs{f}/h$, donde $\uep\approx 1{,}1\cdot 10^{-16}$ es la unidad de redondeo de doble precisión. El compromiso entre ambos da un paso óptimo $h^{*}\sim\uep^{1/3}$ para la diferencia centrada, con un error mínimo de orden $\uep^{2/3}\approx 10^{-11}$.
+
+\begin{proposicion}[Coste de las diferencias finitas]\label{prop:coste-fd}
+Aproximar el gradiente de $f\colon\R^{n}\to\R$ por diferencias centradas requiere $2n$ evaluaciones de $f$; por diferencias hacia delante, $n+1$.
+\end{proposicion}
+
+\begin{proof}
+Cada componente centrada usa $f(x+he_i)$ y $f(x-he_i)$, distintas para cada $i$: $2n$ evaluaciones. Hacia delante, $f(x)$ es común a todas las componentes y cada una añade $f(x+he_i)$: $n+1$.
+\end{proof}
+
+Con $n=10^{11}$ parámetros, ni la precisión ni el coste son aceptables. Las diferencias finitas se usan para \emph{comprobar} un gradiente en unas pocas direcciones, nunca para entrenar~\cite[§2.1]{baydin}.
+
+\begin{observacion}[Paso complejo]\label{obs:paso-complejo}
+Si $f$ es analítica y real sobre la recta real, el desarrollo de Taylor $f(x+ih)=f(x)+ihf'(x)-\tfrac12h^{2}f''(x)-\tfrac{i}{6}h^{3}f'''(x)+\dots$ da
+\[
+f'(x)=\frac{\operatorname{Im}f(x+ih)}{h}+O(h^{2}).
+\]
+No hay resta de cantidades próximas, de modo que el error de redondeo no crece al disminuir $h$ y puede tomarse $h=10^{-20}$. Es un precursor del modo directo del \cref{tema:2}: la unidad imaginaria hace el papel de un infinitesimal, aunque con $i^{2}=-1$ en lugar de $\varepsilon^{2}=0$~\cite{mit18337}.
+\end{observacion}
+
+\subsection{Derivación simbólica}
+
+La derivación simbólica aplica las reglas del cálculo a la \emph{expresión} de $f$ y devuelve otra expresión. Es exacta, pero, si se aplica sin compartir subexpresiones, el tamaño del resultado puede crecer exponencialmente~\cite[§2.2]{baydin}.
+
+\begin{ejemplo}[Crecimiento de las expresiones]\label{ej:logistica}
+Sea la recurrencia logística $l_1=x$, $l_{k+1}=4l_k(1-l_k)$~\cite[tabla~1]{baydin}. Se tiene $l_2=4x(1-x)$ y $l_3=16x(1-x)(1-2x)^{2}$. Por la regla del producto, la derivada de $l_{k+1}$ contiene la de $l_k$ y una copia de $l_k$: $l_{k+1}'=4l_k'(1-l_k)-4l_kl_k'$. Si cada $l_k$ se sustituye por su expresión en $x$, la expresión de $l_k'$ duplica al menos su tamaño en cada paso. En cambio, el par $(l_k,l_k')$ se puede calcular numéricamente con un número constante de operaciones por paso, como se verá en el \cref{tema:2}.
+\end{ejemplo}
+
+\subsection{Diferenciación automática}
+
+\begin{definicion}[Diferenciación automática]\label{def:ad}
+La \emph{diferenciación automática} (\emph{automatic differentiation}, AD) es la familia de técnicas que calculan valores numéricos de derivadas de una función definida por un programa, aplicando la regla de la cadena a los \emph{valores} de la traza de evaluación y usando, en cada operación elemental, su derivada local conocida.
+\end{definicion}
+
+Como subraya~\cite[§3]{baydin}, la AD no manipula expresiones sino números: cada operación elemental aporta una derivada local que se combina con las demás. A diferencia de las diferencias finitas, el resultado es exacto salvo el redondeo de cada operación; a diferencia de la derivación simbólica, el coste es proporcional al de la traza. La regla de la cadena admite dos órdenes de aplicación, que dan los dos modos de la AD: el \emph{directo} (\emph{forward}), del \cref{tema:2}, y el \emph{inverso} (\emph{reverse}), del \cref{tema:3}.
+
+\begin{center}\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Método & Exactitud & Coste de $\nabla f$, $f\colon\R^{n}\to\R$ & Uso \\
+\midrule
+Diferencias finitas & error $O(h^{2})$ más redondeo & $2n$ evaluaciones & comprobar \\
+Simbólica & exacta & expresiones que pueden crecer & cálculo a mano \\
+AD, modo directo & exacta salvo redondeo & $n$ pasadas & pocas entradas \\
+AD, modo inverso & exacta salvo redondeo & una pasada (\cref{teo:barato}) & entrenar redes \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{observacion}[Conexión con los LLM]
+La retropropagación de los módulos~8 y~9 es el modo inverso de la AD aplicado a la traza de una red neuronal~\cite[§6.5]{gbc}. Una llamada a \texttt{loss.backward()} en PyTorch recorre la traza registrada durante la pasada hacia delante y aplica en cada nodo la regla local que se estudia en el \cref{tema:3}.
+\end{observacion}
+
+\begin{lecturas}
+\item Baydin \emph{et al.}~\cite{baydin}, §2 «What AD Is Not» (§2.1 y §2.2) y comienzo de la §3, con la figura~4 y la tabla~2.
+\item Griewank y Walther~\cite{gw}, cap.~2 «A Framework for Evaluating Functions».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §6.5.1 «Computational Graphs».
+\item MIT 18.337~\cite{mit18337}, notas de la clase~8, apartados «Finite Differencing and Numerical Stability» y «Complex Step Differentiation».
+\item Grosse~\cite{grosse}, lección~6, apartados iniciales sobre las alternativas a la AD.
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-traza}
+Para el \cref{ej:baydin}, indique cuántos nodos y aristas tiene el grafo, qué nodos tienen más de un sucesor y escriba otro orden topológico distinto del de la traza.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-precision}
+Ordene de menor a mayor precisión y justifique: diferencias centradas con $h=10^{-5}$, diferenciación automática y diferencias centradas con $h=10^{-15}$, todo en doble precisión. Ilústrelo con $f(x)=e^{x}$ en $x=1$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-d2l}
+Sea $f(x)=\ln(x^{2})\cdot\sen x+x^{-1}$. (a) Descomponga $f$ en operaciones elementales y dibuje su grafo de dependencias, de $x$ a $f(x)$. (b) Escriba la traza de evaluación en $x=2$ (radianes) con cuatro cifras significativas.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.5 «Automatic Differentiation», ejercicio~5.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-complejo}
+Para $f(x)=e^{x}$, demuestre que $\operatorname{Im}f(x+ih)/h=e^{x}\,\sen(h)/h$ y deduzca que el error relativo de la aproximación por paso complejo es $1-\sen(h)/h\approx h^{2}/6$. Calcúlelo para $h=10^{-1}$ y $h=10^{-8}$ y compárelo con el de la diferencia centrada con el mismo $h$ en doble precisión, cuyo error relativo es $\sinh(h)/h-1$ más un término de redondeo de orden $\uep/h$.
+\fuente{adaptado de MIT 18.337~\cite{mit18337}, notas de la clase~8, apartado «Complex Step Differentiation».}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-logistica}
+Para la recurrencia del \cref{ej:logistica} con $x=0{,}2$, calcule $l_2$, $l_3$ y las derivadas $l_2'$, $l_3'$ propagando el par $(l_k,l_k')$ con la regla $l_{k+1}'=4l_k'(1-2l_k)$. Compruebe el resultado derivando la expresión $l_3=16x(1-x)(1-2x)^{2}$.
+\fuente{adaptado de Baydin \emph{et al.}~\cite{baydin}, §2.2 y tabla~1 (se añade el cálculo numérico).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-grado}
+Para la recurrencia del \cref{ej:logistica}, demuestre que $l_k$ es un polinomio en $x$ de grado exactamente $2^{k-1}$, de modo que su expresión desarrollada tiene hasta $2^{k-1}+1$ coeficientes, y que, en cambio, el par $(l_k,l_k')$ se obtiene con a lo sumo $6(k-1)$ operaciones aritméticas a partir de $(x,1)$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{El modo directo y los números duales}
+\label{tema:2}
+% =====================================================================
+
+El modo directo propaga, junto con cada valor de la traza, su derivada respecto a una dirección fijada de las entradas. Este tema lo formula como propagación de tangentes, demuestra que calcula un producto jacobiano-vector y lo reinterpreta con los números duales, que reducen la regla de la cadena a aritmética. Se siguen la §3.1 de~\cite{baydin}, incluida la §3.1.1 sobre números duales, el capítulo~3 de~\cite{gw}, las notas de la clase~8 de MIT 18.337~\cite{mit18337} y la clase~5 de MIT 18.S096~\cite{mit18s096}.
+
+\section{Propagación de tangentes}
+
+Se fija una traza de $f\colon\R^{n}\to\R^{m}$ (\cref{def:traza}), un punto $x$ y una dirección $\dot x\in\R^{n}$.
+
+\begin{definicion}[Tangentes]\label{def:tangente}
+Las \emph{tangentes} de la traza son los números definidos por recurrencia como
+\[
+\dot v_{i-n}=\dot x_i\quad(i=1,\dots,n),\qquad
+\dot v_i=\sum_{j\pre i}\frac{\partial\varphi_i}{\partial v_j}\,\dot v_j\quad(i=1,\dots,\ell),
+\]
+donde las derivadas parciales se evalúan en los valores de la traza. El vector $\dot x$ se llama \emph{semilla}.
+\end{definicion}
+
+\begin{teorema}[El modo directo calcula $J\dot x$]\label{teo:directo}
+Sea $\gamma(t)=x+t\dot x$. Para cada $i$, $\dot v_i=\frac{d}{dt}v_i(\gamma(t))\big|_{t=0}=\nabla v_i(x)\T\dot x$, donde $v_i(\cdot)$ denota la variable $i$ como función de las entradas. En particular, el vector de tangentes de las salidas es $\dot y=J_f(x)\,\dot x$.
+\end{teorema}
+
+\begin{proof}
+Por inducción sobre $i$. Para las entradas, $v_{i-n}(\gamma(t))=x_i+t\dot x_i$, cuya derivada en $t=0$ es $\dot x_i$. Sea $i\ge 1$ y supóngase el resultado cierto para todo índice menor; en particular, para cada $j\pre i$, porque $j<i$. Como $v_i(\gamma(t))=\varphi_i\bigl((v_j(\gamma(t)))_{j\pre i}\bigr)$, la regla de la cadena (módulo~4) da
+\[
+\frac{d}{dt}v_i(\gamma(t))\Big|_{t=0}=\sum_{j\pre i}\frac{\partial\varphi_i}{\partial v_j}\,\frac{d}{dt}v_j(\gamma(t))\Big|_{t=0}=\sum_{j\pre i}\frac{\partial\varphi_i}{\partial v_j}\,\dot v_j=\dot v_i.
+\]
+Para las salidas, $\frac{d}{dt}f(x+t\dot x)|_{t=0}=J_f(x)\dot x$ es la derivada direccional.
+\end{proof}
+
+\begin{ejemplo}[Traza tangente]\label{ej:tangente}
+En el \cref{ej:baydin}, con semilla $\dot x=(1,0)\T$ se obtiene $\partial y/\partial x_1$~\cite[tabla~2]{baydin}:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Tangente & Regla & Valor \\
+\midrule
+$\dot v_{-1}$, $\dot v_0$ & semilla & $1$, $0$ \\
+$\dot v_1$ & $\dot v_{-1}/v_{-1}$ & $0{,}5$ \\
+$\dot v_2$ & $\dot v_{-1}v_0+v_{-1}\dot v_0$ & $5$ \\
+$\dot v_3$ & $\cos(v_0)\,\dot v_0$ & $0$ \\
+$\dot v_4$ & $\dot v_1+\dot v_2$ & $5{,}5$ \\
+$\dot v_5$ & $\dot v_4-\dot v_3$ & $5{,}5$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+En efecto, $\partial f/\partial x_1=1/x_1+x_2=0{,}5+5=5{,}5$. Con la semilla $(0,1)\T$ se obtendría $\partial f/\partial x_2=x_1-\cos x_2=2-\cos 5\approx 1{,}7163$.
+\end{ejemplo}
+
+\begin{corolario}[Coste del jacobiano en modo directo]\label{cor:coste-directo}
+Una pasada en modo directo da una columna de $J_f(x)$, la correspondiente a la semilla $e_k$. El jacobiano completo de $f\colon\R^{n}\to\R^{m}$ requiere $n$ pasadas, independientemente de $m$.
+\end{corolario}
+
+\begin{proof}
+Por el \cref{teo:directo}, con $\dot x=e_k$ se obtiene $J_f(x)e_k$, que es la columna $k$. Las $n$ semillas $e_1,\dots,e_n$ dan las $n$ columnas.
+\end{proof}
+
+El corolario fija el campo de aplicación del modo directo: es óptimo cuando hay pocas entradas y muchas salidas y es inviable para el gradiente de una pérdida escalar respecto a $10^{11}$ parámetros, que exigiría $10^{11}$ pasadas.
+
+\section{Números duales}
+
+\begin{definicion}[Números duales]\label{def:duales}
+El conjunto de los \emph{números duales} es $\Du=\{a+b\varepsilon : a,b\in\R\}$, con la suma y el producto
+\[
+(a+b\varepsilon)+(c+d\varepsilon)=(a+c)+(b+d)\varepsilon,\qquad
+(a+b\varepsilon)(c+d\varepsilon)=ac+(ad+bc)\varepsilon .
+\]
+El número $a$ es la \emph{parte real} y $b$, la \emph{parte dual}.
+\end{definicion}
+
+El producto es el que resulta de multiplicar formalmente e imponer $\varepsilon^{2}=0$ con $\varepsilon\ne 0$. Con estas operaciones $\Du$ es un anillo conmutativo con unidad, isomorfo a $\R[\varepsilon]/(\varepsilon^{2})$, pero no es un cuerpo: $\varepsilon\cdot\varepsilon=0$ con $\varepsilon\ne 0$, de modo que $\varepsilon$ no tiene inverso~\cite[§3.1.1]{baydin}.
+
+\begin{proposicion}[Inverso de un dual]\label{prop:inverso}
+Si $a\ne 0$, el dual $a+b\varepsilon$ es invertible y
+\[
+\frac{1}{a+b\varepsilon}=\frac1a-\frac{b}{a^{2}}\,\varepsilon .
+\]
+\end{proposicion}
+
+\begin{proof}
+$(a+b\varepsilon)\bigl(\tfrac1a-\tfrac{b}{a^{2}}\varepsilon\bigr)=1+\bigl(-\tfrac{b}{a}+\tfrac{b}{a}\bigr)\varepsilon=1$. Si $a=0$, $(b\varepsilon)(c+d\varepsilon)=bc\,\varepsilon\ne 1$ para todo $c,d$, y no hay inverso.
+\end{proof}
+
+La parte dual del inverso es $b$ veces la derivada de $u\mapsto 1/u$ en $a$, y la parte dual del producto es la regla de Leibniz. Esto no es casual, y motiva la definición siguiente.
+
+\begin{definicion}[Extensión dual de una operación elemental]\label{def:extension}
+Sea $\varphi\colon U\subseteq\R^{k}\to\R$ de clase $C^{1}$. Su \emph{extensión dual} es
+\[
+\varphi(a_1+b_1\varepsilon,\dots,a_k+b_k\varepsilon)=\varphi(a)+\Bigl(\sum_{j=1}^{k}\frac{\partial\varphi}{\partial u_j}(a)\,b_j\Bigr)\varepsilon ,\qquad a\in U.
+\]
+Por ejemplo, $\exp(a+b\varepsilon)=e^{a}+e^{a}b\,\varepsilon$ y $\sen(a+b\varepsilon)=\sen a+(\cos a)\,b\,\varepsilon$.
+\end{definicion}
+
+\begin{proposicion}[Coherencia con la aritmética]\label{prop:coherencia}
+Para la suma, el producto y la inversión, la extensión dual de la \cref{def:extension} coincide con las operaciones de la \cref{def:duales} y de la \cref{prop:inverso}.
+\end{proposicion}
+
+\begin{proof}
+Para $\varphi(u_1,u_2)=u_1+u_2$, las parciales valen~1 y la extensión da $(a_1+a_2)+(b_1+b_2)\varepsilon$. Para $\varphi(u_1,u_2)=u_1u_2$, las parciales son $a_2$ y $a_1$, y la extensión da $a_1a_2+(a_2b_1+a_1b_2)\varepsilon$, que es el producto de la \cref{def:duales}. Para $\varphi(u)=1/u$, $\varphi'(a)=-1/a^{2}$ y la extensión da la fórmula de la \cref{prop:inverso}.
+\end{proof}
+
+\begin{teorema}[Los duales propagan la derivada]\label{teo:duales}
+Sea $f\colon\R^{n}\to\R^{m}$ dada por una traza y evalúese la traza en aritmética dual, con entradas $x_k+\dot x_k\varepsilon$ y la extensión dual de cada operación elemental. Entonces cada variable vale $v_i+\dot v_i\varepsilon$, con $\dot v_i$ la tangente de la \cref{def:tangente}, y las salidas valen
+\[
+f(x+\dot x\,\varepsilon)=f(x)+J_f(x)\,\dot x\,\varepsilon .
+\]
+\end{teorema}
+
+\begin{proof}
+Por inducción sobre $i$. Para las entradas es la elección de la semilla. Si las variables $v_j$ con $j\pre i$ valen $v_j+\dot v_j\varepsilon$, la \cref{def:extension} da
+$\varphi_i\bigl((v_j+\dot v_j\varepsilon)_{j\pre i}\bigr)=\varphi_i\bigl((v_j)_{j\pre i}\bigr)+\bigl(\sum_{j\pre i}\tfrac{\partial\varphi_i}{\partial v_j}\dot v_j\bigr)\varepsilon=v_i+\dot v_i\varepsilon$. La última afirmación es el \cref{teo:directo}.
+\end{proof}
+
+El teorema justifica la lectura del desarrollo de Taylor del módulo~4 con un infinitesimal: $f(a+b\varepsilon)=f(a)+f'(a)b\varepsilon$ es el desarrollo de primer orden, y aquí el truncamiento es exacto porque los términos de orden superior contienen $\varepsilon^{2}=0$. Para evaluar $f'(a)$ basta con calcular $f(a+\varepsilon)$ y leer la parte dual.
+
+\begin{ejemplo}\label{ej:dual-cubo}
+Sea $f(x)=x^{3}+2x$ en $x=2$. Con $x=2+\varepsilon$:
+\begin{enumerate}[label=\arabic*.]
+  \item $x^{2}=(2+\varepsilon)(2+\varepsilon)=4+4\varepsilon$;
+  \item $x^{3}=(4+4\varepsilon)(2+\varepsilon)=8+(4+8)\varepsilon=8+12\varepsilon$;
+  \item $2x=4+2\varepsilon$, y $f=12+14\varepsilon$.
+\end{enumerate}
+Luego $f(2)=12$ y $f'(2)=14$, que coincide con $f'(x)=3x^{2}+2$.
+\end{ejemplo}
+
+\begin{observacion}[Duales con varias componentes]\label{obs:multidual}
+Si se toman $p$ infinitesimales $\varepsilon_1,\dots,\varepsilon_p$ con $\varepsilon_r\varepsilon_s=0$ para todo $r,s$, cada variable lleva un vector de $p$ partes duales, y con las semillas $x_k+\sum_r(\dot x^{(r)})_k\varepsilon_r$ una sola pasada calcula $p$ productos $J\dot x^{(r)}$. Con $p=n$ y semillas $e_1,\dots,e_n$ se obtiene el jacobiano entero en una pasada vectorial, cuyo coste sigue siendo proporcional a $n\cdot\ops(f)$~\cite{mit18337}. La biblioteca JAX ofrece esta operación como \texttt{jvp} (\emph{Jacobian-vector product}).
+\end{observacion}
+
+\section{Coste del modo directo}
+
+\begin{proposicion}\label{prop:coste-dual}
+Existe una constante $\omega_{\mathrm{dir}}$, que depende solo del conjunto $\Phi$ de operaciones elementales, tal que una pasada en modo directo cuesta a lo sumo $\omega_{\mathrm{dir}}\cdot\ops(f)$ operaciones.
+\end{proposicion}
+
+\begin{proof}
+Cada operación de la traza se sustituye por su extensión dual. La parte real cuesta lo mismo que la operación original; la parte dual requiere evaluar a lo sumo $k$ derivadas parciales, de coste acotado por hipótesis (\cref{def:elementales}), y una combinación lineal de $k$ términos. El cociente entre ambos costes está acotado por una constante que depende de $k$ y de $\Phi$, y sumando sobre las $\ell$ operaciones se obtiene la cota. Por ejemplo, el producto dual usa tres productos y una suma en lugar de un producto.
+\end{proof}
+
+\begin{observacion}[Conexión con los LLM]
+El modo directo no se usa para el gradiente de la pérdida de un LLM, pero sí aparece en otros cálculos: un producto hessiana-vector se obtiene aplicando el modo directo al gradiente (\cref{tema:5}), y la memoria del modo directo no crece con la longitud de la traza, porque cada tangente se descarta en cuanto deja de usarse. El precio es el del \cref{cor:coste-directo}: una pasada por dirección.
+\end{observacion}
+
+\begin{lecturas}
+\item Baydin \emph{et al.}~\cite{baydin}, §3.1 «Forward Mode» y §3.1.1 «Dual Numbers».
+\item Griewank y Walther~\cite{gw}, cap.~3 «Fundamentals of Forward and Reverse».
+\item MIT 18.337~\cite{mit18337}, notas de la clase~8, apartados «Dual numbers», «Higher dimensions» y «Forward-Mode AD as jvp».
+\item MIT 18.S096~\cite{mit18s096}, clase~5, parte~2, «Forward Automatic Differentiation via Dual Numbers».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-cuadrado}
+(a) Calcule la parte dual de $(3+\varepsilon)^{2}$ e interprétela. (b) Una función $f\colon\R^{1000}\to\R$ se diferencia en modo directo. ¿Cuántas pasadas hacen falta para obtener su gradiente? ¿Y para una sola derivada direccional?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-cuartica}
+Con números duales, calcule $f(1)$ y $f'(1)$ para $f(x)=x^{4}-3x$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-cociente}
+Con números duales y la \cref{prop:inverso}, calcule $g(2)$ y $g'(2)$ para $g(x)=x/(1+x^{2})$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-tanh}
+Con la extensión dual de $\tanh$, calcule $h(1)$ y $h'(1)$ para $h(x)=\tanh(x^{2})$ con cuatro cifras significativas, y compruébelo con la regla de la cadena.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-multidual}
+Para $f(x_1,x_2)=\ln x_1+x_1x_2-\sen x_2$ en $(2,5)$, evalúe la traza del \cref{ej:baydin} con duales de dos componentes, $x_1=2+\varepsilon_1$ y $x_2=5+\varepsilon_2$ ($\varepsilon_r\varepsilon_s=0$), y obtenga el gradiente en una sola pasada. Deduzca la derivada direccional en la dirección $(1,1)\T$.
+\fuente{adaptado de MIT 18.337~\cite{mit18337}, notas de la clase~8, apartado «Higher dimensions», aplicado al ejemplo de Baydin \emph{et al.}~\cite[tabla~2]{baydin}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-polinomios}
+Demuestre por inducción sobre el grado, usando solo la aritmética de la \cref{def:duales}, que todo polinomio real $p$ cumple $p(a+b\varepsilon)=p(a)+p'(a)\,b\,\varepsilon$. Demuestre después que, si $f$ y $g$ cumplen esa propiedad, también la cumple $g\circ f$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{El modo inverso y la retropropagación}
+\label{tema:3}
+% =====================================================================
+
+El modo inverso recorre la traza dos veces: hacia delante, para calcular y guardar los valores, y hacia atrás, para propagar desde la salida la derivada de esta respecto a cada variable. Este tema define los adjuntos, demuestra que el algoritmo calcula un producto vector-jacobiano, estudia el papel del orden topológico y aplica el método a mano. Se siguen la §3.2 de~\cite{baydin}, el capítulo~3 de~\cite{gw}, las §6.5.2--6.5.6 de~\cite{gbc}, las notas «Backpropagation, Intuitions» de~\cite{cs231n} y la §5.3 de~\cite{d2l}.
+
+\section{Adjuntos}
+
+Se fija una traza de $f\colon\R^{n}\to\R$ con salida escalar $y=v_\ell$, y un punto $x$ en el que se han calculado todos los valores $v_i$.
+
+\begin{definicion}[Adjuntos]\label{def:adjunto}
+Los \emph{adjuntos} de la traza se obtienen así: se inicializan $\bar v_\ell=1$ y $\bar v_j=0$ para $j<\ell$, y se recorren las operaciones en orden decreciente, $i=\ell,\ell-1,\dots,1$, ejecutando para cada argumento $j\pre i$ la actualización
+\[
+\bar v_j\;\mathrel{+}=\;\bar v_i\,\frac{\partial\varphi_i}{\partial v_j}.
+\]
+El valor final de $\bar v_j$ se llama \emph{adjunto} de $v_j$.
+\end{definicion}
+
+Equivalentemente, el valor final de cada adjunto es
+\[
+\bar v_j=\sum_{i\,:\,j\pre i}\bar v_i\,\frac{\partial\varphi_i}{\partial v_j},
+\]
+la suma sobre todas las operaciones que usan $v_j$. El símbolo $\mathrel{+}=$ es esencial: si $v_j$ alimenta a varias operaciones, su adjunto acumula una contribución de cada una.
+
+Para enunciar qué calculan los adjuntos, sea $F_i(v_{1-n},\dots,v_i)$ la salida que se obtiene al ejecutar las operaciones $i+1,\dots,\ell$ de la traza a partir de unos valores \emph{arbitrarios} de las variables $v_{1-n},\dots,v_i$, tratadas como independientes. Así, $F_\ell(v_{1-n},\dots,v_\ell)=v_\ell$ y $F_0(x)=f(x)$, y $\partial F_i/\partial v_i$ mide la sensibilidad de la salida a una perturbación de $v_i$ introducida justo después de calcularla.
+
+\begin{teorema}[Corrección del modo inverso]\label{teo:inverso}
+Para cada $i\in\{0,\dots,\ell\}$, después de procesar las operaciones $\ell,\dots,i+1$, los acumuladores cumplen $\bar v_j=\partial F_i/\partial v_j$ para todo $j\le i$. En particular, al terminar,
+\[
+\bar v_{k-n}=\frac{\partial f}{\partial x_k}(x)\quad(k=1,\dots,n),\qquad\text{es decir,}\qquad(\bar v_{1-n},\dots,\bar v_0)=\nabla f(x)\T ,
+\]
+y el adjunto de cada variable intermedia es $\bar v_i=\partial F_i/\partial v_i$.
+\end{teorema}
+
+\begin{proof}
+Por inducción descendente sobre $i$. Para $i=\ell$ no se ha procesado ninguna operación: $\bar v_\ell=1=\partial F_\ell/\partial v_\ell$ y $\bar v_j=0=\partial F_\ell/\partial v_j$ para $j<\ell$, porque $F_\ell=v_\ell$.
+
+Supóngase cierto para $i$ y procésese la operación $i$. Por definición de las funciones $F$,
+\[
+F_{i-1}(v_{1-n},\dots,v_{i-1})=F_i\bigl(v_{1-n},\dots,v_{i-1},\,\varphi_i((v_j)_{j\pre i})\bigr).
+\]
+Por la regla de la cadena, para $j\le i-1$,
+\[
+\frac{\partial F_{i-1}}{\partial v_j}=\frac{\partial F_i}{\partial v_j}+\frac{\partial F_i}{\partial v_i}\,\frac{\partial\varphi_i}{\partial v_j},
+\]
+donde $\partial\varphi_i/\partial v_j=0$ si $j\not\pre i$. Por la hipótesis de inducción, el primer sumando es el valor actual de $\bar v_j$ y el factor $\partial F_i/\partial v_i$ es el valor actual de $\bar v_i$. La actualización de la \cref{def:adjunto} suma exactamente $\bar v_i\,\partial\varphi_i/\partial v_j$ a $\bar v_j$ para $j\pre i$ y no modifica los demás, luego tras ella $\bar v_j=\partial F_{i-1}/\partial v_j$ para todo $j\le i-1$.
+
+Para $i=0$ se obtiene $\bar v_{k-n}=\partial F_0/\partial x_k=\partial f/\partial x_k$. Por último, el acumulador $\bar v_i$ no cambia después de procesar la operación $i$, porque las operaciones $i-1,\dots,1$ solo actualizan sus argumentos, de índice menor que el suyo; su valor final es, pues, $\partial F_i/\partial v_i$.
+\end{proof}
+
+La demostración muestra por qué el orden importa: cuando se procesa la operación $i$, el acumulador $\bar v_i$ debe estar completo, lo que exige haber procesado antes todas las operaciones que usan $v_i$. Es la regla de la cadena en un grafo del módulo~9 (tema~5), ahora con su algoritmo.
+
+\begin{proposicion}[El modo inverso calcula $\bar y\T J$]\label{prop:vjp}
+Sea $f\colon\R^{n}\to\R^{m}$ y $\bar y\in\R^{m}$. Si se inicializan los adjuntos de las salidas con las componentes de $\bar y$ y se ejecuta el recorrido de la \cref{def:adjunto}, los adjuntos de las entradas forman el vector fila $\bar x\T=\bar y\T J_f(x)$. En consecuencia, el jacobiano completo requiere $m$ pasadas inversas, una por fila.
+\end{proposicion}
+
+\begin{proof}
+Se añade a la traza una operación final $v_{\ell+1}=\sum_{r}\bar y_r\,y_r$, lineal en las salidas, y se aplica el \cref{teo:inverso} a la función escalar $g(x)=\bar y\T f(x)$: los adjuntos de las entradas son $\nabla g(x)\T=\bar y\T J_f(x)$. Procesar la operación añadida asigna a cada salida $y_r$ el adjunto $\bar y_r$, que es la inicialización del enunciado. Con $\bar y=e_r$ se obtiene la fila $r$ de $J_f(x)$.
+\end{proof}
+
+\section{El algoritmo}
+
+\begin{figure}[h]
+\centering
+\fbox{\begin{minipage}{0.86\textwidth}\small
+\textbf{Modo inverso} (entrada: traza de $f\colon\R^{n}\to\R$, punto $x$).
+\begin{enumerate}[label=\arabic*.,leftmargin=1.6em]
+  \item \emph{Pasada hacia delante.} Para $i=1,\dots,\ell$: calcular $v_i=\varphi_i((v_j)_{j\pre i})$ y guardar los valores que necesitarán las derivadas locales.
+  \item \emph{Inicialización.} $\bar v_\ell\gets 1$; $\bar v_j\gets 0$ para $j<\ell$.
+  \item \emph{Pasada hacia atrás.} Para $i=\ell,\ell-1,\dots,1$ y para cada $j\pre i$: $\bar v_j\gets\bar v_j+\bar v_i\,\partial\varphi_i/\partial v_j$.
+  \item \emph{Salida.} $\nabla f(x)=(\bar v_{1-n},\dots,\bar v_0)\T$.
+\end{enumerate}
+\end{minipage}}
+\caption{El modo inverso de la diferenciación automática~\cite[§3.2]{baydin}. En redes neuronales se llama \emph{retropropagación}~\cite[§6.5.6]{gbc}.}
+\label{fig:algoritmo}
+\end{figure}
+
+\begin{ejemplo}[Traza adjunta del ejemplo de Baydin \emph{et al.}]\label{ej:adjunta}
+Para el \cref{ej:baydin}, la pasada hacia atrás es~\cite[tabla~3]{baydin}:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Operación procesada & Actualizaciones & Valores \\
+\midrule
+semilla & $\bar v_5=1$ & \\
+$v_5=v_4-v_3$ & $\bar v_4\mathrel{+}=\bar v_5$; $\bar v_3\mathrel{+}=-\bar v_5$ & $\bar v_4=1$; $\bar v_3=-1$ \\
+$v_4=v_1+v_2$ & $\bar v_1\mathrel{+}=\bar v_4$; $\bar v_2\mathrel{+}=\bar v_4$ & $\bar v_1=1$; $\bar v_2=1$ \\
+$v_3=\sen v_0$ & $\bar v_0\mathrel{+}=\bar v_3\cos v_0$ & $\bar v_0=-0{,}2837$ \\
+$v_2=v_{-1}v_0$ & $\bar v_{-1}\mathrel{+}=\bar v_2v_0$; $\bar v_0\mathrel{+}=\bar v_2v_{-1}$ & $\bar v_{-1}=5$; $\bar v_0=1{,}7163$ \\
+$v_1=\ln v_{-1}$ & $\bar v_{-1}\mathrel{+}=\bar v_1/v_{-1}$ & $\bar v_{-1}=5{,}5$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Una sola pasada da las dos derivadas, $\partial f/\partial x_1=5{,}5$ y $\partial f/\partial x_2=1{,}7163$, que en el \cref{ej:tangente} requerían dos pasadas en modo directo. Las variables $v_{-1}$ y $v_0$ alimentan a dos operaciones cada una, y sus adjuntos acumulan dos contribuciones.
+\end{ejemplo}
+
+\begin{ejemplo}[Una expresión con cuatro entradas]\label{ej:abcf}
+Sea $L=(a\cdot b+c)\cdot f$ con $a=3$, $b=-2$, $c=8$, $f=-1$, y variables intermedias $e=ab$ y $d=e+c$. Hacia delante: $e=-6$, $d=2$, $L=-2$. Hacia atrás, con $\bar L=1$:
+\begin{enumerate}[label=\arabic*.]
+  \item nodo $L=d\cdot f$: $\bar d=\bar L\cdot f=-1$ y $\bar f=\bar L\cdot d=2$;
+  \item nodo $d=e+c$: la suma copia el adjunto, $\bar e=\bar c=\bar d=-1$;
+  \item nodo $e=a\cdot b$: el producto intercambia los factores, $\bar a=\bar e\cdot b=2$ y $\bar b=\bar e\cdot a=-3$.
+\end{enumerate}
+En efecto, $L=-ab-8$ y $\partial L/\partial a=-b=2$. La \cref{fig:abcf} muestra el grafo con los dos recorridos.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},
+  n/.style={draw,rounded corners=2pt,minimum height=7mm,minimum width=13mm,inner sep=2pt,font=\small,align=center},
+  g/.style={font=\scriptsize,text=enlace}]
+  \node[n] (a) at (0,1.6) {$a=3$};
+  \node[n] (b) at (0,0.4) {$b=-2$};
+  \node[n] (c) at (2.6,-0.8) {$c=8$};
+  \node[n] (e) at (2.6,1.0) {$e=-6$};
+  \node[n] (d) at (5.2,0.3) {$d=2$};
+  \node[n] (f) at (5.2,-1.3) {$f=-1$};
+  \node[n] (L) at (7.8,-0.4) {$L=-2$};
+  \draw[->] (a)--(e); \draw[->] (b)--(e); \draw[->] (e)--(d); \draw[->] (c)--(d); \draw[->] (d)--(L); \draw[->] (f)--(L);
+  \node[g,above=1pt of a] {$\bar a=2$};
+  \node[g,below=1pt of b] {$\bar b=-3$};
+  \node[g,below=1pt of c] {$\bar c=-1$};
+  \node[g,above=1pt of e] {$\bar e=-1$};
+  \node[g,above=1pt of d] {$\bar d=-1$};
+  \node[g,below=1pt of f] {$\bar f=2$};
+  \node[g,above=1pt of L] {$\bar L=1$};
+\end{tikzpicture}
+\caption{Grafo del \cref{ej:abcf}. Dentro de cada nodo, el valor de la pasada hacia delante; junto a él, en color, su adjunto, obtenido en la pasada hacia atrás.}
+\label{fig:abcf}
+\end{figure}
+
+\begin{ejemplo}[Una neurona]\label{ej:neurona}
+Sea $o=\tanh(n)$ con $n=w_1x_1+w_2x_2+b$, $x=(1,-2)$, $w=(0{,}5;\,0{,}25)$ y $b=0{,}5$. Hacia delante, $n=0{,}5-0{,}5+0{,}5=0{,}5$ y $o=\tanh 0{,}5\approx 0{,}4621$. Hacia atrás, con $\bar o=1$: el nodo $\tanh$ da $\bar n=\bar o\,(1-o^{2})=0{,}7864$; la suma lo copia en $\bar b=0{,}7864$ y en cada producto; los productos dan $\bar w_1=\bar n\,x_1=0{,}7864$, $\bar w_2=\bar n\,x_2=-1{,}5729$, $\bar x_1=\bar n\,w_1=0{,}3932$ y $\bar x_2=\bar n\,w_2=0{,}1966$.
+\end{ejemplo}
+
+Las derivadas locales usan valores de la pasada hacia delante: $o$ en el nodo $\tanh$, los factores en cada producto. Por eso el modo inverso debe \emph{guardar} esos valores hasta la pasada hacia atrás; en un LLM, las activaciones guardadas ocupan a menudo más memoria que los pesos (\cref{tema:5}).
+
+\section{El orden topológico}
+
+\begin{definicion}[Orden topológico]\label{def:topologico}
+Un \emph{orden topológico} de un grafo dirigido $G=(V,E)$ es una enumeración $u_1,\dots,u_{\abs{V}}$ de sus nodos tal que toda arista $u_r\to u_s$ cumple $r<s$.
+\end{definicion}
+
+El \cref{teo:inverso} se ha enunciado con el orden de la traza, pero la demostración solo usa que cada operación se procesa después de todas las que usan su resultado. Por tanto, el modo inverso es correcto si las operaciones se procesan en el \emph{inverso} de cualquier orden topológico del grafo.
+
+\begin{proposicion}[Construcción por búsqueda en profundidad]\label{prop:dfs}
+Sea $G$ un grafo dirigido acíclico y sea el procedimiento \textsc{visitar}$(v)$: si $v$ no está marcado, marcarlo, llamar a \textsc{visitar}$(u)$ para cada predecesor $u$ de $v$ (cada $u$ con $u\to v$) y, después, añadir $v$ al final de una lista. Si se llama a \textsc{visitar} desde la salida, la lista resultante es un orden topológico del subgrafo de los nodos de los que depende la salida, y se construye en tiempo $O(\abs{V}+\abs{E})$.
+\end{proposicion}
+
+\begin{proof}
+Sea $u\to v$ una arista con $v$ en la lista. Cuando se añade $v$, ya se ha ejecutado \textsc{visitar}$(u)$. Si esa llamada marcó $u$ por primera vez, terminó añadiendo $u$ antes de volver. Si $u$ ya estaba marcado, o bien ya estaba en la lista, o bien su llamada seguía en curso; en este último caso $v$ se habría alcanzado desde $u$ siguiendo predecesores, lo que daría un camino $v\to\dots\to u$ que, junto con $u\to v$, formaría un ciclo, imposible en un grafo acíclico. En ambos casos $u$ precede a $v$. Cada nodo se marca una vez y cada arista se examina una vez, de donde el coste.
+\end{proof}
+
+\begin{ejemplo}[Qué ocurre si el orden es incorrecto]\label{ej:orden}
+Sea $x=3$, $u=2x$, $y=u^{2}$, $z=y+u$. Entonces $z=4x^{2}+2x$ y $dz/dx=8x+2=26$.
+\begin{itemize}[leftmargin=1.4em]
+  \item Orden inverso correcto ($z,y,u$): $\bar z=1$; desde $z$, $\bar y=1$ y $\bar u=1$; desde $y$, $\bar u\mathrel{+}=2u\,\bar y=12$, luego $\bar u=13$; desde $u$, $\bar x=2\cdot 13=26$.
+  \item Orden incorrecto ($z,u,y$): $u$ se procesa cuando $\bar u=1$ y da $\bar x=2$. Después, $y$ suma~12 a $\bar u$, pero $u$ ya no vuelve a propagar. Resultado: $\bar x=2$, erróneo.
+\end{itemize}
+\end{ejemplo}
+
+\begin{observacion}[La cinta]\label{obs:cinta}
+Muchos sistemas no construyen el orden con la \cref{prop:dfs}, sino que registran las operaciones en una lista, la \emph{cinta} (\emph{tape} o lista de Wengert), en el orden en que se ejecutan. Ese orden es topológico, porque ninguna operación se ejecuta antes que sus argumentos, y basta recorrer la cinta al revés. Es el diseño de la tarea complementaria de autograd del curso 11-785 de Carnegie Mellon~\cite[§2.3]{cmu11785}, que sustituye el grafo por una lista lineal de operaciones.
+\end{observacion}
+
+\begin{observacion}[Conexión con los LLM]
+En un Transformer, cada bloque suma su salida a la entrada mediante una conexión residual, $h_{k+1}=h_k+F_k(h_k)$. La variable $h_k$ alimenta así a dos operaciones, $F_k$ y la suma, como $u$ en el \cref{ej:orden}, y su adjunto es la suma de dos contribuciones: $\bar h_k=\bar h_{k+1}+\bar h_{k+1}\,J_{F_k}(h_k)$. El primer sumando transmite el gradiente sin atenuarse a través de toda la pila de bloques (módulos~11 y~14).
+\end{observacion}
+
+\begin{lecturas}
+\item Baydin \emph{et al.}~\cite{baydin}, §3.2 «Reverse Mode», con la tabla~3.
+\item Griewank y Walther~\cite{gw}, cap.~3 «Fundamentals of Forward and Reverse».
+\item Goodfellow, Bengio y Courville~\cite{gbc}, §6.5.2 «Chain Rule of Calculus», §6.5.3 «Recursively Applying the Chain Rule to Obtain Backprop» y §6.5.6 «General Back-Propagation».
+\item Stanford CS231n~\cite{cs231n}, «Backpropagation, Intuitions», apartados «Intuitive understanding of backpropagation» y «Patterns in backward flow».
+\item Zhang \emph{et al.}~\cite{d2l}, §5.3 «Forward Propagation, Backward Propagation, and Computational Graphs».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-acumular}
+¿Por qué la actualización de la \cref{def:adjunto} usa $\mathrel{+}=$ y no una asignación? Dé un ejemplo de una sola operación en el que la asignación produzca un resultado erróneo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-producto}
+Dibuje el grafo de $f(x,y)=(x+y)\cdot(x\cdot y)$ y retropropague a mano en $(2,3)$. Dé $f$, $\partial f/\partial x$ y $\partial f/\partial y$, y compruébelos derivando la expresión.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-neurona}
+Para la neurona $o=\tanh(w_1x_1+w_2x_2+b)$ con $x=(2,0)$, $w=(-1,3)$ y $b=1$, calcule $o$ y las derivadas de $o$ respecto a $w_1$, $w_2$, $b$, $x_1$ y $x_2$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-topologico}
+Para $f=a\cdot b+a$ con $a=2$ y $b=5$, escriba todos los órdenes topológicos del grafo, retropropague y dé $\partial f/\partial a$ y $\partial f/\partial b$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-d2l}
+Sobre el grafo construido en el \cref{eje:1-d2l}, para $f(x)=\ln(x^{2})\cdot\sen x+x^{-1}$: (a) coloque en cada arista la derivada local correspondiente; (b) calcule $f'(2)$ recorriendo el grafo desde $x$ hasta $f$ (modo directo) y (c) desde $f$ hasta $x$ (modo inverso). Compruebe que coinciden con la derivada simbólica.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.5 «Automatic Differentiation», ejercicios~6 y~7.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-sesgo}
+Se añade un sesgo $b_1$, que no se regulariza, a la capa oculta de un perceptrón con decaimiento de pesos. Con vectores fila: $z=xW_1+b_1$, $h=\max(0,z)$, $o=hW_2$, $L=\tfrac12(o-y)^{2}$, $s=\tfrac{\lambda}{2}\bigl(\norm{W_1}_F^{2}+\norm{W_2}_F^{2}\bigr)$ y $J=L+s$. Sean $x=(1,2)$, $W_1=\begin{psmallmatrix}1&0\\-1&0{,}5\end{psmallmatrix}$, $b_1=(0{,}5;\,0)$, $W_2=\begin{psmallmatrix}2\\1\end{psmallmatrix}$, $y=3$ y $\lambda=0{,}1$. (a) Escriba las ecuaciones de la pasada hacia atrás del grafo. (b) Calcule $J$, $\nabla_{\!W_2}J$, $\nabla_{\!W_1}J$ y $\nabla_{\!b_1}J$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §5.3, ejercicio~2 (se añaden datos numéricos).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-arbol}
+Se modifica el algoritmo de la \cref{fig:algoritmo} sustituyendo la acumulación por la asignación $\bar v_j\gets\bar v_i\,\partial\varphi_i/\partial v_j$. Demuestre que el resultado sigue siendo correcto si cada variable es argumento de a lo sumo una operación (el grafo es entonces un árbol cuya raíz es la salida), y que puede ser incorrecto en caso contrario, con un ejemplo.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Coste del gradiente y productos vector-jacobiano}
+\label{tema:4}
+% =====================================================================
+
+Este tema responde a la pregunta que justifica el módulo: por qué el modo inverso calcula el gradiente de una función de millones de variables con un coste comparable al de evaluarla. Se demuestra el principio del gradiente barato, se compara el coste de los dos modos mediante la asociatividad del producto de jacobianos, se formulan las reglas locales de los sistemas reales como productos vector-jacobiano y se deduce de ellas la regla $C\approx 6ND$ del cómputo de entrenamiento. Se siguen el capítulo~4 de~\cite{gw}, la §3.2 de~\cite{baydin}, la lección~6 de~\cite{grosse}, el apartado «Gradients for vectorized operations» de~\cite{cs231n} y el artículo de Kaplan \emph{et al.}~\cite{kaplan}.
+
+\section{El principio del gradiente barato}
+
+\begin{teorema}[Gradiente barato]\label{teo:barato}
+Sea $f\colon\R^{n}\to\R$ dada por una traza con operaciones del conjunto $\Phi$ de la \cref{def:elementales}, cada una con a lo sumo $k$ argumentos. Existe una constante $\omega$, que depende solo de $\Phi$ y no de $n$ ni de la traza, tal que el modo inverso calcula $\nabla f(x)$ con a lo sumo $\omega\cdot\ops(f)$ operaciones.
+\end{teorema}
+
+\begin{proof}
+Sea $\ell$ el número de operaciones de la traza y $E$ el de aristas del grafo. Cada operación cuesta al menos una unidad, luego $\ops(f)\ge\ell$, y tiene a lo sumo $k$ argumentos, luego $E\le k\ell$.
+\begin{enumerate}[label=\arabic*.]
+  \item La pasada hacia delante cuesta $\ops(f)$.
+  \item En la pasada hacia atrás, la operación $i$, con $r_i\le k$ argumentos, evalúa $r_i$ derivadas locales sobre valores guardados, cada una de coste a lo sumo $c_\Phi$ (\cref{def:elementales}), y ejecuta $r_i$ productos y $r_i$ sumas. Su coste es a lo sumo $(c_\Phi+2)\,r_i$.
+  \item Sumando sobre las operaciones, la pasada hacia atrás cuesta a lo sumo $(c_\Phi+2)\sum_ir_i=(c_\Phi+2)E\le(c_\Phi+2)k\ell\le(c_\Phi+2)k\,\ops(f)$.
+\end{enumerate}
+El total es a lo sumo $\bigl(1+(c_\Phi+2)k\bigr)\ops(f)$, y basta tomar $\omega=1+(c_\Phi+2)k$. La corrección del resultado es el \cref{teo:inverso}.
+\end{proof}
+
+La constante de la demostración es pesimista. Un análisis más fino de cada operación da cotas pequeñas: Baydin \emph{et al.}, siguiendo a Griewank y Walther, indican que el cociente entre el coste del modo inverso y el de la función está por debajo de~6 y suele estar entre~2 y~3~\cite[§3.2]{baydin}, \cite[cap.~4]{gw}. Para funciones racionales, un resultado de este tipo fue demostrado por Baur y Strassen~\cite{baurstrassen}. Lo esencial es que la cota no depende de $n$: diez derivadas y $10^{11}$ derivadas cuestan, en relación con $f$, lo mismo.
+
+\begin{corolario}[Elección del modo]\label{cor:eleccion}
+Para $f\colon\R^{n}\to\R^{m}$, el jacobiano completo cuesta del orden de $n\cdot\ops(f)$ en modo directo y de $m\cdot\ops(f)$ en modo inverso. Conviene el directo si $n\ll m$ y el inverso si $m\ll n$. Entrenar un LLM corresponde a $n\approx 10^{11}$ y $m=1$.
+\end{corolario}
+
+\begin{proof}
+Es la combinación del \cref{cor:coste-directo} y la \cref{prop:coste-dual} con la \cref{prop:vjp} y el \cref{teo:barato}, aplicado este a cada una de las $m$ funciones escalares $\bar y\T f$ con $\bar y=e_r$.
+\end{proof}
+
+El precio del modo inverso es la memoria: la pasada hacia atrás necesita los valores de la pasada hacia delante. En el modo directo, en cambio, cada tangente se descarta en cuanto deja de usarse. El \cref{tema:5} estudia este compromiso.
+
+\section{Asociatividad del producto de jacobianos}
+
+Sea $f=f_L\circ\dots\circ f_1$ una composición de funciones diferenciables. Por la regla de la cadena (módulo~4), $J_f=J_{f_L}\cdots J_{f_1}$, con cada jacobiano evaluado en el punto correspondiente. El producto de matrices es asociativo y el resultado no depende del orden en que se agrupen los factores, pero el coste sí.
+
+\begin{proposicion}[Coste de las dos agrupaciones]\label{prop:asociatividad}
+Sea $f\colon\R^{m}\to\R$ con $J_f=J_L J_{L-1}\cdots J_1$, donde $J_L\in\R^{1\times m}$ y $J_1,\dots,J_{L-1}\in\R^{m\times m}$, con $L\ge 2$, y cuéntese como coste de un producto $(p\times q)(q\times r)$ el número $pqr$ de multiplicaciones escalares. Entonces:
+\begin{enumerate}
+  \item agrupando de derecha a izquierda, $J_L\bigl(J_{L-1}(\cdots(J_2J_1))\bigr)$, el coste es $(L-2)m^{3}+m^{2}$;
+  \item agrupando de izquierda a derecha, $\bigl(((J_LJ_{L-1})J_{L-2})\cdots\bigr)J_1$, el coste es $(L-1)m^{2}$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Los $L-2$ productos $J_2J_1$, $J_3(J_2J_1)$, \dots, $J_{L-1}(\cdots)$ son de matrices $m\times m$ y cuestan $m^{3}$ cada uno; el último, $J_L$ por una matriz $m\times m$, cuesta $1\cdot m\cdot m$. (ii) Cada producto parcial es un vector fila $1\times m$, y cada uno de los $L-1$ productos por una matriz $m\times m$ cuesta $m^{2}$.
+\end{proof}
+
+La agrupación (i) es la del modo directo con todas las semillas a la vez: propaga la matriz $\partial v/\partial x$, de tamaño $m\times m$. La agrupación (ii) es la del modo inverso: lo que viaja hacia atrás es siempre un vector fila, el adjunto. Con $L=3$ y $m=100$, el cociente de costes es $(100^{3}+100^{2})/(2\cdot 100^{2})=50{,}5$, y en general crece linealmente con $m$. Para composiciones que no son cadenas, encontrar la agrupación óptima es un problema difícil, estudiado en~\cite[cap.~9 y~10]{gw}.
+
+\section{Productos vector-jacobiano}
+
+Los sistemas reales no trabajan con escalares, sino con operaciones sobre tensores, y nunca construyen sus jacobianos~\cite{grosse}.
+
+\begin{definicion}[Producto vector-jacobiano]\label{def:vjp}
+Sea $g\colon\R^{p}\to\R^{q}$ una operación con entrada $u$ y salida $w=g(u)$, y sea $\bar w\in\R^{1\times q}$ el adjunto de la salida. El \emph{producto vector-jacobiano} (VJP) de $g$ en $u$ es la aplicación lineal $\bar w\mapsto\bar u=\bar w\,J_g(u)\in\R^{1\times p}$.
+\end{definicion}
+
+Por el \cref{teo:inverso}, aplicado por bloques, el modo inverso sobre un grafo de operaciones tensoriales solo necesita, para cada tipo de operación, una función que calcule su VJP. Si la entrada o la salida son matrices, se aplanan para la definición y el resultado se devuelve con la forma original.
+
+\begin{ejemplo}[Operaciones componente a componente]\label{ej:vjp-componente}
+Si $w=\phi(u)$ se aplica componente a componente, $J_g(u)=\operatorname{diag}(\phi'(u))$ y el VJP es $\bar u=\bar w\odot\phi'(u)$, con coste $O(p)$ en lugar de los $O(p^{2})$ que exigiría multiplicar por la matriz diagonal~\cite{grosse}. Para $\phi=\exp$, $\bar u=\bar w\odot w$: basta haber guardado la salida.
+\end{ejemplo}
+
+\begin{proposicion}[VJP de la capa lineal]\label{prop:vjp-lineal}
+Sea $Y=XW$ con $X\in\R^{B\times n}$, $W\in\R^{n\times m}$, y sea $\bar Y\in\R^{B\times m}$ el adjunto de la salida. Entonces
+\[
+\bar X=\bar Y\,W\T\in\R^{B\times n},\qquad \bar W=X\T\,\bar Y\in\R^{n\times m}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Se tiene $Y_{rs}=\sum_iX_{ri}W_{is}$, luego $\partial Y_{rs}/\partial X_{ri}=W_{is}$ y $\partial Y_{rs}/\partial W_{is}=X_{ri}$. Por la regla de la cadena, $\bar X_{ri}=\sum_s\bar Y_{rs}W_{is}=(\bar YW\T)_{ri}$ y $\bar W_{is}=\sum_r\bar Y_{rs}X_{ri}=(X\T\bar Y)_{is}$. Es el resultado obtenido en el módulo~4 (tema~3) y en el módulo~9 (tema~5), ahora como regla local de un sistema de AD.
+\end{proof}
+
+\begin{ejemplo}\label{ej:vjp-lineal}
+Sean $X=(1,2)$, $W=\begin{psmallmatrix}1&0\\-1&1\end{psmallmatrix}$ y $\bar Y=(1,-1)$. Entonces $Y=(-1,2)$, $\bar X=\bar YW\T=(1,-2)$ y $\bar W=X\T\bar Y=\begin{psmallmatrix}1&-1\\2&-2\end{psmallmatrix}$. Ambos gradientes tienen la forma de la variable a la que corresponden.
+\end{ejemplo}
+
+\begin{proposicion}[VJP de la softmax]\label{prop:vjp-softmax}
+Sea $p=\softmax(z)$ con $z\in\R^{1\times K}$ y sea $\bar p\in\R^{1\times K}$. Entonces
+\[
+\bar z=\bar p\,J_{\softmax}(z)=p\odot\bigl(\bar p-\langle\bar p,p\rangle\,\mathbf{1}\bigr),
+\]
+donde $\langle\bar p,p\rangle=\sum_k\bar p_kp_k$ y $\mathbf 1=(1,\dots,1)$. El cálculo cuesta $O(K)$ operaciones.
+\end{proposicion}
+
+\begin{proof}
+Como se demostró en el módulo~4 (tema~3), $\partial p_i/\partial z_j=p_i(\ind[i=j]-p_j)$. Luego $\bar z_j=\sum_i\bar p_i\,p_i(\ind[i=j]-p_j)=\bar p_jp_j-p_j\sum_i\bar p_ip_i=p_j\bigl(\bar p_j-\langle\bar p,p\rangle\bigr)$. El producto escalar cuesta $O(K)$ y se calcula una vez; cada componente cuesta después $O(1)$.
+\end{proof}
+
+\begin{corolario}[Softmax con entropía cruzada]\label{cor:ce}
+Si $L=-\ln p_y$, entonces $\bar z=p-e_y$.
+\end{corolario}
+
+\begin{proof}
+El VJP de $p\mapsto-\ln p_y$ con $\bar L=1$ es $\bar p=-e_y/p_y$, y $\langle\bar p,p\rangle=-1$. Por la \cref{prop:vjp-softmax}, $\bar z_j=p_j(\bar p_j+1)$, que vale $p_y(-1/p_y+1)=p_y-1$ si $j=y$ y $p_j$ si $j\ne y$.
+\end{proof}
+
+En la práctica, la softmax y la entropía cruzada se tratan como una sola operación con VJP $p-e_y$, que además es numéricamente estable: es lo que hace \texttt{F.cross\_entropy} en PyTorch, que recibe logits y no probabilidades (\cref{tema:6}).
+
+\section{El cómputo de un paso de entrenamiento}
+
+Se cuenta como FLOP una suma o un producto en coma flotante. Un producto de matrices $(p\times q)(q\times r)$ cuesta $pr(2q-1)\approx 2pqr$ FLOPs.
+
+\begin{proposicion}[Coste de una capa lineal]\label{prop:flops}
+Para $Y=XW$ con $X\in\R^{B\times n}$ y $W\in\R^{n\times m}$, la pasada hacia delante cuesta unos $2Bnm$ FLOPs y la pasada hacia atrás unos $4Bnm$: $2Bnm$ para $\bar X$ y $2Bnm$ para $\bar W$. El total es $6Bnm=6\cdot(\text{parámetros})\cdot(\text{filas del lote})$.
+\end{proposicion}
+
+\begin{proof}
+$XW$ es $(B\times n)(n\times m)$; $\bar YW\T$ es $(B\times m)(m\times n)$; $X\T\bar Y$ es $(n\times B)(B\times m)$. Los tres productos tienen el mismo número de multiplicaciones, $Bnm$, y cuestan unos $2Bnm$ FLOPs cada uno. La capa tiene $nm$ pesos.
+\end{proof}
+
+\begin{corolario}[Regla $6ND$]\label{cor:6nd}
+Si el cómputo de un modelo con $N$ parámetros está dominado por productos de matrices en los que cada parámetro actúa una vez por token, entrenarlo con $D$ tokens cuesta $C\approx 6ND$ FLOPs: $2ND$ en las pasadas hacia delante y $4ND$ en las pasadas hacia atrás.
+\end{corolario}
+
+\begin{proof}
+Se aplica la \cref{prop:flops} a cada capa, con $B$ igual al número de tokens procesados, y se suma sobre las capas y sobre los pasos.
+\end{proof}
+
+La aproximación ignora las operaciones que no son productos por pesos, como el producto de la atención entre consultas y claves, que crece con la longitud del contexto, y el hecho de que la primera capa no necesita $\bar X$. Kaplan \emph{et al.} la usan como base de las leyes de escalado~\cite{kaplan}, que se estudian en el módulo~16. Por ejemplo, un modelo de $N=10^{8}$ parámetros entrenado con $D=2\cdot 10^{9}$ tokens requiere $C\approx 6\cdot 10^{8}\cdot 2\cdot 10^{9}=1{,}2\cdot 10^{18}$ FLOPs; a $10^{14}$ FLOP/s efectivos, unos $1{,}2\cdot 10^{4}$~s, algo más de tres horas.
+
+\begin{lecturas}
+\item Griewank y Walther~\cite{gw}, cap.~4 «Memory Issues and Complexity Bounds».
+\item Baydin \emph{et al.}~\cite{baydin}, §3.2, discusión final sobre el coste de los dos modos.
+\item Grosse~\cite{grosse}, lección~6, apartado sobre productos vector-jacobiano.
+\item Stanford CS231n~\cite{cs231n}, «Backpropagation, Intuitions», apartado «Gradients for vectorized operations».
+\item Kaplan \emph{et al.}~\cite{kaplan}, recuento de parámetros y de cómputo de un Transformer y aproximación $C\approx 6ND$.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-modo}
+Se dispone de $f\colon\R^{1000}\to\R$ y de $g\colon\R\to\R^{1000}$. ¿Qué modo de AD usaría para el jacobiano de cada una y cuántas pasadas necesitaría? ¿Cuántas necesitaría con el otro modo?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:4-d2l}
+¿Cuándo conviene el modo directo y cuándo el inverso? Responda atendiendo a tres criterios: la cantidad de datos intermedios que hay que guardar, la posibilidad de ejecutar pasos en paralelo y el tamaño de las matrices y vectores que intervienen.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.5 «Automatic Differentiation», ejercicio~8.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-cadena}
+Sea $\nabla f\T=c\,B\,A$ con $c\in\R^{1\times 100}$ y $A,B\in\R^{100\times 100}$. Cuente las multiplicaciones escalares de las dos agrupaciones posibles y su cociente. Generalice a $c\in\R^{1\times m}$ y $A,B\in\R^{m\times m}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-lineal}
+Para la capa $Y=XW$ con $X=(2,-1)$, $W=\begin{psmallmatrix}1&2&0\\0&1&-1\end{psmallmatrix}$ y adjunto de la salida $\bar Y=(1,0,2)$, calcule $Y$, $\bar X$ y $\bar W$, y compruebe las formas. Verifique una componente de $\bar W$ derivando $L=\bar Y\,Y\T$ directamente.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-cs336}
+Un modelo de $N=10^{9}$ parámetros se entrena durante $10^{5}$ pasos con lotes de 512 secuencias de 1024 tokens en una GPU de $495\cdot 10^{12}$ FLOP/s de pico, con una utilización del 50\,\%. Suponiendo que la pasada hacia delante cuesta $2N$ FLOPs por token y la hacia atrás el doble que la de delante, estime los FLOPs totales y el tiempo de entrenamiento en horas y en días.
+\fuente{adaptado de Stanford CS336, primavera de 2026~\cite{cs336a1}, tarea~1, problema \texttt{adamw\_accounting}, apartado~(d).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-softmax}
+(a) Demuestre la \cref{prop:vjp-softmax} sin usar el jacobiano de la softmax, derivando $\bar z_j=\sum_i\bar p_i\,\partial p_i/\partial z_j$ a partir de $\ln p_i=z_i-\ln\sum_ke^{z_k}$. (b) Deduzca que, para $L=-\ln\softmax(z)_y$, $\partial L/\partial z_i=\softmax(z)_i-\ind[i=y]$, y que las componentes de $\nabla_{\!z}L$ suman~0. (c) Compruébelo con $z=(2,1,0)$ e $y=0$, y dé el valor de $L$.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Memoria, segundo orden y método adjunto}
+\label{tema:5}
+% =====================================================================
+
+El modo inverso compra su eficiencia en operaciones con memoria: necesita los valores de la pasada hacia delante. Este tema cuantifica esa memoria y estudia el recálculo por puntos de control, que la reduce a cambio de cómputo; obtiene productos hessiana-vector combinando los dos modos, y muestra que los adjuntos son multiplicadores de Lagrange, lo que conecta la retropropagación con el método adjunto del control óptimo y de la física. Se siguen los capítulos~4 y~12 de~\cite{gw}, el artículo de Chen \emph{et al.}~\cite{chen}, el de Pearlmutter~\cite{pearlmutter}, la §3.3 de~\cite{baydin} y la tarea~2 de CS336~\cite{cs336a2}.
+
+\section{La memoria del modo inverso}
+
+\begin{proposicion}[Memoria de una cadena de capas]\label{prop:memoria}
+Sea $f=f_L\circ\dots\circ f_1$ una red de $L$ capas cuyas activaciones intermedias $h_k=f_k(h_{k-1})$ ocupan $a$ unidades de memoria cada una, y supóngase que el VJP de la capa $k$ necesita $h_{k-1}$. Evaluar $f$ requiere memoria $O(a)$, mientras que el modo inverso de la \cref{fig:algoritmo} requiere guardar $h_0,\dots,h_{L-1}$, es decir, memoria $La$.
+\end{proposicion}
+
+\begin{proof}
+Para evaluar $f$ basta conservar la activación actual: $h_k$ se calcula a partir de $h_{k-1}$, que puede descartarse a continuación. En el modo inverso, el VJP de la capa $L$ se ejecuta en primer lugar y necesita $h_{L-1}$, y el de la capa~1, que se ejecuta en último lugar, necesita $h_0$. Como todas las pasadas hacia atrás ocurren después de la pasada hacia delante completa, las $L$ activaciones deben estar disponibles a la vez.
+\end{proof}
+
+En un LLM, $a$ es proporcional al número de tokens del lote por la dimensión del modelo, y la memoria de las activaciones supera a menudo la de los pesos (módulo~17).
+
+\section{Recálculo por puntos de control}
+
+La idea del recálculo (\emph{gradient checkpointing} o \emph{rematerialization}) consiste en guardar solo algunas activaciones, los \emph{puntos de control}, y recalcular las demás cuando la pasada hacia atrás las necesita~\cite{chen}, \cite[cap.~12]{gw}.
+
+\begin{proposicion}[Un nivel de puntos de control]\label{prop:checkpoint}
+En la situación de la \cref{prop:memoria}, divídanse las $L$ capas en $L/k$ tramos de $k$ capas consecutivas y guárdese durante la pasada hacia delante solo la entrada de cada tramo. En la pasada hacia atrás, al llegar a cada tramo se repite su pasada hacia delante desde el punto de control, guardando sus $k$ activaciones, y se retropropaga por él. Entonces:
+\begin{enumerate}
+  \item la memoria de activaciones es $M(k)=(L/k+k)\,a$, mínima para $k=\sqrt L$, con valor $2\sqrt L\,a$;
+  \item el cómputo adicional es una pasada hacia delante más.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) En todo momento se mantienen los $L/k$ puntos de control y, como mucho, las activaciones de un tramo, $k$ en total. La función $M(k)/a=L/k+k$, con $k>0$ real, tiene derivada $-L/k^{2}+1$, que se anula en $k=\sqrt L$, y segunda derivada $2L/k^{3}>0$: es un mínimo, de valor $\sqrt L+\sqrt L=2\sqrt L$. (ii) Cada capa se evalúa dos veces hacia delante, una en la pasada original y otra al recalcular su tramo.
+\end{proof}
+
+Con las cuentas de la \cref{prop:flops}, una pasada hacia delante extra cuesta $2N$ FLOPs por token, y el paso de entrenamiento pasa de $6N$ a $8N$: un 33\,\% más de cómputo a cambio de reducir la memoria de $L$ a $2\sqrt L$ activaciones. Aplicando la idea de forma recursiva, la memoria baja a $O(\log L)$ con un cómputo de $O(L\log L)$ evaluaciones de capa~\cite{chen}; Griewank y Walther estudian los esquemas óptimos de este tipo~\cite[cap.~12]{gw}.
+
+\begin{observacion}[Conexión con los LLM]
+El recálculo de activaciones por bloques del Transformer es una técnica habitual en el entrenamiento de modelos grandes: los puntos de control son las entradas de los bloques y lo que se recalcula son las activaciones internas de la atención y de la red prealimentada. La tarea~2 de CS336~\cite{cs336a2} pide analizar exactamente este compromiso (\cref{eje:5-cs336}).
+\end{observacion}
+
+\section{Productos hessiana-vector}
+
+Las derivadas de segundo orden se obtienen aplicando la AD a un programa que, a su vez, calcula derivadas.
+
+\begin{proposicion}[Directo sobre inverso]\label{prop:hvp}
+Sea $f\colon\R^{n}\to\R$ de clase $C^{2}$ dada por una traza cuyas operaciones elementales son de clase $C^{2}$, y sean $x,v\in\R^{n}$. Si se ejecuta el modo inverso (que calcula $\nabla f$) en aritmética dual, con entradas $x+v\varepsilon$, la parte dual del resultado es el producto hessiana-vector $H_f(x)\,v$. Su coste es a lo sumo una constante, independiente de $n$, por $\ops(f)$.
+\end{proposicion}
+
+\begin{proof}
+El modo inverso es un programa $g$, compuesto de operaciones elementales y de sus derivadas, que calcula $g(x)=\nabla f(x)$. Por el \cref{teo:duales}, aplicado a $g$, la parte dual de $g(x+v\varepsilon)$ es $J_g(x)\,v$, y $J_g=J_{\nabla f}=H_f$. Por el \cref{teo:barato}, $\ops(g)\le\omega\,\ops(f)$, y por la \cref{prop:coste-dual} la pasada dual cuesta a lo sumo $\omega_{\mathrm{dir}}\ops(g)\le\omega_{\mathrm{dir}}\,\omega\,\ops(f)$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:hvp}
+Sea $f(x_1,x_2)=x_1^{2}x_2$ en $(1,2)$ con $v=(1,0)\T$. El modo inverso calcula $\nabla f=(2x_1x_2,\,x_1^{2})$. Con $x_1=1+\varepsilon$ y $x_2=2$, se obtiene $\bigl(2(1+\varepsilon)\cdot 2,\,(1+\varepsilon)^{2}\bigr)=(4+4\varepsilon,\,1+2\varepsilon)$. Luego $\nabla f(1,2)=(4,1)$ y $Hv=(4,2)$, que es la primera columna de $H=\begin{psmallmatrix}2x_2&2x_1\\2x_1&0\end{psmallmatrix}=\begin{psmallmatrix}4&2\\2&0\end{psmallmatrix}$.
+\end{ejemplo}
+
+La técnica es la de Pearlmutter~\cite{pearlmutter} y permite usar información de curvatura sin formar el hessiano, que para $n=10^{9}$ tendría $10^{18}$ entradas. El hessiano completo requiere $n$ productos hessiana-vector, uno por columna, y cuesta del orden de $n\cdot\ops(f)$, frente al $O(\ops(f))$ del gradiente.
+
+\section{Los adjuntos como multiplicadores de Lagrange}
+
+\begin{teorema}[Método adjunto]\label{teo:lagrange}
+Sea una traza de $f\colon\R^{n}\to\R$ y considérese la lagrangiana
+\[
+\mathcal L(x,v_1,\dots,v_\ell,\lambda_1,\dots,\lambda_\ell)=v_\ell-\sum_{i=1}^{\ell}\lambda_i\Bigl(v_i-\varphi_i\bigl((v_j)_{j\pre i}\bigr)\Bigr),
+\]
+donde $v_{k-n}=x_k$. Si los $v_i$ toman los valores de la traza y los multiplicadores se eligen de modo que $\partial\mathcal L/\partial v_i=0$ para $i=1,\dots,\ell$, entonces $\lambda_i=\bar v_i$ para todo $i$ y $\nabla f(x)=\nabla_x\mathcal L$.
+\end{teorema}
+
+\begin{proof}
+Para $i\ge 1$, el término $v_i$ aparece con coeficiente $-\lambda_i$ en su propia restricción, con coeficiente~1 en $v_\ell$ si $i=\ell$, y dentro de $\varphi_r$ para cada $r$ con $i\pre r$. Por tanto,
+\[
+\frac{\partial\mathcal L}{\partial v_i}=\ind[i=\ell]-\lambda_i+\sum_{r\,:\,i\pre r}\lambda_r\,\frac{\partial\varphi_r}{\partial v_i}.
+\]
+Anularla da $\lambda_\ell=1$ (la operación $\ell$ no es argumento de ninguna otra) y $\lambda_i=\sum_{r:i\pre r}\lambda_r\,\partial\varphi_r/\partial v_i$ para $i<\ell$, que es la recurrencia de la \cref{def:adjunto}, resuelta en orden decreciente. Luego $\lambda_i=\bar v_i$.
+
+Sobre los valores de la traza todas las restricciones se cumplen, y $\mathcal L=v_\ell=f(x)$ para todo $x$ y toda elección de $\lambda$. Derivando respecto a $x_k$ esta identidad, con $v_i=v_i(x)$, se obtiene $\partial f/\partial x_k=\partial\mathcal L/\partial x_k+\sum_{i\ge 1}(\partial\mathcal L/\partial v_i)(\partial v_i/\partial x_k)=\partial\mathcal L/\partial x_k$, porque los multiplicadores anulan cada $\partial\mathcal L/\partial v_i$. Finalmente, $\partial\mathcal L/\partial x_k=\sum_{r:k-n\pre r}\lambda_r\partial\varphi_r/\partial v_{k-n}=\bar v_{k-n}$.
+\end{proof}
+
+\begin{ejemplo}[Una recurrencia en el tiempo]\label{ej:recurrencia}
+Sea $x_{t+1}=a\,x_t$ para $t=0,1,2$, con $x_0=1$ y $a=2$, y sea $L=\tfrac12x_3^{2}$. Hacia delante, $x=(1,2,4,8)$ y $L=32$. Los multiplicadores cumplen $\lambda_3=\partial L/\partial x_3=x_3=8$ y $\lambda_t=\lambda_{t+1}\,\partial x_{t+1}/\partial x_t=a\lambda_{t+1}$: $\lambda_2=16$, $\lambda_1=32$. El parámetro $a$ interviene en las tres transiciones, y $dL/da=\sum_t\lambda_{t+1}\,\partial x_{t+1}/\partial a=\lambda_3x_2+\lambda_2x_1+\lambda_1x_0=32+32+32=96$. En efecto, $L=\tfrac12a^{6}$ y $dL/da=3a^{5}=96$.
+\end{ejemplo}
+
+El ejemplo es la retropropagación a través del tiempo de una red recurrente: un mismo parámetro actúa en cada paso y su gradiente es la suma de las contribuciones de todos ellos. En control óptimo, en diseño aerodinámico y en la asimilación de datos meteorológicos (el método 4D-Var), el mismo esquema se aplica a ecuaciones diferenciales, integrando una ecuación adjunta hacia atrás en el tiempo para obtener el gradiente de un coste respecto a millones de condiciones iniciales o parámetros.
+
+\begin{observacion}[Historia]
+Linnainmaa describió el modo inverso en 1970 como herramienta para analizar errores de redondeo acumulados~\cite{linnainmaa}; Rumelhart, Hinton y Williams lo popularizaron en 1986 para entrenar redes neuronales~\cite{rumelhart}. Baydin \emph{et al.} reconstruyen esta historia y sus redescubrimientos~\cite[§3.3]{baydin}.
+\end{observacion}
+
+\begin{lecturas}
+\item Griewank y Walther~\cite{gw}, cap.~4 «Memory Issues and Complexity Bounds» y cap.~12 «Reversal Schedules and Checkpointing».
+\item Chen \emph{et al.}~\cite{chen}, «Training Deep Nets with Sublinear Memory Cost».
+\item Pearlmutter~\cite{pearlmutter}, «Fast exact multiplication by the Hessian».
+\item Baydin \emph{et al.}~\cite{baydin}, §3.3 «Origins of AD and Backpropagation».
+\item Stanford CS336~\cite{cs336a2}, tarea~2, sección~3.2.1 sobre recálculo de activaciones.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-d2l}
+¿Por qué la segunda derivada es mucho más costosa de calcular que la primera? Distinga entre un producto hessiana-vector y el hessiano completo de $f\colon\R^{n}\to\R$.
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.5 «Automatic Differentiation», ejercicio~1.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-hvp}
+Sea $f(x_1,x_2)=x_1^{2}x_2+x_2^{3}$. Calcule $\nabla f(1,2)$ y el producto $H_f(1,2)\,v$ con $v=(0,1)\T$ aplicando aritmética dual a la expresión del gradiente, como en el \cref{ej:hvp}. Compruébelo con el hessiano.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-adjunto}
+Sea la recurrencia $x_{t+1}=a\,x_t+b$ para $t=0,1,2$, con $x_0=1$, $a=2$ y $b=1$, y sea $L=x_3$. Calcule la trayectoria, los multiplicadores $\lambda_t$ del \cref{teo:lagrange} y las derivadas $dL/da$ y $dL/db$. Compruébelas con la expresión cerrada de $x_3$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-checkpoint}
+Demuestre la \cref{prop:checkpoint} y calcule la memoria óptima para $L=16$ y $L=100$, comparándola con la del modo inverso sin puntos de control. ¿Cuántos FLOPs por parámetro y por token cuesta entonces un paso de entrenamiento?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-cs336}
+Un Transformer tiene $N_b=16$ bloques idénticos. Se mide la memoria en «bloques»: guardar las activaciones internas de un bloque cuesta~1 y guardar un punto de control cuesta $c=1/4$. Con un nivel de recálculo en tramos de $k$ bloques, la memoria pico es $M(k)=(N_b/k)\,c+k$. (a) Calcule $M(k)$ para $k\in\{1,2,4,8,16\}$ y el óptimo continuo. (b) Si se permite anidar los puntos de control sin límite de cómputo, describa una estrategia que reduzca la memoria a $O(\log N_b)$ y estime su cómputo.
+\fuente{adaptado de Stanford CS336, primavera de 2026~\cite{cs336a2}, tarea~2, sección~3.2.1, problema \texttt{gradient\_checkpointing}, apartados~(a) y~(b).}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Implementación: un autograd escalar y PyTorch}
+\label{tema:6}
+% =====================================================================
+
+Todo lo anterior cabe en unas decenas de líneas de Python. Este tema describe un sistema de diferenciación automática en modo inverso que opera con escalares, como micrograd~\cite{karpathy}, demuestra que basta un puñado de reglas locales, explica por qué los sistemas reales trabajan con tensores y presenta las piezas de PyTorch que se usan en el resto del curso: tensores con \texttt{requires\_grad}, \texttt{backward}, \texttt{nn.Module} y los optimizadores. Se siguen el artículo de Paszke \emph{et al.}~\cite{paszke}, la nota «Autograd mechanics» de la documentación de PyTorch~\cite{pytorch}, la §2.5 de~\cite{d2l} y la tarea complementaria de autograd del curso 11-785 de Carnegie Mellon~\cite{cmu11785}.
+
+\section{Un autograd escalar}
+
+\begin{definicion}[Nodo de un autograd escalar]\label{def:valor}
+Un \emph{nodo} es un objeto con cuatro atributos: su valor \texttt{dato}; su adjunto \texttt{grad}, inicializado a~0; la lista \texttt{\_prev} de los nodos de los que se ha calculado, y una función \texttt{\_backward} que, leída la variable \texttt{grad} del propio nodo, suma a la \texttt{grad} de cada nodo de \texttt{\_prev} su contribución según la regla local. Cada operación entre nodos crea un nodo nuevo y le asigna su \texttt{\_backward}.
+\end{definicion}
+
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Operación & Hacia delante & Regla local (\texttt{\_backward}) \\
+\midrule
+$s=a+b$ & $a+b$ & $\bar a\mathrel{+}=\bar s$; $\bar b\mathrel{+}=\bar s$ \\
+$p=a\cdot b$ & $a\cdot b$ & $\bar a\mathrel{+}=b\,\bar p$; $\bar b\mathrel{+}=a\,\bar p$ \\
+$q=a^{k}$, $k$ fijo & $a^{k}$ & $\bar a\mathrel{+}=k\,a^{k-1}\,\bar q$ \\
+$t=\tanh a$ & $\tanh a$ & $\bar a\mathrel{+}=(1-t^{2})\,\bar t$ \\
+$e=\exp a$ & $e^{a}$ & $\bar a\mathrel{+}=e\,\bar e$ \\
+$l=\ln a$ & $\ln a$ & $\bar a\mathrel{+}=\bar l/a$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+El método \texttt{backward()} del nodo de salida construye un orden topológico con la \cref{prop:dfs}, pone su propio \texttt{grad} a~1 y llama a \texttt{\_backward} de cada nodo en orden inverso. Por el \cref{teo:inverso}, al terminar cada \texttt{grad} contiene la derivada de la salida respecto a ese nodo. El núcleo del sistema se muestra en la \cref{fig:valor}.
+
+\begin{figure}[htbp]
+\centering
+\begin{minipage}{0.8\textwidth}
+{\small
+\begin{verbatim}
+class Valor:
+    def __init__(self, dato, _prev=()):
+        self.dato, self.grad = dato, 0.0
+        self._prev, self._backward = _prev, lambda: None
+
+    def __mul__(self, otro):
+        sal = Valor(self.dato * otro.dato, (self, otro))
+        def _backward():
+            self.grad += otro.dato * sal.grad
+            otro.grad += self.dato * sal.grad
+        sal._backward = _backward
+        return sal
+
+    def backward(self):
+        orden, vistos = [], set()
+        def visitar(v):
+            if v not in vistos:
+                vistos.add(v)
+                for u in v._prev:
+                    visitar(u)
+                orden.append(v)
+        visitar(self)
+        self.grad = 1.0
+        for v in reversed(orden):
+            v._backward()
+\end{verbatim}
+}
+\end{minipage}
+\caption{Núcleo de un autograd escalar: el nodo, la regla local del producto y el método \texttt{backward}, que construye un orden topológico (\cref{prop:dfs}) y lo recorre al revés.}
+\label{fig:valor}
+\end{figure}
+
+Las demás operaciones de la tabla se escriben como \texttt{\_\_mul\_\_}. Si una misma variable aparece en los dos factores, como en \texttt{x * x}, las dos líneas de \texttt{\_backward} suman cada una su contribución a \texttt{x.grad}, y el resultado es $2x$, como exige la acumulación del \cref{tema:3}.
+
+\begin{proposicion}[Operaciones derivadas]\label{prop:derivadas}
+Si la resta, la negación y la división se definen como $-a=(-1)\cdot a$, $a-b=a+(-1)\cdot b$ y $a/b=a\cdot b^{-1}$, el sistema calcula correctamente sus derivadas sin reglas propias. Por ejemplo, para $f=a/b$ se obtiene $\bar a=1/b$ y $\bar b=-a/b^{2}$.
+\end{proposicion}
+
+\begin{proof}
+Cada operación derivada es una composición de operaciones de la tabla, y el \cref{teo:inverso} se aplica a cualquier traza. Para $f=a\cdot q$ con $q=b^{-1}$: el nodo producto da $\bar a=q=1/b$ y $\bar q=a$; el nodo potencia, con $k=-1$, da $\bar b=-b^{-2}\,\bar q=-a/b^{2}$.
+\end{proof}
+
+\begin{ejemplo}[Entropía cruzada con piezas elementales]\label{ej:ce-micro}
+Con logits $z=(2,1,0)$ y clase correcta~0, se construye $L=-\ln\bigl(e^{z_0}/(e^{z_0}+e^{z_1}+e^{z_2})\bigr)$ con nodos \texttt{exp}, suma, potencia $-1$, producto y \texttt{ln}. La llamada \texttt{L.backward()} da $L\approx 0{,}4076$ y $\nabla_{\!z}L\approx(-0{,}3348;\,0{,}2447;\,0{,}0900)$, que es $\softmax(z)-e_0$, el resultado del \cref{cor:ce} obtenido sin deducirlo.
+\end{ejemplo}
+
+Con estos nodos se construye una red: una neurona calcula $\tanh\bigl(\sum_iw_ix_i+b\bigr)$; una capa es una lista de neuronas, y un perceptrón multicapa, una lista de capas. Un perceptrón $3\to 4\to 4\to 1$ tiene $(3\cdot 4+4)+(4\cdot 4+4)+(4\cdot 1+1)=41$ parámetros. Cada paso de descenso de gradiente tiene tres fases: calcular la pérdida; poner a cero todos los \texttt{grad} y llamar a \texttt{backward}; y actualizar cada parámetro con $p\gets p-\eta\,\bar p$. Si se omite la puesta a cero, los adjuntos de pasos sucesivos se suman por la acumulación de la \cref{def:adjunto}.
+
+\begin{observacion}[Límite del enfoque escalar]
+Un producto de dos matrices $1000\times 1000$ ejecuta $10^{9}$ multiplicaciones y casi otras tantas sumas: un autograd escalar crearía del orden de $2\cdot 10^{9}$ nodos, cada uno con su objeto de Python. Los sistemas reales usan \emph{tensores}: un nodo por operación sobre arrays enteros, con un VJP vectorizado como los de la \cref{prop:vjp-lineal} y la \cref{prop:vjp-softmax}, que se ejecuta en una GPU. La tarea complementaria del curso 11-785~\cite[§1 y §3.2]{cmu11785} subraya este cambio de granularidad: el autograd trabaja a nivel de operación, no de capa, y cada operación necesita su función hacia atrás.
+\end{observacion}
+
+\section{PyTorch}
+
+PyTorch~\cite{paszke} es, en esencia, el sistema anterior con tensores, ejecución en GPU y cientos de operaciones con su VJP. Es la herramienta del curso a partir de este módulo. El código de referencia publicado para los modelos LLaMA de Meta usa PyTorch~\cite{llama}; el informe técnico de Gemini indica que se entrenó con JAX y Pathways~\cite{gemini}, y el código de los pesos abiertos de Grok-1, un modelo de 314\,000 millones de parámetros, también es de JAX~\cite{grok}. Anthropic no ha publicado los detalles de su pila de software para Claude.
+
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Pieza de PyTorch & Función & Equivalente escalar \\
+\midrule
+\texttt{Tensor} con \texttt{requires\_grad} & array que registra sus operaciones & \texttt{Valor} \\
+\texttt{grad\_fn}, \texttt{backward()} & nodo del grafo y modo inverso & \texttt{\_backward}, \texttt{backward()} \\
+\texttt{nn.Module} & agrupa parámetros, define \texttt{forward} & neurona, capa, MLP \\
+\texttt{torch.optim} (SGD, AdamW) & aplica la actualización & $p\gets p-\eta\,\bar p$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+La nota «Autograd mechanics» de la documentación~\cite{pytorch} precisa varios comportamientos que se siguen de la teoría de los temas anteriores.
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Grafo dinámico.} El grafo se reconstruye desde cero en cada iteración, al ejecutar el código; por eso se puede usar el control de flujo de Python, y las derivadas son las de la traza ejecutada (\cref{tema:1}).
+  \item \emph{Acumulación.} Durante \texttt{backward()}, solo los tensores \emph{hoja} (los creados por el usuario) con \texttt{requires\_grad=True} reciben gradiente, y este se \emph{suma} a su atributo \texttt{.grad}. Por eso cada paso empieza con \texttt{opt.zero\_grad()}.
+  \item \emph{Tensores guardados.} Cada operación guarda los tensores que necesita su VJP. Tras la pasada hacia atrás, esos tensores se liberan; una segunda llamada a \texttt{backward()} sobre el mismo grafo produce un error, salvo que la primera se haya hecho con \texttt{retain\_graph=True}.
+  \item \emph{Desactivar el registro.} Dentro de \texttt{with torch.no\_grad():} las operaciones no crean nodos ni guardan tensores; se usa para evaluar en validación y para actualizar los parámetros sin registrar la actualización.
+\end{enumerate}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>={Stealth[length=2mm]},node distance=6mm,
+  n/.style={draw,rounded corners=2pt,minimum height=7mm,inner sep=3pt,font=\small}]
+  \node[n] (a) {lote $X,Y$};
+  \node[n,right=of a] (b) {\texttt{logits = modelo(X)}};
+  \node[n,right=of b] (c) {\texttt{loss = F.cross\_entropy(logits, Y)}};
+  \node[n,below=9mm of c] (d) {\texttt{opt.zero\_grad()}};
+  \node[n,left=of d] (e) {\texttt{loss.backward()}};
+  \node[n,left=of e] (f) {\texttt{opt.step()}};
+  \draw[->] (a)--(b); \draw[->] (b)--(c); \draw[->] (c)--(d); \draw[->] (d)--(e); \draw[->] (e)--(f);
+  \draw[->] (f.west) -| ([xshift=-4mm]a.west) -- (a.west);
+\end{tikzpicture}
+\caption{Un paso de entrenamiento en PyTorch: pasada hacia delante, pérdida, puesta a cero de los gradientes, modo inverso y actualización.}
+\label{fig:bucle}
+\end{figure}
+
+\begin{ejemplo}[El modelo de caracteres del módulo~9]\label{ej:mlp-caracteres}
+El modelo de lenguaje neuronal de caracteres del módulo~9, con vocabulario $V=28$, contexto de $B=3$ caracteres, embeddings de dimensión $d=10$ y una capa oculta de $H=64$ unidades ReLU, se escribe así:
+
+\par\noindent\begin{minipage}{\linewidth}
+{\small
+\begin{verbatim}
+class MLPCaracteres(nn.Module):
+    def __init__(self, V, d=10, B=3, H=64):
+        super().__init__()
+        self.emb = nn.Embedding(V, d)       # matriz C
+        self.oculta = nn.Linear(B * d, H)   # W1, b1
+        self.salida = nn.Linear(H, V)       # W2, b2
+    def forward(self, X):
+        E = self.emb(X).view(X.shape[0], -1)
+        return self.salida(F.relu(self.oculta(E)))
+\end{verbatim}
+}
+\end{minipage}
+
+Tiene $28\cdot 10+(30\cdot 64+64)+(64\cdot 28+28)=280+1984+1820=4084$ parámetros, como en el módulo~9, y la función de retropropagación escrita allí a mano desaparece. En la práctica del módulo, con descenso de gradiente de lote completo ($\eta=0{,}5$, decaimiento $\lambda=0{,}005$) durante 1000 pasos, la perplejidad de validación baja a $10{,}31$, frente a $12{,}42$ del modelo de bigramas; difiere del $10{,}45$ del módulo~9 porque \texttt{nn.Linear} se inicializa de otra forma.
+\end{ejemplo}
+
+\begin{observacion}[Dos detalles de convención]
+\texttt{nn.Linear(n, m)} guarda su peso con forma $(m,n)$ y calcula $XW\T+b$, de modo que \texttt{weight} es la traspuesta de la $W$ del módulo~9. Y \texttt{F.cross\_entropy} recibe logits, no probabilidades: aplica internamente una log-softmax estable (módulo~11) y su VJP es el del \cref{cor:ce}.
+\end{observacion}
+
+\section{Acumulación de gradientes}
+
+La acumulación en \texttt{.grad}, que obliga a llamar a \texttt{zero\_grad()}, es también una herramienta.
+
+\begin{proposicion}[Microlotes]\label{prop:microlotes}
+Sea $\mathcal L(\theta)=\frac1{|S|}\sum_{s\in S}\ell_s(\theta)$ la pérdida media sobre un lote $S$, partido en $k$ microlotes disjuntos $S_1,\dots,S_k$ del mismo tamaño. Si, sin poner a cero los gradientes entre ellos, se llama a \texttt{backward()} sobre $\mathcal L_r/k$ para cada $r$, con $\mathcal L_r=\frac1{|S_r|}\sum_{s\in S_r}\ell_s$, el gradiente acumulado es $\nabla\mathcal L(\theta)$.
+\end{proposicion}
+
+\begin{proof}
+Tras las $k$ llamadas, el acumulador vale $\sum_r\nabla(\mathcal L_r/k)=\frac1k\sum_r\nabla\mathcal L_r$ por linealidad de la derivada. Como $|S_r|=|S|/k$, $\frac1k\mathcal L_r=\frac1{|S|}\sum_{s\in S_r}\ell_s$, y sumando sobre $r$ se obtiene $\mathcal L$.
+\end{proof}
+
+Así se entrenan los LLM con lotes de millones de tokens que no caben a la vez en la memoria de una GPU: se procesan microlotes sucesivos, se acumulan sus gradientes y se da un solo paso del optimizador. Si los microlotes tuvieran tamaños distintos, habría que ponderar cada $\mathcal L_r$ por $|S_r|/|S|$ en lugar de por $1/k$.
+
+\begin{lecturas}
+\item Karpathy~\cite{karpathy}, micrograd, ficheros \texttt{engine.py} y \texttt{nn.py}.
+\item Paszke \emph{et al.}~\cite{paszke}, «PyTorch: An Imperative Style, High-Performance Deep Learning Library».
+\item Documentación de PyTorch~\cite{pytorch}, nota «Autograd mechanics», apartados «How autograd encodes the history» y «Locally disabling gradient computation».
+\item Zhang \emph{et al.}~\cite{d2l}, §2.5 «Automatic Differentiation», §2.5.1--2.5.4.
+\item CMU 11-785~\cite{cmu11785}, tarea complementaria «An Introduction to Autograd», §2 y §3.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-zero}
+En PyTorch, ¿qué ocurre si se olvida \texttt{opt.zero\_grad()} en el bucle de entrenamiento? ¿Para qué sirve \texttt{torch.no\_grad()} al evaluar en validación?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:6-dos-veces}
+Con $x=3$ (\texttt{requires\_grad=True}) e $y=x\cdot x$, se ejecuta \texttt{y.backward()} dos veces seguidas. (a) ¿Qué ocurre? (b) ¿Y si en la primera llamada se pasa el argumento \texttt{retain\_graph=True}? ¿Cuánto vale \texttt{x.grad} al final y por qué?
+\fuente{adaptado de Zhang \emph{et al.}~\cite{d2l}, §2.5 «Automatic Differentiation», ejercicio~2.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-cmu}
+Escriba la función hacia atrás de cada una de las operaciones siguientes, que recibe el adjunto $g$ (o $G$) de la salida y devuelve los de las entradas: $a-b$, $a\cdot b$, $a/b$, $\ln a$, $\exp a$ y el producto de matrices $AB$. Aplíquelas, en una cinta recorrida al revés, a $f=\ln(a/b)-\exp(a\cdot b)$ en $(a,b)=(2,1)$ y compruebe el resultado derivando $f$.
+\fuente{adaptado de CMU 11-785, otoño de 2021~\cite{cmu11785}, tarea complementaria «An Introduction to Autograd», §3.2.1 (funciones \texttt{sub\_backward}, \texttt{mul\_backward}, \texttt{divide\_backward}, \texttt{log\_backward}, \texttt{exp\_backward} y \texttt{matmul\_backward}).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-parametros}
+Cuente los parámetros de \texttt{MLPCaracteres} con $V=28$, $d=8$, $B=3$ y $H=64$, separando embeddings, capa oculta y capa de salida.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-paso}
+Una neurona $o=\tanh(wx+b)$ con $x=1$, $w=0{,}5$ y $b=0$ se entrena con la pérdida $L=\tfrac12(o-y)^{2}$ e $y=1$. Calcule $L$, $\partial L/\partial w$ y $\partial L/\partial b$, aplique un paso de descenso con $\eta=0{,}5$ y compruebe que la pérdida disminuye.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-microlotes}
+(a) Demuestre la \cref{prop:microlotes} y explique qué ocurre si se llama a \texttt{backward()} sobre $\mathcal L_r$ en lugar de sobre $\mathcal L_r/k$. (b) Compruébela con el modelo $\ell_s(w)=\tfrac12(wx_s-y_s)^{2}$, los datos $x=(1,2,3,4)$, $y=(2,3,7,8)$, $w=1$ y dos microlotes de dos ejemplos.
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa; los cálculos con números duales y con enteros son exactos. Todos los resultados numéricos se han comprobado con Python y PyTorch en doble precisión.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-traza}
+\datos la traza del \cref{ej:baydin}: $v_{-1},v_0$ (entradas) y $v_1,\dots,v_5$.
+\planteamiento contar un nodo por variable y una arista por cada par $j\pre i$ (\cref{def:grafo}); un orden topológico solo exige que cada nodo vaya detrás de sus argumentos (\cref{def:topologico}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Nodos: $v_{-1},v_0,v_1,\dots,v_5$, en total $7$.
+  \item Aristas: $v_1$ tiene un argumento, $v_2$ dos, $v_3$ uno, $v_4$ dos y $v_5$ dos: $1+2+1+2+2=8$.
+  \item Sucesores: $v_{-1}$ alimenta a $v_1$ y $v_2$; $v_0$, a $v_2$ y $v_3$. Los demás nodos tienen un solo sucesor, salvo $v_5$, que no tiene ninguno.
+  \item Otro orden topológico: $v_0,v_{-1},v_3,v_2,v_1,v_4,v_5$. Cada nodo aparece tras sus argumentos: $v_3$ tras $v_0$; $v_2$ tras $v_{-1}$ y $v_0$; $v_1$ tras $v_{-1}$; $v_4$ tras $v_1$ y $v_2$; $v_5$ tras $v_4$ y $v_3$.
+\end{enumerate}
+\resultado \textbf{7 nodos y 8 aristas; $v_{-1}$ y $v_0$ tienen dos sucesores}; un orden alternativo es $v_0,v_{-1},v_3,v_2,v_1,v_4,v_5$.
+\comprobacion la suma de los grados de entrada de los nodos interiores coincide con el número de aristas: $8$.
+\end{solucion}
+
+\begin{solucion}{eje:1-precision}
+\datos diferencias centradas con $h=10^{-5}$ y con $h=10^{-15}$, AD; doble precisión, $\uep\approx 1{,}1\cdot 10^{-16}$.
+\planteamiento el error de la diferencia centrada es truncamiento, de orden $h^{2}$, más redondeo, de orden $\uep/h$ (módulo~4, tema~6); la AD solo arrastra el redondeo de cada operación.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $h=10^{-15}$: truncamiento del orden de $10^{-30}$, despreciable; redondeo del orden de $10^{-16}/10^{-15}=10^{-1}$. La resta $f(x+h)-f(x-h)$ pierde casi todas las cifras.
+  \item $h=10^{-5}$: truncamiento del orden de $(10^{-5})^{2}=10^{-10}$ y redondeo del orden de $10^{-16}/10^{-5}=10^{-11}$. Error total del orden de $10^{-10}$.
+  \item AD: aplica reglas exactas, como $(e^{x})'=e^{x}$, a los valores; el error relativo es del orden de $\uep$.
+  \item Con $f=e^{x}$ en $x=1$: el error medido es $5{,}9\cdot 10^{-11}$ con $h=10^{-5}$ y $0{,}17$ con $h=10^{-15}$.
+\end{enumerate}
+\resultado \textbf{de menor a mayor precisión: $h=10^{-15}$, $h=10^{-5}$, AD.}
+\comprobacion los errores medidos siguen el orden previsto: $0{,}17\gg 5{,}9\cdot 10^{-11}\gg 10^{-16}$.
+\end{solucion}
+
+\begin{solucion}{eje:1-d2l}
+\datos $f(x)=\ln(x^{2})\cdot\sen x+x^{-1}$, $x=2$.
+\planteamiento descomponer en operaciones de la \cref{def:elementales}: un nodo por cada potencia, logaritmo, seno, producto y suma.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Nodos: $a=x^{2}$, $b=\ln a$, $c=\sen x$, $d=b\cdot c$, $e=x^{-1}$, $f=d+e$. Aristas: $x\to a\to b\to d$, $x\to c\to d$, $x\to e$, $d\to f$, $e\to f$. La entrada $x$ tiene tres sucesores: $a$, $c$ y $e$.
+  \item (b) $a=2^{2}=4$.
+  \item $b=\ln 4=1{,}386$.
+  \item $c=\sen 2=0{,}9093$.
+  \item $d=1{,}386\cdot 0{,}9093=1{,}261$.
+  \item $e=1/2=0{,}5$.
+  \item $f=1{,}261+0{,}5=1{,}761$.
+\end{enumerate}
+\resultado \textbf{grafo con seis nodos interiores y $f(2)\approx 1{,}761$.}
+\comprobacion evaluando directamente, $\ln 4\cdot\sen 2+0{,}5=1{,}2606+0{,}5=1{,}7606$.
+\end{solucion}
+
+\begin{solucion}{eje:1-complejo}
+\datos $f(x)=e^{x}$; $h=10^{-1}$ y $h=10^{-8}$; $x=1$ para las cifras.
+\planteamiento usar $e^{x+ih}=e^{x}(\cos h+i\sen h)$ y comparar con la diferencia centrada $\bigl(e^{x+h}-e^{x-h}\bigr)/(2h)=e^{x}\sinh(h)/h$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\operatorname{Im}e^{x+ih}=e^{x}\sen h$, luego $\operatorname{Im}f(x+ih)/h=e^{x}\,\sen(h)/h$.
+  \item Error relativo respecto a $f'(x)=e^{x}$: $1-\sen(h)/h$. Con $\sen h=h-h^{3}/6+O(h^{5})$, es $h^{2}/6+O(h^{4})$.
+  \item $h=10^{-1}$: paso complejo $1-\sen(0{,}1)/0{,}1=1{,}666\cdot 10^{-3}$; centrada $\sinh(0{,}1)/0{,}1-1=1{,}668\cdot 10^{-3}$. Domina el truncamiento y ambos son casi iguales.
+  \item $h=10^{-8}$: paso complejo, $h^{2}/6\approx 1{,}7\cdot 10^{-17}$, por debajo de $\uep$; el valor calculado coincide con $e$ en todas las cifras. Centrada: truncamiento $1{,}7\cdot 10^{-17}$, pero el redondeo, de orden $\uep/h\approx 10^{-8}$, da un error medido de $2{,}4\cdot 10^{-9}$.
+\end{enumerate}
+\resultado \textbf{error relativo $1-\sen(h)/h\approx h^{2}/6$}: $1{,}67\cdot 10^{-3}$ con $h=0{,}1$ en ambos métodos; con $h=10^{-8}$, error nulo en doble precisión con paso complejo y $2{,}4\cdot 10^{-9}$ con la centrada.
+\comprobacion el paso complejo no resta cantidades próximas, de modo que su error decrece con $h$ sin límite (\cref{obs:paso-complejo}); la centrada alcanza su mínimo hacia $h\approx 10^{-5}$.
+\end{solucion}
+
+\begin{solucion}{eje:1-logistica}
+\datos $l_1=x=0{,}2$, $l_1'=1$; $l_{k+1}=4l_k(1-l_k)$, $l_{k+1}'=4l_k'(1-2l_k)$.
+\planteamiento propagar el par (valor, derivada) paso a paso, como en el modo directo.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $l_2=4\cdot 0{,}2\cdot 0{,}8=0{,}64$; $l_2'=4\cdot 1\cdot(1-0{,}4)=2{,}4$.
+  \item $l_3=4\cdot 0{,}64\cdot 0{,}36=0{,}9216$; $l_3'=4\cdot 2{,}4\cdot(1-1{,}28)=9{,}6\cdot(-0{,}28)=-2{,}688$.
+  \item Comprobación simbólica: $l_3=16(x-x^{2})(1-2x)^{2}$, y por la regla del producto
+  $l_3'=16\bigl[(1-2x)^{3}-4(x-x^{2})(1-2x)\bigr]=16(1-2x)(1-8x+8x^{2})$.
+  \item En $x=0{,}2$: $16\cdot 0{,}6\cdot(1-1{,}6+0{,}32)=9{,}6\cdot(-0{,}28)=-2{,}688$.
+\end{enumerate}
+\resultado \textbf{$l_2=0{,}64$, $l_2'=2{,}4$, $l_3=0{,}9216$, $l_3'=-2{,}688$.}
+\comprobacion $l_3=16\cdot 0{,}2\cdot 0{,}8\cdot 0{,}36=0{,}9216$ coincide con el valor de la recurrencia.
+\end{solucion}
+
+\begin{solucion}{eje:1-grado}
+\datos $l_1=x$, $l_{k+1}=4l_k-4l_k^{2}$.
+\planteamiento inducción sobre $k$ para el grado; recuento directo de operaciones para el par $(l_k,l_k')$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Base: $l_1=x$ tiene grado $1=2^{0}$ y coeficiente principal $c_1=1\ne 0$.
+  \item Hipótesis: $l_k$ tiene grado $2^{k-1}$ y coeficiente principal $c_k\ne 0$.
+  \item Entonces $l_k^{2}$ tiene grado $2^{k}$ y coeficiente principal $c_k^{2}$, mientras que $4l_k$ tiene grado $2^{k-1}<2^{k}$. El término de grado $2^{k}$ de $l_{k+1}$ es $-4c_k^{2}x^{2^{k}}$, con $c_{k+1}=-4c_k^{2}\ne 0$: grado exactamente $2^{k}$.
+  \item Un polinomio de grado $2^{k-1}$ tiene $2^{k-1}+1$ coeficientes, de modo que la forma desarrollada de $l_k$, y con ella la de $l_k'$, crece exponencialmente con $k$.
+  \item Par $(l_{k+1},l_{k+1}')$ a partir de $(l_k,l_k')$: $t=1-l_k$ (1 operación); $l_{k+1}=4\cdot l_k\cdot t$ (2); $s=t-l_k=1-2l_k$ (1); $l_{k+1}'=4\cdot l_k'\cdot s$ (2). Total: 6 operaciones por paso.
+  \item De $(l_1,l_1')=(x,1)$ a $(l_k,l_k')$ hay $k-1$ pasos: a lo sumo $6(k-1)$ operaciones.
+\end{enumerate}
+\resultado \textbf{$\deg l_k=2^{k-1}$, mientras que el modo directo calcula $(l_k,l_k')$ con $6(k-1)$ operaciones}: coste lineal frente a una expresión de tamaño exponencial.
+\comprobacion $l_3=16x(1-x)(1-2x)^{2}$ tiene grado $1+1+2=4=2^{2}$, con coeficiente principal $16\cdot(-1)\cdot 4=-64=-4c_2^{2}$, pues $c_2=-4$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-cuadrado}
+\datos $(3+\varepsilon)^{2}$; $f\colon\R^{1000}\to\R$.
+\planteamiento por el \cref{teo:duales}, la parte dual de $f(a+\varepsilon)$ es $f'(a)$; por el \cref{cor:coste-directo}, cada pasada da una derivada direccional.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $(3+\varepsilon)^{2}=9+6\varepsilon+\varepsilon^{2}=9+6\varepsilon$.
+  \item La parte dual, 6, es la derivada de $x^{2}$ en $x=3$.
+  \item El gradiente de $f\colon\R^{1000}\to\R$ tiene $1000$ componentes, y cada pasada en modo directo con semilla $e_k$ da una: $1000$ pasadas.
+  \item Una derivada direccional $\nabla f\T v$ es exactamente lo que da una pasada con semilla $v$: una pasada.
+\end{enumerate}
+\resultado \textbf{(a) parte dual 6, la derivada de $x^{2}$ en 3; (b) 1000 pasadas para el gradiente y una para una derivada direccional.}
+\comprobacion $\frac{d}{dx}x^{2}=2x=6$ en $x=3$.
+\end{solucion}
+
+\begin{solucion}{eje:2-cuartica}
+\datos $f(x)=x^{4}-3x$, $x=1$.
+\planteamiento evaluar $f(1+\varepsilon)$ con $\varepsilon^{2}=0$ y leer la parte real y la dual.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $x^{2}=(1+\varepsilon)(1+\varepsilon)=1+2\varepsilon$.
+  \item $x^{4}=(1+2\varepsilon)(1+2\varepsilon)=1+4\varepsilon$.
+  \item $3x=3+3\varepsilon$.
+  \item $f=(1+4\varepsilon)-(3+3\varepsilon)=-2+\varepsilon$.
+\end{enumerate}
+\resultado \textbf{$f(1)=-2$ y $f'(1)=1$.}
+\comprobacion $f'(x)=4x^{3}-3$ vale $4-3=1$ en $x=1$.
+\end{solucion}
+
+\begin{solucion}{eje:2-cociente}
+\datos $g(x)=x/(1+x^{2})$, $x=2$; $1/(a+b\varepsilon)=1/a-(b/a^{2})\varepsilon$.
+\planteamiento calcular el denominador como dual, invertirlo con la \cref{prop:inverso} y multiplicar por $x$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $x^{2}=(2+\varepsilon)^{2}=4+4\varepsilon$, luego $1+x^{2}=5+4\varepsilon$.
+  \item Inverso con $a=5$, $b=4$: $\tfrac15-\tfrac{4}{25}\varepsilon=0{,}2-0{,}16\varepsilon$.
+  \item $(2+\varepsilon)(0{,}2-0{,}16\varepsilon)=0{,}4+\bigl(2\cdot(-0{,}16)+0{,}2\bigr)\varepsilon=0{,}4-0{,}12\varepsilon$.
+\end{enumerate}
+\resultado \textbf{$g(2)=2/5=0{,}4$ y $g'(2)=-3/25=-0{,}12$.}
+\comprobacion $g'(x)=(1-x^{2})/(1+x^{2})^{2}$ vale $(1-4)/25=-3/25$ en $x=2$.
+\end{solucion}
+
+\begin{solucion}{eje:2-tanh}
+\datos $h(x)=\tanh(x^{2})$, $x=1$; $\tanh(a+b\varepsilon)=\tanh a+(1-\tanh^{2}a)\,b\,\varepsilon$.
+\planteamiento evaluar $x^{2}$ en duales y aplicar la extensión dual de $\tanh$ (\cref{def:extension}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $x^{2}=(1+\varepsilon)^{2}=1+2\varepsilon$.
+  \item $\tanh 1=0{,}76159$ y $1-\tanh^{2}1=1-0{,}58002=0{,}41997$.
+  \item $\tanh(1+2\varepsilon)=0{,}76159+0{,}41997\cdot 2\,\varepsilon=0{,}7616+0{,}8399\,\varepsilon$.
+\end{enumerate}
+\resultado \textbf{$h(1)\approx 0{,}7616$ y $h'(1)\approx 0{,}8399$.}
+\comprobacion por la regla de la cadena, $h'(x)=(1-\tanh^{2}x^{2})\cdot 2x$, que en $x=1$ vale $0{,}41997\cdot 2=0{,}8399$.
+\end{solucion}
+
+\begin{solucion}{eje:2-multidual}
+\datos $x_1=2+\varepsilon_1$, $x_2=5+\varepsilon_2$, $\varepsilon_r\varepsilon_s=0$; $\cos 5=0{,}2837$.
+\planteamiento cada variable lleva un valor y dos partes duales; la parte en $\varepsilon_r$ es la derivada respecto a $x_r$ (\cref{obs:multidual}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $v_1=\ln(2+\varepsilon_1)=0{,}6931+0{,}5\,\varepsilon_1$.
+  \item $v_2=(2+\varepsilon_1)(5+\varepsilon_2)=10+5\varepsilon_1+2\varepsilon_2$, porque $\varepsilon_1\varepsilon_2=0$.
+  \item $v_3=\sen(5+\varepsilon_2)=-0{,}9589+0{,}2837\,\varepsilon_2$.
+  \item $v_4=v_1+v_2=10{,}6931+5{,}5\,\varepsilon_1+2\,\varepsilon_2$.
+  \item $v_5=v_4-v_3=11{,}6521+5{,}5\,\varepsilon_1+(2-0{,}2837)\,\varepsilon_2=11{,}6521+5{,}5\,\varepsilon_1+1{,}7163\,\varepsilon_2$.
+  \item Derivada direccional en $(1,1)\T$: $\nabla f\T(1,1)\T=5{,}5+1{,}7163=7{,}2163$.
+\end{enumerate}
+\resultado \textbf{$\nabla f(2,5)=(5{,}5;\,1{,}7163)\T$ en una pasada; derivada direccional $7{,}2163$.}
+\comprobacion coincide con el \cref{ej:tangente} y con la traza adjunta del \cref{ej:adjunta}; además, la semilla única $x=(2+\varepsilon,5+\varepsilon)$ daría directamente $7{,}2163$.
+\end{solucion}
+
+\begin{solucion}{eje:2-polinomios}
+\datos polinomios reales; aritmética de la \cref{def:duales}.
+\planteamiento inducción sobre el grado con la descomposición $p(x)=x\,q(x)+c$; después, la regla de la cadena para la composición.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Base (grado 0): $p=c$ constante. $p(a+b\varepsilon)=c=c+0\cdot b\,\varepsilon$ y $p'(a)=0$.
+  \item Hipótesis: todo polinomio $q$ de grado a lo sumo $n$ cumple $q(a+b\varepsilon)=q(a)+q'(a)b\varepsilon$.
+  \item Todo $p$ de grado $n+1$ se escribe $p(x)=x\,q(x)+c$ con $q$ de grado $n$ y $c=p(0)$.
+  \item Por la hipótesis, $p(a+b\varepsilon)=(a+b\varepsilon)\bigl(q(a)+q'(a)b\varepsilon\bigr)+c$.
+  \item Producto de duales: $(a+b\varepsilon)(q(a)+q'(a)b\varepsilon)=a\,q(a)+\bigl(a\,q'(a)+q(a)\bigr)b\,\varepsilon$.
+  \item Por la regla del producto, $p'(x)=q(x)+x\,q'(x)$, luego $p(a+b\varepsilon)=p(a)+p'(a)\,b\,\varepsilon$.
+  \item Composición: si $f$ cumple la propiedad, $f(a+b\varepsilon)=f(a)+f'(a)b\,\varepsilon$. Aplicando la de $g$ con $a'=f(a)$ y $b'=f'(a)b$: $g(f(a+b\varepsilon))=g(f(a))+g'(f(a))f'(a)\,b\,\varepsilon$.
+  \item Por la regla de la cadena, $g'(f(a))f'(a)=(g\circ f)'(a)$.
+\end{enumerate}
+\resultado \textbf{la propiedad vale para todo polinomio y se conserva por composición}; es el \cref{teo:duales} para funciones de una variable.
+\comprobacion $p(x)=x^{3}$ en $a=2$, $b=1$: el \cref{ej:dual-cubo} dio $(2+\varepsilon)^{3}=8+12\varepsilon$ y $p'(2)=12$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-acumular}
+\datos actualización $\bar v_j\mathrel{+}=\bar v_i\,\partial\varphi_i/\partial v_j$; ejemplo $y=x\cdot x$ con $x=3$.
+\planteamiento por el \cref{teo:inverso}, el adjunto de una variable es la suma de las contribuciones de todas las operaciones que la usan.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item El producto $y=a\cdot b$ con $a=b=x$ ejecuta $\bar a\mathrel{+}=b\,\bar y$ y $\bar b\mathrel{+}=a\,\bar y$, y ambas líneas actúan sobre $\bar x$.
+  \item Con acumulación: $\bar x=0+3\cdot 1+3\cdot 1=6$.
+  \item Con asignación: la primera línea pone $\bar x=3$ y la segunda lo sobrescribe con $\bar x=3$.
+\end{enumerate}
+\resultado \textbf{con acumulación se obtiene $2x=6$, correcto; con asignación, $3$, erróneo.}
+\comprobacion $\frac{d}{dx}x^{2}=6$ en $x=3$. El \cref{eje:3-arbol} caracteriza cuándo la asignación basta.
+\end{solucion}
+
+\begin{solucion}{eje:3-producto}
+\datos $f(x,y)=(x+y)\cdot(x\cdot y)$ en $(2,3)$.
+\planteamiento nodos $s=x+y$, $p=x\cdot y$, $f=s\cdot p$; $x$ e $y$ alimentan a dos nodos y sus adjuntos acumulan dos contribuciones.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Hacia delante: $s=5$, $p=6$, $f=30$.
+  \item $\bar f=1$. Nodo $f=s\cdot p$: $\bar s=p=6$, $\bar p=s=5$.
+  \item Nodo $s=x+y$: $\bar x\mathrel{+}=6$, $\bar y\mathrel{+}=6$.
+  \item Nodo $p=x\cdot y$: $\bar x\mathrel{+}=\bar p\,y=15$, luego $\bar x=21$; $\bar y\mathrel{+}=\bar p\,x=10$, luego $\bar y=16$.
+\end{enumerate}
+\resultado \textbf{$f=30$, $\partial f/\partial x=21$, $\partial f/\partial y=16$.}
+\comprobacion $f=x^{2}y+xy^{2}$: $\partial_xf=2xy+y^{2}=12+9=21$ y $\partial_yf=x^{2}+2xy=4+12=16$.
+\end{solucion}
+
+\begin{solucion}{eje:3-neurona}
+\datos $o=\tanh(n)$, $n=w_1x_1+w_2x_2+b$, $x=(2,0)$, $w=(-1,3)$, $b=1$.
+\planteamiento como en el \cref{ej:neurona}: $\bar n=(1-o^{2})\bar o$ con $\bar o=1$, y después las reglas de la suma y del producto.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $n=(-1)\cdot 2+3\cdot 0+1=-1$.
+  \item $o=\tanh(-1)=-0{,}76159$; $1-o^{2}=0{,}41997=\bar n$.
+  \item Suma: $\bar b=\bar n=0{,}4200$.
+  \item Productos: $\bar w_1=\bar n\,x_1=0{,}8399$; $\bar w_2=\bar n\,x_2=0$; $\bar x_1=\bar n\,w_1=-0{,}4200$; $\bar x_2=\bar n\,w_2=1{,}260$.
+\end{enumerate}
+\resultado \textbf{$o\approx-0{,}7616$; $\partial o/\partial w_1\approx 0{,}8399$, $\partial o/\partial w_2=0$, $\partial o/\partial b\approx 0{,}4200$, $\partial o/\partial x_1\approx-0{,}4200$, $\partial o/\partial x_2\approx 1{,}260$.}
+\comprobacion un peso cuya entrada es nula no recibe gradiente, y $\partial o/\partial w_1=x_1\,\partial o/\partial b=2\cdot 0{,}41997$.
+\end{solucion}
+
+\begin{solucion}{eje:3-topologico}
+\datos $f=a\cdot b+a$, $a=2$, $b=5$; nodos $a$, $b$, $m=a\cdot b$, $f=m+a$.
+\planteamiento $m$ debe ir tras $a$ y $b$; $f$, tras $m$ y $a$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Órdenes topológicos: solo pueden variar las posiciones relativas de $a$ y $b$, que van antes que $m$, y $f$ va al final: $(a,b,m,f)$ y $(b,a,m,f)$.
+  \item Hacia delante: $m=10$, $f=12$.
+  \item $\bar f=1$. Nodo $f=m+a$: $\bar m=1$, $\bar a\mathrel{+}=1$.
+  \item Nodo $m=a\cdot b$: $\bar a\mathrel{+}=\bar m\,b=5$, luego $\bar a=6$; $\bar b\mathrel{+}=\bar m\,a=2$.
+\end{enumerate}
+\resultado \textbf{dos órdenes topológicos; $f=12$, $\partial f/\partial a=6$, $\partial f/\partial b=2$.}
+\comprobacion $\partial f/\partial a=b+1=6$ y $\partial f/\partial b=a=2$.
+\end{solucion}
+
+\begin{solucion}{eje:3-d2l}
+\datos el grafo del \cref{eje:1-d2l}: $a=x^{2}$, $b=\ln a$, $c=\sen x$, $d=b\cdot c$, $e=1/x$, $f=d+e$, en $x=2$, con $a=4$, $b=1{,}386$, $c=0{,}9093$.
+\planteamiento modo directo con $\dot x=1$; modo inverso con $\bar f=1$, sumando en $\bar x$ las tres contribuciones de $a$, $c$ y $e$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Derivadas locales: $\partial a/\partial x=2x=4$; $\partial b/\partial a=1/a=0{,}25$; $\partial c/\partial x=\cos 2=-0{,}4161$; $\partial d/\partial b=c=0{,}9093$; $\partial d/\partial c=b=1{,}386$; $\partial e/\partial x=-1/x^{2}=-0{,}25$; $\partial f/\partial d=\partial f/\partial e=1$.
+  \item (b) Directo: $\dot a=4$; $\dot b=\dot a/a=1$; $\dot c=-0{,}4161$; $\dot d=\dot b\,c+b\,\dot c=0{,}9093-0{,}5769=0{,}3324$; $\dot e=-0{,}25$; $\dot f=0{,}3324-0{,}25=0{,}0824$.
+  \item (c) Inverso: $\bar d=\bar e=1$; $\bar b=\bar d\,c=0{,}9093$; $\bar c=\bar d\,b=1{,}386$; $\bar a=\bar b/a=0{,}2273$.
+  \item Contribuciones a $\bar x$: desde $a$, $0{,}2273\cdot 4=0{,}9093$; desde $c$, $1{,}386\cdot(-0{,}4161)=-0{,}5769$; desde $e$, $1\cdot(-0{,}25)=-0{,}25$. Suma: $\bar x=0{,}0824$.
+\end{enumerate}
+\resultado \textbf{$f'(2)\approx 0{,}0824$ por los dos modos.}
+\comprobacion $f'(x)=\frac{2}{x}\sen x+\ln(x^{2})\cos x-\frac{1}{x^{2}}$; en $x=2$: $0{,}9093-0{,}5769-0{,}25=0{,}0824$. PyTorch da $0{,}08240$.
+\end{solucion}
+
+\begin{solucion}{eje:3-sesgo}
+\datos $x=(1,2)$, $W_1=\begin{psmallmatrix}1&0\\-1&0{,}5\end{psmallmatrix}$, $b_1=(0{,}5;\,0)$, $W_2=\begin{psmallmatrix}2\\1\end{psmallmatrix}$, $y=3$, $\lambda=0{,}1$.
+\planteamiento el sesgo es un sumando más de $z$, luego $\bar b_1=\bar z$; no aparece en $s$ y no recibe término de regularización. Cada peso recibe la parte de $L$ más $\lambda W$, por la arista que lo une a $s$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Ecuaciones: $\bar o=o-y$; $\bar W_2=h\T\bar o+\lambda W_2$; $\bar h=\bar o\,W_2\T$; $\bar z=\bar h\odot\ind[z>0]$; $\bar W_1=x\T\bar z+\lambda W_1$; $\bar b_1=\bar z$.
+  \item (b) $xW_1=(1-2,\;0+1)=(-1,1)$; $z=(-0{,}5;\,1)$; $h=(0,1)$.
+  \item $o=hW_2=1$; $L=\tfrac12(1-3)^{2}=2$.
+  \item $\norm{W_1}_F^{2}=1+0+1+0{,}25=2{,}25$; $\norm{W_2}_F^{2}=5$; $s=0{,}05\cdot 7{,}25=0{,}3625$; $J=2{,}3625$.
+  \item $\bar o=-2$; $\bar W_2=(0;\,-2)\T+(0{,}2;\,0{,}1)\T=(0{,}2;\,-1{,}9)\T$.
+  \item $\bar h=-2\cdot(2,1)=(-4,-2)$; como $z_1<0$, $\bar z=(0,-2)$.
+  \item $x\T\bar z=\begin{psmallmatrix}0&-2\\0&-4\end{psmallmatrix}$ y $\bar W_1=\begin{psmallmatrix}0&-2\\0&-4\end{psmallmatrix}+\begin{psmallmatrix}0{,}1&0\\-0{,}1&0{,}05\end{psmallmatrix}=\begin{psmallmatrix}0{,}1&-2\\-0{,}1&-3{,}95\end{psmallmatrix}$.
+  \item $\bar b_1=\bar z=(0,-2)$.
+\end{enumerate}
+\resultado \textbf{$J=2{,}3625$; $\nabla_{\!W_2}J=(0{,}2;\,-1{,}9)\T$; $\nabla_{\!W_1}J=\begin{psmallmatrix}0{,}1&-2\\-0{,}1&-3{,}95\end{psmallmatrix}$; $\nabla_{\!b_1}J=(0,-2)$.}
+\comprobacion la primera columna de $\nabla_{\!W_1}J$ es solo $\lambda W_1$, porque la unidad~1 está inactiva. PyTorch da los mismos valores.
+\end{solucion}
+
+\begin{solucion}{eje:3-arbol}
+\datos el algoritmo de la \cref{fig:algoritmo} con asignación en lugar de acumulación.
+\planteamiento si cada variable es argumento de una sola operación, cada acumulador recibe una única contribución, y sumarla a~0 equivale a asignarla.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sea $j<\ell$. Si $v_j$ es argumento de una única operación $i$, y figura una sola vez en su lista de argumentos, la versión con acumulación ejecuta sobre $\bar v_j$ una sola actualización, $\bar v_j\gets 0+\bar v_i\,\partial\varphi_i/\partial v_j$, que coincide con la asignación.
+  \item La salida $v_\ell$ no es argumento de ninguna operación y conserva la semilla $\bar v_\ell=1$ en ambas versiones.
+  \item Por tanto, las dos versiones ejecutan las mismas operaciones con los mismos valores, y por el \cref{teo:inverso} la versión con asignación es correcta.
+  \item Contraejemplo con un nodo de dos sucesores: $u=2x$, $z=u^{2}+u$ con $x=3$, es decir, $y=u^{2}$ y $z=y+u$. Con asignación, el nodo $z$ pone $\bar y=1$ y $\bar u=1$; el nodo $y$ \emph{sustituye} $\bar u$ por $2u\cdot\bar y=12$, y el nodo $u$ da $\bar x=2\cdot 12=24$.
+  \item El valor correcto es $dz/dx=8x+2=26$: la asignación ha perdido la contribución $\bar u=1$ del camino directo.
+\end{enumerate}
+\resultado \textbf{la asignación es correcta en un árbol; con un nodo usado dos veces puede fallar}, como en el ejemplo, que da $24$ en lugar de $26$.
+\comprobacion con acumulación, $\bar u=1+12=13$ y $\bar x=26$ (\cref{ej:orden}).
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-modo}
+\datos $f\colon\R^{1000}\to\R$ ($n=1000$, $m=1$); $g\colon\R\to\R^{1000}$ ($n=1$, $m=1000$).
+\planteamiento el modo directo da una columna del jacobiano por pasada y el inverso una fila (\cref{cor:eleccion}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $J_f$ es $1\times 1000$, una fila: el modo inverso necesita 1 pasada; el directo, 1000.
+  \item $J_g$ es $1000\times 1$, una columna: el modo directo necesita 1 pasada; el inverso, 1000.
+\end{enumerate}
+\resultado \textbf{$f$: modo inverso, 1 pasada; $g$: modo directo, 1 pasada.} El modo contrario costaría 1000 pasadas en ambos casos.
+\comprobacion el número de pasadas es $\min(n,m)=1$ en los dos casos, eligiendo el modo adecuado.
+\end{solucion}
+
+\begin{solucion}{eje:4-d2l}
+\datos los dos modos de la AD aplicados a $f\colon\R^{n}\to\R^{m}$.
+\planteamiento comparar los modos según los tres criterios del enunciado, usando las \cref{cor:coste-directo,prop:vjp,prop:memoria} y la \cref{prop:asociatividad}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Datos intermedios.} El modo directo descarta cada tangente en cuanto deja de usarse y necesita memoria comparable a la de evaluar $f$. El inverso debe guardar los valores de toda la pasada hacia delante (\cref{prop:memoria}).
+  \item \emph{Paralelismo.} En el modo directo, las $n$ pasadas con semillas distintas son independientes y pueden ejecutarse en paralelo, o en una sola pasada vectorial (\cref{obs:multidual}). En el inverso, la pasada hacia atrás no puede empezar hasta terminar la pasada hacia delante.
+  \item \emph{Tamaños.} El directo propaga matrices $m'\times n$ o vectores de tamaño $n$ por dirección; el inverso propaga vectores fila del tamaño de cada variable intermedia. Con una salida escalar y muchas entradas, el inverso multiplica siempre vectores por matrices (\cref{prop:asociatividad}).
+\end{enumerate}
+\resultado \textbf{directo cuando hay pocas entradas ($n\ll m$) o la memoria es crítica; inverso cuando hay pocas salidas ($m\ll n$), como en el entrenamiento, con una pérdida escalar.}
+\comprobacion un LLM tiene $n\approx 10^{11}$ y $m=1$: el inverso cuesta una pasada, el directo $10^{11}$.
+\end{solucion}
+
+\begin{solucion}{eje:4-cadena}
+\datos $c\in\R^{1\times 100}$; $A,B\in\R^{100\times 100}$.
+\planteamiento un producto $(p\times q)(q\times r)$ cuesta $pqr$ multiplicaciones (\cref{prop:asociatividad} con $L=3$).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $c(BA)$: $BA$ cuesta $100^{3}=1\,000\,000$; $c\,(BA)$ cuesta $100^{2}=10\,000$. Total: $1\,010\,000$.
+  \item $(cB)A$: $cB$ cuesta $10\,000$ y da un vector $1\times 100$; $(cB)A$ cuesta otros $10\,000$. Total: $20\,000$.
+  \item Cociente: $1\,010\,000/20\,000=50{,}5$.
+  \item En general: $(m^{3}+m^{2})/(2m^{2})=(m+1)/2$.
+\end{enumerate}
+\resultado \textbf{$1\,010\,000$ frente a $20\,000$ multiplicaciones; cociente $50{,}5=(m+1)/2$ con $m=100$.}
+\comprobacion con $m=1000$ el cociente es $1001/2=500{,}5$: crece linealmente con $m$.
+\end{solucion}
+
+\begin{solucion}{eje:4-lineal}
+\datos $X=(2,-1)$, $W=\begin{psmallmatrix}1&2&0\\0&1&-1\end{psmallmatrix}$, $\bar Y=(1,0,2)$.
+\planteamiento \cref{prop:vjp-lineal}: $\bar X=\bar YW\T$ y $\bar W=X\T\bar Y$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $Y=XW=(2\cdot 1+(-1)\cdot 0,\;2\cdot 2+(-1)\cdot 1,\;2\cdot 0+(-1)\cdot(-1))=(2,3,1)$.
+  \item $W\T=\begin{psmallmatrix}1&0\\2&1\\0&-1\end{psmallmatrix}$; $\bar X=\bar YW\T=(1\cdot 1+0\cdot 2+2\cdot 0,\;1\cdot 0+0\cdot 1+2\cdot(-1))=(1,-2)$.
+  \item $\bar W=X\T\bar Y=\begin{psmallmatrix}2\\-1\end{psmallmatrix}(1,0,2)=\begin{psmallmatrix}2&0&4\\-1&0&-2\end{psmallmatrix}$.
+  \item Formas: $\bar X$ es $1\times 2$, como $X$; $\bar W$ es $2\times 3$, como $W$.
+  \item Comprobación directa: $L=\bar YY\T=Y_1+2Y_3$ y $Y_3=X_1W_{13}+X_2W_{23}$, luego $\partial L/\partial W_{13}=2X_1=4$.
+\end{enumerate}
+\resultado \textbf{$Y=(2,3,1)$; $\bar X=(1,-2)$; $\bar W=\begin{psmallmatrix}2&0&4\\-1&0&-2\end{psmallmatrix}$.}
+\comprobacion la columna central de $\bar W$ es nula porque $\bar Y_2=0$, y la entrada $(1,3)$ coincide con la derivada directa.
+\end{solucion}
+
+\begin{solucion}{eje:4-cs336}
+\datos $N=10^{9}$; $512\times 1024$ tokens por paso; $10^{5}$ pasos; pico $495\cdot 10^{12}$ FLOP/s; utilización $0{,}5$.
+\planteamiento FLOPs por paso $=(2N+4N)\cdot$ tokens por paso (\cref{cor:6nd}); tiempo $=$ FLOPs totales$/$FLOP/s efectivos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Tokens por paso: $512\cdot 1024=524\,288$.
+  \item FLOPs por paso: $6\cdot 10^{9}\cdot 524\,288=3{,}146\cdot 10^{15}$.
+  \item Total: $3{,}146\cdot 10^{15}\cdot 10^{5}=3{,}146\cdot 10^{20}$ FLOPs.
+  \item Rendimiento efectivo: $0{,}5\cdot 495\cdot 10^{12}=2{,}475\cdot 10^{14}$ FLOP/s.
+  \item Tiempo: $3{,}146\cdot 10^{20}/2{,}475\cdot 10^{14}=1{,}271\cdot 10^{6}$~s, es decir, $1{,}271\cdot 10^{6}/3600=353{,}1$~h y $353{,}1/24=14{,}71$ días.
+\end{enumerate}
+\resultado \textbf{$\approx 3{,}15\cdot 10^{20}$ FLOPs; $\approx 353$~h, unos $14{,}7$ días en una GPU.}
+\comprobacion $D=524\,288\cdot 10^{5}\approx 5{,}24\cdot 10^{10}$ tokens y $6ND=6\cdot 10^{9}\cdot 5{,}24\cdot 10^{10}\approx 3{,}15\cdot 10^{20}$.
+\end{solucion}
+
+\begin{solucion}{eje:4-softmax}
+\datos $p_i=e^{z_i}/S$, $S=\sum_ke^{z_k}$; $z=(2,1,0)$, $y=0$.
+\planteamiento derivar $\ln p_i$ en lugar de $p_i$, usando $\partial p_i/\partial z_j=p_i\,\partial\ln p_i/\partial z_j$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\ln p_i=z_i-\ln S$ da $\partial\ln p_i/\partial z_j=\ind[i=j]-e^{z_j}/S=\ind[i=j]-p_j$.
+  \item Luego $\partial p_i/\partial z_j=p_i(\ind[i=j]-p_j)$ y $\bar z_j=\sum_i\bar p_ip_i(\ind[i=j]-p_j)=p_j\bar p_j-p_j\langle\bar p,p\rangle$, que es la \cref{prop:vjp-softmax}.
+  \item (b) Para $L=-\ln p_y$, $\bar p=-e_y/p_y$ y $\langle\bar p,p\rangle=-1$. Entonces $\bar z_j=p_j(\bar p_j+1)$: vale $p_y-1$ si $j=y$ y $p_j$ si $j\ne y$, es decir, $\bar z=p-e_y$.
+  \item Suma de las componentes: $\sum_j(p_j-\ind[j=y])=1-1=0$.
+  \item (c) $e^{z}=(7{,}389;\,2{,}718;\,1)$, con $S=11{,}107$; $p=(0{,}6652;\,0{,}2447;\,0{,}0900)$.
+  \item $\nabla_{\!z}L=(0{,}6652-1;\,0{,}2447;\,0{,}0900)=(-0{,}3348;\,0{,}2447;\,0{,}0900)$.
+  \item $L=-\ln 0{,}6652=0{,}4076$.
+\end{enumerate}
+\resultado \textbf{$\nabla_{\!z}L=\softmax(z)-e_y$; con $z=(2,1,0)$ e $y=0$, $\nabla_{\!z}L\approx(-0{,}3348;\,0{,}2447;\,0{,}0900)$ y $L\approx 0{,}4076$.}
+\comprobacion $-0{,}3348+0{,}2447+0{,}0900=-0{,}0001\approx 0$, por redondeo; también $L=-2+\ln 11{,}107=0{,}4076$. Coincide con el \cref{ej:ce-micro} y con \texttt{F.cross\_entropy}.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-d2l}
+\datos $f\colon\R^{n}\to\R$; gradiente con un coste $O(\ops(f))$ (\cref{teo:barato}).
+\planteamiento el hessiano tiene $n^{2}$ entradas, frente a las $n$ del gradiente, y cada columna se obtiene con un producto hessiana-vector (\cref{prop:hvp}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item La segunda derivada se obtiene aplicando la AD al programa que calcula el gradiente, que ya es una o dos veces más largo que el de $f$ y contiene las derivadas locales.
+  \item Un producto $H_fv$ cuesta, por la \cref{prop:hvp}, una constante por $\ops(f)$: del mismo orden que el gradiente.
+  \item El hessiano completo necesita $n$ productos hessiana-vector, uno por columna: coste del orden de $n\cdot\ops(f)$, y $n^{2}$ números que guardar.
+  \item Además, el programa del gradiente debe conservar su propio grafo para poder derivarlo de nuevo, lo que aumenta la memoria (en PyTorch, \texttt{create\_graph=True}).
+\end{enumerate}
+\resultado \textbf{un producto hessiana-vector cuesta lo mismo que un gradiente, salvo una constante; el hessiano completo cuesta $n$ veces más y ocupa $n^{2}$ números.}
+\comprobacion con $n=10^{9}$, el hessiano tendría $10^{18}$ entradas, inabordable; los métodos que usan curvatura emplean productos hessiana-vector.
+\end{solucion}
+
+\begin{solucion}{eje:5-hvp}
+\datos $f=x_1^{2}x_2+x_2^{3}$, punto $(1,2)$, $v=(0,1)\T$.
+\planteamiento calcular $\nabla f=(2x_1x_2,\;x_1^{2}+3x_2^{2})$ con $x_1=1$ y $x_2=2+\varepsilon$; la parte dual es $Hv$ (\cref{prop:hvp}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Primera componente: $2\cdot 1\cdot(2+\varepsilon)=4+2\varepsilon$.
+  \item $(2+\varepsilon)^{2}=4+4\varepsilon$, luego $3x_2^{2}=12+12\varepsilon$.
+  \item Segunda componente: $1+12+12\varepsilon=13+12\varepsilon$.
+  \item Lectura: $\nabla f(1,2)=(4,13)$ y $Hv=(2,12)$.
+  \item Hessiano: $H=\begin{psmallmatrix}2x_2&2x_1\\2x_1&6x_2\end{psmallmatrix}=\begin{psmallmatrix}4&2\\2&12\end{psmallmatrix}$, cuya segunda columna es $(2,12)$.
+\end{enumerate}
+\resultado \textbf{$\nabla f(1,2)=(4,13)$ y $H_f(1,2)\,v=(2,12)$.}
+\comprobacion PyTorch, derivando el gradiente con \texttt{create\_graph=True}, da los mismos vectores.
+\end{solucion}
+
+\begin{solucion}{eje:5-adjunto}
+\datos $x_{t+1}=ax_t+b$, $t=0,1,2$; $x_0=1$, $a=2$, $b=1$; $L=x_3$.
+\planteamiento por el \cref{teo:lagrange}, $\lambda_3=\partial L/\partial x_3=1$, $\lambda_t=\lambda_{t+1}\,\partial x_{t+1}/\partial x_t=a\lambda_{t+1}$, y las derivadas respecto a los parámetros suman las contribuciones de cada transición.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Trayectoria: $x_1=3$, $x_2=7$, $x_3=15$.
+  \item Multiplicadores: $\lambda_3=1$, $\lambda_2=2$, $\lambda_1=4$.
+  \item $dL/da=\sum_{t=0}^{2}\lambda_{t+1}\,x_t=\lambda_1x_0+\lambda_2x_1+\lambda_3x_2=4+6+7=17$.
+  \item $dL/db=\sum_{t=0}^{2}\lambda_{t+1}\cdot 1=4+2+1=7$.
+  \item Expresión cerrada: $x_3=a^{3}x_0+b(a^{2}+a+1)$.
+\end{enumerate}
+\resultado \textbf{$x=(1,3,7,15)$; $\lambda=(\lambda_1,\lambda_2,\lambda_3)=(4,2,1)$; $dL/da=17$ y $dL/db=7$.}
+\comprobacion $dx_3/da=3a^{2}x_0+b(2a+1)=12+5=17$ y $dx_3/db=a^{2}+a+1=7$.
+\end{solucion}
+
+\begin{solucion}{eje:5-checkpoint}
+\datos memoria $M(k)=L/k+k$ en unidades de activación; $L=16$ y $L=100$.
+\planteamiento minimizar $M$ con derivadas y contar las pasadas como en la \cref{prop:flops}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Se guardan $L/k$ puntos de control; al retropropagar un tramo se recalculan y guardan sus $k$ activaciones. La memoria máxima es $M(k)=L/k+k$.
+  \item $M'(k)=1-L/k^{2}=0\iff k=\sqrt L$ (con $k>0$); $M''(k)=2L/k^{3}>0$: mínimo, de valor $2\sqrt L$.
+  \item $L=16$: $k=4$, $M=4+4=8$, frente a 16 sin puntos de control.
+  \item $L=100$: $k=10$, $M=10+10=20$, frente a 100.
+  \item Cómputo: pasada hacia delante ($2N$ FLOPs por token), recálculo ($2N$) y pasada hacia atrás ($4N$): $8N$ por token, un $8/6-1=33\,\%$ más.
+\end{enumerate}
+\resultado \textbf{$k=\sqrt L$ y memoria $2\sqrt L$: 8 para $L=16$ y 20 para $L=100$; el paso cuesta $8N$ FLOPs por token.}
+\comprobacion con $L=16$, $k=2$ da $8+2=10$ y $k=8$ da $2+8=10$, ambos mayores que 8.
+\end{solucion}
+
+\begin{solucion}{eje:5-cs336}
+\datos $N_b=16$; coste~1 por bloque de activaciones y $c=1/4$ por punto de control; $M(k)=(N_b/k)c+k$.
+\planteamiento equilibrar la memoria de los puntos de control, decreciente en $k$, con la del tramo recalculado, creciente, como en el \cref{eje:5-checkpoint} pero con $c\ne 1$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $k=1$: $16\cdot 0{,}25+1=5$. $k=2$: $8\cdot 0{,}25+2=4$. $k=4$: $4\cdot 0{,}25+4=5$. $k=8$: $2\cdot 0{,}25+8=8{,}5$. $k=16$: $0{,}25+16=16{,}25$.
+  \item Óptimo continuo: $M'(k)=-N_bc/k^{2}+1=0\iff k=\sqrt{N_bc}=\sqrt 4=2$, con $M(2)=4$, frente a 16 sin recálculo.
+  \item (b) Estrategia recursiva: se parte la pila en dos mitades con un punto de control al inicio de cada una; para retropropagar una mitad, se vuelve a partir en dos, y así hasta bloques sueltos. Hay $\log_2N_b$ niveles.
+  \item Memoria: en cada nivel se mantiene un número acotado de puntos de control, más las activaciones de un solo bloque: $O(\log N_b)$; con $N_b=16$, unos $\log_216=4$ niveles.
+  \item Cómputo: cada bloque se recalcula una vez por nivel, $O(\log N_b)$ veces, y el total es de $O(N_b\log N_b)$ evaluaciones de bloque, frente a $O(N_b)$ sin recálculo.
+\end{enumerate}
+\resultado \textbf{(a) $M=5;\,4;\,5;\,8{,}5;\,16{,}25$, con óptimo $k=\sqrt{N_bc}=2$ y $M=4$. (b) Recálculo recursivo por mitades: memoria $O(\log N_b)$, cómputo $O(N_b\log N_b)$.}
+\comprobacion con $c=1$ la fórmula se reduce a la del \cref{eje:5-checkpoint}, con óptimo $k=\sqrt{N_b}=4$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-zero}
+\datos bucle de PyTorch sin \texttt{opt.zero\_grad()}; evaluación con \texttt{torch.no\_grad()}.
+\planteamiento \texttt{backward()} suma en \texttt{.grad} (acumulación del \cref{tema:3}); \texttt{no\_grad} impide registrar el grafo.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sin \texttt{zero\_grad()}, en el paso $t$ el gradiente guardado es $g_1+\dots+g_t$, no $g_t$.
+  \item Si los $g_i$ son parecidos, el paso efectivo crece como $t\,\eta\,g$: equivale a multiplicar la tasa de aprendizaje por $t$, y el entrenamiento se vuelve errático o diverge.
+  \item \texttt{torch.no\_grad()} no crea nodos ni guarda tensores. Al evaluar no hace falta derivar, así que ahorra memoria y tiempo, y la evaluación no deja rastro en \texttt{.grad} ni en el grafo del paso siguiente.
+\end{enumerate}
+\resultado \textbf{sin \texttt{zero\_grad()} los gradientes se acumulan entre pasos; \texttt{no\_grad()} evalúa sin registrar el grafo.}
+\comprobacion en el \cref{eje:6-dos-veces}, dos llamadas a \texttt{backward()} sobre $y=x^{2}$ en $x=3$ dejan \texttt{x.grad}${}=6+6=12$.
+\end{solucion}
+
+\begin{solucion}{eje:6-dos-veces}
+\datos $x=3$, $y=x\cdot x$, dos llamadas a \texttt{backward()}.
+\planteamiento PyTorch libera los tensores guardados tras la pasada hacia atrás, salvo con \texttt{retain\_graph=True}; \texttt{.grad} se acumula.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Primera llamada: \texttt{x.grad}${}=0+2\cdot 3=6$, y se liberan los valores guardados del nodo producto.
+  \item Segunda llamada: el VJP del producto necesita esos valores, que ya no existen, y PyTorch lanza un \texttt{RuntimeError} que indica que se intenta retropropagar por el grafo una segunda vez.
+  \item (b) Con \texttt{retain\_graph=True} el grafo se conserva: tras la primera llamada \texttt{x.grad}${}=6$ y tras la segunda \texttt{x.grad}${}=6+6=12$.
+\end{enumerate}
+\resultado \textbf{(a) error en la segunda llamada; (b) \texttt{x.grad}${}=12$}, el doble del gradiente, por la acumulación.
+\comprobacion es el mismo efecto que olvidar \texttt{zero\_grad()} (\cref{eje:6-zero}). PyTorch~2.14 reproduce ambos comportamientos.
+\end{solucion}
+
+\begin{solucion}{eje:6-cmu}
+\datos operaciones $a-b$, $a\cdot b$, $a/b$, $\ln a$, $\exp a$, $AB$; $f=\ln(a/b)-\exp(a\cdot b)$ en $(2,1)$.
+\planteamiento cada función hacia atrás aplica la regla local (VJP) y devuelve un adjunto por entrada; la cinta se recorre al revés (\cref{obs:cinta}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Reglas: $a-b$: $(g,\,-g)$. $a\cdot b$: $(g\,b,\;g\,a)$. $a/b$: $(g/b,\;-g\,a/b^{2})$. $\ln a$: $g/a$. $\exp a$: $g\,e^{a}$. $AB$: $(G\,B\T,\;A\T G)$ (\cref{prop:vjp-lineal}).
+  \item Cinta hacia delante: $v_1=a/b=2$; $v_2=\ln v_1=0{,}6931$; $v_3=a\cdot b=2$; $v_4=\exp v_3=7{,}389$; $f=v_2-v_4=-6{,}696$.
+  \item Hacia atrás: resta, $\bar v_2=1$, $\bar v_4=-1$; exponencial, $\bar v_3=-1\cdot e^{2}=-7{,}389$; logaritmo, $\bar v_1=1/2=0{,}5$.
+  \item Producto $v_3=a\cdot b$: $\bar a\mathrel{+}=-7{,}389\cdot 1$ y $\bar b\mathrel{+}=-7{,}389\cdot 2=-14{,}78$.
+  \item Cociente $v_1=a/b$: $\bar a\mathrel{+}=0{,}5/1$, luego $\bar a=-6{,}889$; $\bar b\mathrel{+}=-0{,}5\cdot 2/1^{2}=-1$, luego $\bar b=-15{,}78$.
+\end{enumerate}
+\resultado \textbf{$f(2,1)\approx-6{,}696$, $\partial f/\partial a\approx-6{,}889$ y $\partial f/\partial b\approx-15{,}78$.}
+\comprobacion $f=\ln a-\ln b-e^{ab}$: $\partial_af=1/a-b\,e^{ab}=0{,}5-7{,}389=-6{,}889$ y $\partial_bf=-1/b-a\,e^{ab}=-1-14{,}78=-15{,}78$.
+\end{solucion}
+
+\begin{solucion}{eje:6-parametros}
+\datos $V=28$, $d=8$, $B=3$, $H=64$.
+\planteamiento embeddings: $V\cdot d$; capa lineal de $n$ entradas y $k$ salidas: $nk$ pesos y $k$ sesgos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Embeddings: $28\cdot 8=224$.
+  \item Capa oculta: entrada $B\cdot d=24$; $24\cdot 64+64=1536+64=1600$.
+  \item Capa de salida: $64\cdot 28+28=1792+28=1820$.
+  \item Total: $224+1600+1820=3644$.
+\end{enumerate}
+\resultado \textbf{$224+1600+1820=3644$ parámetros.}
+\comprobacion con $d=10$ se obtiene $280+1984+1820=4084$, la cifra del \cref{ej:mlp-caracteres}.
+\end{solucion}
+
+\begin{solucion}{eje:6-paso}
+\datos $o=\tanh(wx+b)$, $x=1$, $w=0{,}5$, $b=0$, $y=1$, $L=\tfrac12(o-y)^{2}$, $\eta=0{,}5$.
+\planteamiento modo inverso por los nodos $n=wx+b$, $o=\tanh n$ y $L$; después, $w\gets w-\eta\,\bar w$ y $b\gets b-\eta\,\bar b$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $n=0{,}5$; $o=0{,}46212$; $L=\tfrac12(0{,}46212-1)^{2}=0{,}14466$.
+  \item $\bar o=o-y=-0{,}53788$; $\bar n=\bar o\,(1-o^{2})=-0{,}53788\cdot 0{,}78645=-0{,}42302$.
+  \item $\bar w=\bar n\,x=-0{,}4230$; $\bar b=\bar n=-0{,}4230$.
+  \item Paso: $w=0{,}5+0{,}5\cdot 0{,}42302=0{,}71151$; $b=0+0{,}21151=0{,}21151$.
+  \item Nueva pérdida: $n=0{,}92302$, $o=\tanh 0{,}92302=0{,}72732$ y $L=\tfrac12(0{,}72732-1)^{2}=0{,}03718$.
+\end{enumerate}
+\resultado \textbf{$L=0{,}1447$, $\partial L/\partial w=\partial L/\partial b\approx-0{,}4230$; tras el paso, $w\approx 0{,}7115$, $b\approx 0{,}2115$ y $L\approx 0{,}0372$.}
+\comprobacion la pérdida disminuye de $0{,}1447$ a $0{,}0372$. El mismo paso en PyTorch, con \texttt{torch.no\_grad()} en la actualización, da los mismos números.
+\end{solucion}
+
+\begin{solucion}{eje:6-microlotes}
+\datos $\ell_s(w)=\tfrac12(wx_s-y_s)^{2}$; $x=(1,2,3,4)$, $y=(2,3,7,8)$, $w=1$; $k=2$ microlotes, $S_1=\{1,2\}$ y $S_2=\{3,4\}$.
+\planteamiento linealidad de la derivada (\cref{prop:microlotes}); $\ell_s'(w)=(wx_s-y_s)x_s$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Tras las $k$ llamadas, el acumulador vale $\sum_r\nabla(\mathcal L_r/k)=\nabla\bigl(\frac1k\sum_r\mathcal L_r\bigr)$, y con $|S_r|=|S|/k$ se tiene $\frac1k\sum_r\mathcal L_r=\mathcal L$.
+  \item Sin dividir por $k$, el acumulador vale $\sum_r\nabla\mathcal L_r=k\,\nabla\mathcal L$: el gradiente queda multiplicado por $k$, como si la tasa de aprendizaje fuera $k$ veces mayor.
+  \item (b) Residuos $wx_s-y_s=(-1,-1,-4,-4)$; derivadas $\ell_s'=(-1,-2,-12,-16)$.
+  \item Lote completo: $\nabla\mathcal L=(-1-2-12-16)/4=-31/4=-7{,}75$.
+  \item Microlote 1: $\nabla\mathcal L_1=(-1-2)/2=-1{,}5$; acumulado tras dividir por 2: $-0{,}75$.
+  \item Microlote 2: $\nabla\mathcal L_2=(-12-16)/2=-14$; se suma $-7$: acumulado $-7{,}75$.
+\end{enumerate}
+\resultado \textbf{el gradiente acumulado es $-7{,}75$, igual al del lote completo}; sin dividir por $k$ sería $-15{,}5$.
+\comprobacion PyTorch, con dos llamadas a \texttt{backward()} sin \texttt{zero\_grad()} intermedio, deja \texttt{w.grad}${}=-0{,}75$ y después $-7{,}75$.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{baurstrassen}
+W.~Baur y V.~Strassen.
+\newblock The complexity of partial derivatives.
+\newblock \emph{Theoretical Computer Science}, 22(3):317--330, 1983.
+
+\bibitem{baydin}
+A.~G. Baydin, B.~A. Pearlmutter, A.~A. Radul y J.~M. Siskind.
+\newblock Automatic differentiation in machine learning: a survey.
+\newblock \emph{Journal of Machine Learning Research}, 18(153):1--43, 2018.
+\newblock \url{https://jmlr.org/papers/v18/17-468.html}
+
+\bibitem{chen}
+T.~Chen, B.~Xu, C.~Zhang y C.~Guestrin.
+\newblock Training deep nets with sublinear memory cost.
+\newblock arXiv:1604.06174, 2016.
+\newblock \url{https://arxiv.org/abs/1604.06174}
+
+\bibitem{cmu11785}
+B.~Raj y equipo docente de 11-785.
+\newblock 11-785: Introduction to Deep Learning. Tarea~1, parte complementaria, «An Introduction to Autograd».
+\newblock Carnegie Mellon University, otoño de 2021.
+\newblock \url{https://github.com/CMU-IDeeL/new_grad}
+
+\bibitem{cs231n}
+A.~Karpathy y equipo docente de CS231n.
+\newblock CS231n: Deep Learning for Computer Vision. Notas del curso, «Backpropagation, Intuitions».
+\newblock Stanford University.
+\newblock \url{https://cs231n.github.io/optimization-2/}
+
+\bibitem{cs336a1}
+Equipo docente de CS336.
+\newblock CS336: Language Modeling from Scratch. Tarea~1, «Basics», versión 26.0.3.
+\newblock Stanford University, primavera de 2026.
+\newblock \url{https://github.com/stanford-cs336/assignment1-basics}
+
+\bibitem{cs336a2}
+Equipo docente de CS336.
+\newblock CS336: Language Modeling from Scratch. Tarea~2, «Systems», versión 26.1.3.
+\newblock Stanford University, primavera de 2026.
+\newblock \url{https://github.com/stanford-cs336/assignment2-systems}
+
+\bibitem{gemini}
+Gemini Team, Google.
+\newblock Gemini: a family of highly capable multimodal models.
+\newblock arXiv:2312.11805, 2023.
+\newblock \url{https://arxiv.org/abs/2312.11805}
+
+\bibitem{gbc}
+I.~Goodfellow, Y.~Bengio y A.~Courville.
+\newblock \emph{Deep Learning}.
+\newblock MIT Press, 2016.
+\newblock §6.5, «Back-Propagation and Other Differentiation Algorithms».
+\newblock \url{https://www.deeplearningbook.org/}
+
+\bibitem{gw}
+A.~Griewank y A.~Walther.
+\newblock \emph{Evaluating Derivatives: Principles and Techniques of Algorithmic Differentiation}, 2.ª ed.
+\newblock SIAM, 2008.
+
+\bibitem{grok}
+xAI.
+\newblock Grok-1: código de ejemplo en JAX para cargar y ejecutar el modelo de pesos abiertos.
+\newblock 2024.
+\newblock \url{https://github.com/xai-org/grok-1}
+
+\bibitem{grosse}
+R.~Grosse.
+\newblock Lecture~6: Automatic Differentiation. Notas del curso CSC421/2516, «Neural Networks and Deep Learning».
+\newblock University of Toronto, 2019.
+\newblock \url{https://www.cs.toronto.edu/~rgrosse/courses/csc421_2019/}
+
+\bibitem{kaplan}
+J.~Kaplan, S.~McCandlish, T.~Henighan, T.~B. Brown, B.~Chess, R.~Child, S.~Gray, A.~Radford, J.~Wu y D.~Amodei.
+\newblock Scaling laws for neural language models.
+\newblock arXiv:2001.08361, 2020.
+\newblock \url{https://arxiv.org/abs/2001.08361}
+
+\bibitem{karpathy}
+A.~Karpathy.
+\newblock micrograd: un pequeño motor de diferenciación automática en modo inverso sobre un grafo construido dinámicamente.
+\newblock 2020.
+\newblock \url{https://github.com/karpathy/micrograd}
+
+\bibitem{linnainmaa}
+S.~Linnainmaa.
+\newblock The representation of the cumulative rounding error of an algorithm as a Taylor expansion of the local rounding errors.
+\newblock Tesis de maestría, Universidad de Helsinki, 1970.
+
+\bibitem{llama}
+Meta.
+\newblock Llama 2: código de inferencia de referencia (PyTorch).
+\newblock 2023.
+\newblock \url{https://github.com/meta-llama/llama}
+
+\bibitem{mit18337}
+C.~Rackauckas.
+\newblock Parallel Computing and Scientific Machine Learning (18.337). Notas de la clase~8, «Forward-Mode Automatic Differentiation (AD) via High Dimensional Algebras».
+\newblock Massachusetts Institute of Technology, 2020.
+\newblock \url{https://book.sciml.ai/}
+
+\bibitem{mit18s096}
+A.~Edelman y S.~G. Johnson.
+\newblock 18.S096: Matrix Calculus for Machine Learning and Beyond. Clase~5, partes~2 y~3.
+\newblock Massachusetts Institute of Technology, MIT OpenCourseWare, IAP de enero de 2023.
+\newblock \url{https://ocw.mit.edu/courses/18-s096-matrix-calculus-for-machine-learning-and-beyond-january-iap-2023/}
+
+\bibitem{paszke}
+A.~Paszke \emph{et al.}
+\newblock PyTorch: an imperative style, high-performance deep learning library.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2019.
+\newblock \url{https://arxiv.org/abs/1912.01703}
+
+\bibitem{pearlmutter}
+B.~A. Pearlmutter.
+\newblock Fast exact multiplication by the Hessian.
+\newblock \emph{Neural Computation}, 6(1):147--160, 1994.
+
+\bibitem{pytorch}
+PyTorch.
+\newblock Autograd mechanics. Documentación de PyTorch, versión 2.14.
+\newblock \url{https://docs.pytorch.org/docs/stable/notes/autograd.html}
+
+\bibitem{rumelhart}
+D.~E. Rumelhart, G.~E. Hinton y R.~J. Williams.
+\newblock Learning representations by back-propagating errors.
+\newblock \emph{Nature}, 323:533--536, 1986.
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock §2.5, «Automatic Differentiation», y §5.3, «Forward Propagation, Backward Propagation, and Computational Graphs».
+\newblock \url{https://d2l.ai/}
+
+\end{thebibliography}
+
+
+\end{document}
