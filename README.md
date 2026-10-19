@@ -1,17 +1,33 @@
 # Anatomía de un LLM
 
-Curso de fundamentos matemáticos y computacionales de los grandes modelos de lenguaje, en español. Parte del nivel de primer curso de ingeniería y llega hasta el preentrenamiento a escala, el ajuste a preferencias, los agentes y la interpretabilidad.
+Curso de fundamentos matemáticos y computacionales de los grandes modelos de lenguaje, en español. Parte del nivel de primer curso de ingeniería, con una Fase 0 que repasa todas las matemáticas previas (demostraciones, conjuntos y funciones, álgebra, trigonometría, cálculo, probabilidad y estadística), y llega hasta el preentrenamiento a escala, el ajuste a preferencias, los agentes y la interpretabilidad.
 
 **Campus web:** https://nava98.github.io/anatomia-de-un-llm/
 
 ## Contenido
 
-- **Apuntes** de 23 módulos (1167 páginas), organizados en temas con definiciones, teoremas, demostraciones y ejercicios graduados: ★ comprensión, ★★ cálculo a mano, ★★★ demostración. Son 815 ejercicios con solución completa paso a paso en el apéndice de cada documento; una parte está adaptada de cursos y libros universitarios, con la fuente indicada.
-- **Cinco exámenes de hito**, uno por fase, con test, problemas, proyecto de fase, solucionario y tabla de autoevaluación.
+- **Apuntes** de 32 módulos (1840 páginas): una Fase 0 de repaso con 9 módulos y 23 módulos en 5 fases, organizados en temas con definiciones, teoremas, demostraciones y ejercicios graduados: ★ comprensión, ★★ cálculo a mano, ★★★ demostración. Son 1628 ejercicios con solución completa paso a paso en el apéndice de cada documento; una parte está adaptada de cursos y libros universitarios, con la fuente indicada.
+- **Seis exámenes de hito**, uno por fase, con test, problemas, proyecto de fase, solucionario y tabla de autoevaluación.
 - **Prácticas** en cuadernos de Python (NumPy, Matplotlib y PyTorch).
 - **Campus web** (carpeta `docs/`): visor de los PDF, índice de ejercicios con acceso al enunciado y a la solución, prácticas ejecutables en el navegador con Pyodide, tests con corrección automática y tarjetas de repaso.
 
 ## Plan del curso
+
+
+### Fase 0. Preliminares matemáticos (repaso previo)
+
+| Módulo | Título | Páginas | Ejercicios | Apuntes | Fuentes | Práctica |
+|---|---|--:|--:|---|---|---|
+| 0.1 | Lógica y técnicas de demostración | 73 | 89 | [PDF](docs/pdf/010-F0-P01-apuntes-demostraciones.pdf) | [LaTeX](apuntes/P01/) | — |
+| 0.2 | Conjuntos, funciones y relaciones | 67 | 88 | [PDF](docs/pdf/020-F0-P02-apuntes-conjuntos-funciones.pdf) | [LaTeX](apuntes/P02/) | — |
+| 0.3 | Números, álgebra y sumatorios | 67 | 91 | [PDF](docs/pdf/030-F0-P03-apuntes-algebra.pdf) | [LaTeX](apuntes/P03/) | — |
+| 0.4 | Trigonometría y números complejos | 68 | 91 | [PDF](docs/pdf/040-F0-P04-apuntes-trigonometria-complejos.pdf) | [LaTeX](apuntes/P04/) | — |
+| 0.5 | Cálculo diferencial de una variable | 84 | 91 | [PDF](docs/pdf/050-F0-P05-apuntes-calculo-diferencial.pdf) | [LaTeX](apuntes/P05/) | — |
+| 0.6 | Cálculo integral y series | 78 | 90 | [PDF](docs/pdf/060-F0-P06-apuntes-calculo-integral.pdf) | [LaTeX](apuntes/P06/) | — |
+| 0.7 | Vectores y funciones de varias variables | 75 | 90 | [PDF](docs/pdf/070-F0-P07-apuntes-varias-variables.pdf) | [LaTeX](apuntes/P07/) | — |
+| 0.8 | Combinatoria y probabilidad | 75 | 91 | [PDF](docs/pdf/080-F0-P08-apuntes-probabilidad.pdf) | [LaTeX](apuntes/P08/) | — |
+| 0.9 | Estadística | 86 | 92 | [PDF](docs/pdf/090-F0-P09-apuntes-estadistica.pdf) | [LaTeX](apuntes/P09/) | — |
+| H0 | *Examen de hito 0* | 30 | 9 | [PDF](docs/pdf/099-F0-H0-examen.pdf) | [LaTeX](apuntes/H0/) | — |
 
 ### Fase I. Fundamentos matemáticos (semanas 1–8)
 
@@ -69,7 +85,7 @@ Curso de fundamentos matemáticos y computacionales de los grandes modelos de le
 ## Estructura del repositorio
 
 ```
-apuntes/          fuentes LaTeX: estilo-apuntes.sty, latexmkrc y una carpeta por módulo (M01–M23) y por examen (H1–H5)
+apuntes/          fuentes LaTeX: estilo-apuntes.sty, latexmkrc y una carpeta por módulo (P01–P09 de la Fase 0 y M01–M23) y por examen (H0–H5)
 docs/             campus web (GitHub Pages) y PDF compilados en docs/pdf/
 practicas/        cuadernos de Jupyter de cada módulo
 ```
