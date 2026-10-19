@@ -266,6 +266,8 @@ function pintarMenu(){
     det.addEventListener('toggle',()=>{if(det.open)$$('#menu details').forEach(d=>{if(d!==det)d.open=false})});
     items.push(det);
   }
+  const abiertas=T.convs.filter(c=>{const e=estadoConv(c);return e==='abierta'||e==='en curso'}).length;
+  items.push(h('a',{class:'item',href:'#convocatorias','aria-current':actual==='convocatorias'?'page':null},'Convocatorias'+(abiertas?' ●':'')));
   items.push(h('a',{class:'item',href:'#descargas','aria-current':actual==='descargas'?'page':null},'Descargas'));
   menu.replaceChildren(...items);
 }
@@ -423,7 +425,8 @@ function pestanas(lista,activa,alCambiar){
 function vistaInicio(){
   const d=S.datos; const totEj=d.modulos.reduce((a,m)=>a+m.ejercicios.length,0); const totPag=d.modulos.reduce((a,m)=>a+m.paginas,0); const totU=d.modulos.reduce((a,m)=>a+m.ejercicios.filter(e=>e.fuente).length,0);
   const p=$('#principal');
-  p.replaceChildren(
+  const planCaja=h('div',{id:'plan-semana',style:'margin-bottom:28px'});
+  p.replaceChildren(planCaja,
     h('div',{class:'columnas'},
       h('div',{class:'lectura'},
         h('h3',{class:'sec',style:'margin-top:0'},'Presentación'),
@@ -449,6 +452,7 @@ function vistaInicio(){
       h('tbody',{},d.fases.flatMap(f=>[h('tr',{class:'grupo'},h('td',{},'Fase '+f.romano),h('td',{colspan:'4'},f.titulo+(f.id==='F0'?' (repaso previo)':''))),
         ...f.modulos.map(modulo).map(m=>h('tr',{},h('td',{}),h('td',{},h('a',{href:'#'+m.id},'Módulo '+m.etiqueta+'. '+m.titulo)),h('td',{class:'num'},m.fase==='F0'?'—':m.semanas),h('td',{class:'num'},m.paginas+' p. · '+m.ejercicios.length+' ejercicios'),h('td',{},'Test'))),
         hito(f.hito)?h('tr',{},h('td',{}),h('td',{},h('a',{href:'#'+f.hito},h('i',{},'Examen de hito '+f.n))),h('td',{class:'num'},''),h('td',{class:'num'},hito(f.hito).paginas+' p.'),h('td',{},'≥ 70 %')):null])))));
+  pintarPlan(planCaja);
 }
 function vistaModulo(m,pest){
   const f=fase(m.fase); const p=$('#principal');
@@ -572,6 +576,7 @@ function panelTest(clave,preg,total,umbral,tipo,ptsPorPreg){
       const ex=$('.expl',b);ex.hidden=false;ex.innerHTML='<i class="'+(bien?'e-bien':'e-mal')+'">'+(bien?'Correcta.':'Incorrecta.')+'</i> '+(q.tipo==='numero'?'Respuesta: '+esc(fmt(q.valor))+(q.unidad?' '+esc(q.unidad):'')+'. ':'')+(q.explicacion||'')+(q.repasar?' <span class="eti">Repasar: '+esc(q.repasar)+'</span>':'');
     });
     const pts=ok*pp; tipografiar(lista);
+    guardarResultado(clave,tipo,{puntos:pts,total:maxP,fallos:fallos.map(n=>preg[n-1].repasar).filter(Boolean)});
     res.innerHTML='Calificación: <b>'+fmt(pts)+' / '+fmt(maxP)+'</b>. '+(pts>=umbralP?'<span class="e-bien">Superado.</span>':'<span class="e-mal">No superado</span> (mínimo '+fmt(umbralP)+').');
     bCor.hidden=true;bRe.hidden=false;corregido=true;
   };
@@ -623,14 +628,142 @@ function vistaDescargas(){
   );
 }
 
+/* ------------------------------------------------------------------ datos del tutor (plan, convocatorias, resultados) */
+const TZ='Europe/Madrid';
+const fechaHora=iso=>new Date(iso).toLocaleString('es-ES',{timeZone:TZ,weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'});
+const soloFecha=iso=>new Date(iso+'T12:00:00').toLocaleDateString('es-ES',{timeZone:TZ,weekday:'long',day:'numeric',month:'long'});
+const T={db:null,plan:null,convs:[],intentos:{},listo:false};
+async function iniciarDb(){
+  try{
+    if(!window.claude||!claude.use){T.listo=true;return}
+    const db=await claude.use('db'); T.listo=true; if(!db){refrescarTutor();return} T.db=db;
+    db.doc('plan/semana').onSnapshot(s=>{T.plan=s.exists?s.data():null;refrescarTutor()},()=>{});
+    db.collection('convocatorias').onSnapshot(s=>{T.convs=s.docs.map(d=>Object.assign({id:d.id},d.data())).sort((a,b)=>String(a.apertura).localeCompare(String(b.apertura)));refrescarTutor()},()=>{});
+    db.collection('intentos').onSnapshot(s=>{const o={};s.docs.forEach(d=>{o[d.id]=d.data()});T.intentos=o;refrescarTutor()},()=>{});
+  }catch(e){T.listo=true}
+}
+let tRef=null;
+function refrescarTutor(){clearTimeout(tRef);tRef=setTimeout(()=>{const id=(location.hash.slice(1)||'inicio').split('-')[0];if(id==='inicio'&&$('#plan-semana'))pintarPlan($('#plan-semana'));if(id==='convocatorias'&&!T.enCurso){const tok=location.hash.slice(1);if(T.limpiar){try{T.limpiar()}catch(e){}T.limpiar=null}if(tok.startsWith('convocatorias-'))vistaConvocatoria(tok.slice(14));else vistaConvocatorias()}pintarMenu()},150)}
+async function guardarResultado(clave,tipo,datos){
+  if(!T.db)return;
+  try{
+    const ref=T.db.collection('resultados').doc(clave);const prev=await ref.get();const p=prev.exists?prev.data():{};
+    const hist=(p.historial||[]).concat([{fecha:new Date().toISOString(),puntos:datos.puntos}]).slice(-20);
+    await ref.set({tipo,total:datos.total,ultimo:datos.puntos,mejor:Math.max(p.mejor||0,datos.puntos),intentos:(p.intentos||0)+1,fallos:datos.fallos,historial:hist,fecha:new Date().toISOString()});
+  }catch(e){}
+}
+function pintarPlan(caja){
+  if(!caja)return;
+  if(!T.db){caja.replaceChildren();return}
+  const pl=T.plan;
+  if(!pl){caja.replaceChildren(h('h3',{class:'sec',style:'margin-top:0'},'Plan de esta semana'),h('p',{class:'vacio'},'El tutor publica aquí cada domingo el plan de sesiones de la semana (lunes a viernes, de 18:00 a 20:00).'));return}
+  const hoy=new Date().toLocaleDateString('en-CA',{timeZone:TZ});
+  caja.replaceChildren(
+    h('h3',{class:'sec',style:'margin-top:0'},'Plan de esta semana'),
+    pl.resumen?h('p',{class:'lectura'},pl.resumen):null,
+    h('div',{class:'tabla'},h('table',{class:'t'},h('thead',{},h('tr',{},h('th',{},'Día'),h('th',{},'Horario'),h('th',{},'Sesión'),h('th',{},'Tareas'))),
+      h('tbody',{},(pl.sesiones||[]).map(s=>h('tr',{style:s.fecha===hoy?'background:var(--acento-2)':null},h('td',{style:'white-space:nowrap'},soloFecha(s.fecha)),h('td',{class:'num'},s.horario||'18:00–20:00'),h('td',{},s.enlace?h('a',{href:s.enlace},s.titulo):s.titulo),h('td',{},h('ul',{style:'margin:0;padding-left:1.1em'},(s.tareas||[]).map(t=>h('li',{},t))))))))),
+    (pl.recomendaciones&&pl.recomendaciones.length)?h('div',{class:'aviso'},h('i',{},'Recomendaciones del tutor. '),pl.recomendaciones.join(' ')):null);
+  tipografiar(caja);
+}
+function estadoConv(c,ahora=Date.now()){
+  const a=Date.parse(c.apertura),z=Date.parse(c.cierre||new Date(a+(c.duracion_min||120)*60000).toISOString());
+  const it=T.intentos[c.id];
+  if(it&&it.estado==='entregado')return 'entregada';
+  if(ahora<a)return 'proxima'; if(ahora>=z)return it&&it.inicio?'entregada':'cerrada'; return it&&it.inicio?'en curso':'abierta';
+}
+const NOMBRE_ESTADO={proxima:'Próxima',abierta:'Abierta',['en curso']:'En curso',entregada:'Entregada',cerrada:'Cerrada sin presentar'};
+function vistaConvocatorias(){
+  const p=$('#principal');
+  const cab=h('div',{class:'titular'},h('span',{class:'eti'},'Evaluación con ventana horaria'),h('h2',{},'Convocatorias'),h('div',{class:'meta'},h('span',{},'Exámenes generados por el tutor; cada uno solo puede hacerse dentro de su ventana.')),h('hr'));
+  if(!T.listo){p.replaceChildren(cab,h('p',{class:'vacio'},'Cargando convocatorias…'));return}
+  if(!T.db){p.replaceChildren(cab,h('p',{class:'vacio'},'Las convocatorias solo están disponibles en el campus de claude.ai, con la sesión iniciada.'));return}
+  if(!T.convs.length){p.replaceChildren(cab,h('p',{class:'vacio'},'Todavía no hay convocatorias. El tutor las publica con el plan semanal.'));return}
+  const filas=T.convs.slice().reverse().map(c=>{const e=estadoConv(c);const it=T.intentos[c.id];
+    return h('tr',{},h('td',{},h('a',{href:'#convocatorias-'+c.id},c.titulo)),h('td',{},(c.modulos||[]).join(', ')),h('td',{style:'white-space:nowrap'},fechaHora(c.apertura)),h('td',{class:'num'},(c.duracion_min||'—')+' min'),h('td',{},NOMBRE_ESTADO[e]),h('td',{class:'num'},it&&it.estado==='entregado'?fmt(it.puntos)+' / '+fmt(it.total):'—'))});
+  p.replaceChildren(cab,h('div',{class:'tabla'},h('table',{class:'t'},h('thead',{},h('tr',{},h('th',{},'Convocatoria'),h('th',{},'Módulos'),h('th',{},'Apertura'),h('th',{},'Duración'),h('th',{},'Estado'),h('th',{},'Nota'))),h('tbody',{},filas))));
+}
+function vistaConvocatoria(id){
+  const p=$('#principal');const c=T.convs.find(x=>x.id===id);
+  if(!c){vistaConvocatorias();return}
+  const e=estadoConv(c);const it=T.intentos[id]||{};
+  const a=Date.parse(c.apertura),z=Date.parse(c.cierre||new Date(a+(c.duracion_min||120)*60000).toISOString());
+  const cab=h('div',{class:'titular'},h('span',{class:'eti'},'Convocatoria'),h('h2',{},c.titulo),h('div',{class:'meta'},h('span',{},'Abre: '+fechaHora(c.apertura)),h('span',{},'Cierra: '+fechaHora(new Date(z).toISOString())),h('span',{class:'num'},'Duración: '+(c.duracion_min||Math.round((z-a)/60000))+' min'),h('span',{},'Aprobado: '+Math.round(100*(c.umbral||0.7))+' %')),h('hr'));
+  const cuerpo=h('div');
+  if(c.descripcion)cuerpo.append(h('p',{class:'lectura'},c.descripcion));
+  if(e==='proxima'){
+    const cuenta=h('p',{class:'num',style:'font-size:1.3rem'});
+    const tic=()=>{const d=a-Date.now();if(d<=0){clearInterval(iv);vistaConvocatoria(id);return}const hh=Math.floor(d/3.6e6),mm=Math.floor(d%3.6e6/6e4),ss=Math.floor(d%6e4/1e3);cuenta.textContent='Se abre en '+(hh?hh+' h ':'')+mm+' min '+ss+' s.'};
+    const iv=setInterval(tic,1000);tic();T.limpiar=()=>clearInterval(iv);
+    cuerpo.append(h('div',{class:'aviso'},'El enunciado se mostrará al abrirse la ventana. Prepare papel, lápiz y calculadora; no se permiten apuntes.'),cuenta);
+  }else if(e==='abierta'){
+    const b=h('button',{class:'boton prim',type:'button'},'Comenzar el examen');
+    b.onclick=async()=>{b.disabled=true;try{await T.db.collection('intentos').doc(id).set({inicio:new Date().toISOString(),estado:'en curso'})}catch(err){aviso('No se pudo iniciar el examen.');b.disabled=false;return}T.intentos[id]={inicio:new Date().toISOString(),estado:'en curso'};vistaConvocatoria(id)};
+    cuerpo.append(h('div',{class:'aviso'},'Al pulsar «Comenzar» empieza a contar el tiempo ('+(c.duracion_min||'—')+' minutos, sin pasar del cierre de la ventana). Al agotarse, las respuestas se entregan solas.'),b);
+  }else if(e==='en curso'){
+    cuerpo.append(panelExamen(c,it,Math.min(z,Date.parse(it.inicio)+(c.duracion_min||1e6)*60000)));
+  }else if(e==='entregada'){
+    cuerpo.append(panelRevision(c,it,Date.now()>=z));
+  }else{
+    cuerpo.append(h('p',{class:'vacio'},'La ventana de esta convocatoria se cerró sin que se presentara.'),panelRevision(c,{},true));
+  }
+  p.replaceChildren(cab,cuerpo);tipografiar(cuerpo);
+}
+function corregir(preg,resp){
+  let ok=0;const fallos=[];
+  preg.forEach((q,i)=>{let bien;
+    if(q.tipo==='numero'){const t=String(resp[i]??'').replace(/[\s ]/g,'');const cands=t.includes(',')?[t.replace(/\./g,'').replace(',','.')]:[t,t.replace(/\./g,'')];const tol=(q.tolerancia||Math.abs(q.valor)*1e-3+1e-9);bien=cands.some(c=>{const v=parseFloat(c);return c!==''&&isFinite(v)&&Math.abs(v-q.valor)<=tol})}
+    else bien=resp[i]===q.correcta;
+    if(bien)ok++;else fallos.push({n:i+1,repasar:q.repasar||''})});
+  return {ok,fallos};
+}
+function panelExamen(c,it,limite){
+  T.enCurso=true;
+  const caja=h('div');const resp={};const preg=c.preguntas||[];
+  const reloj=h('b',{class:'num'});
+  const lista=h('div');
+  preg.forEach((q,i)=>{const nombre='cv-'+c.id+'-'+i;
+    const b=h('div',{class:'preg'},h('div',{class:'enun'},h('b',{class:'num'},(i+1)+'.'),h('div',{html:q.enunciado})));
+    if(q.tipo==='numero'){const inp=h('input',{type:'text',inputmode:'decimal',id:nombre});inp.oninput=()=>{resp[i]=inp.value};b.append(h('div',{class:'resp-num'},inp,q.unidad?h('span',{},q.unidad):null))}
+    else b.append(h('div',{class:'opc'},q.opciones.map((o,j)=>{const r=h('input',{type:'radio',name:nombre,id:nombre+'-'+j});r.onchange=()=>{resp[i]=j};return h('label',{for:nombre+'-'+j},r,h('span',{class:'eti',style:'min-width:1.4em'},'('+'abcd'[j]+')'),h('span',{html:o}))})));
+    lista.append(b)});
+  const probs=(c.problemas||[]).length?h('div',{},h('h3',{class:'sec'},'Problemas para resolver a mano'),h('p',{class:'lectura'},'Resuélvalos en papel. Las soluciones se mostrarán al cerrarse la ventana para que se autocorrija.'),...c.problemas.map((pr,k)=>h('div',{class:'preg'},h('div',{class:'enun'},h('b',{},'P'+(k+1)+'.'),h('div',{html:pr.enunciado+(pr.puntos?' <span class="eti">('+pr.puntos+' p.)</span>':'')}))))):null;
+  const bEnt=h('button',{class:'boton prim',type:'button'},'Entregar');
+  let entregado=false;
+  const entregar=async auto=>{if(entregado)return;entregado=true;clearInterval(iv);bEnt.disabled=true;
+    const {ok,fallos}=corregir(preg,resp);const pp=c.puntos_por_pregunta||1;
+    const d={inicio:it.inicio,fin:new Date().toISOString(),estado:'entregado',respuestas:preg.map((_,i)=>resp[i]??null),puntos:ok*pp,total:preg.length*pp,fallos,automatica:!!auto};
+    try{await T.db.collection('intentos').doc(c.id).set(d)}catch(e){aviso('No se pudo guardar la entrega; vuelva a pulsar «Entregar».');entregado=false;bEnt.disabled=false;return}
+    await guardarResultado('conv-'+c.id,'convocatoria',{puntos:d.puntos,total:d.total,fallos:fallos.map(f=>f.repasar).filter(Boolean)});
+    T.intentos[c.id]=d;T.enCurso=false;vistaConvocatoria(c.id)};
+  bEnt.onclick=()=>entregar(false);
+  const tic=()=>{const d=limite-Date.now();if(d<=0){reloj.textContent='0:00';entregar(true);return}const mm=Math.floor(d/6e4),ss=Math.floor(d%6e4/1e3);reloj.textContent=mm+':'+String(ss).padStart(2,'0');reloj.style.color=d<5*6e4?'var(--mal)':''};
+  const iv=setInterval(tic,1000);tic();T.limpiar=()=>{clearInterval(iv);T.enCurso=false};
+  const marcador=h('div',{class:'marcador'},h('span',{},'Tiempo restante: ',reloj),h('span',{style:'flex:1'}),bEnt);
+  caja.append(lista,probs,marcador);
+  return caja;
+}
+function panelRevision(c,it,cerrada){
+  const caja=h('div');const preg=c.preguntas||[];const resp=it.respuestas||[];
+  if(it.estado==='entregado')caja.append(h('p',{class:'lectura'},'Calificación: ',h('b',{class:'num'},fmt(it.puntos)+' / '+fmt(it.total)),'. ',it.puntos>=(c.umbral||0.7)*it.total?h('span',{class:'e-bien'},'Superada.'):h('span',{class:'e-mal'},'No superada.'),it.automatica?' Entrega automática al agotarse el tiempo.':''));
+  if(!cerrada){caja.append(h('div',{class:'aviso'},'La corrección detallada y las soluciones de los problemas se mostrarán cuando se cierre la ventana.'));return caja}
+  preg.forEach((q,i)=>{const r=resp[i];const {ok}=corregir([q],[r]);
+    caja.append(h('div',{class:'preg'},h('div',{class:'enun'},h('b',{class:'num'},(i+1)+'.'),h('div',{html:q.enunciado})),
+      h('div',{class:'expl',html:'<i class="'+(ok?'e-bien':'e-mal')+'">'+(ok?'Correcta.':'Incorrecta.')+'</i> Su respuesta: '+esc(r==null?'—':(q.tipo==='numero'?r:'('+'abcd'[r]+')'))+'. Respuesta correcta: '+(q.tipo==='numero'?esc(fmt(q.valor))+(q.unidad?' '+esc(q.unidad):''):'('+'abcd'[q.correcta]+') '+q.opciones[q.correcta])+'. '+(q.explicacion||'')+(q.repasar?' <span class="eti">Repasar: '+esc(q.repasar)+'</span>':'')})))});
+  if((c.problemas||[]).length)caja.append(h('h3',{class:'sec'},'Problemas: soluciones'),...c.problemas.map((pr,k)=>h('div',{class:'preg'},h('div',{class:'enun'},h('b',{},'P'+(k+1)+'.'),h('div',{html:pr.enunciado})),h('div',{class:'expl',html:pr.solucion||''}))));
+  return caja;
+}
+
 /* ------------------------------------------------------------------ enrutado */
 function enrutar(){
   if(!S.datos)return;
   const tok=location.hash.slice(1)||'inicio';const [id,sub]=tok.split('-');
+  if(T.limpiar){try{T.limpiar()}catch(e){}T.limpiar=null}
   pintarMenu();
   if(/^[MP]\d\d$/.test(id)&&modulo(id))vistaModulo(modulo(id),sub||ls.get(BASE_LOCAL+'tab-'+id,'apuntes'));
   else if(/^H\d$/.test(id)&&hito(id))vistaHito(hito(id),sub||ls.get(BASE_LOCAL+'tab-'+id,'examen'));
   else if(id==='descargas')vistaDescargas();
+  else if(id==='convocatorias'){if(sub)vistaConvocatoria(tok.slice('convocatorias-'.length));else vistaConvocatorias()}
   else vistaInicio();
   window.scrollTo(0,0);
 }
@@ -642,6 +775,7 @@ addEventListener('hashchange',enrutar);
   try{Object.assign(S.tests,await (await fetch('tests-fase0.json')).json())}catch(e){}
   try{Object.assign(S.tests,await (await fetch('tests-fase6.json')).json())}catch(e){}
   enrutar();
+  iniciarDb();
 })();
 </script>
 
