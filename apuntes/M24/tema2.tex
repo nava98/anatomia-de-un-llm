@@ -1,0 +1,258 @@
+% =====================================================================
+\chapter{Programación lineal y entera mixta}
+\label{tema:2}
+% =====================================================================
+
+La programación lineal y la entera mixta resuelven la mayor parte de los problemas de planificación de la industria: producción, mezclas, transporte, turnos, inversiones. Este tema sigue los capítulos~2 a~5, 10 y~11 de Bertsimas y Tsitsiklis~\cite{bt}, que son las lecturas del curso 6.251J del MIT~\cite{mit6251}, y las clases~6 («Sensitivity analysis and shadow prices»), 10--12 (programación entera y ramificación y acotación) del curso 15.053~\cite{mit15053}, con los capítulos~3 («Sensitivity Analysis») y~9 («Integer Programming») de Bradley, Hax y Magnanti~\cite{amp}. La ramificación y acotación procede de Land y Doig~\cite{landdoig}; el resolvedor de referencia es HiGHS~\cite{highs,hh}.
+
+\section{Programas lineales y vértices}
+
+\begin{definicion}[Programa lineal]\label{def:pl}
+Un \emph{programa lineal} (PL) en forma canónica es
+\[
+z^{*}=\max\ c\T x\qquad\st Ax\le b,\quad x\ge 0,
+\]
+con $A\in\R^{m\times n}$, $b\in\R^{m}$ y $c\in\R^{n}$. Su conjunto factible $\mathcal{P}=\{x: Ax\le b,\ x\ge 0\}$ es un \emph{poliedro}. Un punto $v\in\mathcal{P}$ es un \emph{vértice} si no es combinación convexa $\lambda u+(1-\lambda)w$ de dos puntos distintos $u,w\in\mathcal{P}$ con $\lambda\in(0,1)$; equivalentemente, si en $v$ hay $n$ restricciones activas linealmente independientes~\cite{bt}.
+\end{definicion}
+
+\begin{teorema}[Teorema fundamental de la programación lineal]\label{teo:vertice}
+Si $\mathcal{P}$ es no vacío y acotado, el PL tiene un óptimo que es un vértice de $\mathcal{P}$.
+\end{teorema}
+
+\begin{proof}
+Un poliedro acotado y no vacío tiene un número finito de vértices $v_1,\dots,v_K$ y todo punto suyo es combinación convexa de ellos (teorema de representación; Bertsimas y Tsitsiklis~\cite{bt}, cap.~2). Sea $x\in\mathcal{P}$ con $x=\sum_k\lambda_kv_k$, $\lambda_k\ge 0$, $\sum_k\lambda_k=1$. Entonces
+\[
+c\T x=\sum_k\lambda_k\,c\T v_k\le\Bigl(\sum_k\lambda_k\Bigr)\max_k c\T v_k=\max_k c\T v_k .
+\]
+Luego el vértice con mayor $c\T v_k$ es óptimo.
+\end{proof}
+
+El \emph{método símplex} (Dantzig) explota el teorema: recorre vértices adyacentes mejorando el objetivo hasta que ninguna arista mejora. Los \emph{métodos de punto interior} avanzan por el interior del poliedro y tienen complejidad polinómica. HiGHS implementa ambos (su símplex dual revisado paralelo se describe en~\cite{hh}) y un resolvedor de PLEM; SciPy lo usa en \texttt{linprog} y \texttt{milp}~\cite{highs}.
+
+\section{Dualidad y precios sombra}
+
+\begin{definicion}[Problema dual]\label{def:dual}
+El \emph{dual} del PL de la \cref{def:pl} es
+\[
+w^{*}=\min\ b\T y\qquad\st A\T y\ge c,\quad y\ge 0.
+\]
+Cada variable dual $y_i$ corresponde a la restricción $i$ del primal.
+\end{definicion}
+
+\begin{teorema}[Dualidad débil]\label{teo:dual-debil}
+Si $x$ es factible para el primal e $y$ para el dual, entonces $c\T x\le b\T y$. En consecuencia $z^{*}\le w^{*}$, y si $c\T x=b\T y$ ambos son óptimos.
+\end{teorema}
+
+\begin{proof}
+Como $x\ge 0$ y $A\T y\ge c$, se tiene $c\T x\le (A\T y)\T x=y\T(Ax)$. Como $y\ge 0$ y $Ax\le b$, $y\T(Ax)\le y\T b$. Encadenando, $c\T x\le b\T y$. Si hay igualdad, ningún primal factible puede superar $c\T x$ (estaría por encima de $b\T y$) y ningún dual puede bajar de $b\T y$.
+\end{proof}
+
+\begin{teorema}[Dualidad fuerte]\label{teo:dual-fuerte}
+Si el primal tiene óptimo, también lo tiene el dual y $z^{*}=w^{*}$ (Bertsimas y Tsitsiklis~\cite{bt}, cap.~4).
+\end{teorema}
+
+\begin{corolario}[Holgura complementaria]\label{cor:holgura}
+Sean $x$ e $y$ factibles. Ambos son óptimos si y solo si
+\[
+y_i\,\bigl(b_i-(Ax)_i\bigr)=0\ \ \text{para todo }i\qquad\text{y}\qquad x_j\,\bigl((A\T y)_j-c_j\bigr)=0\ \ \text{para todo }j.
+\]
+\end{corolario}
+
+\begin{proof}
+En la demostración de la dualidad débil, $b\T y-c\T x=\sum_i y_i(b_i-(Ax)_i)+\sum_j x_j((A\T y)_j-c_j)$, suma de términos no negativos. Por la dualidad fuerte, ambos son óptimos si y solo si la diferencia es cero, es decir, si y solo si todos los términos se anulan.
+\end{proof}
+
+La holgura complementaria tiene una lectura económica directa: un recurso que sobra (restricción no activa) tiene precio cero, y un producto que no se fabrica no cubre con su margen el valor de los recursos que consumiría.
+
+\begin{proposicion}[Precios sombra]\label{prop:sombra}
+Sea $z^{*}(b)$ el valor óptimo en función del término independiente. La función $z^{*}$ es cóncava en el conjunto de $b$ con primal factible y acotado, y si $y^{*}$ es una solución dual óptima para $b$, para todo $b'$ de ese conjunto
+\[
+z^{*}(b')\le z^{*}(b)+(y^{*})\T(b'-b).
+\]
+Si el dual óptimo es único, $z^{*}$ es diferenciable en $b$ con $\partial z^{*}/\partial b_i=y_i^{*}$: el \emph{precio sombra} $y_i^{*}$ es lo que aumenta el valor óptimo por unidad adicional del recurso $i$, mientras la base óptima no cambia.
+\end{proposicion}
+
+\begin{proof}
+La factibilidad dual ($A\T y\ge c$, $y\ge 0$) no depende de $b$, así que $y^{*}$ es factible para el dual del problema con $b'$. Por la dualidad débil y la fuerte,
+\[
+z^{*}(b')\le (b')\T y^{*}=b\T y^{*}+(b'-b)\T y^{*}=z^{*}(b)+(y^{*})\T(b'-b).
+\]
+Además $z^{*}(b')=\min_{y\in D}(b')\T y$, con $D$ el poliedro dual, es un mínimo de funciones lineales de $b'$ y por tanto cóncava. Una función cóncava con un único supergradiente en un punto es diferenciable en él.
+\end{proof}
+
+\begin{ejemplo}[Precios sombra en la fábrica de piensos]\label{ej:sombra-piensos}
+En el \cref{ej:piensos}, las restricciones activas en $(100,100)$ son el molino y la granuladora; la demanda de puesta no lo es ($100<160$), luego $y_3^{*}=0$. Por la holgura complementaria, como $E,P>0$, las dos restricciones duales son igualdades:
+\[
+0{,}5y_1+0{,}6y_2=40,\qquad 0{,}5y_1+0{,}3y_2=30 .
+\]
+Restando, $0{,}3y_2=10$, de donde $y_2^{*}=33{,}33$~€/h y $y_1^{*}=(30-10)/0{,}5=40$~€/h. Comprobación: $b\T y^{*}=100\cdot 40+90\cdot 33{,}33=7000$~€, el valor primal. Una hora más de granuladora vale $33{,}33$~€ (el cuaderno lo confirma resolviendo con 91~h: $7033{,}33$~€), y no merece la pena pagar más de 40~€ por una hora extra de molino.
+\end{ejemplo}
+
+\section{Programación entera mixta}
+
+\begin{definicion}[PLEM y relajación lineal]\label{def:plem}
+Un \emph{programa lineal entero mixto} (PLEM, en inglés MILP) es un PL en el que un subconjunto $J$ de variables debe ser entero: $\max\{c\T x: Ax\le b,\ x\ge 0,\ x_j\in\Z\ (j\in J)\}$. Su \emph{relajación lineal} es el mismo problema sin la condición de integralidad; su valor se denota $z_{\mathrm{LP}}$.
+\end{definicion}
+
+\begin{proposicion}[La relajación acota]\label{prop:relajacion}
+En un problema de maximización, $z^{*}\le z_{\mathrm{LP}}$; en uno de minimización, $z^{*}\ge z_{\mathrm{LP}}$. Si la solución de la relajación cumple la integralidad, es óptima para el PLEM.
+\end{proposicion}
+
+\begin{proof}
+El conjunto factible del PLEM está contenido en el de la relajación, y el máximo sobre un conjunto mayor no es menor. Si el óptimo de la relajación es entero, es factible para el PLEM y alcanza una cota de su valor, luego es óptimo.
+\end{proof}
+
+La diferencia relativa entre el mejor valor entero conocido (el \emph{incumbente}) y la mejor cota se llama \emph{gap}; los resolvedores se detienen cuando es menor que una tolerancia (por defecto, del orden de $10^{-4}$).
+
+Las variables binarias $y\in\{0,1\}$ permiten modelizar decisiones lógicas con restricciones lineales:
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{coste fijo o de preparación}: $x\le My$ con coste $fy$ en el objetivo; si se produce ($x>0$), se paga $f$;
+  \item \emph{lote mínimo}: $Ly\le x\le My$; o no se produce, o se producen al menos $L$ unidades;
+  \item \emph{implicación} «si se elige $A$, se elige $B$»: $y_A\le y_B$; \emph{exclusión}: $y_A+y_B\le 1$; \emph{al menos $k$ de $n$}: $\sum_i y_i\ge k$;
+  \item \emph{disyunción} «se cumple $a\T x\le b$ o $d\T x\le e$»: $a\T x\le b+M\delta$, $d\T x\le e+M(1-\delta)$, $\delta\in\{0,1\}$.
+\end{enumerate}
+
+\begin{proposicion}[Validez y fuerza de una cota big-M]\label{prop:bigm}
+Sea $\mathcal{X}$ el conjunto factible sin la restricción $x\le My$ y sea $U=\sup\{x: x\in\mathcal{X}\}$.
+\begin{enumerate}
+  \item La restricción $x\le My$, con $y\in\{0,1\}$, no elimina ninguna solución con $y=1$ si y solo si $M\ge U$.
+  \item Si $U\le M\le M'$, la relajación lineal con $M$ está contenida en la relajación con $M'$; la menor cota válida, $M=U$, da la relajación más ajustada.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Con $y=1$ la restricción es $x\le M$, que no corta nada si y solo si $M\ge x$ para todo $x$ factible, es decir, $M\ge U$. (ii) En la relajación, $y\in[0,1]$; si $(x,y)$ cumple $x\le My$ con $y\ge 0$, entonces $x\le My\le M'y$. Por tanto cualquier punto de la relajación con $M$ pertenece a la relajación con $M'$.
+\end{proof}
+
+Con una $M$ grande la relajación permite valores de $y$ diminutos, por ejemplo $y=x/M$, y paga solo una fracción del coste fijo: la cota es mala y el árbol de búsqueda crece. Una $M$ desmesurada causa además errores numéricos, porque los resolvedores trabajan con tolerancias del orden de $10^{-6}$ a $10^{-9}$.
+
+\section{Ramificación y acotación}
+
+La \emph{ramificación y acotación} (\emph{branch and bound})~\cite{landdoig} explora un árbol de subproblemas. En cada nodo se resuelve la relajación lineal con las cotas acumuladas. Para un problema de maximización:
+\begin{enumerate}[label=\arabic*.]
+  \item si la relajación es infactible, el nodo se \emph{poda};
+  \item si su valor no supera el del incumbente, se poda \emph{por cota}: ningún descendiente puede mejorar (\cref{prop:relajacion});
+  \item si la solución es entera, se actualiza el incumbente y se poda;
+  \item si no, se elige una variable $x_j$ con valor fraccionario $x_j^{*}$ y se crean dos hijos con $x_j\le\lfloor x_j^{*}\rfloor$ y $x_j\ge\lceil x_j^{*}\rceil$.
+\end{enumerate}
+Si todas las variables enteras están acotadas, el árbol es finito y el incumbente final es óptimo: cada nodo podado lo es con una justificación válida y las ramas cubren todos los enteros factibles. Si los coeficientes del objetivo son enteros, el valor de cualquier solución entera también lo es, y un nodo puede podarse cuando $\lfloor z_{\mathrm{LP}}\rfloor$ no supera al incumbente. Los resolvedores modernos añaden preproceso, planos de corte (desigualdades válidas que eliminan soluciones fraccionarias; clase~13 de~\cite{mit15053}), heurísticas primales y reglas de ramificación elaboradas.
+
+\begin{ejemplo}[Caso de estudio: plan semanal de una cervecera]\label{ej:cervecera}
+Una cervecera planifica cuatro semanas de tres cervezas. La demanda prevista (hL) es
+\begin{center}\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+ & sem.~1 & sem.~2 & sem.~3 & sem.~4 & total \\
+\midrule
+Lager & 120 & 140 & 160 & 190 & 610 \\
+IPA & 60 & 50 & 80 & 100 & 290 \\
+Tostada & 40 & 50 & 30 & 60 & 180 \\
+\midrule
+total & 220 & 240 & 270 & 350 & 1080 \\
+\bottomrule
+\end{tabular}
+\end{center}
+La capacidad de fermentación es $C=280$~hL/semana. Los costes variables son $c=(60,85,70)$~€/hL; el almacenamiento en frío cuesta $h=(4,8,4)$~€/hL y semana (la IPA pierde aroma y se penaliza más); cada semana en que se elabora una cerveza se paga una preparación y limpieza de $f=500$~€, y si se elabora, el lote mínimo es de $L=20$~hL (un fermentador). El inventario inicial y el final son nulos.
+
+\emph{Variables:} $x_{pt}\ge 0$ (hL elaborados), $I_{pt}\ge 0$ (hL en inventario al final de la semana) e $y_{pt}\in\{0,1\}$ (se elabora $p$ en la semana $t$). \emph{Modelo:}
+\begin{align*}
+\min\ &\sum_{p,t}\bigl(c_px_{pt}+h_pI_{pt}+f\,y_{pt}\bigr)\\
+\st\ &I_{p,t-1}+x_{pt}-I_{pt}=d_{pt}\quad(I_{p,0}=0),\qquad \sum_p x_{pt}\le C,\\
+&L\,y_{pt}\le x_{pt}\le M_{pt}\,y_{pt},\qquad M_{pt}=\min\Bigl(C,\ \sum_{s\ge t}d_{ps}\Bigr).
+\end{align*}
+Por la \cref{prop:bigm}, $M_{pt}$ es la menor cota válida: no se puede elaborar más que la capacidad ni, con inventario final nulo, más que la demanda pendiente. \emph{Elección del método:} 12 binarias y 24 continuas con estructura lineal; PLEM con HiGHS. \emph{Por qué no basta un PL:} sin binarias el coste de preparación desaparece y el plan sería producir cada semana su demanda, con nueve preparaciones adicionales que nadie ha pagado.
+
+\emph{Resultado} (cuaderno, parte~2). Coste mínimo \textbf{79\,390~€}: coste variable 73\,850~€ (fijo, porque se produce toda la demanda), almacenamiento 1040~€ y nueve preparaciones, 4500~€. Un plan óptimo es
+\begin{center}\small
+\begin{tabular}{@{}lcccc@{\qquad}cccc@{}}
+\toprule
+ & \multicolumn{4}{c}{elaboración $x_{pt}$ (hL)} & \multicolumn{4}{c}{inventario $I_{pt}$ (hL)} \\
+ & 1 & 2 & 3 & 4 & 1 & 2 & 3 & 4 \\
+\midrule
+Lager & 120 & 140 & 170 & 180 & 0 & 0 & 10 & 0 \\
+IPA & 110 & 0 & 80 & 100 & 50 & 0 & 0 & 0 \\
+Tostada & 40 & 140 & 0 & 0 & 0 & 90 & 60 & 0 \\
+\midrule
+total & 270 & 280 & 250 & 280 & & & & \\
+\bottomrule
+\end{tabular}
+\end{center}
+La IPA de la semana~2 y la Tostada de las semanas~3 y~4 se adelantan para ahorrar preparaciones (guardar 50~hL de IPA una semana cuesta 400~€, menos que una preparación), y 10~hL de Lager se adelantan a la semana~3 porque la semana~4 está saturada. La relajación lineal vale $77\,284{,}36$~€, de modo que el \emph{gap} de integralidad es $(79\,390-77\,284{,}36)/79\,390=2{,}65\,\%$; HiGHS cierra ese gap en el nodo raíz, gracias a su preproceso y a sus planos de corte. La enumeración de los $2^{12}=4096$ patrones de preparación, resolviendo un PL para cada uno, confirma el óptimo.
+
+\emph{Precios sombra.} Fijando las binarias en su valor óptimo y resolviendo el PL resultante, la capacidad solo tiene precio en la semana~4: $4$~€/hL. Un hectolitro más de fermentación esa semana evitaría adelantar un hectolitro de Lager a la semana~3 y ahorraría su almacenamiento. El precio sombra es local: solo se adelantan 10~hL, así que la capacidad adicional vale 4~€/hL para los primeros 10~hL y nada a partir de ahí. Resolviendo de nuevo con 290 y 300~hL en la semana~4 se obtiene $79\,350$~€ en ambos casos: un fermentador extra de 20~hL vale como mucho $10\cdot 4=40$~€, no $20\cdot 4=80$~€.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~2: programación lineal y entera mixta.}\label{tab:tec2}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.3cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+HiGHS~\cite{highs} & PL (símplex dual, punto interior), PLEM, cuadrático & abierta (MIT) & resolvedor abierto de referencia; incluido en SciPy \\
+SciPy \texttt{linprog}/\texttt{milp} & interfaz matricial a HiGHS, con duales & abierta (BSD-3) & modelos pequeños y docencia \\
+PuLP~\cite{pulp} & modelización por nombres; CBC, HiGHS, SCIP\dots & abierta (MIT) & modelos de planificación legibles \\
+SCIP & PLEM y no lineal entero, con cortes y ramificación configurables & abierta (Apache~2.0 desde la 8.0.3) & investigación y PLEM difíciles sin licencia comercial \\
+Gurobi, CPLEX & PL/PLEM a gran escala & comercial & producción con exigencias de tiempo y soporte \\
+OR-Tools (GLOP, MathOpt) & PL y envoltorio de resolvedores & abierta (Apache~2.0) & si ya se usa OR-Tools para rutas o CP \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en PL y PLEM]\label{obs:errores2}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Big-M desmesuradas}: relajaciones flojas, árboles enormes y soluciones con $y=10^{-7}$ que el resolvedor acepta por tolerancia. Hay que derivar la menor $M$ válida de los datos.
+  \item \emph{Leer duales de un PLEM como si fuera un PL}: solo tienen sentido con las enteras fijas y valen mientras no cambie la parte discreta.
+  \item \emph{Degeneración}: si hay más restricciones activas que variables, el dual puede no ser único y el precio sombra depende del sentido del cambio (derivadas laterales distintas).
+  \item \emph{Óptimos alternativos}: otro plan con el mismo coste puede ser operativamente preferible; conviene un segundo objetivo de desempate.
+  \item \emph{Simetría}: fermentadores o camiones idénticos generan soluciones equivalentes que multiplican el árbol; se rompe con restricciones de orden.
+  \item \emph{Confiar en el gap por defecto}: un gap del 1\,\% sobre millones de euros puede ser mucho dinero; se fija según el problema y se informa junto con la solución.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Bertsimas y Tsitsiklis~\cite{bt}, caps.~2--5 (geometría, símplex, dualidad, sensibilidad) y~10--11 (programación entera), según el calendario de MIT 6.251J~\cite{mit6251}.
+\item MIT 15.053~\cite{mit15053}, clases~6 «Sensitivity analysis and shadow prices», 10--11 (formulaciones enteras) y~12 «Branch and bound».
+\item Bradley, Hax y Magnanti~\cite{amp}, cap.~3 «Sensitivity Analysis» y cap.~9 «Integer Programming», §§9.1--9.6.
+\item A.~H. Land y A.~G. Doig~\cite{landdoig}, artículo original de la ramificación y acotación.
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-holgura}
+En el \cref{ej:sombra-piensos}, explique con la holgura complementaria por qué el precio sombra de la demanda de pienso de puesta es cero y por qué las dos restricciones duales se cumplen con igualdad. ¿Qué precio máximo pagaría la fábrica por una hora extra de granuladora?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-dual}
+Escriba el dual del PL de los piensos, compruebe que $y^{*}=(40;\ 33{,}33;\ 0)$ es factible y verifique la dualidad fuerte.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-outdoors}
+Una empresa fabrica sillas, bancos y mesas de jardín. Por unidad consumen $1{,}2$, $1{,}7$ y $1{,}2$~h de curvado (1000~h disponibles), $0{,}8$, $0$ y $2{,}3$~h de soldadura (1200~h) y $2$, $3$ y $4{,}5$~kg de tubo (2000~kg), con márgenes de 3, 3 y 5~\$. El plan óptimo es 700 sillas y $133{,}33$ mesas, con margen $2766{,}67$~\$; los precios sombra son $1{,}1667$~\$/h (curvado), 0 (soldadura) y $0{,}80$~\$/kg (tubo), y el lado derecho del tubo puede aumentar hasta 555,56~kg sin cambiar de base. (a) Un proveedor ofrece tubo a $0{,}70$~\$/kg: ¿conviene comprar 550~kg y cuánto aumenta el margen neto? (b) ¿Qué margen mínimo debe tener un toldo que consuma $1{,}8$~h de curvado, $0{,}5$~h de soldadura y $1{,}3$~kg de tubo para que merezca fabricarse?
+\fuente{adaptado de MIT 15.053, primavera de 2013, hoja de problemas~4, problema~1~\cite{mit15053ps}, basado en Bradley, Hax y Magnanti, cap.~3, ejercicio~1~\cite{amp}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-bb}
+Resuelva $\max\ x_1+5x_2$ s.a. $-4x_1+3x_2\le 6$, $3x_1+2x_2\le 18$, $x_1,x_2\ge 0$ enteros por ramificación y acotación, resolviendo cada relajación gráficamente. Dibuje el árbol.
+\fuente{adaptado de Bradley, Hax y Magnanti, cap.~9, ejercicio~10~\cite{amp}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-mochila}
+Seis inversiones tienen valor actual neto $(33,45,25,17,39,23)$ y requieren $(10,14,8,6,12,8)$ unidades de capital; el presupuesto es 28. (a) Formule el problema. (b) Resuelva la relajación lineal ordenando por rentabilidad (valor por unidad de capital). (c) La cartera $\{1,4,5\}$ vale 89: calcule el gap. (d) Ramifique sobre la variable fraccionaria y calcule las cotas de los dos hijos. ¿Puede podarse alguno?
+\fuente{adaptado de MIT 15.053, primavera de 2013, hoja de problemas~6, problema~2~\cite{mit15053ps}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-logica}
+Sean $x_1,x_2\in\{0,1\}$. Escriba restricciones lineales que definan $w=x_1\wedge x_2$ e $y=x_1\vee x_2$ sin variables auxiliares, y $z=x_1\oplus x_2$ (o exclusivo) con una variable auxiliar. Compruebe las cuatro combinaciones.
+\fuente{adaptado de MIT 15.053, primavera de 2013, hoja de problemas~5, problema~3~\cite{mit15053ps}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-bigm}
+En el caso de la cervecera (\cref{ej:cervecera}): (a) calcule $M_{pt}$ para la Lager en la semana~3 y para la IPA en la semana~4; (b) si la Lager de la semana~3 se elabora en una cantidad de 170~hL, ¿qué valor mínimo puede tomar $y$ en la relajación con $M=280$ y con $M=10^{4}$? ¿Qué parte del coste de preparación se «paga» en cada caso? (c) Exprese con binarias la regla «si se elabora IPA en una semana, no se elabora Tostada esa misma semana».
+\fuente{adaptado de MIT 15.053, primavera de 2013, hoja de problemas~5, problema~4 (elegir la menor $M$ válida)~\cite{mit15053ps}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-concava}
+Demuestre que, para un PL de maximización con dual factible, la función $z^{*}(b)$ es cóncava y lineal a trozos en el conjunto de $b$ donde el primal es factible. Deduzca que el valor de una hora adicional de un recurso no puede aumentar al disponer de más horas (rendimientos decrecientes).
+\end{ejercicio}

@@ -1,0 +1,214 @@
+% =====================================================================
+\chapter{Aprendizaje por refuerzo para control continuo}
+\label{tema:4}
+% =====================================================================
+
+El módulo~21 formuló el aprendizaje por refuerzo para modelos de lenguaje: acciones discretas (tokens), recompensa al final y PPO, un método \emph{en política} que descarta las muestras tras cada actualización. En control de procesos las acciones son continuas (potencias, aperturas de válvula), las recompensas llegan en cada paso y cada muestra cuesta: viene de un simulador lento o de la planta. Este tema presenta los métodos actor-crítico \emph{fuera de política} que reutilizan la experiencia (DDPG, TD3 y SAC), cómo se empaqueta un proceso como entorno, cómo se diseña la recompensa sin cambiar el problema y cómo se tratan la seguridad y el salto del simulador a la planta. Sigue a Sutton y Barto~\cite{sb}, las clases~7 («Value Function Methods»), 8 («Deep RL with Q-Functions») y~10 de CS285~\cite{cs285}, la tarea~3 de ese curso~\cite{cs285hw3} y los artículos originales citados en cada sección.
+
+\section{Del PPO a los métodos fuera de política}
+
+\begin{definicion}[MDP de control continuo]\label{def:mdp-cont}
+Un MDP de control continuo tiene estados $s\in\Sset\subseteq\R^{n}$, acciones $a\in\Aset=[a_{\min},a_{\max}]^{m}$, dinámica $s'\sim p(\cdot\mid s,a)$, recompensa $r(s,a,s')$ y descuento $\gamma<1$. La función de valor de acción de una política $\pi$ cumple la ecuación de Bellman (módulo~21, tema~1)
+\[
+Q^{\pi}(s,a)=\E_{s'}\bigl[r(s,a,s')+\gamma\,\E_{a'\sim\pi(\cdot\mid s')}Q^{\pi}(s',a')\bigr].
+\]
+\end{definicion}
+
+PPO sirve para acciones continuas con una política gaussiana $\pi_\psi(a\mid s)=\mathcal N(\mu_\psi(s),\diag\sigma^{2})$ y es robusto, pero cada lote de experiencia se usa para unas pocas épocas y se descarta. Los métodos fuera de política guardan las transiciones $(s,a,r,s',d)$ en un \emph{búfer de repetición} y aprenden de ellas muchas veces, porque la ecuación de Bellman para $Q^{\pi}$ se puede imponer sobre transiciones generadas por cualquier política. El precio es la inestabilidad del aprendizaje de $Q$ con aproximadores no lineales, que se mitiga con \emph{redes objetivo}: copias lentas $\phi'\leftarrow\tau\phi+(1-\tau)\phi'$, con $\tau\approx0{,}005$, que fijan los objetivos de regresión~\cite{cs285}.
+
+\begin{definicion}[DDPG]\label{def:ddpg}
+DDPG~\cite{ddpg} aprende un crítico $Q_\phi(s,a)$ y un actor determinista $a=\mu_\psi(s)$. El crítico minimiza $\E\bigl[(Q_\phi(s,a)-y)^{2}\bigr]$ sobre el búfer con el objetivo $y=r+\gamma(1-d)\,Q_{\phi'}\bigl(s',\mu_{\psi'}(s')\bigr)$, y el actor asciende por el gradiente $\nabla_\psi\E_s\bigl[Q_\phi(s,\mu_\psi(s))\bigr]=\E_s\bigl[\nabla_aQ_\phi(s,a)\rvert_{a=\mu_\psi(s)}\nabla_\psi\mu_\psi(s)\bigr]$, por la regla de la cadena (módulo~4, tema~2). La exploración se hace sumando ruido a la acción.
+\end{definicion}
+
+\section{El sesgo de sobreestimación y TD3}
+
+\begin{proposicion}[Sobreestimación por maximización]\label{prop:sobre}
+Sean $\hat Q(a)$, $a\in\Aset$ finito, estimaciones aleatorias con $\E[\hat Q(a)]=Q(a)$. Entonces $\E\bigl[\max_a\hat Q(a)\bigr]\ge\max_aQ(a)$. Si son independientes, gaussianas de varianza $\sigma^{2}$ y todos los $Q(a)$ son iguales a $q$, con dos acciones $\E[\max_a\hat Q(a)]=q+\sigma/\sqrt\pi$.
+\end{proposicion}
+
+\begin{proof}
+Para cada $a_0$, $\max_a\hat Q(a)\ge\hat Q(a_0)$; tomando esperanzas, $\E[\max_a\hat Q(a)]\ge Q(a_0)$ para todo $a_0$, luego también para el que maximiza $Q$. Para el caso gaussiano, $\max(X_1,X_2)=\frac{X_1+X_2}{2}+\frac{\abs{X_1-X_2}}{2}$ y $X_1-X_2\sim\mathcal N(0,2\sigma^{2})$, cuyo valor absoluto tiene media $\sqrt2\sigma\sqrt{2/\pi}=2\sigma/\sqrt\pi$.
+\end{proof}
+
+El objetivo de Bellman contiene un máximo, explícito en Q-learning o implícito en el actor que busca la acción de mayor $Q_\phi$; el error de estimación se convierte en sesgo positivo y se propaga hacia atrás por el \emph{bootstrapping}. Con diez acciones de igual valor y $\sigma=1$, el sesgo de cada objetivo es de $1{,}54$. Sutton y Barto lo llaman \emph{sesgo de maximización} y lo corrigen con el doble aprendizaje~\cite[§6.7]{sb}.
+
+\begin{definicion}[TD3]\label{def:td3}
+TD3~\cite{td3} modifica DDPG con tres mecanismos: (i) \emph{doble Q recortado}: dos críticos $Q_{\phi_1},Q_{\phi_2}$ y el objetivo $y=r+\gamma(1-d)\min_{i=1,2}Q_{\phi_i'}(s',\tilde a')$, que sustituye el sesgo positivo por uno ligeramente negativo; (ii) \emph{suavizado de la política objetivo}: $\tilde a'=\clip\bigl(\mu_{\psi'}(s')+\clip(\epsilon,-c,c),a_{\min},a_{\max}\bigr)$ con $\epsilon\sim\mathcal N(0,\tilde\sigma^{2})$, que impide explotar picos estrechos y erróneos del crítico; (iii) \emph{actualizaciones retardadas}: el actor y las redes objetivo se actualizan una vez por cada dos actualizaciones de los críticos.
+\end{definicion}
+
+\section{Máxima entropía: SAC}
+
+\begin{definicion}[Objetivo de máxima entropía]\label{def:maxent}
+SAC~\cite{sac} maximiza $J(\pi)=\sum_t\E\bigl[r_t+\alpha\,\mathcal H(\pi(\cdot\mid s_t))\bigr]$, con $\mathcal H$ la entropía y $\alpha>0$ la \emph{temperatura}. Las funciones de valor «blandas» cumplen
+\[
+Q(s,a)=\E_{s'}\bigl[r+\gamma V(s')\bigr],\qquad V(s)=\E_{a\sim\pi}\bigl[Q(s,a)-\alpha\log\pi(a\mid s)\bigr].
+\]
+\end{definicion}
+
+\begin{proposicion}[Política blanda óptima]\label{prop:blanda}
+Para un estado con acciones finitas y valores $Q(a)$, la política que maximiza $\E_\pi[Q]+\alpha\mathcal H(\pi)$ es $\pi^{*}(a)=\exp(Q(a)/\alpha)/Z$, con $Z=\sum_a\exp(Q(a)/\alpha)$, y el valor máximo es $V=\alpha\log Z$.
+\end{proposicion}
+
+\begin{proof}
+Para toda distribución $\pi$, $\E_\pi[Q]+\alpha\mathcal H(\pi)=-\alpha\sum_a\pi(a)\log\frac{\pi(a)}{e^{Q(a)/\alpha}}=\alpha\log Z-\alpha\KL(\pi\,\|\,\pi^{*})$, y la divergencia es no negativa y nula solo si $\pi=\pi^{*}$ (desigualdad de Gibbs, módulo~6). Es el mismo argumento que da la política óptima con penalización KL en el módulo~21 (tema~3), con la distribución uniforme como referencia.
+\end{proof}
+
+\begin{ejemplo}[Política blanda]\label{ej:blanda}
+Con $Q=(1,2,0)$ y $\alpha=0{,}5$: $e^{2}=7{,}389$, $e^{4}=54{,}598$, $e^{0}=1$, $Z=62{,}987$, $\pi^{*}=(0{,}117;\ 0{,}867;\ 0{,}016)$ y $V=0{,}5\ln62{,}987=2{,}071$, algo mayor que $\max Q=2$: la entropía tiene valor. Con $\alpha\to0$ la política tiende a la voraz.
+\end{ejemplo}
+
+En acciones continuas, el actor de SAC es una gaussiana comprimida, $a=\tanh(\mu_\psi(s)+\sigma_\psi(s)\odot\xi)$ con $\xi\sim\mathcal N(0,I)$, escalada al rango de la acción. Esta \emph{reparametrización} permite derivar $\E[Q_\phi(s,a)-\alpha\log\pi_\psi(a\mid s)]$ respecto a $\psi$ a través de la muestra, y el cambio de variable corrige la densidad: $\log\pi(a\mid s)=\log\mathcal N(u;\mu,\sigma^{2})-\sum_i\log(1-\tanh^{2}u_i)$. SAC usa además dos críticos con el mínimo, como TD3. La versión posterior~\cite{sac2} ajusta $\alpha$ automáticamente para mantener una entropía objetivo $\bar{\mathcal H}$ (típicamente $-\dim\Aset$), descendiendo por $\E[-\alpha\log\pi(a\mid s)-\alpha\bar{\mathcal H}]$: si la entropía de la política cae por debajo del objetivo, $\alpha$ sube (\cref{eje:4-temperatura}). La tarea~3 de CS285~\cite{cs285hw3} implementa estos componentes paso a paso.
+
+\section{Entornos: la interfaz de Gymnasium}
+
+\begin{definicion}[Entorno Gymnasium]\label{def:gym}
+Un entorno de Gymnasium~\cite{gymnasium} es un objeto con un espacio de observaciones, un espacio de acciones (por ejemplo, \texttt{Box} para vectores continuos acotados) y dos métodos: \texttt{reset(seed)}, que devuelve \texttt{(obs, info)}, y \texttt{step(accion)}, que devuelve \texttt{(obs, recompensa, terminated, truncated, info)}. El indicador \texttt{terminated} señala un estado terminal del MDP (el valor futuro es nulo) y \texttt{truncated} un corte externo, como un límite de tiempo (el valor futuro no es nulo, simplemente no se observa).
+\end{definicion}
+
+La distinción importa al calcular objetivos: el término $(1-d)$ de DDPG, TD3 y SAC debe usar $d=\texttt{terminated}$, nunca \texttt{truncated}. Un episodio de climatización que se corta a los tres días no termina el mundo: si se tratara como terminal, el último objetivo sería $y=r$ en lugar de $r+\gamma V(s')$, y el agente aprendería que justo antes del corte da igual pasar frío (\cref{eje:4-truncado}).
+
+Con la interfaz estándar, entrenar un agente es una línea con Stable-Baselines3~\cite{sb3}, que implementa PPO, SAC, TD3 y otros algoritmos:
+\begin{verbatim}
+from stable_baselines3 import SAC
+modelo = SAC("MlpPolicy", EntornoHVAC(), learning_rate=3e-4,
+             gamma=0.99, seed=0)
+modelo.learn(total_timesteps=50_000)
+\end{verbatim}
+Las recomendaciones prácticas de esa biblioteca coinciden con la experiencia en procesos: normalizar observaciones y acciones (preferiblemente a $[-1,1]$), usar varias semillas y evaluar con un conjunto de episodios distinto del de entrenamiento.
+
+\section{Diseño de la recompensa}
+
+En control de procesos la recompensa suele ser el negativo de un coste económico más penalizaciones: $r_k=-\bigl(c_kP_k\Dt+\rho\,v_{k+1}\Dt\bigr)$, con $v$ la violación del confort, como en el MPC del \cref{ej:caso-mpc}. Usar el mismo coste en MPC y en RL es lo que hace comparables los dos enfoques. Dos transformaciones de la recompensa merecen atención: sumar una constante y sumar términos de \emph{conformación} (\emph{shaping}) para guiar el aprendizaje.
+
+\begin{teorema}[Conformación basada en potenciales]\label{teo:shaping}
+Sea $\Phi:\Sset\to\R$ acotada y $F(s,a,s')=\gamma\Phi(s')-\Phi(s)$. En un MDP con $\gamma<1$, las funciones de valor de cualquier política $\pi$ con la recompensa $r'=r+F$ cumplen $Q'^{\pi}(s,a)=Q^{\pi}(s,a)-\Phi(s)$. En consecuencia, las políticas óptimas con $r$ y con $r'$ coinciden.
+\end{teorema}
+
+\begin{proof}
+Para una trayectoria desde $s_0=s$, $a_0=a$, el retorno modificado es
+\[
+\sum_{t\ge0}\gamma^{t}\bigl(r_t+\gamma\Phi(s_{t+1})-\Phi(s_t)\bigr)=\sum_{t\ge0}\gamma^{t}r_t+\sum_{t\ge0}\bigl(\gamma^{t+1}\Phi(s_{t+1})-\gamma^{t}\Phi(s_t)\bigr)=\sum_{t\ge0}\gamma^{t}r_t-\Phi(s_0),
+\]
+porque la segunda suma es telescópica y $\gamma^{T}\Phi(s_T)\to0$ al estar $\Phi$ acotada. Tomando esperanzas, $Q'^{\pi}(s,a)=Q^{\pi}(s,a)-\Phi(s)$. Como la diferencia no depende de $a$, $\arg\max_aQ'^{*}(s,a)=\arg\max_aQ^{*}(s,a)$ en cada estado.
+\end{proof}
+
+El resultado es de Ng, Harada y Russell~\cite{ng}, que demostraron además que los potenciales son, en un sentido preciso, la única forma de conformación que garantiza no alterar la política óptima. Una bonificación arbitraria, como premiar estar cerca de la consigna, puede crear ciclos que el agente explota indefinidamente. Sumar una constante a todas las recompensas es inocuo en tareas continuadas, pero no en episódicas con terminación, donde altera el valor relativo de terminar pronto o tarde~\cite[ejercicios~3.15 y~3.16]{sb}.
+
+\section{RL seguro, restricciones y del simulador a la planta}
+
+\begin{definicion}[MDP con restricciones]\label{def:cmdp}
+Un MDP con restricciones (CMDP)~\cite{altman} añade costes $c(s,a)$ y límites $d$: $\max_\pi J_r(\pi)$ s.a. $J_c(\pi)\le d$, con $J_r$ y $J_c$ los valores esperados descontados de la recompensa y del coste. Su lagrangiana es $L(\pi,\lambda)=J_r(\pi)-\lambda\bigl(J_c(\pi)-d\bigr)$, con $\lambda\ge0$.
+\end{definicion}
+
+\begin{proposicion}[Dualidad débil]\label{prop:dual}
+Para todo $\lambda\ge0$, $\max_\pi L(\pi,\lambda)\ge J_r(\pi^{\star})$, con $\pi^{\star}$ óptima del CMDP. Por tanto $\min_{\lambda\ge0}\max_\pi L(\pi,\lambda)$ es una cota superior del valor óptimo.
+\end{proposicion}
+
+\begin{proof}
+$\pi^{\star}$ es factible, $J_c(\pi^{\star})\le d$, luego $L(\pi^{\star},\lambda)=J_r(\pi^{\star})-\lambda(J_c(\pi^{\star})-d)\ge J_r(\pi^{\star})$, y el máximo sobre $\pi$ es mayor o igual.
+\end{proof}
+
+Los métodos lagrangianos alternan una mejora de la política con $\lambda$ fijo, con cualquier algoritmo de RL sobre $r-\lambda c$, y un paso de ascenso dual, $\lambda\leftarrow\max\{0,\lambda+\eta(\hat J_c-d)\}$: si la restricción se viola, el coste se encarece. Garantizan el cumplimiento en media al final del entrenamiento, no durante él. Los métodos de región de confianza como CPO~\cite{cpo} buscan mantener la factibilidad en cada actualización. En planta, ninguna de estas garantías estadísticas sustituye a un \emph{filtro de seguridad} determinista entre el agente y el actuador (\cref{tema:6}).
+
+Un agente entrenado en un gemelo digital sufre el \emph{salto de la simulación a la realidad}. El siguiente resultado acota su efecto.
+
+\begin{teorema}[Lema de simulación]\label{teo:simlema}
+Sean dos MDP con los mismos estados (finitos), acciones y recompensas, $\abs{r}\le r_{\max}$, y dinámicas $p$ y $\hat p$ con $\max_{s,a}\norm{p(\cdot\mid s,a)-\hat p(\cdot\mid s,a)}_1\le\epsilon$. Para toda política $\pi$, $\norm{V^{\pi}-\hat V^{\pi}}_\infty\le\gamma\epsilon\,r_{\max}/(1-\gamma)^{2}$.
+\end{teorema}
+
+\begin{proof}
+Por la ecuación de Bellman de cada MDP, para cada $s$,
+\[
+V^{\pi}(s)-\hat V^{\pi}(s)=\gamma\sum_a\pi(a\mid s)\sum_{s'}\Bigl[\bigl(p-\hat p\bigr)(s'\mid s,a)\,\hat V^{\pi}(s')+p(s'\mid s,a)\bigl(V^{\pi}-\hat V^{\pi}\bigr)(s')\Bigr],
+\]
+sumando y restando $\gamma\sum p\,\hat V^{\pi}$ (los términos de recompensa son iguales y se cancelan). El primer sumando interior está acotado por $\epsilon\norm{\hat V^{\pi}}_\infty\le\epsilon r_{\max}/(1-\gamma)$, y el segundo por $\norm{V^{\pi}-\hat V^{\pi}}_\infty$, porque $p$ suma~1. Tomando el máximo en $s$, $\Delta\le\gamma\epsilon r_{\max}/(1-\gamma)+\gamma\Delta$ con $\Delta=\norm{V^{\pi}-\hat V^{\pi}}_\infty$, y se despeja $\Delta$.
+\end{proof}
+
+El factor $1/(1-\gamma)^{2}$ dice que los errores de modelo pesan más cuanto más largo es el horizonte efectivo: es la versión estocástica de la \cref{prop:acumula}. Dos remedios complementarios son mejorar el modelo (identificación, \cref{tema:2}) y hacer la política robusta a lo que no se sabe del modelo con la \emph{aleatorización del dominio}: entrenar maximizando $\E_{\xi\sim p(\xi)}[J(\pi;\xi)]$, donde $\xi$ son los parámetros inciertos del simulador. Tobin \emph{et al.}~\cite{tobin} aleatorizaron la apariencia visual del simulador y Peng \emph{et al.}~\cite{peng}, su dinámica, y en ambos casos los modelos entrenados solo en simulación funcionaron en robots reales: un detector de objetos usado para agarrar, en el primero, y una política de empuje de objetos, en el segundo. Cuando no hay simulador fiable pero sí históricos, el RL \emph{fuera de línea} aprende de un conjunto fijo de datos (CS285, clases~15 y~16 de otoño de 2023~\cite{cs285}).
+
+\begin{observacion}[Búsqueda de política sin gradiente]\label{obs:busqueda}
+Para políticas con pocos parámetros, la búsqueda aleatoria o el método de entropía cruzada (CEM), que muestrean parámetros, evalúan episodios completos y se quedan con los mejores, son referencias sorprendentemente competitivas: Mania, Guy y Recht~\cite{ars} obtuvieron con búsqueda aleatoria de políticas lineales resultados comparables a los de métodos profundos en tareas de locomoción. Son fáciles de paralelizar, no necesitan crítico y solo usan el retorno, lo que las hace robustas a recompensas dispersas.
+\end{observacion}
+
+\begin{ejemplo}[La batería como MDP]\label{ej:bateria-mdp}
+Una batería de $1$ kWh con estados $e\in\{0,1\}$, acciones cargar, descargar o esperar, rendimiento~1 y precios $(0{,}10;\ 0{,}30;\ 0{,}20)$ en tres horas es un MDP determinista de horizonte finito. Hacia atrás, con $V_3\equiv0$: $V_2(1)=\max\{0;\ 0{,}20\}=0{,}20$ y $V_2(0)=\max\{0;\ -0{,}20+V_3(1)\}=0$; $V_1(1)=\max\{V_2(1);\ 0{,}30+V_2(0)\}=0{,}30$ y $V_1(0)=\max\{V_2(0);\ -0{,}30+V_2(1)\}=0$; $V_0(0)=\max\{V_1(0);\ -0{,}10+V_1(1)\}=0{,}20$. La política óptima carga en la primera hora y descarga en la segunda. Con 24 horas y una rejilla de 81 niveles de carga, la programación dinámica del cuaderno (Parte~8) obtiene $1{,}8837$ €, frente a $1{,}8842$ € del LP: la diferencia es el coste de discretizar el estado.
+\end{ejemplo}
+
+\begin{ejemplo}[Caso de estudio: un agente para la zona]\label{ej:caso-rl}
+\emph{Entorno.} El gemelo de la zona como entorno Gymnasium: observación de 8 componentes (temperatura medida, temperatura exterior, precio, seno y coseno de la hora, límite inferior actual y dentro de 2~h, ocupación en las próximas 3~h), acción $P\in[0,3]$ kW, recompensa $r_k=-\Dt(c_kP_k+\rho v_{k+1})$ con $\rho=2$ €/(K·h), episodios de 3 días truncados por tiempo. En cada \texttt{reset} se aleatorizan el clima, el día de la semana, la temperatura inicial y la planta: $R$ y $C$ con $\pm20$~\% y el COP con $\pm10$~\%.
+
+\emph{Agente.} Política $P=P_{\max}\,\sigma(w\T\phi(o))$, con $\phi$ los 8 rasgos escalados y $w\in\R^{8}$, optimizada con CEM: 40 iteraciones con 60 candidatos, 12 de élite y 4 episodios aleatorizados por candidato.
+
+\emph{Elección del método.} Ocho parámetros, recompensa densa y un simulador vectorizable: CEM entrena en unos 3~s, mientras que SAC con Stable-Baselines3 necesitaría decenas de miles de pasos y varios minutos para un resultado comparable (reto opcional del cuaderno).
+
+\emph{Resultados} (cuaderno, Parte~6). En la semana de prueba, que no se usó en el entrenamiento, el agente consume $169{,}9$ kWh, cuesta $20{,}63$ € y acumula $0{,}01$ K·h de violación: mejora al PI en un $2{,}1$~\% de coste y queda por detrás del MPC. Ha aprendido a precalentar (el peso de la ocupación próxima es el mayor, $3{,}13$) y a reaccionar al precio, pero con una política lineal y sin previsiones de precio a varias horas no puede planificar tan bien como el MPC.
+\end{ejemplo}
+
+\begin{table}[htbp]
+\centering\footnotesize
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.0cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+Gymnasium~\cite{gymnasium} & interfaz estándar de entornos, envoltorios, comprobador de entornos & libre (MIT) & siempre que se vaya a entrenar un agente \\
+Stable-Baselines3~\cite{sb3} & PPO, SAC, TD3, DQN fiables y documentados & libre (MIT) & primera opción para entrenar y comparar \\
+CleanRL & implementaciones de un solo archivo & libre (MIT) & entender o modificar un algoritmo \\
+RLlib (Ray), TorchRL & entrenamiento distribuido, muchos entornos en paralelo & libres (Apache-2.0, MIT) & simuladores lentos y grandes presupuestos de cómputo \\
+Safety-Gymnasium & entornos con costes y restricciones & libre (Apache-2.0) & evaluar métodos de RL seguro \\
+Sinergym~\cite{sinergym}, BOPTEST~\cite{boptest} & edificios simulados (EnergyPlus, Modelica) como entornos y bancos de prueba & libres & control de climatización con modelos físicos detallados \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para el aprendizaje por refuerzo en control.}
+\label{tab:tec4}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores4}
+(i) \emph{Tratar la truncación como terminación} al calcular objetivos (\cref{def:gym}). (ii) \emph{Recompensa explotable}: el agente maximiza lo que se mide, no lo que se quiere; por ejemplo, si el confort solo se penaliza en horario de ocupación, puede dejar enfriar el edificio hasta dañar instalaciones. (iii) \emph{Escalas mal elegidas}: observaciones sin normalizar y penalizaciones de órdenes de magnitud distintos desestabilizan el aprendizaje. (iv) \emph{Evaluar con las semillas de entrenamiento} o con una sola semilla de entrenamiento. (v) \emph{Explorar en la planta real}: la exploración aleatoria de un agente sin restricciones es inaceptable en un proceso; se explora en el gemelo y en planta solo dentro de límites seguros. (vi) \emph{Sobreajuste al simulador}: una política que explota un defecto del gemelo falla en la planta; la aleatorización del dominio y la validación en un gemelo distinto lo detectan.
+\end{observacion}
+
+\begin{lecturas}
+\item R.~S. Sutton y A.~G. Barto~\cite{sb}, §6.7 «Maximization Bias and Double Learning» y cap.~13 «Policy Gradient Methods».
+\item CS285~\cite{cs285}, clases~7, 8 y~10; tarea~3~\cite{cs285hw3}, §2.5 y §3.
+\item S.~Fujimoto \emph{et al.}~\cite{td3} (TD3) y T.~Haarnoja \emph{et al.}~\cite{sac,sac2} (SAC).
+\item A.~Y. Ng, D.~Harada y S.~Russell~\cite{ng}, «Policy invariance under reward transformations».
+\item G.~Dulac-Arnold \emph{et al.}~\cite{dulac}, «Challenges of real-world reinforcement learning».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-truncado}
+Un episodio de la zona se trunca tras 288 pasos. Las recompensas típicas son de $-0{,}05$ € por paso y $\gamma=0{,}99$. (a) Estime el valor de un estado típico. (b) Calcule el objetivo del último paso si se trata la truncación como terminación y si se hace correctamente. (c) ¿Qué comportamiento aprendería el agente en el primer caso?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-constante}
+(a) En una tarea continuada con descuento $\gamma<1$, demuestre que sumar una constante $c$ a todas las recompensas suma $c/(1-\gamma)$ al valor de todos los estados y no cambia la política óptima. (b) En una tarea episódica, muestre con un ejemplo de dos acciones (terminar ya o seguir un paso más y terminar) que sumar $c$ puede cambiar la política óptima.
+\fuente{adaptado de R.~S. Sutton y A.~G. Barto, \emph{Reinforcement Learning: An Introduction}, 2.ª ed., ejercicios~3.15 y~3.16~\cite{sb}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-sobre}
+Dos acciones tienen valores verdaderos $Q(a_1)=0$ y $Q(a_2)=-0{,}5$, y sus estimaciones son independientes y gaussianas con $\sigma=1$. (a) Calcule $\E[\max(\hat Q(a_1),\hat Q(a_2))]$ y compárela con $\max_aQ(a)$. (b) Con dos estimaciones independientes $\hat Q_1,\hat Q_2$ del mismo valor $0$, calcule $\E[\min(\hat Q_1,\hat Q_2)]$. (c) Explique cómo se relacionan (a) y (b) con las curvas de valores $Q$ que se piden en la tarea al comparar un crítico con doble Q recortado.
+\fuente{adaptado de CS285, primavera de 2026, tarea~3 «Q-Learning and Actor-Critic Algorithms», §3.6, pregunta~7~\cite{cs285hw3}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-blanda}
+Con $Q=(1,2,0)$, calcule la política blanda óptima y el valor $V$ para $\alpha=1$ y $\alpha=0{,}1$. Compruebe en cada caso que $V=\E_{\pi^{*}}[Q]+\alpha\mathcal H(\pi^{*})$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-temperatura}
+Un actor de SAC con acción unidimensional tiene una entropía media estimada $\mathcal H=-1{,}5$ nats; la entropía objetivo es $\bar{\mathcal H}=-1$. (a) Calcule la derivada de $J(\alpha)=\E[-\alpha\log\pi-\alpha\bar{\mathcal H}]$ respecto a $\alpha$ y el nuevo valor de $\alpha$ tras un paso de descenso con tasa $0{,}1$ desde $\alpha=0{,}2$. (b) Calcule la entropía de una gaussiana con $\sigma=0{,}5$ y la corrección de densidad de la compresión con $\tanh$ en $u=0{,}5$.
+\fuente{adaptado de CS285, primavera de 2026, tarea~3 «Q-Learning and Actor-Critic Algorithms», §3.4 y §3.5~\cite{cs285hw3}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-lagrange}
+Tres políticas candidatas para la zona tienen, por semana, $(J_r,J_c)=(-18;\ 2{,}0)$, $(-19;\ 0{,}5)$ y $(-21;\ 0)$, con $J_r$ en euros cambiados de signo y $J_c$ en K·h; el límite es $d=1$ K·h. (a) ¿Cuál es la óptima del CMDP? (b) Para qué valores de $\lambda$ maximiza cada una la lagrangiana. (c) Simule cuatro pasos de ascenso dual con $\eta=0{,}5$ desde $\lambda=0$ y comente el comportamiento.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-shaping}
+(a) Extienda el \cref{teo:shaping} a una tarea episódica con estados terminales, suponiendo $\Phi(s)=0$ en ellos, y demuestre que la política óptima no cambia. (b) Para la zona se propone $\Phi(s)=-\kappa\max\{\underline T-T,0\}$, con $\kappa>0$. Calcule $F$ en una transición de $T=19$ °C a $T'=19{,}5$ °C con $\underline T=20$ °C, $\kappa=1$ y $\gamma=0{,}99$, e interprete el signo. (c) Dé un ejemplo de bonificación que \emph{no} derive de un potencial y que el agente pueda explotar.
+\fuente{adaptado de A.~Y. Ng, D.~Harada y S.~Russell, «Policy invariance under reward transformations», ICML 1999, teorema~1~\cite{ng}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-simlema}
+(a) Evalúe la cota del \cref{teo:simlema} con $r_{\max}=1$ y $\epsilon=0{,}01$ para $\gamma=0{,}9$ y $\gamma=0{,}99$, y compárela con el rango posible de $V$. (b) Deduzca del lema una cota para la pérdida de rendimiento de la política óptima del simulador cuando se aplica en la planta, $V^{\pi^{*}}-V^{\hat\pi^{*}}$. (c) Explique qué dice el resultado sobre la conveniencia de horizontes efectivos largos cuando el modelo es imperfecto.
+\end{ejercicio}

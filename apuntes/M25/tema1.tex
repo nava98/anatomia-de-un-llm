@@ -1,0 +1,221 @@
+% =====================================================================
+\chapter{Optimizar procesos caros y ruidosos}
+\label{tema:1}
+% =====================================================================
+
+Este tema plantea el problema común a todo el módulo: minimizar una función que solo se conoce a través de experimentos caros y ruidosos, con un presupuesto fijo de evaluaciones y con restricciones que a veces tampoco se conocen de antemano. La formalización sigue el capítulo~1 de Garnett~\cite{garnett} y la sección~2 del tutorial de Frazier~\cite{frazier}; la discusión sobre cuándo compensa un modelo sustituto sigue la §10.1 de Martins y Ning~\cite{mn}, y los planes de muestreo en rejilla, la §13.1 de Kochenderfer y Wheeler~\cite{kw}.
+
+\section{El problema de la caja negra}
+
+En el entrenamiento de una red (módulo~7) la función objetivo es una fórmula explícita, su gradiente se obtiene por diferenciación automática (módulo~10) y evaluarla en un minilote cuesta milisegundos. En un proceso industrial nada de esto se cumple: para conocer la tasa de defectos de una inyectora con un ajuste dado hay que fabricar un lote de piezas e inspeccionarlo.
+
+\begin{definicion}[Problema de optimización de caja negra]\label{def:cajanegra}
+Sean $\X\subset\R^{d}$ un dominio compacto (habitualmente un hiperrectángulo $\prod_{j}[a_j,b_j]$), $f\colon\X\to\R$ una función desconocida y $N\in\mathbb{N}$ un \emph{presupuesto} de evaluaciones. Un \emph{oráculo} devuelve, para cada $x\in\X$ elegido, una observación
+\[
+y=f(x)+\varepsilon,\qquad \E[\varepsilon]=0,\quad \Var(\varepsilon)=\sigma_n^2(x),
+\]
+con ruidos independientes entre evaluaciones. Una \emph{política} elige secuencialmente $x_{n+1}$ a partir de los datos $\D_n=\{(x_i,y_i)\}_{i\le n}$ y, agotado el presupuesto, emite una \emph{recomendación} $\hat x_N\in\X$. El objetivo es que $f(\hat x_N)$ sea lo más próximo posible a $\min_{x\in\X}f(x)$.
+\end{definicion}
+
+Tres rasgos distinguen este problema de los de los módulos~7 y~8: no hay gradiente (ni siquiera ruidoso), el número de evaluaciones es pequeño (de diez a unos centenares) y el coste de decidir dónde evaluar es despreciable frente al de evaluar. Esta última asimetría justifica gastar mucho cómputo en cada decisión: ajustar un modelo estadístico de $f$ y optimizar sobre él~\cite[§1.1]{garnett}.
+
+\begin{definicion}[Regret]\label{def:regret}
+Sea $x^\star\in\arg\min_{\X}f$. El \emph{regret simple} de la recomendación es $r_N=f(\hat x_N)-f(x^\star)\ge 0$. El \emph{regret acumulado} de las evaluaciones es $R_N=\sum_{n=1}^{N}\bigl(f(x_n)-f(x^\star)\bigr)$.
+\end{definicion}
+
+La elección entre ambos depende del caso. En un estudio de laboratorio solo importa la receta final: se mide $r_N$. Si los experimentos se hacen en la línea de producción y las piezas ensayadas se venden o se desechan, cada experimento malo cuesta dinero y se mide $R_N$; Garnett~\cite[§6.1–6.2]{garnett} formaliza ambas utilidades.
+
+\begin{observacion}
+La recomendación $\hat x_N$ no tiene por qué ser uno de los puntos evaluados ni el de mejor observación. Con ruido, el mínimo observado es un mal estimador del mínimo verdadero (\cref{prop:ganador}); en la práctica se recomienda el punto que minimiza un modelo ajustado a todos los datos y se confirma con ensayos repetidos.
+\end{observacion}
+
+\section{Presupuesto y ruido}
+
+\begin{proposicion}[Maldición de la dimensión para rejillas]\label{prop:rejilla}
+Sea $\X=[0,1]^{d}$ y sea $h\in(0,\tfrac12]$. Si un conjunto de $N$ puntos garantiza que todo $x\in\X$ dista menos de $h$ en norma del máximo de algún punto del conjunto, entonces $N\ge(2h)^{-d}$. Una rejilla de $m$ niveles por variable tiene $m^{d}$ puntos.
+\end{proposicion}
+
+\begin{proof}
+La bola de radio $h$ en norma del máximo es un cubo de lado $2h$ y volumen $(2h)^{d}$. Si las $N$ bolas recubren $\X$, la suma de sus volúmenes es al menos el de $\X$, que vale~1: $N(2h)^{d}\ge 1$. La segunda afirmación es la regla del producto (módulo~0.8, §1.1).
+\end{proof}
+
+Con $h=0{,}1$ (un décimo del rango de cada variable) hacen falta al menos $5^{d}$ puntos: 125 con tres variables y casi diez millones con diez. Ningún proceso físico admite ese presupuesto; de ahí la necesidad de diseños que no crezcan exponencialmente (\cref{tema:2}) y de modelos que interpolen entre ensayos (\cref{tema:3}).
+
+El ruido tiene dos orígenes: la variabilidad del proceso (lote de materia prima, temperatura ambiente, desgaste) y el error de medida. Cuando la respuesta es una proporción estimada con $m$ piezas, el ruido es binomial.
+
+\begin{proposicion}\label{prop:binomial}
+Si en un lote de $m$ piezas cada una es defectuosa con probabilidad $d$, independientemente, la fracción observada $\hat d$ cumple $\E[\hat d]=d$ y $\Var(\hat d)=d(1-d)/m$.
+\end{proposicion}
+
+\begin{proof}
+El número de defectuosas es binomial $B(m,d)$, de media $md$ y varianza $md(1-d)$ (módulo~0.8, §5.4); al dividir por $m$, la media se divide por $m$ y la varianza por $m^{2}$.
+\end{proof}
+
+La consecuencia más traicionera del ruido es que el mejor resultado observado es sistemáticamente optimista.
+
+\begin{proposicion}[Maldición del ganador]\label{prop:ganador}
+Sean $y_i=f(x_i)+\varepsilon_i$, $i=1,\dots,n$, con $\varepsilon_i$ independientes de media nula. Entonces
+\[
+\E\Bigl[\min_{i}y_i\Bigr]\le\min_{i}f(x_i).
+\]
+Si además todos los $f(x_i)$ son iguales a $f_0$ y $\varepsilon_i\sim\N(0,\sigma^2)$, entonces $\E[\min_i y_i]=f_0-\sigma\,e_n$, con $e_n=\E[\max_i Z_i]$ para $Z_i\sim\N(0,1)$ independientes.
+\end{proposicion}
+
+\begin{proof}
+Sea $j$ un índice con $f(x_j)=\min_i f(x_i)$. Como $\min_i y_i\le y_j$ siempre, tomando esperanzas $\E[\min_i y_i]\le\E[y_j]=f(x_j)$. Para la segunda parte, $\min_i(f_0+\sigma Z_i)=f_0-\sigma\max_i(-Z_i)$, y $(-Z_i)$ tiene la misma distribución que $(Z_i)$.
+\end{proof}
+
+Los valores de $e_n$ se obtienen por integración numérica: $e_2=1/\sqrt\pi\approx 0{,}5642$ (\cref{eje:1-max2}), $e_5\approx 1{,}163$, $e_{10}\approx 1{,}539$ y $e_{30}\approx 2{,}043$. Elegir el mejor de diez ensayos igual de buenos produce un resultado aparentemente mejor en más de 1,5 desviaciones típicas.
+
+\section{Restricciones}
+
+Las restricciones de un proceso son de naturaleza muy distinta, y conviene clasificarlas antes de elegir el método~\cite[§11.2]{garnett}, \cite[§1.4]{kw}:
+\begin{itemize}
+  \item \emph{conocidas y baratas}: los límites de la máquina, la suma de las fracciones de una mezcla igual a~1, una relación entre variables. Se imponen directamente al generar candidatos;
+  \item \emph{desconocidas y caras}: una especificación de calidad que solo se comprueba con el experimento (alabeo máximo, resistencia mínima). Se modelan igual que el objetivo y se trata su probabilidad de cumplirse (\cref{tema:4});
+  \item \emph{ocultas}: zonas donde el experimento falla y no produce dato (la pieza sale incompleta, la simulación no converge). Se modelan como una clasificación;
+  \item \emph{de seguridad}: no basta con acabar en un punto factible, sino que no se debe \emph{ensayar} un punto peligroso (presión excesiva, temperatura de degradación del polímero). Exigen métodos de exploración segura~\cite[§16.6]{kw}.
+\end{itemize}
+
+\begin{definicion}[Problema con restricciones de caja negra]\label{def:restricciones}
+Se busca $\min_{x\in\X}f(x)$ sujeto a $c_j(x)\le 0$, $j=1,\dots,J$, donde cada $c_j$ es una función desconocida que se observa con ruido en el mismo experimento que $f$ o en uno distinto. El regret simple se define respecto al mejor punto \emph{factible}, y una recomendación no factible se considera un fracaso, sea cual sea su valor de $f$.
+\end{definicion}
+
+\section{El bucle de optimización con un modelo sustituto}
+
+Todos los métodos del módulo comparten la estructura de la \cref{fig:bucle}. Un diseño inicial (\cref{tema:2}) proporciona los primeros datos; un modelo sustituto (\cref{tema:3}) resume lo aprendido con su incertidumbre; una función de adquisición (\cref{tema:4}) traduce el modelo en la decisión del siguiente experimento; y una regla de parada (\cref{tema:6}) decide cuándo dejar de experimentar.
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,rounded corners,align=center,minimum width=2.6cm,minimum height=1cm,thick}]
+  \node[caja] (doe) at (0,0) {diseño inicial\\(LHS, factorial)};
+  \node[caja] (exp) at (4.2,0) {experimento\\$y=f(x)+\varepsilon$};
+  \node[caja] (mod) at (8.4,0) {modelo sustituto\\$\mu_n,\ \sigma_n$};
+  \node[caja] (acq) at (8.4,-2.4) {adquisición\\$x_{n+1}=\arg\max\alpha_n$};
+  \node[caja] (par) at (4.2,-2.4) {¿parar?};
+  \node[caja] (rec) at (0,-2.4) {recomendación $\hat x_N$\\y confirmación};
+  \draw[->,thick] (doe) -- (exp);
+  \draw[->,thick] (exp) -- node[above]{$\D_n$} (mod);
+  \draw[->,thick] (mod) -- (acq);
+  \draw[->,thick] (acq) -- (par);
+  \draw[->,thick] (par) -- node[right]{no} (exp);
+  \draw[->,thick] (par) -- node[above]{sí} (rec);
+\end{tikzpicture}
+\caption{El bucle de optimización con modelo sustituto. El coste está en la caja «experimento»; todas las demás son cálculos baratos.}
+\label{fig:bucle}
+\end{figure}
+
+\begin{table}[ht]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.9cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{3.6cm}@{}}
+\toprule
+Familia & Cuándo es adecuada & Limitaciones \\
+\midrule
+Rejilla y un factor cada vez & Una o dos variables, evaluaciones baratas & Crece como $m^{d}$; no detecta interacciones \\
+Diseño de experimentos y superficie de respuesta & 2–8 variables, decenas de ensayos, se quiere entender el proceso & Modelo polinómico local \\
+Optimización bayesiana & 1–20 variables, 10–500 evaluaciones caras y ruidosas & Coste cúbico en $n$; peor en dimensión alta \\
+Evolutivos (CMA-ES, genéticos) & Miles de evaluaciones baratas, paisajes irregulares & Poco eficientes en número de evaluaciones \\
+Gradiente (adjunto, autodiferenciación) & Simuladores diferenciables, muchas variables & Requiere acceso al código del modelo \\
+\bottomrule
+\end{tabularx}
+\caption{Familias de métodos según el presupuesto y la dimensión. El límite de unas veinte variables para la optimización bayesiana procede de Frazier~\cite[§1]{frazier}.}
+\label{tab:familias}
+\end{table}
+
+La §10.1 de Martins y Ning~\cite{mn} resume el criterio económico: un sustituto compensa cuando el coste de construirlo y consultarlo es pequeño frente al de las evaluaciones que ahorra, cuando el ruido impide usar diferencias finitas y cuando se quiere reutilizar el modelo para otras preguntas (sensibilidad, robustez).
+
+\section{Caso de estudio: ajuste de una inyectora}
+
+\begin{ejemplo}[Formulación del ajuste de un proceso de moldeo por inyección]\label{ej:inyectora}
+Una inyectora fabrica una carcasa de polipropileno. Tras revisar la literatura del proceso~\cite{fernandes}, se eligen tres variables: temperatura de fusión $T\in[200,260]$~°C, presión de mantenimiento $P\in[30,90]$~MPa y tiempo de enfriamiento $t_e\in[8,30]$~s. Los datos de este caso son sintéticos: proceden de un simulador escrito para el curso (Parte~1 de la práctica), con mecanismos de defecto plausibles (rechupes si falta presión o enfriamiento, rebabas si sobran presión y temperatura, piezas incompletas si el material está frío).
+
+\emph{Objetivo.} El tiempo de ciclo es conocido, $t_c(x)=8+t_e+0{,}05\,(T-200)$~s, y la fracción defectuosa $d(x)$ es desconocida. Con un coste de máquina de $45$~€/h y un coste de material de $0{,}40$~€ por pieza, el coste por pieza \emph{buena} es
+\[
+C(x)=\frac{45\,t_c(x)/3600+0{,}40}{1-d(x)}\quad\text{€}.
+\]
+\emph{Restricción de calidad.} El alabeo medio $w(x)$ no debe superar $0{,}45$~mm.
+
+\emph{Experimento.} Cada ensayo es un lote de $m=200$ piezas tras estabilizar la máquina; se cuentan las defectuosas y se mide el alabeo de 20 piezas. Con unos 30~s por ciclo, el lote ocupa la máquina 100 minutos y, con el cambio de ajuste y la estabilización, unas dos horas.
+
+\emph{La receta actual.} El operario trabaja con $x_0=(240,50,26)$: $t_c=8+26+0{,}05\cdot 40=36$~s, $d=2{,}17\,\%$ y
+\[
+C(x_0)=\frac{45\cdot 36/3600+0{,}40}{1-0{,}0217}=\frac{0{,}85}{0{,}9783}=0{,}8688\ \text{€}.
+\]
+\emph{El óptimo} (que solo se conoce porque el simulador es nuestro) está en $x^\star=(213{,}5;\ 70{,}5;\ 18{,}5)$, con $t_c=27{,}18$~s, $d=4{,}95\,\%$, $w=0{,}450$~mm y $C(x^\star)=0{,}7398/0{,}9505=0{,}7782$~€: un ahorro del $10{,}4\,\%$, unos $90\,600$~€ al año por cada millón de piezas. El óptimo acepta más defectos a cambio de un ciclo nueve segundos más corto, y la restricción de alabeo está activa: es ella la que fija el tiempo de enfriamiento.
+
+\emph{Presupuesto y ruido.} Una rejilla de 5 niveles exigiría $5^{3}=125$ lotes, unas 250 horas de máquina. Se dispone de 30 lotes. En el óptimo, por la \cref{prop:binomial}, $\sqrt{0{,}0495\cdot0{,}9505/200}=0{,}0153$: la fracción defectuosa se mide con una desviación de $1{,}5$ puntos porcentuales, que se traduce en una desviación de $0{,}0126$~€ en el coste. Por la \cref{prop:ganador}, el mejor de diez lotes \emph{igual de buenos} parecería $1{,}539\cdot0{,}0126\approx0{,}019$~€ más barato de lo que es: un error del orden de la mitad de las diferencias que se quieren detectar entre ajustes razonables.
+
+\emph{Elección del método.} Tres variables continuas, 30 evaluaciones ruidosas, una restricción cara y otra de seguridad (no superar la presión de la máquina): es el terreno de la optimización bayesiana con restricciones (\cref{tab:familias}), precedida de un diseño inicial que además permita entender el proceso. El \cref{tema:5} resuelve el caso completo.
+\end{ejemplo}
+
+\begin{table}[ht]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.1cm}>{\raggedright\arraybackslash}p{3.6cm}@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia & Cuándo elegirla \\
+\midrule
+Ax~\cite{ax} & Plataforma de experimentación adaptativa: bucle completo, restricciones, varios objetivos, lotes & MIT & Experimentos reales gestionados por un equipo \\
+BoTorch~\cite{botorch} & Optimización bayesiana sobre PyTorch con adquisiciones de Monte Carlo & MIT & Investigación o adquisiciones a medida \\
+Optuna~\cite{optuna} & Ajuste de hiperparámetros con TPE, GP y poda & MIT & Ajuste de modelos de aprendizaje automático \\
+SMAC3~\cite{smac3} & Optimización bayesiana con bosques aleatorios & BSD & Espacios mixtos y condicionales \\
+SciPy~\cite{scipyqmc} & \texttt{optimize} y \texttt{stats.qmc}: métodos clásicos y planes de muestreo & BSD & Líneas base y diseños \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para el bucle completo de optimización de caja negra.}
+\label{tab:tec1}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores1}
+\begin{enumerate}
+  \item \emph{Optimizar sobre observaciones ruidosas}: recomendar el mejor resultado observado (\cref{prop:ganador}) o comparar ajustes con un solo lote cada uno.
+  \item \emph{No fijar el entorno}: cambiar de lote de materia prima o de turno en mitad del estudio confunde su efecto con el de las variables. Se registra, se bloquea o se aleatoriza el orden (\cref{tema:2}).
+  \item \emph{Escalas mal elegidas}: variables que abarcan órdenes de magnitud (una tasa de aprendizaje, una concentración) deben tratarse en escala logarítmica.
+  \item \emph{Ignorar la seguridad}: proponer ensayos fuera de la ventana segura de la máquina porque «el modelo los recomienda».
+  \item \emph{Cambiar el objetivo a mitad}: añadir una restricción o un coste tras ver los datos invalida la comparación entre métodos y entre ensayos.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Garnett~\cite{garnett}, cap.~1 «Introduction» y §6.1–6.2 (utilidades: recomendación final y recompensa acumulada).
+\item Frazier~\cite{frazier}, §1 «Introduction» y §2 «Overview of BayesOpt».
+\item Martins y Ning~\cite{mn}, §10.1 «When to Use a Surrogate Model».
+\item Kochenderfer y Wheeler~\cite{kw}, §1.4 «Constraints» y §13.1 «Full Factorial».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-clasificar}
+Para cada situación indique si es un problema de caja negra, si hay ruido, si hay gradiente disponible y qué medida de regret es la adecuada: (a) ajustar la temperatura de un horno de pan industrial probando hornadas que luego se venden; (b) elegir la geometría de un ala con una simulación CFD de 6 horas, determinista; (c) entrenar una red con descenso de gradiente; (d) elegir la tasa de aprendizaje de un LLM con ejecuciones cortas de entrenamiento.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-rejilla}
+(a) ¿Cuántos ensayos tiene un factorial completo con 4 niveles en 5 variables? (b) Con la \cref{prop:rejilla}, ¿cuántos puntos son necesarios como mínimo para recubrir $[0,1]^{d}$ con cubos de semilado $h=0{,}05$ si $d=2$ y si $d=6$? (c) Si cada ensayo de la inyectora ocupa 2~horas, ¿cuántos días de 24~horas ocupa la rejilla de 5 niveles en las 3 variables?
+\fuente{adaptado de Kochenderfer y Wheeler~\cite{kw}, §13.1 «Full Factorial» (texto del curso AA222/CS361 de Stanford~\cite{aa222}).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-coste}
+Con los datos del \cref{ej:inyectora}, calcule el coste por pieza buena de los ajustes $x_1=(230,60,19)$, con $d=3{,}17\,\%$ y alabeo $0{,}480$~mm, y $x_2=(225,65,22)$, con $d=3{,}06\,\%$ y alabeo $0{,}421$~mm. ¿Cuál de los dos es preferible y por qué?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-max2}
+Sean $Z_1,Z_2\sim\N(0,1)$ independientes. Demuestre que $\E[\max(Z_1,Z_2)]=1/\sqrt\pi$. (Indicación: $\max(a,b)=\tfrac12(a+b)+\tfrac12\abs{a-b}$ y $Z_1-Z_2\sim\N(0,2)$.) Interprete el resultado para dos ensayos de la inyectora con $\sigma=0{,}0126$~€.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-lote}
+Se quiere estimar una fracción defectuosa en torno al $2\,\%$ con una desviación típica de $0{,}5$ puntos porcentuales. (a) ¿Cuántas piezas debe tener el lote? (b) Si se reduce el lote a 200 piezas, ¿qué desviación se obtiene? (c) ¿Cuántas veces más ensayos haría falta repetir para igualar la precisión del apartado~(a)?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-sustituto}
+Una simulación por elementos finitos del enfriamiento de la pieza tarda 40 minutos. Construir y validar un sustituto con 60 simulaciones cuesta esas 60 simulaciones más 2 horas de trabajo de un ingeniero; después cada consulta es instantánea. Un estudio de optimización directa sobre el simulador necesitaría 400 evaluaciones y uno sobre el sustituto, 60 simulaciones más 10 de confirmación. Compare los tiempos totales y discuta qué riesgos asume la segunda opción.
+\fuente{adaptado de Martins y Ning~\cite{mn}, §10.1 «When to Use a Surrogate Model».}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-jensen}
+(a) Demuestre que, con ruido de media nula, $\E[\min_i y_i]\le\min_i f(x_i)$ usando la desigualdad de Jensen (módulo~6, §2.1) aplicada a la función cóncava $\min$. (b) Demuestre que $e_n=\E[\max_{i\le n}Z_i]$ es no decreciente en $n$. (c) Deduzca que aumentar el número de ensayos sin modelar el ruido empeora el sesgo de la recomendación «mejor observado».
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-horno}
+Diseño razonado. Un horno de tratamiento térmico de piezas de acero tiene tres parámetros: temperatura de austenización (840–900~°C), tiempo de mantenimiento (20–60~min) y temperatura de revenido (400–600~°C). Cada ensayo cuesta un día y destruye 5 probetas; la dureza objetivo es $45\pm2$~HRC y se quiere maximizar la tenacidad (ensayo Charpy). Formule el problema según la \cref{def:restricciones}: variables, objetivo, restricciones (clasificándolas), naturaleza del ruido, medida de regret y presupuesto razonable. Proponga el método según la \cref{tab:familias}.
+\end{ejercicio}

@@ -1,0 +1,177 @@
+% =====================================================================
+\chapter{Optimización continua y convexa}
+\label{tema:4}
+% =====================================================================
+
+Cuando las variables son continuas y el problema es convexo, todo mínimo local es global, existen certificados de optimalidad y los multiplicadores tienen interpretación económica. Este tema sigue los capítulos~4 («Convex optimization problems») y~5 («Duality»), en especial las secciones~5.5 («Optimality conditions») y~5.6 («Perturbation and sensitivity analysis»), de Boyd y Vandenberghe~\cite{bv}, texto del curso EE364a de Stanford; el capítulo~12 de Nocedal y Wright~\cite{nw} para las condiciones de Karush--Kuhn--Tucker en problemas no convexos; y el capítulo~3 («Economic Dispatch of Thermal Units and Methods of Solution») de Wood, Wollenberg y Sheblé~\cite{wood} para el caso de estudio. Las herramientas son CVXPY~\cite{cvxpy,cvxpydoc} y SciPy. El módulo~7 (tema~1) introdujo la convexidad en el contexto del entrenamiento; aquí se añaden las restricciones.
+
+\section{Problemas convexos}
+
+\begin{definicion}[Problema convexo]\label{def:convexo}
+El problema de la \cref{def:prob-opt} es \emph{convexo} si $X=\R^{n}$, $f$ y las $g_i$ son funciones convexas y las $h_j$ son afines, $h_j(x)=a_j\T x-b_j$. Su conjunto factible es entonces convexo, como intersección de subniveles de funciones convexas e hiperplanos.
+\end{definicion}
+
+\begin{teorema}[Local implica global]\label{teo:local-global}
+En un problema convexo, todo óptimo local es óptimo global.
+\end{teorema}
+
+\begin{proof}
+Sea $x^{*}$ óptimo local en $\mathcal{X}\cap B(x^{*},r)$ y supóngase que existe $\tilde x\in\mathcal{X}$ con $f(\tilde x)<f(x^{*})$. Para $\theta\in(0,1]$ el punto $x_\theta=(1-\theta)x^{*}+\theta\tilde x$ es factible, por la convexidad de $\mathcal{X}$, y $f(x_\theta)\le(1-\theta)f(x^{*})+\theta f(\tilde x)<f(x^{*})$, por la de $f$. Tomando $\theta$ pequeño, $x_\theta\in B(x^{*},r)$, lo que contradice la optimalidad local.
+\end{proof}
+
+Las clases convexas más usadas, de menor a mayor generalidad, son la programación lineal, la cuadrática (objetivo $\tfrac12x\T Px+q\T x$ con $P\succeq 0$ y restricciones lineales), la cónica de segundo orden y la semidefinida. CVXPY sigue las reglas de la \emph{programación convexa disciplinada} (DCP): construye las expresiones con funciones atómicas de curvatura conocida y reglas de composición que garantizan la convexidad, de modo que rechaza un modelo cuya convexidad no puede certificar, y lo traduce a la forma cónica que aceptan resolvedores como Clarabel, SCS u OSQP~\cite{cvxpy,cvxpydoc}.
+
+\section{Lagrangiana, dualidad y condiciones KKT}
+
+\begin{definicion}[Lagrangiana y función dual]\label{def:lagrangiana}
+Para el problema de la \cref{def:prob-opt} con $X=\R^{n}$, la \emph{lagrangiana} es
+\[
+\Lag(x,\lambda,\nu)=f(x)+\sum_{i=1}^{m}\lambda_ig_i(x)+\sum_{j=1}^{p}\nu_jh_j(x),\qquad\lambda\ge 0,
+\]
+y la \emph{función dual} es $q(\lambda,\nu)=\inf_x\Lag(x,\lambda,\nu)$.
+\end{definicion}
+
+\begin{proposicion}[Dualidad débil]\label{prop:dual-debil-conv}
+Si $\lambda\ge 0$, entonces $q(\lambda,\nu)\le f(x)$ para todo $x$ factible; por tanto $q(\lambda,\nu)\le p^{*}$, el valor óptimo.
+\end{proposicion}
+
+\begin{proof}
+Si $x$ es factible, $g_i(x)\le 0$ y $h_j(x)=0$, luego $\sum_i\lambda_ig_i(x)+\sum_j\nu_jh_j(x)\le 0$ y $\Lag(x,\lambda,\nu)\le f(x)$. El ínfimo sobre todos los $x$ es menor o igual que el valor en ese $x$.
+\end{proof}
+
+En un problema convexo que cumple la \emph{condición de Slater} (existe un punto estrictamente factible, $g_i(x)<0$ para las restricciones no afines), la dualidad es fuerte: $\max q=p^{*}$ (Boyd y Vandenberghe~\cite{bv}, cap.~5).
+
+\begin{teorema}[Condiciones de Karush--Kuhn--Tucker]\label{teo:kkt}
+Sean $f$, $g_i$ y $h_j$ diferenciables. Se dice que $(x^{*},\lambda^{*},\nu^{*})$ cumple las condiciones KKT si
+\begin{enumerate}
+  \item \emph{factibilidad primal}: $g_i(x^{*})\le 0$, $h_j(x^{*})=0$;
+  \item \emph{factibilidad dual}: $\lambda^{*}\ge 0$;
+  \item \emph{holgura complementaria}: $\lambda_i^{*}g_i(x^{*})=0$ para todo $i$;
+  \item \emph{estacionariedad}: $\nabla f(x^{*})+\sum_i\lambda_i^{*}\nabla g_i(x^{*})+\sum_j\nu_j^{*}\nabla h_j(x^{*})=0$.
+\end{enumerate}
+Si el problema es convexo y se cumplen las condiciones KKT, $x^{*}$ es óptimo global. Si el problema es convexo y cumple la condición de Slater, todo óptimo satisface las KKT para algún $(\lambda^{*},\nu^{*})$~\cite{bv}. En problemas no convexos, las KKT son necesarias en un mínimo local bajo una cualificación de restricciones, pero no suficientes~\cite{nw}.
+\end{teorema}
+
+\begin{proof}[Demostración de la suficiencia]
+Con $\lambda^{*}\ge 0$ y $h_j$ afines, $x\mapsto\Lag(x,\lambda^{*},\nu^{*})$ es convexa y diferenciable, y por (iv) su gradiente se anula en $x^{*}$; una función convexa alcanza su mínimo donde se anula el gradiente, así que $q(\lambda^{*},\nu^{*})=\Lag(x^{*},\lambda^{*},\nu^{*})$. Por (i) y (iii), $\Lag(x^{*},\lambda^{*},\nu^{*})=f(x^{*})$. Para cualquier $x$ factible, por la \cref{prop:dual-debil-conv}, $f(x)\ge q(\lambda^{*},\nu^{*})=f(x^{*})$.
+\end{proof}
+
+\begin{proposicion}[Multiplicadores como sensibilidades]\label{prop:sensibilidad}
+Sea el problema convexo perturbado $\min f(x)$ s.a. $g_i(x)\le u_i$, $h_j(x)=w_j$, con valor óptimo $p^{*}(u,w)$, y sea $(\lambda^{*},\nu^{*})$ dual óptimo del problema sin perturbar con dualidad fuerte. Entonces
+\[
+p^{*}(u,w)\ \ge\ p^{*}(0,0)-\lambda^{*\mathsf{T}}u-\nu^{*\mathsf{T}}w ,
+\]
+y si $p^{*}$ es diferenciable en $(0,0)$, $\partial p^{*}/\partial u_i=-\lambda_i^{*}$ y $\partial p^{*}/\partial w_j=-\nu_j^{*}$.
+\end{proposicion}
+
+\begin{proof}
+Para $x$ factible en el problema perturbado, $f(x)\ge f(x)+\sum_i\lambda_i^{*}(g_i(x)-u_i)+\sum_j\nu_j^{*}(h_j(x)-w_j)\ge q(\lambda^{*},\nu^{*})-\lambda^{*\mathsf{T}}u-\nu^{*\mathsf{T}}w$, y $q(\lambda^{*},\nu^{*})=p^{*}(0,0)$. Tomando el ínfimo en $x$ se obtiene la desigualdad. Si $p^{*}$ es diferenciable, la desigualdad dice que el plano $p^{*}(0,0)-\lambda^{*\mathsf{T}}u-\nu^{*\mathsf{T}}w$ queda por debajo de la función y la toca en el origen, de modo que coincide con su plano tangente (Boyd y Vandenberghe~\cite{bv}, §5.6).
+\end{proof}
+
+Es la generalización de los precios sombra de la \cref{prop:sombra}: relajar una restricción activa abarata el óptimo, en primera aproximación, en su multiplicador por unidad.
+
+\section{Caso de estudio: despacho económico}
+
+\begin{ejemplo}[Despacho económico de tres grupos térmicos]\label{ej:despacho}
+Un operador debe cubrir una demanda de $D=850$~MW durante una hora con tres grupos térmicos. El coste horario de cada grupo, ajustado a sus curvas de consumo, es cuadrático, $C_i(P_i)=a_i+b_iP_i+c_iP_i^{2}$~(€/h):
+\begin{center}\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Grupo & $a_i$ (€/h) & $b_i$ (€/MWh) & $c_i$ (€/MW$^2$h) & $P_i^{\min}$ (MW) & $P_i^{\max}$ (MW) \\
+\midrule
+1 & 500 & 18 & 0,020 & 100 & 400 \\
+2 & 400 & 20 & 0,010 & 50 & 350 \\
+3 & 300 & 26 & 0,005 & 50 & 300 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\emph{Modelo.} $\min\sum_iC_i(P_i)$ s.a. $\sum_iP_i=D$ y $P_i^{\min}\le P_i\le P_i^{\max}$. Como $c_i>0$, el objetivo es convexo y las restricciones son lineales: es un programa cuadrático convexo y se cumple la condición de Slater (por ejemplo, $P=(300,300,250)$ es estrictamente factible en los límites). \emph{Elección del método:} KKT a mano para entender la solución, CVXPY para resolverla y verificarla.
+
+\emph{Condiciones KKT.} Con multiplicador $\lambda$ para el balance y $\mu_i^{\pm}\ge 0$ para los límites, la estacionariedad es $b_i+2c_iP_i-\lambda-\mu_i^{-}+\mu_i^{+}=0$. Si ningún grupo está en un límite, todos operan al mismo \emph{coste incremental}:
+\[
+b_i+2c_iP_i=\lambda\quad\Longrightarrow\quad P_i=\frac{\lambda-b_i}{2c_i}=25(\lambda-18),\ 50(\lambda-20),\ 100(\lambda-26).
+\]
+\emph{Paso 1.} Sumando e igualando a $D$: $175\lambda-4050=850$, de donde $\lambda=28$ y $P=(250,400,200)$; pero $P_2=400>350$ viola el límite.
+\emph{Paso 2.} Se fija $P_2=350$ (límite activo) y se reparte el resto, $500$~MW, entre los grupos 1 y 3: $25(\lambda-18)+100(\lambda-26)=500$, es decir, $125\lambda=3550$ y $\lambda=28{,}4$~€/MWh. Entonces $P_1=25\cdot 10{,}4=260$ y $P_3=100\cdot 2{,}4=240$~MW, ambos dentro de sus límites.
+\emph{Paso 3.} El multiplicador del límite del grupo~2 es $\mu_2^{+}=\lambda-(b_2+2c_2P_2)=28{,}4-27=1{,}4\ge 0$: las KKT se cumplen y, por el \cref{teo:kkt}, la solución es óptima.
+
+\emph{Resultado.} $\bm{P^{*}=(260,\ 350,\ 240)}$~MW, con coste \textbf{21\,985~€/h} ($6532+8625+6828$). El multiplicador $\lambda=28{,}4$~€/MWh es el precio marginal del sistema: por la \cref{prop:sensibilidad}, 10~MW más de demanda costarían unos $284$~€/h; el valor exacto, resolviendo de nuevo, es $284{,}4$~€/h, porque el coste es cuadrático. El multiplicador $\mu_2^{+}=1{,}4$~€/MWh indica cuánto se ahorraría por MW si el grupo~2 pudiera producir más. CVXPY reproduce la solución y devuelve los mismos multiplicadores (cuaderno, parte~4):
+\begin{verbatim}
+P = cp.Variable(3); bal = cp.sum(P) == D
+coste = cp.sum(a + cp.multiply(b, P) + cp.multiply(c, cp.square(P)))
+cp.Problem(cp.Minimize(coste), [bal, P >= Pmin, P <= Pmax]).solve()
+bal.dual_value   # 28,4 en valor absoluto (signo según convenio)
+\end{verbatim}
+\end{ejemplo}
+
+\begin{observacion}[Cuando se pierde la convexidad]\label{obs:noconvexo}
+El caso anterior deja de ser convexo con detalles realistas: costes con efecto de apertura de válvulas (términos sinusoidales), mínimos técnicos con arranque y parada (variables binarias, el problema de asignación de unidades del cap.~4 de~\cite{wood}) o mezclas con calidades que se multiplican por caudales (términos bilineales). Entonces las KKT son solo necesarias, los métodos locales (SQP, punto interior) pueden quedarse en óptimos locales y conviene arrancar desde varios puntos, usar un resolvedor global o reformular. En el ajuste de redes neuronales del módulo~7 el problema tampoco es convexo, pero allí basta con un buen mínimo local.
+\end{observacion}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~4: optimización continua.}\label{tab:tec4}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+CVXPY~\cite{cvxpy} & modelización convexa con verificación DCP y duales & abierta (Apache~2.0) & cualquier problema convexo de tamaño medio \\
+Clarabel, SCS, OSQP & resolvedores cónicos (Clarabel, SCS) y cuadráticos (OSQP) & abiertos (Apache~2.0; SCS, MIT) & los usa CVXPY; OSQP, para control predictivo rápido \\
+SciPy \texttt{minimize} & SLSQP, \texttt{trust-constr}, L-BFGS-B & abierta (BSD-3) & no lineal local con pocas variables \\
+Ipopt & punto interior no lineal a gran escala & abierta (EPL-2.0) & no lineal grande con derivadas (vía Pyomo o CasADi) \\
+Gurobi & cuadrático y no convexo bilineal global & comercial & mezclas y redes con términos bilineales \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en optimización continua]\label{obs:errores4}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Creer que el problema es convexo sin comprobarlo}: un coste cóncavo a trozos (descuentos por volumen) o una restricción $x_1x_2\ge k$ rompen la convexidad; DCP lo detecta, un resolvedor local no.
+  \item \emph{Signos de los duales}: cada herramienta tiene su convenio (\texttt{dual\_value} en CVXPY, \texttt{marginals} en SciPy); hay que comprobar el signo con una perturbación pequeña antes de usarlo como precio.
+  \item \emph{Escalado}: mezclar MW con €/MWh$^2$ produce coeficientes de órdenes muy distintos y tolerancias que no significan lo mismo en todas las restricciones.
+  \item \emph{Diferencias finitas en simuladores con ruido}: el gradiente numérico de una función ruidosa es basura; en ese caso conviene un método sin derivadas (\cref{tema:5}).
+  \item \emph{Ignorar los límites de validez del modelo}: una curva de coste ajustada entre 100 y 400~MW no dice nada a 450~MW; los límites técnicos deben ser restricciones duras.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Boyd y Vandenberghe~\cite{bv}, cap.~4 (§4.3 «Linear optimization problems», §4.4 «Quadratic optimization problems») y cap.~5 (§5.5 «Optimality conditions», §5.6 «Perturbation and sensitivity analysis»).
+\item Nocedal y Wright~\cite{nw}, cap.~12 (teoría de la optimización con restricciones).
+\item Wood, Wollenberg y Sheblé~\cite{wood}, cap.~3, despacho económico de grupos térmicos.
+\item Documentación de CVXPY~\cite{cvxpydoc}: «Disciplined Convex Programming» y variables duales.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-dcp}
+Indique si cada problema es convexo y por qué: (a) $\min x_1^{2}+x_2^{2}$ s.a. $x_1+x_2\ge 1$; (b) $\min -\log x_1-\log x_2$ s.a. $x_1+x_2=1$; (c) $\min x_1^{2}$ s.a. $x_1^{2}+x_2^{2}=1$; (d) $\min\ \max(x_1,x_2)$ s.a. $x\ge 0$, $x_1x_2\ge 1$; (e) $\min\ \norm{Ax-b}_2$ s.a. $\norm{x}_\infty\le 1$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-kkt}
+Resuelva con las condiciones KKT el problema $\min x_1^{2}+x_2^{2}$ s.a. $x_1+2x_2\ge 5$. Calcule el multiplicador e interprételo: ¿cuánto cambia aproximadamente el valor óptimo si el lado derecho pasa de 5 a $5{,}1$? Compruebe con el valor exacto.
+\fuente{adaptado de Boyd y Vandenberghe~\cite{bv}, cap.~5, §5.5 (condiciones KKT) y §5.6 (sensibilidad).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-despacho2}
+Dos grupos tienen costes $C_1=20P_1+0{,}01P_1^{2}$ y $C_2=18P_2+0{,}02P_2^{2}$ (€/h) y deben cubrir 500~MW, sin límites activos. Obtenga el despacho por la regla del coste incremental igual y el precio marginal. Compruebe el resultado con el coste total.
+\fuente{adaptado de Wood, Wollenberg y Sheblé~\cite{wood}, cap.~3, despacho económico por igualdad de costes incrementales.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-agua}
+Se reparte una potencia total de 1~W entre tres canales con niveles de ruido $\alpha=(0{,}5;\ 1;\ 1{,}5)$ para maximizar $\sum_i\log(\alpha_i+x_i)$ con $x\ge 0$ y $\sum_ix_i=1$. Escriba las KKT, deduzca que $x_i=\max(0,\ 1/\nu-\alpha_i)$ y calcule $\nu$ y la asignación.
+\fuente{adaptado de Boyd y Vandenberghe~\cite{bv}, cap.~5, §5.5, ejemplo del llenado de agua (\emph{water-filling}).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-sensib}
+En el \cref{ej:despacho}: (a) estime con $\lambda$ el ahorro de reducir la demanda en 20~MW y compárelo con el valor exacto; (b) ¿hasta qué demanda sigue activo solo el límite superior del grupo~2, si los demás límites no cambian?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-dual}
+Para el despacho sin límites técnicos del \cref{ej:despacho} (paso~1), calcule la función dual $q(\lambda)=\min_P\bigl[\sum_iC_i(P_i)-\lambda(\sum_iP_i-D)\bigr]$ de forma explícita y compruebe que su máximo se alcanza en $\lambda=28$ y vale lo mismo que el coste primal.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-primer-orden}
+Sea $f$ convexa y diferenciable y $\mathcal{X}$ convexo. Demuestre que $x^{*}\in\mathcal{X}$ minimiza $f$ en $\mathcal{X}$ si y solo si $\nabla f(x^{*})\T(x-x^{*})\ge 0$ para todo $x\in\mathcal{X}$. Interprete la condición geométricamente y deduzca la condición $\nabla f(x^{*})=0$ cuando $x^{*}$ es interior.
+\fuente{adaptado de Boyd y Vandenberghe~\cite{bv}, cap.~4, criterio de optimalidad para funciones diferenciables.}
+\end{ejercicio}

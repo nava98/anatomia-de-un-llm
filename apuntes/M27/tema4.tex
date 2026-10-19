@@ -1,0 +1,162 @@
+% =====================================================================
+\chapter{Renderizado diferenciable y reconstrucción 3D}
+\label{tema:4}
+% =====================================================================
+
+Reconstruir un objeto a partir de fotografías es un problema inverso: se busca la geometría (y la apariencia) cuyas imágenes renderizadas coinciden con las observadas. Si el renderizador es derivable, el problema se resuelve por descenso de gradiente, igual que el entrenamiento de una red. Este tema explica por qué la rasterización clásica no es derivable, cómo la suavizan SoftRas~\cite{softras} y las bibliotecas actuales~\cite{pytorch3d,nvdiffrast,mitsuba3}, y cómo NeRF~\cite{nerf} y el \emph{Gaussian splatting}~\cite{gs} convierten la reconstrucción de escenas en una optimización. Se apoya en las clases «Graphics Pipeline and Rasterization» de MIT 6.837~\cite{mit6837}, en la clase de renderizado neuronal de CS348n~\cite{cs348n} y en las tareas~2 y~3 del curso 16-825 de Carnegie Mellon~\cite{cmu16825}.
+
+\section{Formación de la imagen y rasterización}
+
+Una cámara estenopeica con matriz de rotación $W$, centro $o$ y distancia focal $\phi$ (en píxeles) proyecta el punto $X$ en el píxel $\bigl(\phi\,X_c^{(1)}/X_c^{(3)},\ \phi\,X_c^{(2)}/X_c^{(3)}\bigr)$, con $X_c=W(X-o)$. La rasterización recorre los triángulos proyectados y asigna a cada píxel el triángulo más cercano que lo cubre (\emph{z-buffer})~\cite{mit6837}. La silueta de una malla es la función indicadora de los píxeles cubiertos.
+
+\begin{proposicion}[La rasterización tiene gradiente nulo casi en todas partes]\label{prop:grad-cero}
+Sea $I_p(\theta)\in\{0,1\}$ el valor de la silueta en el píxel $p$ (muestreado en su centro) como función de las coordenadas $\theta$ de los vértices. Entonces $I_p$ es constante a trozos: en todo $\theta$ en que ningún borde de triángulo proyectado pasa exactamente por el centro de $p$, $\nabla_\theta I_p=0$.
+\end{proposicion}
+
+\begin{proof}
+La pertenencia del centro del píxel a un triángulo proyectado se decide con los signos de tres funciones de arista, continuas en $\theta$. Si ninguna se anula, sus signos se conservan en un entorno de $\theta$ y la cobertura no cambia, así que $I_p$ es constante en ese entorno. Los puntos en que alguna se anula forman un conjunto de medida nula.
+\end{proof}
+
+Una pérdida que compare siluetas rasterizadas tiene, por tanto, gradiente nulo salvo en un conjunto de medida nula, donde no existe: el descenso de gradiente no recibe información. Hay dos soluciones: suavizar el renderizador, o calcular explícitamente la contribución de los bordes (como hacen los métodos de antialias derivable de nvdiffrast~\cite{nvdiffrast} y los renderizadores físicos como Mitsuba~3~\cite{mitsuba3}).
+
+\section{Rasterización suave}
+
+\begin{definicion}[Mapa de probabilidad de SoftRas]\label{def:softras}
+Para el píxel $p_i$ y el triángulo proyectado $f_j$, SoftRas~\cite[§3.2]{softras} define
+\[
+D_j^i=\sigm\Bigl(\delta_j^i\,\frac{d^2(i,j)}{\sigma}\Bigr),
+\]
+donde $d(i,j)$ es la distancia del píxel al borde del triángulo, $\delta_j^i=+1$ si el píxel está dentro y $-1$ si está fuera, y $\sigma>0$ controla la nitidez. La silueta suave se obtiene agregando los triángulos como sucesos independientes~\cite[§3.3]{softras},
+\[
+I_s^i=1-\prod_j\bigl(1-D_j^i\bigr).
+\]
+\end{definicion}
+
+Cuando $\sigma\to 0$, $D_j^i$ tiende a la indicadora del triángulo y se recupera la rasterización clásica; con $\sigma>0$, todos los triángulos cercanos reciben gradiente, incluso los ocultos y los vértices alejados del borde. El valor por defecto en el artículo es $\sigma=10^{-4}$ en coordenadas de imagen normalizadas. La pérdida de siluetas más usada es $1-\IoU$ suave, con $\IoU(S,T)=\sum_iS_iT_i/\sum_i(S_i+T_i-S_iT_i)$~\cite[§4.1]{softras}. El compromiso es claro: un $\sigma$ grande da gradientes en una región amplia, útiles al principio, pero sesga la silueta (la «hincha»); un $\sigma$ pequeño es fiel pero casi no da gradiente. De ahí la práctica de \emph{recocer} $\sigma$ de grande a pequeño, que se ve en el caso de estudio.
+
+Las bibliotecas actuales implementan estas ideas con eficiencia. PyTorch3D proporciona estructuras de mallas y nubes por lotes, pérdidas 3D y un renderizador derivable modular~\cite{pytorch3d}. nvdiffrast ofrece primitivas de alto rendimiento (rasterización, interpolación de atributos, filtrado de texturas y antialias) que aprovechan el hardware gráfico y se integran en PyTorch o TensorFlow~\cite{nvdiffrast}. Mitsuba~3, construido sobre el compilador Dr.Jit, calcula derivadas de simulaciones completas de transporte de luz respecto a la cámara, la geometría, los materiales o las texturas~\cite{mitsuba3}.
+
+\section{Renderizado volumétrico y NeRF}
+
+Un campo de radiancia neuronal (NeRF) representa una escena con una red que, para cada punto $X$ y dirección de vista $d$, devuelve una densidad $\sigma(X)\ge 0$ y un color $c(X,d)$~\cite{nerf}. El color de un rayo $r(t)=o+td$ es
+\[
+C(r)=\int_{t_n}^{t_f}T(t)\,\sigma(r(t))\,c(r(t),d)\,dt,\qquad T(t)=\exp\Bigl(-\int_{t_n}^{t}\sigma(r(u))\,du\Bigr),
+\]
+donde $T(t)$ es la transmitancia, la probabilidad de que la luz recorra el rayo hasta $t$ sin ser absorbida. Con muestras $t_1<\dots<t_N$ y $\delta_i=t_{i+1}-t_i$, la cuadratura de NeRF~\cite[§4]{nerf} es
+\[
+\hat C(r)=\sum_{i=1}^N w_i\,c_i,\qquad w_i=T_i\,\alpha_i,\qquad \alpha_i=1-e^{-\sigma_i\delta_i},\qquad T_i=\exp\Bigl(-\sum_{j<i}\sigma_j\delta_j\Bigr)=\prod_{j<i}(1-\alpha_j).
+\]
+
+\begin{proposicion}[Los pesos del rayo]\label{prop:pesos}
+Con $\sigma_i\ge 0$, los pesos cumplen $w_i\ge 0$ y $\sum_{i=1}^Nw_i=1-T_{N+1}\le 1$, donde $T_{N+1}=\prod_{j\le N}(1-\alpha_j)$ es la transmitancia residual.
+\end{proposicion}
+
+\begin{proof}
+Como $\sigma_i\delta_i\ge 0$, se tiene $\alpha_i\in[0,1)$ y $T_i\in(0,1]$, luego $w_i\ge 0$. Además $w_i=T_i\alpha_i=T_i-T_i(1-\alpha_i)=T_i-T_{i+1}$, y la suma es telescópica: $\sum_{i=1}^N(T_i-T_{i+1})=T_1-T_{N+1}=1-T_{N+1}$.
+\end{proof}
+
+Los pesos forman, pues, una distribución de probabilidad (completada con el fondo, de peso $T_{N+1}$) sobre el punto del rayo en que la luz se emite; la profundidad esperada es $\sum_iw_it_i$. El renderizado es derivable respecto a $\sigma_i$ y $c_i$, y por tanto respecto a los pesos de la red. NeRF aplica a las coordenadas una codificación posicional $\gamma(p)=\bigl(\sin(2^0\pi p),\cos(2^0\pi p),\dots,\sin(2^{L-1}\pi p),\cos(2^{L-1}\pi p)\bigr)$ con $L=10$ para la posición y $L=4$ para la dirección, una red de 8 capas de 256 unidades, y minimiza el error cuadrático entre colores renderizados y observados con lotes de 4096 rayos; cada escena necesita entre $10^5$ y $3\cdot 10^5$ iteraciones, uno o dos días en una GPU V100~\cite[§5]{nerf}.
+
+\section{\emph{Gaussian splatting}}
+
+El \emph{Gaussian splatting} 3D~\cite{gs} sustituye la red por un conjunto explícito de gaussianas anisótropas, cada una con media $\mu$, covarianza $\Sigma$, opacidad $o$ y color dependiente de la vista (coeficientes de armónicos esféricos). Para que la covarianza siga siendo válida durante la optimización se parametriza como
+\[
+\Sigma=R\,S\,S^\T R^\T,
+\]
+con $R$ la rotación de un cuaternión normalizado y $S$ diagonal de escalas~\cite[§4]{gs}. Cada gaussiana se proyecta a la imagen con la covarianza $\Sigma'=JW\Sigma W^\T J^\T$, donde $J$ es el jacobiano de la aproximación afín de la proyección, y las gaussianas que cubren un píxel, ordenadas por profundidad, se componen con la misma fórmula que NeRF:
+\[
+C=\sum_i c_i\,\alpha_i\prod_{j<i}(1-\alpha_j),\qquad \alpha_i=o_i\exp\Bigl(-\tfrac12(p-\mu_i')^\T\Sigma_i'^{-1}(p-\mu_i')\Bigr).
+\]
+La pérdida combina $L^1$ y D-SSIM con peso $\lambda=0{,}2$; un control adaptativo clona o divide gaussianas donde el gradiente de posición es grande y elimina las casi transparentes, y un rasterizador por teselas de $16\times 16$ píxeles con ordenación por radix en GPU permite renderizar en tiempo real (al menos 30 fotogramas por segundo a 1080p) escenas de uno a cinco millones de gaussianas~\cite{gs}. Frente a NeRF, el \emph{splatting} cambia una representación implícita y compacta, pero lenta de muestrear, por una explícita, rápida y más voluminosa en memoria.
+
+\section{Caso de estudio: ajuste de una forma a siluetas}
+
+\begin{ejemplo}[Reconstrucción de una pieza a partir de seis siluetas]\label{ej:siluetas}
+\emph{Contexto.} Se quiere reconstruir una pieza a partir de fotografías segmentadas (máscaras binarias), por ejemplo para verificar una pieza de fundición o crear un recurso digital. La pieza cabe en un cubo de 40 mm de lado y es estrellada respecto a su centro: su superficie es $\{\rho\,\hx:\rho=r(\hx)\}$ con
+\[
+r(\hx)=\exp\Bigl(\sum_{\ell=0}^{3}\sum_{m=-\ell}^{\ell}c_{\ell m}\,Y_{\ell m}(\hx)\Bigr),
+\]
+donde $Y_{\ell m}$ son los armónicos esféricos reales y $\theta=(c_{\ell m})\in\R^{16}$. La exponencial garantiza $r>0$. Hay 6 vistas ortográficas de orientación conocida y aleatoria, de $40\times 40$ píxeles, con 40 muestras por rayo (unidad de longitud: 20 mm).
+
+\emph{Renderizador suave.} La ocupación de un punto $X$ es $o(X)=\sigm\bigl((r(\hx)-\norm{X})/\tau\bigr)$, una versión suave de la indicadora de la pieza, y la silueta de un rayo con muestras $X_1,\dots,X_{40}$ es $S=1-\prod_k\bigl(1-o(X_k)\bigr)$, la agregación de SoftRas (\cref{def:softras}). La base de armónicos de cada muestra se precalcula, de modo que una pasada cuesta un producto de una matriz de $6\cdot 64\,000$ filas por $\theta$.
+
+\emph{Formulación.} $\min_\theta\ 1-\IoU\bigl(S(\theta;\tau),T\bigr)$, con $T$ las seis máscaras binarias; se optimiza con Adam (tasa 0,03, 300 iteraciones) desde una esfera de radio 8 mm.
+
+\emph{Elección del método.} El gradiente de la pérdida respecto a los 16 coeficientes atraviesa la sigmoide de cada muestra; con $\tau$ fijo y pequeño, solo las muestras muy cercanas al contorno aportan, y con $\tau$ grande la silueta suave queda sesgada. Se compara $\tau=0{,}03$ fijo con un recocido geométrico de $\tau$ desde $0{,}05$ hasta $0{,}005$ (de 1 mm a 0,1 mm).
+
+\emph{Resultado.} Con $\tau$ fijo, la $\IoU$ de las siluetas binarias es $0{,}827$ y la $\IoU$ volumétrica (medida en una rejilla de $64^3$) es $0{,}744$: la silueta suave de cada rayo acumula muchas muestras con ocupación intermedia y se hincha, y el optimizador compensa encogiendo la pieza. Con recocido, la $\IoU$ de siluetas es $0{,}995$ y la volumétrica $0{,}991$, y los coeficientes se recuperan con un error relativo inferior al 1~\%. Cada ajuste tarda unos 4 s en una CPU.
+
+\emph{Límite fundamental.} Las siluetas solo determinan el \emph{casco visual} del objeto, la intersección de los conos de visión de sus siluetas~\cite{laurentini}: una concavidad que no se ve de perfil desde ninguna cámara es invisible. Aquí la recuperación es casi perfecta porque la familia de formas (16 coeficientes, armónicos de grado bajo) es pequeña; con formas generales hacen falta términos fotométricos o de profundidad.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.9cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia & Cuándo elegirla \\
+\midrule
+PyTorch3D & rasterización suave de mallas y nubes, pérdidas 3D & BSD & ajuste de mallas e investigación en PyTorch \\
+nvdiffrast & primitivas de rasterización derivable de alto rendimiento & licencia de código de NVIDIA & mallas grandes, texturas y antialias en GPU NVIDIA \\
+Mitsuba~3 & renderizado físico (transporte de luz) derivable & BSD-3 (con cláusula adicional) & materiales, iluminación indirecta, medios participantes \\
+Kaolin & conversiones y renderizado derivable & Apache-2.0 & ecosistema NVIDIA \\
+nerfstudio & entrenamiento modular de NeRF & Apache-2.0 & reconstrucción de escenas con varias variantes de NeRF \\
+gsplat & rasterizador de gaussianas & Apache-2.0 & \emph{Gaussian splatting} con licencia permisiva \\
+3DGS original (Inria) & implementación de referencia de~\cite{gs} & solo uso no comercial & investigación y comparación \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías del tema~4, con las licencias publicadas en sus repositorios.}
+\label{tab:tec4}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores4}
+(i) \emph{Poses de cámara erróneas}: un error de calibración de un grado se paga con geometría deformada; las poses deben estimarse bien (o refinarse en la optimización). (ii) \emph{Ambigüedad}: siluetas sin información fotométrica no ven las concavidades (casco visual). (iii) \emph{Mínimos locales y sesgo del suavizado}: sin recocer $\sigma$ o $\tau$, el ajuste se atasca o converge sesgado, como en el \cref{ej:siluetas}. (iv) \emph{Fuga de vistas}: evaluar NeRF o \emph{splatting} en las mismas imágenes con que se entrenó mide memorización; se reservan vistas de prueba. (v) \emph{Máscaras de mala calidad}: los errores de segmentación se convierten en geometría. (vi) \emph{Licencias}: algunas implementaciones de referencia (3DGS de Inria, Instant-NGP, nvdiffrast) imponen restricciones de uso que impiden usarlas en un producto comercial sin permiso.
+\end{observacion}
+
+\begin{lecturas}
+\item MIT 6.837~\cite{mit6837}: clases «Graphics Pipeline and Rasterization» I y II.
+\item S.~Liu \emph{et al.}~\cite{softras}: §3.2 (mapas de probabilidad), §3.3 (agregación) y §4.1 (pérdida de siluetas).
+\item B.~Mildenhall \emph{et al.}~\cite{nerf}: §4 (renderizado volumétrico) y §5 (codificación posicional y muestreo jerárquico).
+\item B.~Kerbl \emph{et al.}~\cite{gs}: §4--6.
+\item CMU 16-825~\cite{cmu16825}: tarea~3, «Volume Rendering, NeRF, and 3D Gaussian Splatting».
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-gradcero}
+Explique con la \cref{prop:grad-cero} por qué no se puede ajustar una malla a siluetas con un rasterizador clásico y una pérdida de píxeles, y qué compromiso introduce el parámetro $\sigma$ de SoftRas.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:4-casco}
+Un objeto es una taza con el asa hacia la derecha. Se dispone de 50 siluetas tomadas alrededor de ella. ¿Puede reconstruirse el interior de la taza? Razone con el concepto de casco visual y proponga qué información adicional lo permitiría.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-softras}
+Con $\sigma=10^{-4}$ (coordenadas normalizadas), calcule $D$ para un píxel dentro de un triángulo a distancia $0{,}01$ del borde, para uno fuera a distancia $0{,}01$ y para uno fuera a distancia $0{,}02$. Calcule la silueta agregada de un píxel cubierto por dos triángulos con $D=0{,}7311$ y $D=0{,}2689$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-volumen}
+Un rayo tiene tres muestras con $\delta_i=0{,}5$, densidades $\sigma=(0{,}2;\ 1{,}0;\ 3{,}0)$, colores (en gris) $c=(0{,}1;\ 0{,}8;\ 0{,}4)$ y profundidades $t=(1{,}0;\ 1{,}5;\ 2{,}0)$. Calcule $\alpha_i$, $T_i$, los pesos, el color y la profundidad renderizados, y compruebe la \cref{prop:pesos}.
+\fuente{adaptado de CMU 16-825, «Learning for 3D Vision» (S.~Tulsiani), tarea~3, §1.5 «Volume rendering»~\cite{cmu16825}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-alfa}
+Tres gaussianas proyectadas, ya ordenadas por profundidad, cubren un píxel con opacidades $o=(0{,}8;\ 0{,}6;\ 0{,}9)$ y exponentes $P=-\tfrac12(p-\mu')^\T\Sigma'^{-1}(p-\mu')=(-0{,}5;\ -0{,}1;\ -2{,}0)$. Sus colores son rojo, verde y azul puros. Calcule $\alpha_i=o_ie^{P_i}$, las transmitancias y el color del píxel.
+\fuente{adaptado de CMU 16-825, «Learning for 3D Vision» (S.~Tulsiani), tarea~3, §5.4 «Compute Alphas and Transmittance»~\cite{cmu16825}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-pe}
+Calcule $\gamma(p)$ para $p=0{,}25$ con $L=2$. ¿Cuántas componentes tiene la codificación de una posición 3D con $L=10$ y la de una dirección con $L=4$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-iou}
+Una silueta suave de cuatro píxeles vale $S=(0{,}9;\ 0{,}6;\ 0{,}2;\ 0)$ y la máscara objetivo es $T=(1;\ 1;\ 0;\ 0)$. Calcule la $\IoU$ suave, la pérdida $1-\IoU$ y la derivada de la $\IoU$ respecto a $S_3$. Interprete el signo.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-pesos-dem}
+(a) Demuestre la \cref{prop:pesos}. (b) Demuestre que si se duplica el número de muestras partiendo cada intervalo en dos mitades con la misma densidad, los pesos de las dos mitades suman el peso original, de modo que la cuadratura es coherente al refinar. (c) Deduzca que la composición de gaussianas del \emph{splatting} es la misma fórmula con $\alpha_i$ dado.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-cov}
+(a) Demuestre que $\Sigma=RSS^\T R^\T$, con $R$ ortogonal y $S=\diag(s_1,s_2,s_3)$, es simétrica y semidefinida positiva, y que es definida positiva si y solo si todas las $s_i$ son no nulas. (b) Demuestre que $\Sigma'=JW\Sigma W^\T J^\T$ es semidefinida positiva para cualesquiera $J$ y $W$. (c) Explique por qué optimizar directamente las seis entradas de una matriz simétrica $\Sigma$ con descenso de gradiente puede producir matrices no válidas.
+\end{ejercicio}

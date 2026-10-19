@@ -1,0 +1,301 @@
+% =====================================================================
+\chapter{Del problema real al modelo matemático}
+\label{tema:1}
+% =====================================================================
+
+Antes de elegir un algoritmo hay que saber qué se decide, qué se quiere mejorar y qué no se puede violar. Este tema fija el vocabulario de la modelización siguiendo el capítulo~1 de Bertsimas y Tsitsiklis~\cite{bt}, la clase~1 («Formulations») del curso 6.251J del MIT~\cite{mit6251} y la clase~2 («Formulations of linear and non-linear programs») del curso 15.053~\cite{mit15053}; describe la arquitectura de un sistema que predice y decide, con dos aplicaciones industriales publicadas~\cite{deepmind,orion}, y traza el mapa de métodos que recorre la fase, con el capítulo~1 de Kochenderfer y Wheeler~\cite{kw} como guía.
+
+\section{Elementos de un modelo de optimización}
+
+Un problema real llega como una descripción verbal: «queremos producir lo más rentable posible sin parar la línea y sin dejar a ningún cliente sin pedido». Modelizar consiste en separar lo que se elige de lo que se sabe y en escribir con precisión lo que se quiere y lo que se exige.
+
+\begin{definicion}[Problema de optimización]\label{def:prob-opt}
+Un \emph{problema de optimización} es
+\[
+\min_{x\in X}\ f(x)\qquad \st g_i(x)\le 0\ \ (i=1,\dots,m),\qquad h_j(x)=0\ \ (j=1,\dots,p),
+\]
+donde $x$ es el vector de \emph{variables de decisión}, $X$ un conjunto básico (por ejemplo $\R^{n}$, $\R^{n}_{\ge 0}$ o $\Z^{n_1}\times\R^{n_2}$), $f$ la \emph{función objetivo} y $g_i,h_j$ las \emph{restricciones}. El \emph{conjunto factible} es $\mathcal{X}=\{x\in X: g_i(x)\le 0,\ h_j(x)=0\}$. Un punto $x^{*}\in\mathcal{X}$ es \emph{óptimo (global)} si $f(x^{*})\le f(x)$ para todo $x\in\mathcal{X}$, y \emph{óptimo local} si la desigualdad se cumple en $\mathcal{X}\cap B(x^{*},r)$ para algún $r>0$. El problema es \emph{infactible} si $\mathcal{X}=\varnothing$ y \emph{no acotado} si $\inf_{\mathcal{X}}f=-\infty$.
+\end{definicion}
+
+\begin{definicion}[Datos, decisiones e indicadores]\label{def:elementos}
+En un modelo se distinguen:
+\begin{enumerate}[label=(\alph*)]
+  \item los \emph{parámetros} o datos $\theta$ (precios, capacidades, demandas, tiempos), que el decisor no controla y que pueden ser inciertos o predichos;
+  \item las \emph{variables de decisión} $x$, que el decisor fija;
+  \item las \emph{restricciones duras}, que ninguna decisión puede violar (seguridad, física, contratos), y las \emph{restricciones blandas}, que pueden violarse con una penalización en el objetivo;
+  \item el \emph{objetivo} $f(x;\theta)$, un único escalar que se optimiza;
+  \item los \emph{indicadores clave} (KPIs, \emph{key performance indicators}): magnitudes que se miden para vigilar el sistema (utilización, nivel de servicio, emisiones, tiempo de cálculo) y que no tienen por qué coincidir con el objetivo.
+\end{enumerate}
+\end{definicion}
+
+\begin{observacion}
+El objetivo es una decisión de diseño: si se optimiza el coste y se vigila el nivel de servicio, conviene comprobar que el óptimo del coste no hunde el servicio. Cuando varios KPIs son igualmente importantes, el problema es multiobjetivo (\cref{tema:5}). Optimizar un indicador que solo aproxima lo que se quiere conduce a la ley de Goodhart que el módulo~21 estudió como sobreoptimización de la recompensa.
+\end{observacion}
+
+Muchos modelos que no parecen lineales lo son tras una reformulación. Las tres siguientes son las más útiles.
+
+\begin{proposicion}[Reformulaciones elementales]\label{prop:reform}
+\begin{enumerate}
+  \item Maximizar $f$ equivale a minimizar $-f$: $\max_{\mathcal{X}}f=-\min_{\mathcal{X}}(-f)$, con los mismos puntos óptimos.
+  \item Una igualdad $h(x)=0$ equivale a las dos desigualdades $h(x)\le 0$ y $-h(x)\le 0$; una desigualdad $a\T x\le b$ equivale a $a\T x+s=b$ con una \emph{holgura} $s\ge 0$.
+  \item Una variable libre $x_j\in\R$ puede sustituirse por $x_j=x_j^{+}-x_j^{-}$ con $x_j^{\pm}\ge 0$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $f(x^{*})\ge f(x)$ para todo $x$ si y solo si $-f(x^{*})\le -f(x)$ para todo $x$. (ii) Un número es nulo si y solo si es a la vez $\le 0$ y $\ge 0$; y $a\T x\le b$ si y solo si $s=b-a\T x\ge 0$. (iii) Todo real es diferencia de dos no negativos (por ejemplo, $x^{+}=\max(x,0)$ y $x^{-}=\max(-x,0)$), y toda diferencia de no negativos es un real; la correspondencia conserva los valores de $f$ y de las restricciones.
+\end{proof}
+
+\begin{proposicion}[Epígrafe de un máximo]\label{prop:minimax}
+Sean $f_1,\dots,f_k$ funciones sobre $\mathcal{X}$. Los problemas
+\[
+\text{(P)}\ \ \min_{x\in\mathcal{X}}\ \max_{i}f_i(x)\qquad\text{y}\qquad \text{(Q)}\ \ \min_{x\in\mathcal{X},\,t\in\R}\ t\ \ \st f_i(x)\le t\ \ (i=1,\dots,k)
+\]
+tienen el mismo valor óptimo, y $x^{*}$ es óptimo de (P) si y solo si $(x^{*},\max_i f_i(x^{*}))$ es óptimo de (Q). Si las $f_i$ son afines y $\mathcal{X}$ es un poliedro, (Q) es un programa lineal.
+\end{proposicion}
+
+\begin{proof}
+Para cada $x$ fijo, el menor $t$ factible en (Q) es $t=\max_i f_i(x)$. Minimizar (Q) en $t$ primero y en $x$ después da exactamente (P). Si $(x,t)$ es óptimo de (Q), necesariamente $t=\max_if_i(x)$, porque en otro caso podría reducirse $t$.
+\end{proof}
+
+\begin{proposicion}[Suma de valores absolutos]\label{prop:abs}
+El problema $\min_{x\in\mathcal{X}}\sum_{i=1}^{k}\abs{a_i\T x-b_i}$ equivale a
+\[
+\min_{x\in\mathcal{X},\,e\in\R^{k}}\ \sum_{i=1}^{k}e_i\qquad\st -e_i\le a_i\T x-b_i\le e_i\quad(i=1,\dots,k).
+\]
+\end{proposicion}
+
+\begin{proof}
+Es la \cref{prop:minimax} aplicada término a término, porque $\abs{r}=\max(r,-r)$: para $x$ fijo, el menor $e_i$ factible es $\abs{a_i\T x-b_i}$, y la suma se minimiza por separado en cada $e_i$.
+\end{proof}
+
+\begin{ejemplo}[Caso de estudio: la fábrica de piensos]\label{ej:piensos}
+Una fábrica de piensos compuestos elabora pienso de engorde y pienso de puesta. Cada tonelada pasa por el molino y por la granuladora, con los tiempos del \cref{tab:piensos}. La dirección quiere el plan semanal de máximo margen; el departamento comercial informa de que no se pueden colocar más de 160~t semanales de pienso de puesta.
+
+\begin{table}[h]
+\centering\small
+\caption{Datos del caso de la fábrica de piensos.}\label{tab:piensos}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & Engorde ($E$) & Puesta ($P$) & Disponible \\
+\midrule
+Molino (h/t) & 0,5 & 0,5 & 100 h/semana \\
+Granuladora (h/t) & 0,6 & 0,3 & 90 h/semana \\
+Margen (€/t) & 40 & 30 & \\
+Demanda máxima (t/semana) & --- & 160 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\emph{Variables:} $E,P\ge 0$, toneladas por semana. \emph{Parámetros:} los de la tabla. \emph{Objetivo y restricciones:}
+\[
+\max\ 40E+30P\quad\st 0{,}5E+0{,}5P\le 100,\quad 0{,}6E+0{,}3P\le 90,\quad P\le 160,\quad E,P\ge 0.
+\]
+Dividiendo, las dos primeras restricciones son $E+P\le 200$ y $2E+P\le 300$. La región factible es el pentágono de la \cref{fig:piensos}, de vértices $(0,0)$, $(150,0)$, $(100,100)$, $(40,160)$ y $(0,160)$. Evaluando el margen en ellos: $0$, $6000$, $7000$, $6400$ y $4800$~€. El óptimo es $\bm{E^{*}=P^{*}=100}$~t con un margen de \textbf{7000~€/semana}. La elección del método es inmediata: dos variables continuas y todo lineal, luego programación lineal; con dos variables basta el método gráfico, y con miles, un resolvedor como HiGHS (\cref{tema:2}).
+
+\emph{KPIs del plan:} utilización del molino $100/100=100\,\%$, utilización de la granuladora $(60+30)/90=100\,\%$ y demanda de puesta cubierta $100/160=62{,}5\,\%$ del potencial. Los dos recursos están saturados; el \cref{tema:2} calculará cuánto vale una hora más de cada uno.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=0.028cm,y=0.022cm,font=\small,>={Stealth[length=2mm]}]
+  \fill[gray!20] (0,0)--(150,0)--(100,100)--(40,160)--(0,160)--cycle;
+  \draw[->] (0,0)--(215,0) node[below] {$E$ (t)};
+  \draw[->] (0,0)--(0,250) node[left] {$P$ (t)};
+  \draw[thick] (0,200)--(200,0);
+  \node[anchor=south west,font=\footnotesize] at (2,201) {molino};
+  \draw[thick] (60,180)--(150,0);
+  \node[anchor=south,font=\footnotesize] at (66,181) {granuladora};
+  \draw[thick,dashed] (0,160)--(200,160) node[right] {$P=160$};
+  \draw[dotted,thick] (40,180)--(175,0);
+  \node[anchor=west,font=\footnotesize] at (176,22) {$40E+30P=7000$};
+  \fill (100,100) circle (2.2pt) node[right=3pt] {$(100,100)$};
+  \foreach \x in {50,100,150} \draw (\x,0)--(\x,-4) node[below] {\x};
+  \draw (200,0)--(200,-4);
+  \foreach \y in {50,100,150,200} \draw (0,\y)--(-4,\y) node[left] {\y};
+\end{tikzpicture}
+\caption{Región factible del caso de los piensos (sombreada) y recta de nivel óptima.}
+\label{fig:piensos}
+\end{figure}
+
+\section{Anatomía de un optimizador con IA}
+
+En la industria el modelo matemático es una pieza de un sistema mayor que se ejecuta de forma periódica (cada semana, cada hora, cada cinco minutos). La \cref{fig:anatomia} muestra sus componentes.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},node distance=4mm and 5mm,
+  caja/.style={draw,thick,rounded corners=2pt,align=center,inner sep=2pt,minimum height=11mm,text width=2.25cm,font=\footnotesize}]
+  \node[caja] (dat) {datos\\(sensores, ERP, históricos)};
+  \node[caja,right=of dat] (pred) {modelo\\predictivo\\$\hat\theta=m_\phi(\cdot)$};
+  \node[caja,right=of pred] (opt) {modelo de\\optimización\\$\min f(x;\hat\theta)$};
+  \node[caja,right=of opt] (sol) {resolvedor\\(HiGHS, CP-SAT, \dots)};
+  \node[caja,below=9mm of sol] (dec) {decisión\\+ salvaguardas};
+  \node[caja,left=of dec] (pla) {planta,\\red o negocio};
+  \node[caja,left=of pla] (mon) {monitorización\\(KPIs, deriva, alarmas)};
+  \node[caja,left=of mon,text width=1.9cm] (hum) {supervisión\\humana};
+  \draw[->,thick] (dat)--(pred); \draw[->,thick] (pred)--(opt); \draw[->,thick] (opt)--(sol);
+  \draw[->,thick] (sol)--(dec); \draw[->,thick] (dec)--(pla); \draw[->,thick] (pla)--(mon);
+  \draw[->,thick] (mon)--(hum);
+  \draw[->,thick,dashed] (mon.north) -- node[right,font=\scriptsize] {reentrenar} (pred.south);
+  \draw[->,thick,dashed] (hum.north) -- node[right,font=\scriptsize] {corregir} (dat.south);
+\end{tikzpicture}
+\caption{Arquitectura de un optimizador con IA. Las flechas continuas forman el ciclo de decisión; las discontinuas, el de aprendizaje y supervisión.}
+\label{fig:anatomia}
+\end{figure}
+
+\begin{definicion}[Optimizador con IA]\label{def:optimizador-ia}
+Un \emph{optimizador con IA} es un procedimiento que, a partir de observaciones $w$ (contexto: fecha, temperatura, estado de la planta), produce una decisión
+\[
+\hat x(w)\in\argmin_{x\in\mathcal{X}(\hat\theta)}\ f\bigl(x;\hat\theta\bigr),\qquad \hat\theta=m_\phi(w),
+\]
+donde $m_\phi$ es un modelo aprendido de datos con parámetros $\phi$ que predice los parámetros inciertos del problema (o el propio valor de una decisión), y el conjunto factible incluye las restricciones de seguridad. La calidad del sistema se mide por el coste real $f(\hat x(w);\theta)$ con el $\theta$ verdadero, no por el error de predicción.
+\end{definicion}
+
+Los componentes de la \cref{fig:anatomia} son:
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Datos}: históricos, tiempo real y datos maestros (capacidades, recetas, tarifas). Su calidad limita todo lo demás.
+  \item \emph{Modelo predictivo}: estima demandas, tiempos, rendimientos o el estado futuro del sistema (regresión, árboles, redes; módulos~8--11).
+  \item \emph{Modelo de optimización}: la formulación de la \cref{def:prob-opt}, con los parámetros predichos y las restricciones duras.
+  \item \emph{Resolvedor}: el algoritmo elegido según la estructura (\cref{sec:mapa}).
+  \item \emph{Decisión con salvaguardas}: comprobaciones independientes del modelo (límites físicos, cambios máximos entre periodos, plan de respaldo) antes de ejecutar.
+  \item \emph{Monitorización}: KPIs, error de predicción, deriva de los datos, tiempo de cálculo y tasa de intervenciones humanas; disparan el reentrenamiento o la revisión del modelo.
+\end{enumerate}
+
+\begin{ejemplo}[Dos sistemas publicados]\label{ej:casos-reales}
+\emph{Refrigeración de centros de datos de Google (DeepMind, 2016).} Según la descripción publicada por sus autores~\cite{deepmind}, se entrenó un conjunto de redes neuronales profundas con datos históricos de miles de sensores (temperaturas, potencias, velocidades de bombas, consignas) para predecir la eficiencia energética media futura (PUE, cociente entre la energía total del edificio y la consumida por los equipos informáticos); otros dos conjuntos de redes predecían la temperatura y la presión de la hora siguiente para comprobar que las acciones recomendadas respetaban los límites de operación. El sistema redujo de forma consistente un 40\,\% la energía usada en refrigeración, lo que equivalía a una reducción del 15\,\% de la sobrecarga de PUE. Es exactamente la arquitectura de la \cref{fig:anatomia}: modelos predictivos, un optimizador de las consignas y restricciones de seguridad predichas.
+
+\emph{Rutas de UPS (ORION).} Holland \emph{et al.}~\cite{orion} describen el sistema que planifica a diario las rutas de unos 55\,000 conductores en Estados Unidos. Los autores estiman, con el despliegue completo, una reducción de unos 100 millones de millas recorridas al año, de 10 millones de galones de combustible y un ahorro anual de 300 a 400 millones de dólares. El núcleo es un problema de rutas con ventanas horarias (\cref{tema:3}), con reglas operativas que los conductores deben poder aceptar.
+\end{ejemplo}
+
+\section{Mapa de métodos de la fase}\label{sec:mapa}
+
+La estructura matemática del problema, no la moda, decide el método. El \cref{tab:mapa} resume la elección; la \cref{fig:arbol} la presenta como árbol de decisión.
+
+\begin{table}[h]
+\centering\small
+\caption{Mapa de métodos: estructura del problema, familia y herramienta típica.}\label{tab:mapa}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Estructura & Familia & Métodos y herramientas \\
+\midrule
+objetivo y restricciones lineales, variables continuas & PL (LP) & símplex, punto interior; HiGHS (\cref{tema:2}) \\
+lineal con decisiones discretas (sí/no, lotes, turnos) & PLEM (MILP) & ramificación y acotación con cortes; HiGHS, SCIP, Gurobi (\cref{tema:2}) \\
+secuenciación, rutas, asignación con lógica compleja & combinatoria, programación por restricciones & CP-SAT, OR-Tools Routing, búsqueda local (\cref{tema:3}) \\
+convexo y diferenciable (cuadrático, cónico) & optimización convexa & punto interior; CVXPY con Clarabel u OSQP (\cref{tema:4}) \\
+no convexo y diferenciable & programación no lineal & SQP, punto interior, multiarranque; SciPy (\cref{tema:4}) \\
+caja negra barata, sin derivadas & metaheurísticas & recocido, genéticos, CMA-ES, NSGA-II (\cref{tema:5}) \\
+caja negra cara (simulación, experimento) & optimización bayesiana & modelo sustituto gaussiano y función de adquisición~\cite{garnett,frazier} \\
+decisiones secuenciales con incertidumbre & control y RL & control predictivo, aprendizaje por refuerzo (módulo~21)~\cite{sb} \\
+parámetros inciertos que se predicen & predecir y optimizar, estocástica, robusta & SAA, recurso, conjuntos de incertidumbre (\cref{tema:6}) \\
+espacio de programas o heurísticas & búsqueda con LLM y evaluador & FunSearch~\cite{funsearch}, AlphaEvolve~\cite{alphaevolve}, OPRO~\cite{opro} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\footnotesize,>={Stealth[length=1.8mm]},
+  preg/.style={draw,thick,rounded corners=6pt,align=center,inner sep=2pt,text width=2.5cm,fill=gray!8},
+  hoja/.style={draw,thick,align=center,inner sep=2pt,text width=2.3cm}]
+  \node[preg] (q1) at (0,0) {¿se puede evaluar $f$ con una fórmula?};
+  \node[preg] (q2) at (-3.5,-1.6) {¿hay variables discretas?};
+  \node[preg] (q5) at (4,-1.6) {¿cada evaluación es cara?};
+  \node[hoja] (h2) at (-5.7,-3.3) {PLEM (lineal) o CP (lógica)};
+  \node[preg] (q3) at (-2,-3.3) {¿todo es lineal?};
+  \node[hoja] (h1) at (-3.9,-5.0) {PL};
+  \node[preg] (q4) at (-0.2,-5.0) {¿es convexo?};
+  \node[hoja] (h3) at (-2,-6.7) {convexa (CVXPY)};
+  \node[hoja] (h4) at (1.6,-6.7) {no lineal local con multiarranque};
+  \node[hoja] (h5) at (2.5,-3.3) {optimización bayesiana};
+  \node[hoja] (h6) at (5.4,-3.3) {metaheurísticas};
+  \draw[->] (q1) -- node[above left] {sí} (q2);
+  \draw[->] (q1) -- node[above right] {no (caja negra)} (q5);
+  \draw[->] (q2) -- node[left] {sí} (h2);
+  \draw[->] (q2) -- node[right] {no} (q3);
+  \draw[->] (q3) -- node[left] {sí} (h1);
+  \draw[->] (q3) -- node[right] {no} (q4);
+  \draw[->] (q4) -- node[left] {sí} (h3);
+  \draw[->] (q4) -- node[right] {no} (h4);
+  \draw[->] (q5) -- node[left] {sí} (h5);
+  \draw[->] (q5) -- node[right] {no} (h6);
+\end{tikzpicture}
+\caption{Árbol de decisión simplificado para elegir la familia de métodos. Los problemas con parámetros inciertos o decisiones secuenciales se tratan en el \cref{tema:6} y en los módulos posteriores.}
+\label{fig:arbol}
+\end{figure}
+
+\begin{observacion}[Modelos de lenguaje en la optimización]\label{obs:llm}
+Los LLM intervienen en la optimización de dos formas distintas. Como \emph{asistentes de formulación}, traducen un enunciado en lenguaje natural a un modelo para un resolvedor clásico; OptiMUS~\cite{optimus} es un ejemplo publicado para PL y PLEM, y su salida debe verificarse como cualquier código. Como \emph{generadores de candidatos} dentro de un bucle evolutivo con un evaluador automático, proponen programas o soluciones que el evaluador puntúa: FunSearch~\cite{funsearch} encontró así construcciones matemáticas y heurísticas de empaquetado, AlphaEvolve~\cite{alphaevolve} extendió la idea a algoritmos completos y OPRO~\cite{opro} usa el propio LLM como optimizador de instrucciones. En ambos casos la garantía procede del evaluador o del resolvedor, no del modelo de lenguaje; los módulos posteriores de la fase desarrollan este enfoque.
+\end{observacion}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~1: lenguajes de modelización y resolvedores generales.}\label{tab:tec1}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+SciPy (\texttt{optimize}) & PL y PLEM con HiGHS, mínimos cuadrados, no lineal local & abierta (BSD-3) & prototipos y modelos pequeños sin dependencias extra \\
+PuLP~\cite{pulp} & modelizar PL/PLEM y enviarlos a CBC, HiGHS, SCIP, Gurobi\dots & abierta (MIT) & modelos lineales legibles en Python \\
+Pyomo & modelización algebraica general (lineal y no lineal) & abierta (BSD-3) & modelos grandes, con estructura por índices y varios resolvedores \\
+OR-Tools~\cite{ortools-cpsat} & CP-SAT, rutas, flujos, PL (GLOP) & abierta (Apache~2.0) & combinatoria, programación y rutas \\
+CVXPY~\cite{cvxpy} & optimización convexa disciplinada & abierta (Apache~2.0) & problemas convexos con verificación automática \\
+Gurobi, CPLEX & resolvedores comerciales de PL/PLEM/cuadráticos & comercial (licencia académica gratuita) & PLEM grandes en producción con exigencia de tiempo \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes al modelizar]\label{obs:errores1}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Unidades inconsistentes}: mezclar horas y minutos o toneladas y kilogramos produce soluciones absurdas que el resolvedor da por buenas. Conviene anotar la unidad de cada parámetro y escalar los coeficientes a magnitudes parecidas, lo que además mejora la estabilidad numérica.
+  \item \emph{Optimizar el KPI equivocado}: minimizar el coste sin restricción de servicio puede ser óptimo y desastroso; hay que revisar los KPIs de la solución, no solo el valor del objetivo.
+  \item \emph{Restricciones de seguridad blandas}: una penalización finita siempre puede compensarse con suficiente ahorro; lo que no se puede violar debe ser una restricción dura.
+  \item \emph{Infactibilidad sin diagnóstico}: cuando el modelo es infactible conviene añadir variables de holgura penalizadas para saber qué restricción falla.
+  \item \emph{Datos maestros desactualizados}: capacidades o tiempos que ya no son los reales invalidan la decisión aunque el algoritmo sea perfecto.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Bertsimas y Tsitsiklis~\cite{bt}, cap.~1 (formulaciones; lectura de la clase~1 de MIT 6.251J~\cite{mit6251}).
+\item MIT 15.053~\cite{mit15053}, clases~1 «Introduction» y~2 «Formulations of linear and non-linear programs».
+\item Kochenderfer y Wheeler~\cite{kw}, cap.~1 «Introduction».
+\item R.~Evans y J.~Gao~\cite{deepmind} y C.~Holland \emph{et al.}~\cite{orion}, para los dos sistemas industriales.
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-elementos}
+Un invernadero de 1~ha controla cada hora la apertura de ventanas, la calefacción y la inyección de CO$_2$. Se dispone de una predicción de radiación y temperatura exterior. La temperatura interior debe estar entre 16 y 28~ºC; la concentración de CO$_2$ no debe superar 1000~ppm por seguridad de los trabajadores; se quiere maximizar el crecimiento estimado menos el coste energético. Identifique variables de decisión, parámetros (indicando cuáles se predicen), objetivo, restricciones duras y blandas, y proponga tres KPIs que no coincidan con el objetivo.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-mapa}
+Asigne a cada problema la familia del \cref{tab:mapa} y justifique la elección en una línea: (a) mezcla de materias primas de mínimo coste con requisitos nutricionales lineales; (b) decidir qué 5 de 20 almacenes abrir, con costes fijos y de transporte lineales; (c) ajustar 8 parámetros de un simulador de horno que tarda 2~h por ejecución; (d) asignar 300 tareas con precedencias a 12 máquinas; (e) despachar generadores con costes cuadráticos convexos; (f) regular cada minuto la temperatura de un reactor ante perturbaciones.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-abs}
+Convierta en un programa lineal el problema $\min\ \abs{x_1}+2\abs{x_2}$ s.a. $x_1+x_2\ge 4$, $x_1-x_2\le 2$, y resuélvalo.
+\fuente{adaptado de Bertsimas y Tsitsiklis~\cite{bt}, cap.~1, reformulación de objetivos lineales a trozos (lectura de la clase~1 de MIT 6.251J~\cite{mit6251}).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-correos}
+Una oficina de correos necesita, de lunes a domingo, al menos 17, 13, 15, 19, 14, 16 y 11 empleados. Cada empleado trabaja cinco días consecutivos y descansa dos. (a) Formule el problema de contratar el mínimo número de empleados; explique por qué conviene tomar como variable el número de empleados que \emph{empiezan} cada día. (b) Sumando las siete restricciones, obtenga una cota inferior del óptimo. (c) La relajación lineal vale $22{,}33$ y el óptimo entero, $23$; interprete los tres números.
+\fuente{adaptado de MIT 15.053, primavera de 2013, clase~2 «Formulations of linear and non-linear programs», ejemplo de los turnos de correos~\cite{mit15053}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-piensos}
+En el caso de los piensos (\cref{ej:piensos}), el margen del pienso de puesta sube a 45~€/t. Encuentre el nuevo plan óptimo con el método de los vértices y calcule sus KPIs. ¿Para qué intervalo de márgenes $m_P$ del pienso de puesta sigue siendo óptimo $(100,100)$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-minimax}
+Tres turbinas tienen pérdidas (en kW) que dependen de un reparto $x\in[0,10]$: $x-1$, $-2x+8$ y $0{,}5x+1$. Formule como programa lineal el problema de minimizar la mayor de las tres pérdidas y resuélvalo gráficamente.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-desviaciones}
+Para penalizar la falta y el exceso de personal se escribe $\sum_j a_{ij}x_j+d_i-e_i=r_i$ con $d_i,e_i\ge 0$ y se minimiza $\sum_i(\alpha d_i+\beta e_i)$ con $\alpha,\beta>0$. Demuestre que en toda solución óptima se cumple $d_ie_i=0$ para todo $i$, de modo que $d_i$ y $e_i$ son exactamente la falta y el exceso. ¿Sigue siendo cierto si el objetivo es $\sum_i(5d_i^{2}+e_i^{2})$?
+\fuente{adaptado de MIT 15.053, primavera de 2013, clase~2, modificación con penalizaciones por falta y exceso de personal~\cite{mit15053}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-diseno}
+Diseñe, siguiendo la \cref{fig:anatomia}, el optimizador del invernadero del \cref{eje:1-elementos}: qué datos recoger, qué predecir y con qué modelo, qué familia de optimización usar si el modelo térmico es lineal en los controles, qué salvaguardas independientes añadir y qué cinco magnitudes monitorizar para decidir cuándo reentrenar. Justifique cada elección.
+\end{ejercicio}

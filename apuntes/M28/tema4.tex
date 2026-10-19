@@ -1,0 +1,301 @@
+% =====================================================================
+\chapter{Del prototipo a la producción: arquitectura, MLOps y evaluación}
+\label{tema:4}
+% =====================================================================
+
+Un cuaderno que predice averías y propone un calendario es un prototipo; un sistema que lo hace cada día durante años, con datos que cambian, usuarios que dependen de él y auditores que preguntan por qué decidió algo, es otra cosa. Este tema describe esa otra cosa. La arquitectura y el ciclo de vida siguen el curso CS329S de Stanford~\cite{cs329s} y el libro de Huyen~\cite{huyen}; la deuda técnica, a Sculley \emph{et al.}~\cite{sculley}; la lista de pruebas, a Breck \emph{et al.}~\cite{breck}; la evaluación contrafactual, a Dudík, Langford y Li~\cite{dudik}; la fiabilidad, al capítulo~4 «Optimum Maintenance Policies» de Barlow y Proschan~\cite{bp} y al curso 1.010 del MIT~\cite{mit1010}. Completa la arquitectura del módulo~24 (tema~1, §1.2) y la puesta en planta del módulo~26 (tema~6), que trató el control por capas, los modos de operación, las alarmas y la ciberseguridad.
+
+\section{Arquitectura de un optimizador en producción}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,thick,rounded corners=2pt,align=center,inner sep=3pt,minimum height=11mm,text width=2.6cm,font=\footnotesize,execute at begin node={\hyphenpenalty=10000}},
+  alm/.style={caja,fill=gray!10}]
+  \node[caja] (src) at (0,0) {fuentes\\(sensores, ERP, GMAO)};
+  \node[caja] (val) at (3.6,0) {ingesta y validación\\del esquema};
+  \node[alm]  (dat) at (7.2,0) {datos y características versionados};
+  \node[caja] (tr)  at (10.8,0) {entrenamiento\\y selección};
+  \node[alm]  (reg) at (10.8,-2.1) {registro\\de modelos};
+  \node[caja] (api) at (7.2,-2.1) {servicio de predicción (API)};
+  \node[caja] (opt) at (3.6,-2.1) {optimizador\\(modelo + resolvedor)};
+  \node[caja] (hum) at (0,-2.1) {interfaz humana: revisar, aprobar, anular};
+  \node[caja] (exe) at (0,-4.2) {ejecución\\(órdenes de trabajo)};
+  \node[caja,text width=6.2cm] (mon) at (5.4,-4.2) {monitorización: datos, predicciones, decisiones, indicadores y latencia};
+  \node[caja] (trig) at (10.8,-4.2) {disparadores: reentrenar, revisar, volver atrás};
+  \draw[->,thick] (src)--(val); \draw[->,thick] (val)--(dat); \draw[->,thick] (dat)--(tr); \draw[->,thick] (tr)--(reg);
+  \draw[->,thick] (reg)--(api); \draw[->,thick] (api)--(opt); \draw[->,thick] (opt)--(hum); \draw[->,thick] (hum)--(exe);
+  \draw[->,thick] (exe)--(mon); \draw[->,thick] (mon)--(trig);
+  \draw[->,thick,dashed] (trig.east) -- ++(0.35,0) |- (tr.east);
+  \draw[->,thick,dashed] (dat)--(api);
+\end{tikzpicture}
+\caption{Arquitectura de un optimizador en producción. Las cajas sombreadas son almacenes versionados; las flechas discontinuas, los lazos de reentrenamiento y de consulta de características. GMAO: gestión del mantenimiento asistido por ordenador.}
+\label{fig:produccion}
+\end{figure}
+
+La \cref{fig:produccion} separa responsabilidades que en el prototipo estaban mezcladas.
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Datos}: la ingesta valida un \emph{esquema} (tipos, rangos, unidades, frecuencias, ausencias) antes de aceptar nada; los datos y las características se \emph{versionan}, de modo que se pueda reconstruir exactamente con qué datos se entrenó cada modelo.
+  \item \emph{Características}: se calculan con el mismo código al entrenar y al servir, y respetando el tiempo: cada fila de entrenamiento solo puede usar información disponible en su instante.
+  \item \emph{Modelos}: se entrenan con una canalización reproducible y se guardan en un \emph{registro} con sus métricas, sus datos de origen y su estado (candidato, en sombra, en producción, retirado).
+  \item \emph{Servicio}: una API con un contrato explícito (entradas, salidas, unidades, versión del modelo, latencia máxima) desacopla a los consumidores del modelo concreto.
+  \item \emph{Optimizador}: combina las predicciones con el modelo de decisión y un resolvedor (módulo~24); sus restricciones duras no dependen del modelo aprendido.
+  \item \emph{Interfaz humana}: presenta la propuesta con sus motivos, permite aprobarla, modificarla o anularla, y registra la decisión final; es el lugar donde se ejerce la supervisión que exige la regulación (\cref{tema:5}).
+  \item \emph{Monitorización}: vigila los datos, las predicciones, las decisiones, los indicadores de negocio y la salud del servicio, y dispara acciones definidas de antemano.
+\end{enumerate}
+
+\begin{definicion}[Sesgo entre entrenamiento y servicio]\label{def:skew}
+Hay \emph{sesgo entre entrenamiento y servicio} cuando la distribución de las entradas que el modelo recibe en producción difiere de la de entrenamiento por causas del propio sistema y no del mundo: características calculadas con código distinto, unidades distintas, datos que en entrenamiento estaban disponibles y en servicio llegan tarde, o filas de entrenamiento que contienen información del futuro.
+\end{definicion}
+
+\section{Deuda técnica en sistemas con aprendizaje automático}
+
+Sculley \emph{et al.}~\cite{sculley} observan que en un sistema real el código del modelo es una pequeña parte del total y enumeran riesgos propios de estos sistemas, que generan \emph{deuda técnica}: costes futuros que se contraen al tomar atajos hoy.
+
+\begin{definicion}[Factores de riesgo de Sculley \emph{et al.}]\label{def:deuda}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Erosión de fronteras y entrelazamiento}: en un modelo, cambiar cualquier entrada cambia todo lo demás (principio CACE, \emph{changing anything changes everything}); no hay módulos independientes.
+  \item \emph{Bucles de realimentación ocultos}: las decisiones del sistema cambian los datos con que se reentrena.
+  \item \emph{Consumidores no declarados}: otros sistemas usan las salidas del modelo sin que nadie lo sepa, y se rompen al cambiarlo.
+  \item \emph{Dependencias de datos}: entradas inestables (su significado cambia) o infrautilizadas (aportan poco y añaden riesgo).
+  \item \emph{Antipatrones de sistema}: código pegamento, junglas de canalizaciones, rutas experimentales muertas.
+  \item \emph{Deuda de configuración}: miles de parámetros de configuración sin revisión ni pruebas.
+  \item \emph{Cambios en el mundo exterior}: umbrales fijos que dejan de valer, correlaciones que desaparecen.
+\end{enumerate}
+\end{definicion}
+
+\begin{observacion}[El bucle oculto del mantenimiento predictivo]\label{obs:bucle}
+Si el sistema adelanta las intervenciones de las máquinas con riesgo alto, esas máquinas fallarán menos, y los datos futuros mostrarán pocos fallos asociados a vibraciones altas, porque se intervino antes. Un modelo reentrenado ingenuamente con esos datos concluirá que la vibración alta es menos peligrosa y relajará las intervenciones. Es el bucle de realimentación degenerado de la clase~10 de CS329S~\cite{cs329s}. Remedios: registrar cada decisión con su probabilidad (\cref{sec:contrafactual}), tratar las intervenciones como censura en el modelo de supervivencia y mantener una pequeña fracción de decisiones exploratorias cuando sea seguro.
+\end{observacion}
+
+Breck \emph{et al.}~\cite{breck} convierten estos riesgos en una lista de 28 pruebas agrupadas en cuatro bloques: datos y características, desarrollo del modelo, infraestructura y monitorización; cada prueba manual puntúa medio punto y cada prueba automatizada, uno. Es una buena lista de comprobación antes de desplegar.
+
+\section{Deriva y reentrenamiento}
+
+\begin{definicion}[Tipos de cambio de distribución]\label{def:deriva}
+Sea $X$ la entrada y $Y$ la salida, con $P(X,Y)=P(Y\mid X)P(X)=P(X\mid Y)P(Y)$. Siguiendo la clase~10 de CS329S~\cite{cs329s}, hay \emph{cambio de covariables} si cambia $P(X)$ y no $P(Y\mid X)$; \emph{cambio de etiquetas} si cambia $P(Y)$ y no $P(X\mid Y)$; y \emph{deriva de concepto} si cambia $P(Y\mid X)$. Además pueden cambiar las propias características (unidades, definición) o el esquema de las etiquetas.
+\end{definicion}
+
+\begin{definicion}[Índice de estabilidad poblacional]\label{def:psi}
+Sea una variable discretizada en $B$ intervalos, con proporciones $p_b$ en la referencia (entrenamiento) y $q_b$ en una ventana reciente, todas positivas. El \emph{índice de estabilidad poblacional} es
+\[
+\PSI(p,q)=\sum_{b=1}^{B}(q_b-p_b)\ln\frac{q_b}{p_b}.
+\]
+\end{definicion}
+
+\begin{proposicion}[El PSI es la divergencia simetrizada]\label{prop:psi}
+$\PSI(p,q)=\KL(p\,\|\,q)+\KL(q\,\|\,p)\ge 0$, con igualdad si y solo si $p=q$.
+\end{proposicion}
+
+\begin{proof}
+$\KL(q\|p)+\KL(p\|q)=\sum_b q_b\ln(q_b/p_b)+\sum_b p_b\ln(p_b/q_b)=\sum_b(q_b-p_b)\ln(q_b/p_b)$. Cada divergencia es no negativa y nula solo si las distribuciones coinciden (módulo~6, tema~2, §2.2).
+\end{proof}
+
+\begin{ejemplo}[Cambio de sensor]\label{ej:psi}
+Tras sustituir el acelerómetro de la llenadora, la vibración diaria se reparte en cuatro intervalos con proporciones $q=(0{,}15;\ 0{,}30;\ 0{,}30;\ 0{,}25)$, frente a $p=(0{,}25;\ 0{,}35;\ 0{,}25;\ 0{,}15)$ en entrenamiento. Entonces $\PSI=(-0{,}10)\ln0{,}6+(-0{,}05)\ln\frac{0{,}30}{0{,}35}+0{,}05\ln1{,}2+0{,}10\ln\frac{0{,}25}{0{,}15}=0{,}0511+0{,}0077+0{,}0091+0{,}0511=0{,}119$. Se usan a menudo umbrales orientativos de $0{,}1$ (vigilar) y $0{,}25$ (actuar), pero son convenciones; es mejor calibrarlos con el PSI observado entre ventanas de un periodo estable. Aquí el valor justifica revisar el sensor antes de reentrenar: un cambio de calibración es un sesgo del sistema (\cref{def:skew}), no un cambio del mundo.
+\end{ejemplo}
+
+Las métricas de exactitud son la señal más directa de degradación, pero sus etiquetas llegan con retraso (en el caso de estudio, 7 días). Mientras tanto se vigilan las entradas (PSI, contraste de Kolmogorov--Smirnov por variable) y la distribución de las predicciones, más barata por ser de baja dimensión~\cite{cs329s}. Muchas alarmas de deriva resultan ser errores internos: valores ausentes, cambios de unidades, canalizaciones rotas.
+
+\begin{proposicion}[Periodo óptimo de reentrenamiento]\label{prop:reentreno}
+Supóngase que, tras reentrenar, la pérdida diaria por degradación del modelo crece linealmente, $at$ (€/día) con $a>0$, y que cada reentrenamiento (cómputo, validación, despliegue) cuesta $c_r$. Con un periodo fijo $T$, el coste medio por día es $c_r/T+aT/2$, que se minimiza en $T^{*}=\sqrt{2c_r/a}$ con coste $\sqrt{2ac_r}$.
+\end{proposicion}
+
+\begin{proof}
+En un ciclo, la pérdida acumulada es $\int_0^T at\,dt=aT^{2}/2$; sumando $c_r$ y dividiendo por $T$ se obtiene el coste medio. Por la desigualdad entre medias aritmética y geométrica, $c_r/T+aT/2\ge2\sqrt{c_ra/2}=\sqrt{2ac_r}$, con igualdad si $c_r/T=aT/2$, es decir, $T=\sqrt{2c_r/a}$.
+\end{proof}
+
+Es la fórmula del lote económico aplicada al modelo. En la práctica se combina con disparadores: se reentrena antes si la monitorización detecta una deriva o una caída de las métricas, y nunca se despliega un modelo reentrenado sin pasar las mismas validaciones que el primero.
+
+\section{Evaluar decisiones sin experimentar}\label{sec:contrafactual}
+
+Para saber si una política nueva es mejor que la actual hay tres caminos: un experimento en la planta (\cref{tema:5}), un simulador (el gemelo digital del módulo~26, tema~2) o los registros históricos. Los registros solo muestran el resultado de la decisión que se tomó; el de las demás es \emph{contrafactual}.
+
+\begin{proposicion}[Estimador por ponderación inversa de la propensión]\label{prop:ips}
+Sean registros $(x_i,a_i,r_i)$, $i=1,\dots,n$, independientes, donde el contexto $x_i$ sigue una distribución fija, la acción $a_i$ se eligió con una política de registro conocida $\pi_0(a\mid x)$ y $r_i$ es la recompensa observada. Sea $\pi$ una política nueva con $\pi(a\mid x)>0\Rightarrow\pi_0(a\mid x)>0$. Entonces
+\[
+\hat V_{\mathrm{IPS}}(\pi)=\frac1n\sum_{i=1}^{n}\frac{\pi(a_i\mid x_i)}{\pi_0(a_i\mid x_i)}\,r_i
+\]
+es un estimador insesgado del valor $V(\pi)=\E_{x}\E_{a\sim\pi(\cdot\mid x)}\bigl[\E[r\mid x,a]\bigr]$.
+\end{proposicion}
+
+\begin{proof}
+Para un registro, condicionando en $x$:
+$\E\bigl[\tfrac{\pi(a\mid x)}{\pi_0(a\mid x)}r\,\big|\,x\bigr]=\sum_{a:\pi_0(a\mid x)>0}\pi_0(a\mid x)\tfrac{\pi(a\mid x)}{\pi_0(a\mid x)}\E[r\mid x,a]=\sum_{a}\pi(a\mid x)\E[r\mid x,a]$, donde la última igualdad usa que las acciones con $\pi_0=0$ tienen $\pi=0$. Tomando esperanza en $x$ y promediando los $n$ registros se obtiene $V(\pi)$.
+\end{proof}
+
+La varianza crece con los cocientes $\pi/\pi_0$: si la política antigua casi nunca tomaba la acción que la nueva prefiere, la estimación es inútil. El estimador doblemente robusto de Dudík \emph{et al.}~\cite{dudik} combina un modelo de la recompensa con la ponderación y es consistente si cualquiera de los dos es correcto. La consecuencia de diseño es sencilla: \emph{registrar siempre la acción, el contexto y la probabilidad con que se eligió}; un sistema determinista que no explora nunca permite evaluar contrafactuales con sus propios datos.
+
+\section{Fiabilidad y mantenimiento}
+
+\begin{definicion}[Fiabilidad y tasa de fallo]\label{def:fiabilidad}
+Sea $T\ge0$ la vida útil de un componente, con función de distribución $F$ y densidad $f$. La \emph{fiabilidad} es $R(t)=1-F(t)$ y la \emph{tasa de fallo} es $\lambda(t)=f(t)/R(t)$: $\lambda(t)\,dt$ es la probabilidad de fallar en $(t,t+dt)$ habiendo sobrevivido hasta $t$. Se cumple $R(t)=\exp\bigl(-\int_0^t\lambda(u)\,du\bigr)$~\cite{mit1010}. La vida es de tasa creciente (IFR) si $\lambda$ es no decreciente y de tasa decreciente (DFR) si es no creciente.
+\end{definicion}
+
+\begin{definicion}[Distribución de Weibull]\label{def:weibull}
+$T$ sigue una Weibull de forma $\beta>0$ y escala $\theta>0$ si $R(t)=\exp\bigl(-(t/\theta)^{\beta}\bigr)$. Su tasa de fallo es $\lambda(t)=\frac{\beta}{\theta}\bigl(\frac{t}{\theta}\bigr)^{\beta-1}$: decreciente si $\beta<1$ (rodaje), constante si $\beta=1$ (exponencial, sin memoria) y creciente si $\beta>1$ (desgaste). Su media es $\theta\,\Gamma(1+1/\beta)$.
+\end{definicion}
+
+\begin{observacion}[Censura]\label{obs:censura}
+En los históricos de mantenimiento, muchas vidas no terminan en fallo: la máquina se intervino antes. Esas observaciones están \emph{censuradas por la derecha}: solo se sabe que $T>t_c$. La verosimilitud correcta es $\prod_{\text{fallos}}f(t_i)\prod_{\text{censuras}}R(t_c)$. Descartar las censuras, o tratarlas como fallos, sesga la estimación porque elimina precisamente las vidas largas.
+\end{observacion}
+
+\begin{proposicion}[Política de sustitución por edad]\label{prop:edad}
+Bajo la política «intervenir preventivamente al alcanzar la edad $T$, o correctivamente al fallar antes», con costes $c_p<c_f$ y renovación completa tras cada intervención, el coste medio a largo plazo por unidad de tiempo es
+\[
+C(T)=\frac{c_pR(T)+c_fF(T)}{\int_0^{T}R(u)\,du}.
+\]
+Sea $G(T)=\lambda(T)\int_0^TR(u)\,du-F(T)$. Entonces $C'(T)$ tiene el signo de $G(T)-c_p/(c_f-c_p)$, y $G'(T)=\lambda'(T)\int_0^TR(u)\,du$. En consecuencia:
+\begin{enumerate}
+  \item si la vida es DFR (en particular, Weibull con $\beta\le1$), $C$ es decreciente y lo óptimo es no intervenir preventivamente ($T^{*}=\infty$);
+  \item si $\lambda$ es creciente y $\lambda(T)\to\infty$ (Weibull con $\beta>1$), existe un único $T^{*}$ con $G(T^{*})=c_p/(c_f-c_p)$, y en él $C(T^{*})=(c_f-c_p)\lambda(T^{*})$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+Cada ciclo de renovación dura $\min(T_{\mathrm{vida}},T)$, de esperanza $\int_0^TR(u)\,du$, y cuesta $c_f$ con probabilidad $F(T)$ y $c_p$ con probabilidad $R(T)$; el teorema de renovación con recompensas~\cite[cap.~4]{bp} da $C(T)$ como cociente de esperanzas. Escribiendo $N=c_f-(c_f-c_p)R$ y $D=\int_0^TR$, con $N'=(c_f-c_p)f$ y $D'=R$,
+\[
+C'=\frac{N'D-ND'}{D^{2}}=\frac{R\,(c_f-c_p)}{D^{2}}\Bigl[\lambda D-\tfrac{c_f}{c_f-c_p}+R\Bigr]=\frac{R\,(c_f-c_p)}{D^{2}}\Bigl[G-\tfrac{c_p}{c_f-c_p}\Bigr],
+\]
+porque $R-\frac{c_f}{c_f-c_p}=-F-\frac{c_p}{c_f-c_p}$. Derivando, $G'=\lambda'D+\lambda R-f=\lambda'D$, ya que $f=\lambda R$. (i) Si $\lambda'\le0$, $G$ es no creciente y $G(0)=0$, luego $G<c_p/(c_f-c_p)$ y $C'<0$ para todo $T$. (ii) Si $\lambda'>0$, $G$ es creciente desde $G(0)=0$; como $D\ge\int_0^{1}R>0$ para $T\ge1$ y $\lambda\to\infty$, $G\to\infty$, de modo que cruza una sola vez el nivel $c_p/(c_f-c_p)$, donde $C$ pasa de decrecer a crecer. En ese punto $N'D=ND'$, luego $C=N/D=N'/D'=(c_f-c_p)f/R=(c_f-c_p)\lambda(T^{*})$.
+\end{proof}
+
+La política por edad usa solo el tiempo. El mantenimiento \emph{predictivo} usa además el estado medido de cada máquina: un clasificador estima la probabilidad de fallo en el horizonte y la decisión se toma con esa probabilidad, como en la decisión con predicciones del módulo~24 (tema~6, §6.1). Si la probabilidad de fallo en los próximos 7 días es $p_7$, intervenir hoy compensa frente a no intervenir en la semana cuando $c_p<c_fp_7$, es decir, cuando $p_7>c_p/c_f$; las restricciones de capacidad y de calendario convierten esa regla en un problema de asignación.
+
+\section{Caso de estudio: mantenimiento predictivo de una línea de envasado}
+
+\begin{ejemplo}[Optimizador de mantenimiento de una línea de envasado]\label{ej:caso-mant}
+\emph{Planta.} Una línea de envasado tiene seis máquinas en serie: llenadora, taponadora, etiquetadora, encajonadora, paletizadora y enfardadora. Cada máquina se degrada con el uso; una avería para la línea unas 6~h y, con la reparación, la pérdida de producción y el producto desechado, cuesta $c_f=9000$~€. Una intervención preventiva cuesta $1200$~€ si se hace en una de las \emph{ventanas} de cambio de formato (lunes, miércoles y viernes, cuando la línea ya está parada) y $2000$~€ en cualquier otro momento. Hay un técnico especializado por ventana. Política actual: intervención preventiva cada 70 días.
+
+\emph{Datos.} Dos años de registros diarios de tres líneas iguales, simulados con un gemelo de degradación: vibración RMS (mm/s), temperatura del rodamiento (ºC), días desde la última intervención, carga de la línea, pendiente de la vibración en dos días y tipo de máquina; averías e intervenciones. Con la política actual hay de media entre 2{,}5 (paletizadora) y 8{,}5 (llenadora) averías al año por máquina y un coste de unos 328\,000~€ al año por línea.
+
+\emph{Modelo de supervivencia.} Con las 209 vidas que acabaron en avería y las 53 censuradas por una intervención, la Weibull por máxima verosimilitud con censura tiene $\hat\beta=2{,}58$ y $\hat\theta=57{,}6$ días (vida media $51{,}2$ días); ignorando la censura se obtendría $\beta=3{,}37$ y $\theta=48{,}0$, un desgaste más rápido del real. Con $c_p=2000$~€, la \cref{prop:edad} da $T^{*}=30$ días y un coste de $111{,}6$~€/día por máquina, frente a $157{,}3$ con la política actual de 70 días y $175{,}9$ sin preventivo ($c_f$ dividido por la vida media). Se comprueba la identidad del punto óptimo: $(c_f-c_p)\lambda(30)=7000\cdot0{,}01596=111{,}7$.
+
+\emph{Modelo de riesgo.} Una regresión logística con las variables estandarizadas, entrenada con los primeros 18 meses, predice la avería en 7 días. En validación (meses 19 a 24) su pérdida logarítmica es $0{,}2455$, algo peor que el mejor bosque del \cref{ej:caso-automl} ($0{,}2378$), pero se prefiere por ser interpretable y barata de servir. En una línea de prueba independiente, el área bajo la curva ROC es $0{,}804$ y la calibración por quintiles es razonable (probabilidad media predicha $0{,}358$ frente a una frecuencia observada de $0{,}324$ en el quintil superior). Los coeficientes mayores son los de la vibración ($0{,}77$) y la edad ($0{,}42$).
+
+\emph{Modelo de decisión.} Cada lunes, con las probabilidades $p_{7,i}$ de las seis máquinas, se calcula una tasa diaria $\lambda_i=-\ln(1-p_{7,i})/7$ y la probabilidad de fallar antes del día $d$, $F_i(d)=1-e^{-\lambda_id}$. Con las ventanas $w$ de las dos semanas siguientes, en los días $d_w\in\{0,2,4,7,9,11\}$, y variables binarias $x_{iw}$ (intervenir la máquina $i$ en la ventana $w$) y $y_i$ (no intervenir en el horizonte):
+\[
+\min\ \sum_{i,w}\bigl(c_p+c_fF_i(d_w)\bigr)x_{iw}+\sum_i c_fF_i(14)\,y_i\quad\text{s.a.}\quad\sum_w x_{iw}+y_i=1\ \ \forall i,\qquad\sum_i x_{iw}\le1\ \ \forall w .
+\]
+Se ejecutan solo las decisiones de la primera semana y el lunes siguiente se vuelve a planificar con datos nuevos: es el horizonte deslizante del módulo~26 (tema~3, §3.2). El problema es de transporte; su matriz de restricciones es totalmente unimodular y la relajación lineal ya da soluciones enteras~\cite[cap.~7]{bt}.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Costes de cada opción en un lunes con $p_7=(0{,}42;\ 0{,}18;\ 0{,}07;\ 0{,}31;\ 0{,}03;\ 0{,}12)$ y horizonte de una semana (en €). En negrita, la solución óptima con un técnico por ventana.}\label{tab:plan}
+\setlength{\tabcolsep}{4pt}\footnotesize
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+ & llenadora & taponadora & etiquetadora & encajonadora & paletizadora & enfardadora \\
+\midrule
+$\lambda_i$ (1/día) & 0{,}0778 & 0{,}0284 & 0{,}0104 & 0{,}0530 & 0{,}0044 & 0{,}0183 \\
+lunes ($d=0$) & \textbf{1200} & 1200 & 1200 & 1200 & 1200 & 1200 \\
+miércoles ($d=2$) & 2497 & 1696 & 1385 & \textbf{2105} & 1278 & 1523 \\
+viernes ($d=4$) & 3607 & 2165 & 1566 & 2920 & 1355 & 1834 \\
+no intervenir & 3780 & \textbf{1620} & \textbf{630} & 2790 & \textbf{270} & \textbf{1080} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Con un horizonte de una semana (\cref{tab:plan}), la llenadora, la taponadora y la encajonadora preferirían el lunes, pero solo hay un técnico. El ahorro respecto a no intervenir es $3780-1200=2580$ para la llenadora el lunes y $2790-2105=685$ para la encajonadora el miércoles; la alternativa (encajonadora el lunes y llenadora el miércoles) ahorra $1590+1283=2873<3265$. El coste óptimo es $10\,170-3265=6905$~€. Con el horizonte de dos semanas, el modelo añade además la taponadora el viernes, porque no intervenirla en catorce días es más arriesgado que en siete.
+
+\begin{table}[h]
+\centering\small
+\caption{Un año de operación de la línea en el gemelo, con los mismos números aleatorios para todas las políticas (módulo~26, tema~5, §5.1).}\label{tab:politicas}
+\setlength{\tabcolsep}{5pt}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Política & Coste (€/año) & Averías & Preventivos & Fuera de ventana \\
+\midrule
+A. Solo correctivo & 360\,000 & 40 & 0 & --- \\
+H. Actual: cada 70 días & 327\,400 & 35 & 7 & 5 \\
+B. Por edad, $T^{*}=30$ días & 195\,200 & 10 & 65 & 34 \\
+C. Umbral $p_7\ge0{,}10$, sin calendario & 173\,200 & 6 & 70 & 44 \\
+D. Calendario con riesgo (PLEM) & 141\,000 & 7 & 65 & 0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El \cref{tab:politicas} resume la simulación del cuaderno. El umbral de la política C ($0{,}10$, cercano a $c_p/c_f$) se eligió en un año de validación distinto. La política C, además de intervenir fuera de ventana, viola la capacidad del técnico cinco días. La política D respeta todas las restricciones y es la más barata. Que la mejora frente a B sea real, y no suerte de este año, es la pregunta del \cref{tema:5}.
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~4.}\label{tab:tec4}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.5cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.1cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+DVC~\cite{dvc} & versionar datos y modelos junto al código, con canalizaciones reproducibles & abierta (Apache~2.0) & equipos pequeños que ya usan git \\
+MLflow~\cite{mlflow} & seguimiento de experimentos, registro de modelos y empaquetado & abierta (Apache~2.0) & trazabilidad de qué modelo está en producción \\
+Great Expectations, Feast & validación de esquemas y almacén de características & abiertas (Apache~2.0) & evitar el sesgo de la \cref{def:skew} \\
+Evidently~\cite{evidently} & informes y monitorización de deriva de datos y predicciones & abierta (Apache~2.0) & vigilancia periódica con pocos recursos \\
+FastAPI~\cite{fastapi} & servicio de predicción y optimización como API HTTP con esquema & abierta (MIT) & exponer el modelo y el resolvedor a otros sistemas \\
+Kubernetes~\cite{k8s}, Ray Serve~\cite{ray} & despliegue en contenedores, escalado, versiones en paralelo & abiertas (Apache~2.0) & varios servicios con requisitos de disponibilidad \\
+lifelines, scikit-survival & modelos de supervivencia con censura & abiertas (MIT; GPL-3.0) & estimar fiabilidad y riesgo en función del tiempo \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores4}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Fugas temporales}: características calculadas con datos posteriores al instante de predicción, o etiquetas («fallo en 7 días») que se solapan entre entrenamiento y validación.
+  \item \emph{Ignorar la censura}: tratar las intervenciones preventivas como si la máquina no fuera a fallar, o descartarlas (\cref{obs:censura}).
+  \item \emph{Reentrenar dentro del propio bucle} sin corregir el efecto de las decisiones (\cref{obs:bucle}).
+  \item \emph{Vigilar solo la exactitud}, que llega tarde, y no las entradas ni las predicciones; o vigilarlo todo con umbrales arbitrarios y producir fatiga de alarmas.
+  \item \emph{No registrar la decisión humana}: si el técnico anula la propuesta y no queda constancia, no se puede evaluar ni el modelo ni la supervisión.
+  \item \emph{Desplegar sin vuelta atrás}: cada modelo en producción debe poder sustituirse por la versión anterior o por la política de respaldo (aquí, la política por edad) en minutos.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item D.~Sculley \emph{et al.}~\cite{sculley} y E.~Breck \emph{et al.}~\cite{breck}.
+\item CS329S~\cite{cs329s}, clases~6 «Offline evaluation», 8 «Deployment» y~10 sobre fallos, cambios de distribución y monitorización; C.~Huyen~\cite{huyen}, caps.~7--9.
+\item R.~E. Barlow y F.~Proschan~\cite{bp}, cap.~4 «Optimum Maintenance Policies».
+\item M.~Dudík, J.~Langford y L.~Li~\cite{dudik}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-deriva}
+Clasifique según la \cref{def:deriva}: (a) la planta empieza a envasar un producto más viscoso y las vibraciones medias suben, pero la relación entre vibración y avería no cambia; (b) un nuevo lubricante hace que, con la misma vibración, las averías sean menos probables; (c) un lote defectuoso de rodamientos aumenta la proporción de máquinas que van a fallar, pero las máquinas que van a fallar y las que no se siguen manifestando igual en los sensores; (d) el proveedor del sensor cambia la unidad de mm/s a pulgadas por segundo.
+\fuente{adaptado de CS329S, Stanford, invierno de 2022, clase~10 «Diagnosis of ML system failures, data distribution shifts \& monitoring»~\cite{cs329s} (ejemplos propios).}
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:4-deuda}
+Asocie cada situación a un factor de la \cref{def:deuda}: (a) el equipo de calidad usa las probabilidades de avería para decidir inspecciones sin que el equipo de mantenimiento lo sepa; (b) al añadir la temperatura ambiente como variable cambian todos los coeficientes; (c) hay 40 parámetros en un fichero YAML que nadie revisa; (d) el umbral de 0{,}10 se fijó con los costes de 2024.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-uniforme}
+La vida de una cinta transportadora es uniforme entre 0 y 1500 días. (a) Calcule $R(t)$ y $\lambda(t)$. (b) Compare la tasa de fallo a los 0, 500 y 1000 días. (c) Un proveedor ofrece una cinta usada de 500 días «tan buena como nueva»; ¿es cierto? (d) ¿Para qué distribución de la vida sería cierto?
+\fuente{adaptado de MIT 1.010 \emph{Uncertainty in Engineering}, otoño de 2008, \emph{Example Application}~8 (función de riesgo), problema~8.1~\cite{mit1010}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-psi}
+Las proporciones de una variable en cuatro intervalos son, en entrenamiento y en la última semana,
+\[
+p=(0{,}10;\ 0{,}40;\ 0{,}40;\ 0{,}10),\qquad q=(0{,}05;\ 0{,}30;\ 0{,}45;\ 0{,}20).
+\] (a) calcule el PSI; (b) calcule $\KL(p\|q)$ y $\KL(q\|p)$ y compruebe la \cref{prop:psi}; (c) con las proporciones acumuladas $P_b$ y $Q_b$, calcule el estadístico de Kolmogorov--Smirnov, $\max_b\abs{P_b-Q_b}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-edad}
+Una bomba tiene vida exponencial de media 200 días; $c_p=500$~€ y $c_f=3000$~€. (a) Calcule $C(T)$ para $T=50$, $100$ y $\infty$ con la \cref{prop:edad}. (b) Explique el resultado con la propiedad de falta de memoria. (c) Para una Weibull con $\beta=2$, $\theta=100$ días y los mismos costes, compruebe que $G(T)=c_p/(c_f-c_p)$ tiene solución sabiendo que $\int_0^{T}e^{-(u/100)^2}du\approx 37{,}97$ para $T=40$ y $\approx 46{,}13$ para $T=50$, y acote $T^{*}$.
+\fuente{adaptado de R.~E. Barlow y F.~Proschan~\cite{bp}, cap.~4 «Optimum Maintenance Policies» (política de sustitución por edad).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-ips}
+La política antigua decidía intervenir una máquina con alarma con probabilidad $0{,}3$ y sin alarma con probabilidad $0{,}1$. Se registran seis casos $(x,a,r)$, con $r$ el coste negativo de la semana en miles de euros: (alarma, interviene, $-1{,}2$), (alarma, no, $-9$), (alarma, no, $0$), (sin alarma, no, $0$), (sin alarma, interviene, $-1{,}2$), (sin alarma, no, $0$). Estime con la \cref{prop:ips} el valor de la política nueva «intervenir si y solo si hay alarma» y el de la política antigua, y comente la fiabilidad de la estimación.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-reentreno}
+Reentrenar y validar el modelo de riesgo cuesta 3000~€; se estima que cada día sin reentrenar la pérdida esperada crece 4~€/día. (a) Calcule el periodo óptimo y el coste medio diario. (b) ¿Cuánto cuesta reentrenar cada 7 días? (c) ¿Y cada 180?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-lineabase}
+En un problema con un 12{,}5\,\% de positivos, calcule la exactitud y el $F_1$ de: (a) predecir al azar con la distribución de las etiquetas; (b) predecir al azar con probabilidad $1/2$; (c) predecir siempre la clase mayoritaria. ¿Por qué el informe del clasificador de averías no debe dar solo la exactitud?
+\fuente{adaptado de CS329S, Stanford, invierno de 2022, clase~6 «Offline evaluation», apartado de líneas base~\cite{cs329s} (proporciones cambiadas).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-monitor}
+Diseñe el plan de monitorización del optimizador del \cref{ej:caso-mant}: qué se vigila cada día, cada semana y cada mes (entradas, predicciones, decisiones, anulaciones humanas, averías, coste), con qué estadísticos, qué umbrales y cómo se calibran, qué acción dispara cada alarma y cómo se gestiona el retraso de 7 días de las etiquetas. Justifique cómo evita el bucle de la \cref{obs:bucle}.
+\end{ejercicio}

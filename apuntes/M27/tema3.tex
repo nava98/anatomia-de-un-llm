@@ -1,0 +1,156 @@
+% =====================================================================
+\chapter{Simuladores diferenciables y modelos sustitutos}
+\label{tema:3}
+% =====================================================================
+
+El \cref{tema:2} obtuvo el gradiente de un simulador de elementos finitos derivando a mano sus ecuaciones. Este tema generaliza la idea a cualquier simulador, estacionario o temporal, y presenta la alternativa cuando derivar no es posible o el simulador es demasiado caro: aprender un modelo sustituto con pocas simulaciones y optimizar sobre él. Se siguen las notas de S.~G. Johnson sobre adjuntos para recurrencias~\cite{johnson}, las de cálculo matricial del MIT~\cite[§6.3]{mit18s096}, los capítulos de modelos sustitutos de Kochenderfer y Wheeler~\cite{kw}, y los artículos de DiffTaichi~\cite{difftaichi}, las redes informadas por la física~\cite{pinn}, el operador neuronal de Fourier~\cite{fno} y MeshGraphNets~\cite{mgn}. La física de la aleta procede del capítulo~3 de Incropera \emph{et al.}~\cite{incropera}.
+
+\section{Derivar a través de un simulador}
+
+Casi todo simulador discreto resuelve un sistema de ecuaciones $R(u,\theta)=0$, donde $u\in\R^m$ es el estado (temperaturas, desplazamientos, velocidades) y $\theta\in\R^n$ son los parámetros de diseño.
+
+\begin{teorema}[Sensibilidad por la función implícita y el adjunto]\label{teo:implicita}
+Sean $R:\R^m\times\R^n\to\R^m$ y $J(\theta)=g\bigl(u(\theta),\theta\bigr)$ funciones continuamente derivables, con $R(u(\theta),\theta)=0$ y $\partial R/\partial u$ invertible en la solución. Entonces
+\[
+\frac{du}{d\theta}=-\Bigl(\frac{\partial R}{\partial u}\Bigr)^{-1}\frac{\partial R}{\partial\theta},\qquad
+\frac{dJ}{d\theta}=\frac{\partial g}{\partial\theta}-\lambda^\T\frac{\partial R}{\partial\theta},\quad\text{con}\quad\Bigl(\frac{\partial R}{\partial u}\Bigr)^{\!\T}\lambda=\Bigl(\frac{\partial g}{\partial u}\Bigr)^{\!\T}.
+\]
+\end{teorema}
+
+\begin{proof}
+El teorema de la función implícita garantiza que $u(\theta)$ es derivable cerca de la solución. Derivando la identidad $R(u(\theta),\theta)=0$ se obtiene $\frac{\partial R}{\partial u}\frac{du}{d\theta}+\frac{\partial R}{\partial\theta}=0$, de donde sale la primera fórmula. Sustituyéndola en $\frac{dJ}{d\theta}=\frac{\partial g}{\partial\theta}+\frac{\partial g}{\partial u}\frac{du}{d\theta}$ y agrupando $\frac{\partial g}{\partial u}\bigl(\frac{\partial R}{\partial u}\bigr)^{-1}=\lambda^\T$ se obtiene la segunda.
+\end{proof}
+
+El \cref{teo:adjunto} es el caso $R=K(x)U-F$. El coste del adjunto es una resolución con la matriz transpuesta, que en problemas lineales puede reutilizar la factorización ya calculada; el de la sensibilidad directa, $n$ resoluciones. Para simuladores temporales, $u_{k+1}=\Phi(u_k,\theta)$, el mismo razonamiento da una recurrencia adjunta que se recorre hacia atrás en el tiempo~\cite{johnson}:
+\[
+\lambda_N=\Bigl(\frac{\partial g}{\partial u_N}\Bigr)^{\!\T},\qquad \lambda_{k-1}=\Bigl(\frac{\partial\Phi}{\partial u}\Bigr)^{\!\T}_{\!k}\lambda_k,\qquad \frac{dg}{d\theta}=\frac{\partial g}{\partial\theta}+\sum_{k=1}^N\lambda_k^\T\frac{\partial\Phi}{\partial\theta}\Big|_{u_{k-1}} .
+\]
+Es la retropropagación a través del tiempo de una red recurrente (módulo~12, §5.3), con los mismos problemas: hay que guardar todos los estados, lo que se alivia con el recálculo por puntos de control (módulo~10, §5.2), y en dinámicas caóticas o con muchos pasos el gradiente puede explotar.
+
+\section{Diferenciación automática de simuladores}
+
+En lugar de derivar a mano, el simulador se puede escribir en un lenguaje que propague derivadas. JAX transforma programas de Python y NumPy (derivación, vectorización y compilación para GPU y TPU)~\cite{jax}; NVIDIA Warp compila núcleos de Python para GPU que son derivables~\cite{warp}; Taichi, con su extensión DiffTaichi, permite escribir simuladores físicos derivables, y sus autores informan de que su simulador elástico necesita unas 4,2 veces menos líneas que una versión CUDA escrita a mano, con velocidad similar, y es 188 veces más rápido que la implementación en TensorFlow~\cite{difftaichi}. PyTorch también sirve cuando el simulador se expresa con operaciones de tensores, como en el caso de estudio de este tema.
+
+Tres advertencias limitan el enfoque. Los eventos discretos (contactos, cambios de malla, condicionales sobre el estado) producen funciones discontinuas cuya derivada automática es correcta pero inútil, porque vale cero o no ve el salto. Las derivadas de un resolvedor iterativo no deben calcularse a través de sus iteraciones, sino con el \cref{teo:implicita} en la solución convergida. Y el coste de memoria del modo inverso crece con el número de pasos de tiempo.
+
+\section{Modelos sustitutos}
+
+\begin{definicion}[Modelo sustituto]\label{def:sustituto}
+Sea $s:\Theta\to\R$ una respuesta cara de evaluar (el resultado de un simulador). Un \emph{modelo sustituto} es una función $\hat s_\varphi$ barata, ajustada con un conjunto de diseño $\{(\theta_i,s(\theta_i))\}_{i=1}^M$, con la que se sustituye a $s$ dentro de la optimización.
+\end{definicion}
+
+Los sustitutos clásicos son las superficies de respuesta polinómicas ajustadas por mínimos cuadrados y los procesos gaussianos, que además estiman su incertidumbre~\cite{kw}. Los neuronales cubren desde un perceptrón que aproxima una respuesta escalar hasta modelos que aproximan campos completos: las redes informadas por la física (PINN) minimizan el residuo de la ecuación diferencial en puntos de colocación, calculando las derivadas de la red por diferenciación automática~\cite{pinn}; los operadores neuronales de Fourier aprenden la aplicación entre funciones de entrada y de salida, y sus autores informan de aceleraciones de hasta tres órdenes de magnitud frente a resolvedores clásicos~\cite{fno}; MeshGraphNets aprende la dinámica sobre la malla de simulación con una red de grafos~\cite{mgn}. Bibliotecas como NVIDIA PhysicsNeMo (antes Modulus) agrupan estas arquitecturas para construir sustitutos de CFD, mecánica estructural o análisis térmico~\cite{physicsnemo}.
+
+El diseño de experimentos importa tanto como el modelo. El muestreo por hipercubo latino divide el rango de cada variable en $M$ intervalos y toma exactamente una muestra por intervalo, de modo que sus proyecciones sobre cada eje quedan uniformemente repartidas~\cite{kw}.
+
+\begin{proposicion}[Error del óptimo de un sustituto]\label{prop:2eps}
+Sea $\Theta$ compacto, $s$ y $\hat s$ continuas y $\sup_{\theta\in\Theta}\abs{\hat s(\theta)-s(\theta)}\le\varepsilon$. Si $\theta^\star$ minimiza $s$ y $\hat\theta$ minimiza $\hat s$ en $\Theta$, entonces
+\[
+s(\theta^\star)\le s(\hat\theta)\le s(\theta^\star)+2\varepsilon .
+\]
+\end{proposicion}
+
+\begin{proof}
+La primera desigualdad es la optimalidad de $\theta^\star$. Para la segunda, $s(\hat\theta)\le\hat s(\hat\theta)+\varepsilon\le\hat s(\theta^\star)+\varepsilon\le s(\theta^\star)+2\varepsilon$, usando sucesivamente la cota de error, la optimalidad de $\hat\theta$ para $\hat s$ y otra vez la cota.
+\end{proof}
+
+La proposición es tranquilizadora y peligrosa a la vez: la garantía exige un error \emph{uniforme} en todo $\Theta$, mientras que la validación solo mide el error en unos puntos. El optimizador busca precisamente las zonas en que $\hat s$ es optimista, que suelen ser aquellas en que hay pocos datos. Es el mismo fenómeno que la sobreoptimización de un modelo de recompensa (módulo~21, §6.4). Por eso todo diseño propuesto por un sustituto se verifica con el simulador y, si hay presupuesto, se añade a los datos y se reajusta el modelo.
+
+\section{Caso de estudio: el perfil de una aleta disipadora}
+
+\begin{ejemplo}[Aleta de aluminio con sustituto neuronal y con simulador diferenciable]\label{ej:aleta}
+\emph{Contexto.} Un disipador de aluminio ($k=200$ W/(m·K)) refrigerado por aire forzado ($h=60$ W/(m²·K)) debe evacuar calor desde una base a $\theta_b=T_b-T_\infty=50$ K. La masa de cada aleta está fijada: por cada metro de profundidad, el área del perfil es $A=60$ mm². El perfil es trapecial, con espesor $t(x)=t_b(1-s\,x/L)$ para $0\le x\le L$, donde $L$ es la longitud y $s\in[0,1)$ la conicidad; la condición de área fija da $t_b=A/\bigl(L(1-s/2)\bigr)$. Por extrusión, la punta debe medir al menos $t_{\min}=0{,}3$ mm.
+
+\emph{Modelo físico.} Con aleta delgada (número de Biot $ht/(2k)\ll 1$), conducción longitudinal y convección por las dos caras, la temperatura $\theta(x)$ por metro de profundidad satisface~\cite{incropera}
+\[
+\frac{d}{dx}\Bigl(k\,t(x)\,\frac{d\theta}{dx}\Bigr)-2h\,\theta=0,\qquad \theta(0)=\theta_b,\qquad \theta'(L)=0,
+\]
+y el calor evacuado es $q=2h\int_0^L\theta\,dx$. Para $s=0$ hay solución cerrada, $q=\sqrt{2hkt}\,\theta_b\tanh(mL)$ con $m=\sqrt{2h/(kt)}$.
+
+\emph{Formulación.}
+\[
+\max_{L,\,s}\ q(L,s)\quad\text{sujeto a}\quad t_b(1-s)\ge t_{\min},\quad 20\le L\le 100\ \text{mm},\quad 0\le s\le 0{,}9 .
+\]
+El simulador discretiza la ecuación por volúmenes finitos con 400 celdas y resuelve un sistema tridiagonal; reproduce la solución cerrada de la aleta rectangular con un error relativo de $1{,}4\cdot 10^{-6}$.
+
+\emph{Línea base.} Para $s=0$, el óptimo con área fija cumple $\sinh(2\beta)=6\beta$ con $\beta=mL$ (\cref{eje:3-schmidt}), es decir, $\beta=1{,}4192$. Con los datos, $L=58{,}6$ mm, $t=1{,}02$ mm y $q=220{,}4$ W/m: unos 11 W para una aleta de 50 mm de profundidad.
+
+\emph{Método 1: sustituto neuronal.} Se supone que cada simulación es cara (en un diseño real sería un cálculo CFD conjugado de horas) y se dispone de 40. Se toman 60 puntos por hipercubo latino en $(L,s)$, se descartan los no fabricables y se simulan los 40 primeros factibles. Un perceptrón 2--32--32--1 con activación tanh, entrenado con 32 puntos, tiene un error cuadrático medio de 10,1 W/m (4,9~\% de la media) en los 8 reservados. Reentrenado con los 40, su máximo en una rejilla factible de $201\times 201$ está en $L=62{,}4$ mm y $s=0{,}815$, con predicción de 242,2 W/m; la simulación de verificación (la número 41) da 242,0 W/m.
+
+\emph{Método 2: simulador diferenciable.} El mismo simulador escrito con tensores de PyTorch (200 celdas, sistema denso) da $\partial q/\partial L$ y $\partial q/\partial s$ por diferenciación automática, que coinciden con diferencias finitas centradas en seis cifras. Ascenso de gradiente con Adam (módulo~7, §5.3) y \emph{proyección} sobre la restricción de la punta, $s\le s_{\max}(L)=(1-r)/(1-r/2)$ con $r=t_{\min}L/A$, converge en 150 iteraciones a $L=66{,}3$ mm y $s=0{,}801$, con $q=242{,}2$ W/m y la restricción activa (punta de 0,300 mm).
+
+\emph{Comprobación y conclusión.} Una búsqueda exhaustiva en $81\times 96$ puntos (7776 simulaciones) da $q=242{,}1$ W/m en $L=66$ mm y $s=0{,}80$. Los dos métodos llegan a menos del 0,1~\% de ese valor y mejoran la aleta rectangular óptima en un 9,8~\% con la misma masa. El óptimo está sobre la restricción de fabricación: si se pudiera hacer la punta más fina, la aleta mejoraría hacia el perfil triangular. El sustituto encontró una solución algo distinta ($L=62$ mm) con casi el mismo calor porque la función es muy plana cerca del óptimo; el método del gradiente necesita el simulador derivable, pero no un presupuesto de muestras.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.3cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia & Cuándo elegirla \\
+\midrule
+JAX & derivación, vectorización y compilación de código NumPy & Apache-2.0 & simuladores nuevos escritos en estilo funcional \\
+NVIDIA Warp & núcleos de simulación derivables en GPU & Apache-2.0 & física de partículas, telas o sólidos en GPU \\
+Taichi (DiffTaichi) & lenguaje para simulación física derivable & Apache-2.0 & simuladores de partículas y rejillas de alto rendimiento \\
+PyTorch & tensores y diferenciación automática & BSD-3 (con componentes de otras licencias) & simuladores pequeños unidos a redes neuronales \\
+NVIDIA PhysicsNeMo & PINN, operadores neuronales y GNN para física & Apache-2.0 & sustitutos de CFD o de estructuras a escala industrial \\
+scikit-learn & MLP, procesos gaussianos, validación & BSD-3 & sustitutos de pocas variables con pocos datos \\
+dolfin-adjoint & adjuntos automáticos de modelos FEniCS & LGPL & EDP generales con elementos finitos \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías del tema~3. Licencias según los metadatos publicados por cada proyecto.}
+\label{tab:tec3}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores3}
+(i) \emph{Sobreajuste del sustituto}: con 40 puntos y miles de pesos, la red interpola el ruido; hay que reservar datos de validación y regularizar. (ii) \emph{Extrapolación}: el optimizador lleva el diseño a los bordes del dominio, donde hay menos datos; se verifica siempre con el simulador (\cref{prop:2eps}). (iii) \emph{Fugas de datos}: si los puntos de validación son casi idénticos a los de entrenamiento (simulaciones repetidas con otra malla, por ejemplo), el error de validación es optimista. (iv) \emph{La verdad tampoco es exacta}: el simulador tiene error de discretización; hay que comprobar la convergencia de malla antes de entrenar con él. (v) \emph{Validez del modelo físico}: el caso supone aleta delgada; con $ht/k$ grande o radiación apreciable, el modelo unidimensional no vale. (vi) \emph{Restricciones de seguridad}: un sustituto puede predecir un diseño factible que no lo es; las restricciones críticas se comprueban con el simulador o con un margen. (vii) \emph{Coste mal contado}: el entrenamiento del sustituto y las simulaciones de verificación forman parte del presupuesto.
+\end{observacion}
+
+\begin{lecturas}
+\item M.~J. Kochenderfer y T.~A. Wheeler~\cite{kw}: caps. «Sampling Plans», «Surrogate Models», «Probabilistic Surrogate Models» y «Surrogate Optimization».
+\item S.~G. Johnson~\cite{johnson}: adjuntos para relaciones de recurrencia (MIT 18.335J).
+\item Y.~Hu \emph{et al.}~\cite{difftaichi}: programación diferenciable para simulación física.
+\item M.~Raissi, P.~Perdikaris y G.~E. Karniadakis~\cite{pinn}; Z.~Li \emph{et al.}~\cite{fno}; T.~Pfaff \emph{et al.}~\cite{mgn}.
+\item F.~P. Incropera \emph{et al.}~\cite{incropera}, cap.~3: conducción unidimensional y superficies extendidas.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-elegir}
+Para cada caso, elija entre sustituto, simulador diferenciable o diferencias finitas y justifíquelo: (a) 3 parámetros y un CFD comercial de cajas negras que tarda 6 horas; (b) 5000 densidades y un código de elementos finitos propio; (c) un simulador de choques con contactos y 20 parámetros.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:3-pinn}
+Escriba la pérdida de una red informada por la física $\theta_\varphi(x)$ para la aleta rectangular del \cref{ej:aleta}: identifique el término de residuo y los de condiciones de contorno, y explique por qué no hace falta malla.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-aleta}
+Para una aleta rectangular de $L=40$ mm y $t=1{,}5$ mm ($A=60$ mm²), con los datos del \cref{ej:aleta}, calcule $m$, $mL$, el calor $q$, la eficiencia $\eta=\tanh(mL)/(mL)$ y el número de Biot $ht/(2k)$.
+\fuente{adaptado de F.~P. Incropera \emph{et al.}, \emph{Fundamentals of Heat and Mass Transfer}, cap.~3 (aletas de sección uniforme)~\cite{incropera}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-coste}
+La viga MBB tiene 1200 variables y cada resolución de $KU=F$ tarda 10 ms. Compare el tiempo de calcular el gradiente por diferencias finitas hacia delante y por el método adjunto, y el de 100 iteraciones de optimización con cada uno.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-implicita}
+Sea $R(u,\theta)=A(\theta)u-b$ con $A(\theta)=\begin{psmallmatrix}2+\theta&-1\\-1&2\end{psmallmatrix}$, $b=(1,0)^\T$ y $J=u_1+u_2$. En $\theta=0$, calcule $u$, el vector adjunto $\lambda$ y $dJ/d\theta$, y compruébelo con una diferencia finita de paso $0{,}01$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-cuadratico}
+Se simula la aleta rectangular del \cref{ej:aleta} en $L=30$, 60 y 90 mm, con resultados $q=165{,}38$; $220{,}34$ y $198{,}20$ W/m. Ajuste un sustituto cuadrático $\hat q(L)=\beta_0+\beta_1L+\beta_2L^2$ ($L$ en mm), calcule su máximo y compárelo con el óptimo verdadero ($L=58{,}6$ mm, $q=220{,}42$ W/m), sabiendo que el simulador da $218{,}13$ W/m en el máximo del sustituto.
+\fuente{adaptado de M.~J. Kochenderfer y T.~A. Wheeler, \emph{Algorithms for Optimization}, cap. «Surrogate Models»~\cite{kw}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-recurrencia}
+Un componente se enfría según $\theta_{k+1}=(1-a\Delta t)\,\theta_k$ con $\theta_0=50$ K, $\Delta t=1$ s y $a=0{,}1$ s$^{-1}$. Calcule $\theta_3$ y $d\theta_3/da$ derivando la expresión cerrada y con la recurrencia adjunta hacia atrás.
+\fuente{adaptado de S.~G. Johnson, «Adjoint methods and sensitivity analysis for recurrence relations», notas de MIT 18.335J (otoño de 2010)~\cite{johnson}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-cota}
+(a) Demuestre la \cref{prop:2eps}. (b) Construya un ejemplo con $\Theta=[0,1]$ en el que el sustituto tenga error nulo en tres puntos de validación y, sin embargo, su minimizador sea pésimo para $s$. ¿Qué enseña sobre la validación de sustitutos?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-schmidt}
+(a) Demuestre que, para la aleta rectangular de área de perfil fija $A$, el calor $q(L)=\sqrt{2hkA/L}\,\theta_b\tanh\bigl(c\,L^{3/2}\bigr)$, con $c=\sqrt{2h/(kA)}$, es máximo cuando $\beta=cL^{3/2}$ cumple $\sinh(2\beta)=6\beta$. (b) Con $h=40$ W/(m²·K), $k=170$ W/(m·K), $A=50$ mm² y $\theta_b=50$ K, calcule $L$, $t$ y $q$ óptimos, usando $\beta=1{,}4192$.
+\end{ejercicio}

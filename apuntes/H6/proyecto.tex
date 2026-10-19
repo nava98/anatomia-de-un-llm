@@ -1,0 +1,417 @@
+% =====================================================================
+\chapter{Proyecto final: diseñe y construya un optimizador con IA}
+\label{cap:proyecto}
+% =====================================================================
+
+El proyecto final cierra el curso. El estudiante diseña, construye, evalúa y defiende un optimizador con IA completo para uno de tres ámbitos: una planta industrial (opción~a), un \emph{pipeline} de software 3D (opción~b) o las operaciones de una flota (opción~c). En los tres hay que recorrer los doce pasos de M28, §6.1: decidir qué se optimiza y contra qué se compara, generar datos sintéticos realistas y un gemelo digital, formular el problema, combinar un resolvedor con un componente aprendido, proteger las restricciones duras y demostrar con intervalos de confianza cuánto mejora el sistema y si compensa. La \cref{fig:arquitectura} resume la arquitectura que se exige en las tres opciones; es la de M24, §1.2, completada con la evaluación de M28, temas~4 y~5.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\footnotesize,>={Stealth[length=2mm]},node distance=4mm and 4mm,
+  caja/.style={draw,thick,rounded corners=2pt,align=center,inner sep=2pt,minimum height=10mm,text width=2.25cm}]
+  \node[caja] (gen) {generador de datos\\(semilla fija)};
+  \node[caja,right=of gen] (gem) {gemelo digital\\(simulador)};
+  \node[caja,right=of gem] (pred) {modelo predictivo\\o sustituto};
+  \node[caja,right=of pred] (opt) {optimizador\\(PLEM, MPC, BO\dots)};
+  \node[caja,below=12mm of opt] (seg) {salvaguardas\\y respaldo};
+  \node[caja,left=of seg] (dec) {decisión\\aplicada};
+  \node[caja,left=of dec] (eva) {evaluación\\con CRN\\e intervalos};
+  \node[caja,left=of eva] (mon) {monitorización\\y valor (VAN)};
+  \draw[->,thick] (gen)--(gem); \draw[->,thick] (gem)--(pred); \draw[->,thick] (pred)--(opt);
+  \draw[->,thick] (opt)--(seg); \draw[->,thick] (seg)--(dec); \draw[->,thick] (dec)--(eva); \draw[->,thick] (eva)--(mon);
+  \draw[->,thick,dashed] (dec.north) -- ++(0,6mm) -| node[pos=0.13,above=-0.5pt,font=\scriptsize] {se aplica en el gemelo} (gem.south);
+\end{tikzpicture}
+\caption{Arquitectura mínima exigida en las tres opciones del proyecto. Las flechas continuas forman el ciclo de decisión; la discontinua indica que las decisiones se evalúan en el gemelo, nunca solo con el modelo que las propuso.}
+\label{fig:arquitectura}
+\end{figure}
+
+% =====================================================================
+\section{Organización, reglas y entregables comunes}
+\label{sec:proy-comun}
+
+\paragraph{Formato.} Trabajo individual o en parejas, con el reparto de tareas declarado en el documento de diseño. Duración: 8 semanas. Se elige una sola opción en la semana~1 y no se cambia después de la semana~2. Cada opción describe el problema, los datos sintéticos que hay que generar, la formulación que se pide, los métodos y tecnologías sugeridos, los hitos semanales, los entregables específicos, los criterios de aceptación y la rúbrica de 100 puntos.
+
+\paragraph{Reglas de evaluación honesta.} Son obligatorias en las tres opciones y se comprueban en la corrección (\cref{ap:correccion}).
+\begin{enumerate}[label=R\arabic*.]
+  \item \emph{Datos sintéticos con semilla.} Todos los datos se generan con un programa propio y semillas documentadas; no se usan datos reales confidenciales. Los parámetros del generador que se dan en cada opción son el escenario nominal; se pueden enriquecer, pero no simplificar.
+  \item \emph{Partición temporal congelada.} La partición en entrenamiento, validación y prueba se fija en la semana~1, y el conjunto de prueba se genera, se guarda con su huella (\emph{hash}) y no se usa para ninguna elección hasta la semana~7 (M08, §1.4; M28, §2.2, corolario~2.6).
+  \item \emph{Tres referencias.} Toda mejora se mide frente a la \emph{línea base} (la práctica actual que se describe en cada opción), frente a la \emph{mejor alternativa sencilla} sin IA y frente al \emph{techo} con información perfecta (M28, §5.1 y proposición~6.1).
+  \item \emph{Comparación pareada.} Todas las políticas se evalúan en el gemelo con números aleatorios comunes (M26, §5.1), en las mismas semanas o trayectorias, con al menos 5 semillas.
+  \item \emph{Intervalos de la mejora.} Se informa la mejora media con intervalo $t$ pareado del 95\,\% y con intervalo \emph{bootstrap} (por bloques si hay autocorrelación) (M28, §5.2), nunca solo con una media.
+  \item \emph{Salvaguardas independientes.} Las restricciones duras se comprueban fuera del optimizador antes de aplicar cada decisión, y existe una política de respaldo (M26, §6.5; M28, §5.5).
+  \item \emph{Uso de modelos de lenguaje.} Se permite usar asistentes de código y búsquedas guiadas por LLM (M28, tema~1); se declara en el informe qué se generó así y cómo se verificó. El código generado se ejecuta aislado.
+\end{enumerate}
+
+\paragraph{Entregables comunes.} Las tres opciones entregan:
+\begin{enumerate}[label=E\arabic*.]
+  \item \emph{Documento de diseño} con la plantilla del \cref{ap:plantilla}: versión~0 en la semana~2 (secciones 1 a~6), versión~1 en la semana~5 y versión final en la semana~8; entre 10 y 15 páginas más la ficha resumen.
+  \item \emph{Código} en un repositorio con estructura \texttt{datos/}, \texttt{src/}, \texttt{experimentos/}, \texttt{pruebas/} y \texttt{informe/}; un \texttt{README} con instrucciones; una única orden (por ejemplo, \texttt{python -m proyecto reproducir --semilla 0}) que regenera datos, modelos, decisiones, tablas y figuras en menos de 2~h en la CPU de un portátil (o menos de 20~min en un modo reducido documentado); pruebas automáticas (\texttt{pytest}) de las restricciones duras, del generador y del cálculo de costes; registro de experimentos (MLflow o equivalente).
+  \item \emph{Informe técnico final} de 12 a 20 páginas: resumen, resultados frente a las tres referencias con intervalos de confianza, ablaciones (qué aporta cada componente), pruebas de estrés, valor actual neto con incertidumbre, AMFE, monitorización, limitaciones y trabajo futuro.
+  \item \emph{Demostración} de 15~minutos más 10 de preguntas: un ciclo de decisión completo en directo o grabado, la activación de una salvaguarda ante una entrada anómala inyectada y el panel de seguimiento. Las preguntas pueden pedir cambiar un parámetro del generador y volver a ejecutar.
+\end{enumerate}
+
+\paragraph{Calendario común.} Las tres opciones siguen el mismo esqueleto de ocho semanas (\cref{tab:calendario}); cada opción lo concreta en su tabla de hitos.
+
+\begin{table}[H]
+\centering\small
+\caption{Esqueleto común de las ocho semanas.}\label{tab:calendario}
+\begin{tabularx}{\textwidth}{@{}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{4.6cm}@{}}
+\toprule
+Semana & Objetivo & Evidencia en el repositorio \\
+\midrule
+1 & Concepto de operación, requisitos, generador de datos v1, línea base en el gemelo, partición congelada & generador, \emph{hash} de la prueba, coste de la línea base \\
+2 & Gemelo validado, techo de valor y mejor alternativa sencilla & documento de diseño v0 \\
+3 & Formulación principal resuelta con información perfecta & modelo, tiempos de cálculo, \emph{gap} \\
+4 & Componente predictivo con validación temporal e integración & métricas de predicción y de decisión \\
+5 & Segundo nivel de decisión (control, selección en línea o rutas) y salvaguardas & documento de diseño v1 \\
+6 & Ajuste (optimización bayesiana o multifidelidad) y pruebas de estrés & informe de estrés \\
+7 & Evaluación final en prueba con CRN, intervalos, VAN, AMFE y monitorización & tablas finales \\
+8 & Informe, API o herramienta, panel, demostración y reproducibilidad & entrega completa \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% =====================================================================
+\section{Opción (a): planta industrial}
+\label{sec:proy-a}
+
+\subsection*{Planificación y control energético de una línea de producción}
+
+\paragraph{Contexto y decisiones.} Una línea fabrica piezas de aluminio en cuatro familias, P1 a P4. Cada lote pasa por un horno de tratamiento térmico (una carga a la vez) y después por uno de dos centros de mecanizado. La energía eléctrica se compra a precio horario y la potencia contratada es de 1000~kW. El optimizador toma dos decisiones encadenadas: (i) cada día a las 14:00, con los precios del día siguiente ya publicados, el \emph{plan horario} de los siete días siguientes (qué lote entra en el horno y en cada máquina en cada hora, cuándo se enciende o se mantiene caliente el horno), en horizonte deslizante, y (ii) cada 5~minutos, la \emph{potencia del horno} que sigue la consigna de temperatura del plan con el menor coste y sin violar la potencia contratada ni la banda de temperatura del tratamiento.
+
+\paragraph{Datos sintéticos que hay que generar.} Un año ficticio de 52 semanas con resolución horaria (planificación) y de 5~minutos (horno).
+\begin{enumerate}[label=(\roman*)]
+  \item \emph{Precio de la electricidad} (€/MWh): $p_t=\max\bigl(0,\ \mu_{d(t)}+g(h_t,d(t))+\varepsilon_t\bigr)$, con nivel diario $\mu_d=75+15\cos\bigl(2\pi(d-15)/365\bigr)+\eta_d$, $\eta_d=0{,}8\,\eta_{d-1}+\N(0,8^{2})$; perfil horario $g$ con picos de $+20$~€/MWh de 8 a 10~h y de 19 a 22~h y un valle solar de $-25$~€/MWh de 12 a 16~h entre abril y septiembre; ruido $\varepsilon_t\sim\N(0,6^{2})$ y, con probabilidad $0{,}5\,\%$ por hora, un pico que multiplica el precio por~3.
+  \item \emph{Temperatura ambiente} (°C): $T^{\mathrm{amb}}_t=16+9\sin\bigl(2\pi(d-105)/365\bigr)+5\sin\bigl(2\pi(h-9)/24\bigr)+\N(0,1{,}5^{2})$.
+  \item \emph{Pedidos}: llegadas diarias de Poisson con medias semanales de 10, 7, 5 y 3 lotes de P1 a P4 (factor $1{,}15$ de marzo a junio), fecha de entrega uniforme entre 3 y 10 días laborables después de la llegada. La utilización media resultante del horno debe quedar entre el 70 y el 85\,\%; se ajustan las medias si no es así.
+  \item \emph{Horno}: modelo térmico $C\,\dot T=P-(T-T^{\mathrm{amb}})/R-P^{\mathrm{carga}}$, con $R=1$~K/kW, $C=3$~kWh/K ($\tau=3$~h), $P\in[0,800]$~kW, y una carga fría que absorbe 150~kWh durante la primera hora. Tratamientos de 2, 3, 4 y 2~h a 480, 530, 500 y 450~°C, con tolerancia de $\pm5$~°C (restricción dura de calidad). Medida con ruido de 2~°C; un disparo del horno al mes, de 1 a 4~h.
+  \item \emph{Mecanizado}: dos centros de 150~kW cada uno en funcionamiento, tiempos de 1 a 3~h por lote según la familia, solo en turnos de lunes a viernes de 6 a 22~h; el horno puede trabajar de noche, pero se carga y descarga solo en turno.
+  \item \emph{Costes}: energía $p_t\,E_t$; arranque del horno en frío (desde menos de 200~°C), 120~€; retraso, 60~€ por lote y día; almacenamiento intermedio, 3~€ por lote y día; superar los 1000~kW está prohibido (restricción dura).
+  \item \emph{Partición}: semanas 1 a~30 para entrenamiento, 31 a~40 para validación y 41 a~52 para prueba.
+\end{enumerate}
+
+\paragraph{Referencias de comparación.} \emph{Línea base}: lotes por fecha de entrega más próxima (EDD) en cuanto hay recurso, y el horno con un PI ajustado por SIMC (M26, §1.5) a consigna fija en turno y apagado fuera de turno. \emph{Mejor alternativa sencilla}: EDD con precalentamiento en las dos horas más baratas antes del turno y un PI con antisaturación. \emph{Techo}: el plan óptimo con precios y pedidos reales conocidos de antemano.
+
+\paragraph{Formulación que se pide.}
+\begin{enumerate}[label=F\arabic*.]
+  \item \emph{Plan horario} como PLEM en horizonte deslizante de 168~h: binarias de inicio de cada lote en el horno y en cada máquina, estado del horno (encendido, mantenimiento en caliente, apagado) y arranques; restricciones de precedencia horno–mecanizado, de un lote a la vez por recurso, de turnos, de balance de potencia $P_t^{\mathrm{horno}}+\sum_kP_{kt}^{\mathrm{mec}}\le 1000$~kW y de retraso $T_l\ge C_l-d_l$; objetivo de energía prevista, retrasos, arranques y almacenamiento. Todas las constantes big-M deben ser las mínimas válidas (proposición~2.11 de M24) y justificarse. Se informa del tamaño, del \emph{gap} y del tiempo de cálculo, y del precio sombra de la potencia contratada con las binarias fijas (M24, §2.2).
+  \item \emph{Incertidumbre del precio}: a partir de D+2, el plan usa escenarios de precio generados con los cuantiles previstos (aproximación por media muestral, M24, §6.3) o una versión robusta; se compara con usar la media (M24, §6.1).
+  \item \emph{Control del horno} por MPC económico (M26, definición~3.10) con horizonte de 4~h y paso de 5~min sobre un modelo identificado con los datos de entrenamiento (ARX, M26, §2.1), restricciones de banda durante el tratamiento ablandadas con penalización exacta (M26, §3.3) y un filtro de seguridad de potencia y temperatura (M26, §6.5).
+  \item \emph{Ajuste}: los pesos del MPC, el margen de seguridad de temperatura y la holgura de capacidad del plan se ajustan con optimización bayesiana sobre las semanas de validación del gemelo, con un máximo de 60 evaluaciones (M25, tema~4).
+  \item \emph{Opcional}: un agente SAC o TD3 entrenado en el gemelo (M26, tema~4), comparado con el MPC con el mismo coste y las mismas semanas.
+\end{enumerate}
+
+\begin{table}[H]
+\centering\small
+\caption{Opción (a): métodos sugeridos y dónde se estudiaron.}\label{tab:metodos-a}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.6cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{3.8cm}@{}}
+\toprule
+Componente & Método & Referencia del curso \\
+\midrule
+Plan semanal & PLEM con big-M mínimas, horizonte deslizante, precios sombra & M24, §2.2--§2.4; M24, §3.3 (taller) \\
+Precio y pedidos & regresión cuantílica, \emph{gradient boosting}, LSTM opcional & M08, temas~2 y~6; M12, §5.4; 0.9, §1.3 \\
+Decisión con incertidumbre & SAA, robusta, valor de la solución estocástica & M24, §6.1--§6.3 \\
+Horno & identificación ARX, MPC económico, filtro de seguridad & M26, §2.1, §3.3, §6.5 \\
+Ajuste & optimización bayesiana con EI y proceso gaussiano & M25, §3.3, §4.3, §4.6 \\
+Alternativa de control & SAC o TD3 en un entorno Gymnasium & M26, §4.1--§4.4; M21, §1.3 \\
+Evaluación y valor & CRN, intervalos pareados y \emph{bootstrap}, VAN, CVaR & M26, §5.1; M28, §5.1--§5.4 \\
+Producción & deriva (PSI), reentrenamiento, AMFE & M28, §4.3, §5.5 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Tecnologías.} HiGHS (vía SciPy o \texttt{highspy}), PuLP o Pyomo para el PLEM; OR-Tools CP-SAT como alternativa para la secuenciación; CVXPY con OSQP, do-mpc o CasADi para el MPC; scikit-learn para la previsión cuantílica; BoTorch u Optuna para el ajuste; Gymnasium y Stable-Baselines3 para la alternativa de RL; MLflow, FastAPI y \texttt{pytest} para el seguimiento, el servicio y las pruebas.
+
+\begin{table}[H]
+\centering\small
+\caption{Opción (a): hitos semanales.}\label{tab:hitos-a}
+\begin{tabularx}{\textwidth}{@{}c>{\raggedright\arraybackslash}X@{}}
+\toprule
+Semana & Hito \\
+\midrule
+1 & Concepto de operación y requisitos; generador de precios, ambiente y pedidos; gemelo del horno y de la línea; línea base EDD con PI funcionando; partición congelada. \\
+2 & Validación del gemelo (balance de energía, respuesta al escalón del horno, utilización); techo con información perfecta y mejor alternativa sencilla; documento de diseño v0. \\
+3 & PLEM del plan semanal con precios reales: big-M mínimas, \emph{gap} $\le 1\,\%$, tiempos, precio sombra de la potencia contratada. \\
+4 & Previsión cuantílica de precios D+2 a D+7 con validación temporal (pérdida \emph{pinball}); plan con escenarios frente a plan con la media. \\
+5 & Identificación ARX del horno, MPC económico, filtro de seguridad e integración plan--consignas; documento de diseño v1. \\
+6 & Optimización bayesiana de pesos y márgenes en validación; pruebas de estrés: sensor congelado, pico de precio $\times 3$ durante 6~h, disparo del horno y 20\,\% más pedidos. \\
+7 & Evaluación en las 12 semanas de prueba con 5 semillas y CRN; intervalos, VAN con Monte Carlo, CVaR, AMFE y PSI de las variables de precio. \\
+8 & Informe final, API del plan diario y panel (plan, temperatura, potencia, coste); demostración y reproducción completa. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Entregables específicos.} Además de E1 a E4: un diagrama de Gantt del plan de una semana de prueba frente a la línea base, con el precio horario superpuesto; la curva de temperatura y potencia del horno durante un día con la banda de tolerancia; la tabla de costes por partida (energía, arranques, retrasos, almacenamiento) de las cinco políticas (línea base, alternativa sencilla, optimizador, techo y, si se hace, RL).
+
+\paragraph{Criterios de aceptación.} Los obligatorios deben cumplirse todos para aprobar el proyecto (\cref{sec:proy-calificacion}); los de excelencia suben la nota en la rúbrica.
+\begin{enumerate}[label=A\arabic*.]
+  \item \emph{Seguridad} (obligatorio): ninguna violación de la potencia contratada ni de la banda de $\pm5$~°C durante un tratamiento en las 12 semanas de prueba con 5 semillas; ante un disparo o un sensor congelado inyectados, el sistema pasa al respaldo en el paso siguiente.
+  \item \emph{Mejora} (obligatorio): coste total al menos un 8\,\% menor que el de la línea base, con el extremo inferior del intervalo de confianza del 95\,\% pareado por semana de al menos el 4\,\%.
+  \item \emph{Servicio} (obligatorio): al menos el 97\,\% de los lotes a tiempo y no más de 0{,}5 puntos por debajo de la línea base.
+  \item \emph{Cómputo} (obligatorio): plan diario en menos de 120~s con \emph{gap} $\le 1\,\%$ (o el \emph{gap} alcanzado, justificado), y paso del MPC en menos de 2~s en el percentil~99.
+  \item \emph{Honestidad} (obligatorio): mejora frente a la alternativa sencilla con su intervalo y fracción capturada del margen entre esta y el techo.
+  \item \emph{Reproducibilidad} (obligatorio): la orden única reproduce las cifras del informe con una diferencia relativa menor del 0{,}5\,\%.
+  \item \emph{Excelencia}: mejora $\ge 12\,\%$; pérdida \emph{pinball} de la previsión de D+2 al menos un 15\,\% menor que la de la previsión estacional ingenua; captura de al menos el 50\,\% del margen hasta el techo; $\Prob(\VAN<0)\le 10\,\%$.
+\end{enumerate}
+
+\begin{table}[p]
+\centering\footnotesize
+\caption{Rúbrica de la opción (a): planta industrial (100 puntos).}\label{tab:rubrica-a}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.5cm}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Criterio & Peso & Excelente & Suficiente & Insuficiente \\
+\midrule
+Documento de diseño y requisitos & 10 & Plantilla completa; requisitos con unidades y márgenes; línea base, alternativa sencilla y techo calculados en la semana~2 & Plantilla completa con alguna referencia calculada tarde & Faltan secciones, el objetivo no es escalar o no hay línea base \\
+\addlinespace
+Datos y gemelo digital & 10 & Generador fiel al escenario, gemelo validado con balance de energía y escalón, partición congelada con \emph{hash} & Generador correcto y gemelo validado parcialmente & Datos simplificados, fugas o prueba usada para elegir \\
+\addlinespace
+Plan semanal (PLEM) & 20 & Formulación completa con big-M mínimas justificadas, horizonte deslizante, \emph{gap} y tiempos, precio sombra de la potencia interpretado & Formulación correcta con alguna simplificación (por ejemplo, sin turnos) & Big-M arbitrarias, restricciones duras ausentes o plan infactible \\
+\addlinespace
+Control del horno & 15 & ARX validado en simulación libre, MPC económico con restricciones blandas exactas y filtro de seguridad demostrado & MPC o PI mejorado que cumple la banda & Sin control o con violaciones de la banda \\
+\addlinespace
+Componente de IA & 10 & Previsión cuantílica calibrada, escenarios en el plan, BO del ajuste con curva de convergencia & Previsión puntual bien validada y ajuste manual razonado & Previsión sin validación temporal \\
+\addlinespace
+Evaluación & 15 & CRN con 5 semillas, intervalos $t$ y \emph{bootstrap}, ablaciones y las cuatro pruebas de estrés & Intervalos correctos y alguna prueba de estrés & Solo medias o comparación no pareada \\
+\addlinespace
+Valor, riesgo y producción & 10 & VAN con Monte Carlo, CVaR, AMFE, PSI y API del plan & VAN determinista y AMFE & Sin análisis de valor \\
+\addlinespace
+Código y demostración & 10 & Orden única, pruebas automáticas, registro de experimentos, demostración con salvaguarda activada & Código reproducible con pasos manuales & No reproducible \\
+\midrule
+\textbf{Total} & \textbf{100} & & & \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% =====================================================================
+\section{Opción (b): software 3D}
+\label{sec:proy-b}
+
+\subsection*{Niveles de detalle y geometría de una escena con presupuesto de fotograma}
+
+\paragraph{Contexto y decisiones.} Un estudio prepara una escena exterior para una consola de referencia a 60~Hz. El optimizador decide en dos niveles: (i) \emph{fuera de línea}, en la compilación de la escena, la cadena de niveles de detalle (LOD) de cada malla base (cuántos niveles, con qué fracción de triángulos y qué parámetros de simplificación) y el formato de compresión de cada textura, y (ii) \emph{en línea}, en cada fotograma, el nivel de detalle de cada instancia visible, de modo que el tiempo de fotograma quede dentro del presupuesto con el menor error visual y sin parpadeos de cambio de nivel (\emph{popping}).
+
+\paragraph{Datos sintéticos que hay que generar.}
+\begin{enumerate}[label=(\roman*)]
+  \item \emph{Biblioteca de 40 mallas base} generadas de forma procedural con semilla: rocas (icoesferas subdivididas cinco veces con desplazamiento por ruido fractal), árboles (tronco cilíndrico y copas de icoesferas deformadas), edificios (cajas con ventanas extruidas y cornisas) y personajes (superficie implícita de esferas y cápsulas extraída con \emph{marching cubes}, M27, §1.3). Entre 5000 y 80\,000 triángulos por malla, cerradas y orientadas de forma coherente.
+  \item \emph{Escena}: terreno de $1\times 1$~km con 2000 instancias (60\,\% vegetación, 25\,\% rocas, 12\,\% edificios, 3\,\% personajes), colocadas con un proceso de Poisson agrupado; importancia visual $w$ de 1; 0{,}5; 1{,}5 y~3 por clase.
+  \item \emph{Cámaras}: seis trayectorias de 60~s a 60~fotogramas por segundo (3600 fotogramas cada una), a pie, en vehículo y en vuelo bajo: dos para entrenamiento, dos para validación y dos para prueba. Campo de visión vertical de $60^{\circ}$ e imagen de $1920\times 1080$.
+  \item \emph{Modelo de coste} (si no se mide en hardware real): $t_{\mathrm{GPU}}=5{,}0~\text{ms}+\sum_{i\ \text{visible}}\bigl(\alpha\,\mathrm{tri}_i+\beta\,\mathrm{px}_i+\gamma\bigr)+\epsilon$, con $\alpha=2{,}5$~ns por triángulo, $\beta=1{,}2$~ns por píxel sombreado (con un \emph{overdraw} de $1{,}6$), $\gamma=4~\mu$s por llamada de dibujo, ruido multiplicativo log-normal de desviación $0{,}05$ y, con probabilidad $0{,}2\,\%$ por fotograma, un tirón de 8~ms; $t_{\mathrm{CPU}}=2~\text{ms}+6~\mu\text{s}$ por instancia visible. Tiempo de fotograma $\max(t_{\mathrm{CPU}},t_{\mathrm{GPU}})$ (M27, definición~5.1). Medir el coste real con un renderizador (por ejemplo, \texttt{moderngl} o \texttt{pyrender}) es opcional y puntúa en la rúbrica.
+  \item \emph{Calidad}: error en pantalla de cada instancia a partir del error geométrico de su nivel (distancia de Hausdorff a LOD0) con la proposición~5.5 de M27, ponderado por la importancia; métrica perceptual opcional (por ejemplo, FLIP o SSIM) sobre imágenes renderizadas de un subconjunto de fotogramas.
+  \item \emph{Memoria}: tres texturas de $4096\times 4096$ por malla base (color, normales y material). Color y material en BC7 (1~byte por téxel) o BC1 (0{,}5~bytes por téxel), normales en BC5 (1~byte por téxel), más un tercio para los mipmaps (M27, §5.5); se puede además descartar el primer nivel de mipmap de una textura, lo que divide su memoria por cuatro. Todo en BC7 y BC5 a resolución completa ocupa unos 2{,}7~GB, frente a un presupuesto de memoria de vídeo de 1{,}5~GB para texturas y geometría (geometría a unos 36~bytes por vértice, M27, §1.2): la elección de formatos y resoluciones es, pues, una segunda mochila de elección múltiple.
+\end{enumerate}
+
+\paragraph{Referencias de comparación.} \emph{Línea base}: umbrales fijos de distancia de 10, 30 y 80~m para pasar a LOD1, LOD2 y LOD3, con LOD generados con una fracción fija de triángulos (50, 25 y 10\,\%). \emph{Mejor alternativa sencilla}: umbrales por error proyectado de 1~píxel (M27, §5.3), sin presupuesto. \emph{Techo}: el PLEM por ventanas de 60 fotogramas con la trayectoria conocida y los costes exactos.
+
+\paragraph{Formulación que se pide.}
+\begin{enumerate}[label=F\arabic*.]
+  \item \emph{Cadena de LOD} por malla base: simplificación por error cuádrico (M27, §5.2) con fracciones de triángulos y opciones (preservar bordes, peso de las normales) elegidas para minimizar el error en pantalla esperado en las trayectorias de entrenamiento con un límite de memoria; los parámetros se ajustan con optimización bayesiana (M25, tema~4) o con halving sucesivo si la evaluación es cara (M28, §3.3). Cada nivel pasa la validación geométrica (M27, §6.2).
+  \item \emph{Selección por fotograma} como mochila de elección múltiple (M27, definición~5.6): $\min\sum_iw_i\,e_{i\ell}(d_i)+\kappa\sum_i\mathbb{1}[\ell_{i,t}\ne\ell_{i,t-1}]$ con $\sum_it_{i\ell}\le B_t$, cambios de un solo nivel por fotograma y la regla de dirección de arte de que los personajes a menos de 15~m van en LOD0. Se resuelve por relajación lagrangiana (M27, §5.4), y el multiplicador $\lambda$ se actualiza con un controlador PI sobre el tiempo de fotograma medido (M26, §1.4) para cumplir el percentil~99.
+  \item \emph{Modelo de coste aprendido}: regresión (\emph{gradient boosting} o perceptrón multicapa, M08 y M09) del tiempo en función de triángulos, píxeles, llamadas de dibujo y material, validada por trayectorias y usada dentro de F2.
+  \item \emph{Techo}: PLEM sobre ventanas de 60 fotogramas con el coste exacto, para acotar lo alcanzable (M24, §2.3).
+  \item \emph{Opcional}: búsqueda de la función de prioridad de la selección con un LLM (FunSearch u OpenEvolve, M28, tema~1), con el simulador de fotogramas como evaluador y las trayectorias de validación separadas de las de búsqueda.
+\end{enumerate}
+
+\begin{table}[H]
+\centering\small
+\caption{Opción (b): métodos sugeridos y dónde se estudiaron.}\label{tab:metodos-b}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.6cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{3.8cm}@{}}
+\toprule
+Componente & Método & Referencia del curso \\
+\midrule
+Mallas y validación & mallas, característica de Euler, SDF, comprobaciones topológicas & M27, §1.2, §1.3 y §6.2 \\
+Simplificación & error cuádrico, error proyectado & M27, §5.2 y §5.3 \\
+Selección con presupuesto & mochila de elección múltiple, relajación lagrangiana, PLEM & M27, §5.4; M24, §2.3 y §4.2 \\
+Control del presupuesto & PI sobre el multiplicador, antisaturación & M26, §1.4 \\
+Ajuste de la cadena & optimización bayesiana, halving sucesivo, hipercubo latino & M25, §2.6 y tema~4; M28, §3.3 \\
+Modelo de coste & regresión, \emph{gradient boosting}, perceptrón multicapa & M08, temas~2 y~6; M09, tema~1 \\
+Métrica perceptual & renderizado diferenciable y comparación de imágenes & M27, §4.1 y §4.2 \\
+Búsqueda de heurísticas & FunSearch, AlphaEvolve, sesgo del ganador & M28, §1.2--§1.4 y §2.2 \\
+Evaluación y valor & \emph{bootstrap} por bloques, VAN, monitorización & M28, §5.1--§5.2, §4.3 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Tecnologías.} Blender con \texttt{bpy} (modificador \emph{Decimate} en modo de colapso) o \texttt{trimesh} y \texttt{pymeshlab} para generar y simplificar; meshoptimizer para la simplificación y la reordenación de índices; Open3D para la distancia de Hausdorff; \texttt{nvdiffrast}, PyTorch3D, \texttt{pyrender} o \texttt{moderngl} para renderizar; OR-Tools o HiGHS para el PLEM del techo; scikit-learn y PyTorch para el modelo de coste; Optuna o BoTorch para el ajuste; OpenEvolve para la búsqueda opcional; MLflow y una interfaz de línea de órdenes integrada en la compilación de la escena.
+
+\begin{table}[H]
+\centering\small
+\caption{Opción (b): hitos semanales.}\label{tab:hitos-b}
+\begin{tabularx}{\textwidth}{@{}c>{\raggedright\arraybackslash}X@{}}
+\toprule
+Semana & Hito \\
+\midrule
+1 & Concepto de operación y requisitos (percentil 99, píxeles, memoria); generador de mallas y escena; trayectorias; simulador de fotogramas; línea base por distancias; partición congelada. \\
+2 & Validación geométrica de la biblioteca; modelo de coste calibrado; techo por ventanas y alternativa por error proyectado; documento de diseño v0. \\
+3 & Cadenas de LOD por error cuádrico con validación; curvas error--triángulos por malla. \\
+4 & Modelo de coste aprendido con validación por trayectorias; selección por fotograma con relajación lagrangiana y $\lambda$ fijo. \\
+5 & Control PI de $\lambda$, histéresis y regla de dirección de arte; formato de texturas con el presupuesto de memoria; documento de diseño v1. \\
+6 & Optimización bayesiana de los parámetros de simplificación y del controlador en validación; pruebas de estrés: giro rápido de cámara, multitud de personajes, GPU un 30\,\% más lenta y tirones de compilación de sombreadores. \\
+7 & Evaluación en las dos trayectorias de prueba con 5 semillas del ruido del coste; intervalos \emph{bootstrap} por bloques de 1~s; comprobación perceptual opcional. \\
+8 & Informe, herramienta integrada en la compilación, vídeo comparativo lado a lado y demostración. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Entregables específicos.} Además de E1 a E4: un vídeo de 30~s con la línea base y el optimizador lado a lado y el tiempo de fotograma superpuesto; la gráfica del tiempo de fotograma y de $\lambda$ a lo largo de una trayectoria de prueba; el informe de validación geométrica de todos los LOD generados.
+
+\paragraph{Criterios de aceptación.}
+\begin{enumerate}[label=B\arabic*.]
+  \item \emph{Rendimiento} (obligatorio): percentil~99 del tiempo de fotograma $\le 16{,}7$~ms en las dos trayectorias de prueba y ninguna ventana de 1~s con media superior a $16{,}7$~ms.
+  \item \emph{Calidad} (obligatorio): error en pantalla ponderado medio al menos un 20\,\% menor que el de la línea base con un percentil~99 igual o menor, con un intervalo \emph{bootstrap} del 95\,\% por bloques de 1~s cuyo extremo inferior sea de al menos el 10\,\%.
+  \item \emph{Estabilidad} (obligatorio): como máximo un cambio de nivel por instancia visible cada 2~s de media, y ninguna instancia con más de 3 cambios en 1~s.
+  \item \emph{Cómputo y memoria} (obligatorio): selección de las 2000 instancias en menos de 0{,}5~ms en el percentil~99 en CPU; memoria de vídeo dentro del presupuesto en todos los fotogramas.
+  \item \emph{Validez geométrica} (obligatorio): el 100\,\% de los LOD generados son variedades cerradas con orientación coherente, sin caras degeneradas, con la característica de Euler de su malla base y con un error de Hausdorff no mayor que el declarado.
+  \item \emph{Honestidad y reproducibilidad} (obligatorio): mejora frente a la alternativa por error proyectado con su intervalo, fracción capturada del margen hasta el techo, y reproducción con una sola orden.
+  \item \emph{Excelencia}: error del modelo de coste (MAPE) $\le 10\,\%$ en prueba; correlación de Spearman $\ge 0{,}7$ entre el error en pantalla y la métrica perceptual en 200 fotogramas; captura de al menos el 60\,\% del margen hasta el techo; coste medido en hardware real.
+\end{enumerate}
+
+\begin{table}[p]
+\centering\footnotesize
+\caption{Rúbrica de la opción (b): software 3D (100 puntos).}\label{tab:rubrica-b}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.5cm}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Criterio & Peso & Excelente & Suficiente & Insuficiente \\
+\midrule
+Documento de diseño y requisitos & 10 & Requisitos en percentil~99, píxeles y memoria con márgenes; las tres referencias calculadas en la semana~2 & Plantilla completa con alguna referencia tardía & Requisitos sobre la media o sin línea base \\
+\addlinespace
+Datos y modelo de coste & 10 & Biblioteca y escena fieles al escenario; modelo de coste validado por trayectorias; partición congelada & Generador correcto, coste sin validar por trayectorias & Escena trivial o trayectorias de prueba usadas para ajustar \\
+\addlinespace
+Cadena de LOD & 15 & Error cuádrico con parámetros ajustados por BO o halving, curvas error--triángulos, validación geométrica completa & Simplificación correcta con parámetros fijos razonados & LOD inválidos o sin validar \\
+\addlinespace
+Selección con presupuesto & 20 & Mochila con relajación lagrangiana, cota dual, control PI de $\lambda$, histéresis y regla de arte; techo por PLEM & Lagrangiana con $\lambda$ fijo ajustado a mano & Selección voraz sin presupuesto o que lo incumple \\
+\addlinespace
+Componente de IA & 10 & Modelo de coste aprendido integrado y validado; búsqueda con LLM o métrica perceptual & Modelo de coste aprendido sin integrar & Ninguno o sin validar \\
+\addlinespace
+Evaluación & 15 & \emph{Bootstrap} por bloques, 5 semillas, ablaciones (sin histéresis, sin control de $\lambda$, sin modelo aprendido), cuatro pruebas de estrés & Intervalos correctos y alguna prueba de estrés & Medias sin intervalos o en trayectorias de entrenamiento \\
+\addlinespace
+Integración y valor & 10 & Herramienta en la compilación, telemetría del tiempo de fotograma, horas de artista ahorradas y VAN & Script reproducible con informe de memoria & Proceso manual \\
+\addlinespace
+Código y demostración & 10 & Orden única, pruebas automáticas, vídeo comparativo y demostración con caso de estrés & Código reproducible con pasos manuales & No reproducible \\
+\midrule
+\textbf{Total} & \textbf{100} & & & \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% =====================================================================
+\section{Opción (c): operaciones}
+\label{sec:proy-c}
+
+\subsection*{Rutas y mantenimiento predictivo de una flota de reparto}
+
+\paragraph{Contexto y decisiones.} Una empresa de reparto urbano opera 30 furgonetas desde un depósito; cada una recorre unos 100~km por día laborable. El optimizador toma tres decisiones acopladas: (i) cada domingo, y con revisión diaria, el \emph{plan de mantenimiento}: qué vehículo pasa por el taller qué día, con una capacidad de dos vehículos diarios de lunes a viernes; (ii) cada noche, las \emph{rutas} del día siguiente con los vehículos disponibles, respetando capacidades, ventanas horarias y jornada, y (iii) la \emph{asignación según el riesgo}: los vehículos con mayor probabilidad de avería reciben rutas más cortas y cercanas al depósito, porque una avería lejos cuesta más.
+
+\paragraph{Datos sintéticos que hay que generar.} Dos años ficticios de operación diaria.
+\begin{enumerate}[label=(\roman*)]
+  \item \emph{Ciudad}: cuadrado de $30\times 30$~km con el depósito en $(5,15)$~km; 4000 direcciones en cinco agrupaciones gaussianas. Tiempo de viaje: distancia de Manhattan por $1{,}3$ dividida por una velocidad de 28~km/h, que baja a 18~km/h de 8:00 a 9:30 y de 17:30 a 19:00, con ruido multiplicativo log-normal de desviación $0{,}15$.
+  \item \emph{Pedidos}: cada día laborable, una Poisson de media 650 (factor $1{,}2$ los lunes y en diciembre), de 1 a 4 bultos, con servicio de $4+0{,}5$ minutos por bulto; ventanas de mañana (8--12~h, 40\,\%), de tarde (14--18~h, 35\,\%) o libres (8--18~h, 25\,\%).
+  \item \emph{Flota y costes}: capacidad de 70 bultos (con la demanda media hacen falta unas 23 furgonetas por capacidad, y los lunes, unas 28); jornada de 8 a 18~h ampliable hasta las 20~h con horas extra a 35~€/h; conductor a 22~€/h; 0{,}25~€/km; entrega fuera de ventana, 15~€; subcontratar un vehículo un día, 250~€.
+  \item \emph{Degradación}: un componente crítico por vehículo con riesgos proporcionales, $\lambda(t\mid z)=\lambda_0(t)\exp(0{,}6\,z_{\mathrm{carga}}+0{,}4\,z_{\mathrm{paradas}})$, con $\lambda_0$ de Weibull de forma $\beta=2{,}5$ y escala $\theta=15\,000$~km (M28, definición~4.11), y covariables tipificadas que dependen de las rutas asignadas. El fallo se produce cuando el riesgo acumulado supera una exponencial de media~1 sorteada tras cada renovación. Telemetría diaria: índice de vibración $v=1+2D^{2}+\N(0,\,0{,}15^{2})$, con $D\in[0,1]$ el cociente entre el riesgo acumulado y el umbral sorteado (la degradación), temperatura del componente y códigos de error de Poisson con tasa creciente en $D$.
+  \item \emph{Mantenimiento}: preventivo, 350~€ y un día sin vehículo; avería en ruta, 1800~€ (grúa y reparación), los pedidos pendientes se reasignan con penalización y el vehículo queda tres días fuera. El mantenimiento renueva el componente («como nuevo»).
+  \item \emph{Histórico y registro}: la política histórica revisa cada vehículo a los 10\,000~km y, además, cada semana inspecciona al azar un vehículo con probabilidades conocidas y registradas (para la evaluación contrafactual, M28, §4.4). Las vidas interrumpidas por el preventivo quedan censuradas (M28, observación~4.12). En el mes~21 se sustituye el sensor de vibración y su lectura pasa a tener un sesgo de $+0{,}3$.
+  \item \emph{Partición}: meses 1 a~15 para entrenamiento, 16 a~19 para validación y 20 a~24 para prueba.
+\end{enumerate}
+
+\paragraph{Referencias de comparación.} \emph{Línea base}: revisión cada 10\,000~km y rutas con la construcción por el arco más barato de OR-Tools sin búsqueda local. \emph{Mejor alternativa sencilla}: la edad óptima de sustitución $T^{\ast}$ calculada con una Weibull ajustada con censura (M28, proposición~4.13) y rutas con búsqueda local guiada durante 30~s. \emph{Techo}: un oráculo que conoce el instante de cada fallo y revisa el día anterior, con los tiempos de viaje reales.
+
+\paragraph{Formulación que se pide.}
+\begin{enumerate}[label=F\arabic*.]
+  \item \emph{Modelo de riesgo}: probabilidad de fallo en los próximos 7 días por vehículo, con un modelo de supervivencia de Weibull con riesgos proporcionales estimado por máxima verosimilitud con censura y con un clasificador (\emph{gradient boosting} o regresión logística, M08, tema~3) con validación temporal; se comparan discriminación (AUC), calibración (error de calibración esperado con 10 intervalos) y, sobre todo, el coste de las decisiones que inducen.
+  \item \emph{Plan de mantenimiento semanal} como PLEM de asignación: $m_{vd}\in\{0,1\}$ (el vehículo $v$ va al taller el día $d$, o no va, $d=\varnothing$), $\sum_vm_{vd}\le 2$, $\sum_dm_{vd}\le 1$; coste esperado de cada opción $c_{vd}=c_p+c_f\sum_{d'<d}\hat r_{vd'}+\text{coste de capacidad}$, donde $\hat r_{vd'}$ es el riesgo diario previsto. El coste de capacidad penaliza los días en que los vehículos disponibles no cubren la demanda prevista (subcontratación).
+  \item \emph{Rutas diarias} como VRPTW (M24, §3.2) resuelto con OR-Tools (dimensiones de tiempo y de carga), objetivo de kilómetros, horas de conductor, horas extra y entregas fuera de ventana, y un coste por kilómetro que crece con el riesgo del vehículo, $0{,}25+\kappa\,\hat r_v$~€/km, con $\kappa$ elegido en validación.
+  \item \emph{Evaluación contrafactual}: antes de simular, estimar con ponderación inversa de la propensión el valor de la nueva política de inspección a partir de las inspecciones aleatorias del histórico (M28, proposición~4.9), y compararlo con el gemelo.
+  \item \emph{Producción}: PSI semanal de la telemetría con umbrales calibrados en un periodo estable, periodo de reentrenamiento (M28, proposición~4.8) y AMFE del sistema.
+\end{enumerate}
+
+\begin{table}[H]
+\centering\small
+\caption{Opción (c): métodos sugeridos y dónde se estudiaron.}\label{tab:metodos-c}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.6cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{3.8cm}@{}}
+\toprule
+Componente & Método & Referencia del curso \\
+\midrule
+Rutas & VRPTW, big-M de las ventanas, búsqueda local, 2-opt & M24, §3.1 y §3.2 \\
+Plan de mantenimiento & PLEM de asignación con capacidad, precios sombra del taller & M24, §2.2 y §2.3 \\
+Fiabilidad & Weibull, censura, política por edad & M28, §4.5; 0.9, §4.2 \\
+Modelo de riesgo & regresión logística, \emph{gradient boosting}, calibración & M08, tema~3; M05, §4.2 \\
+Decisión con incertidumbre & coste esperado, programación estocástica, CVaR & M24, §6.3; M28, §5.4 \\
+Evaluación contrafactual & ponderación inversa de la propensión & M28, §4.4 \\
+Ajuste de $\kappa$ y del modelo & optimización bayesiana, búsqueda aleatoria & M25, tema~4 y §6.2 \\
+Producción y valor & PSI, reentrenamiento, intervalos, VAN, AMFE & M28, §4.3, §5.1--§5.5 \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Tecnologías.} OR-Tools (rutas y CP-SAT) o PyVRP para el VRPTW; HiGHS o PuLP para el plan de mantenimiento; \texttt{lifelines} o \texttt{scikit-survival} para la supervivencia con censura, o una verosimilitud propia con SciPy; scikit-learn para los clasificadores y la calibración; Optuna para el ajuste; Evidently o un PSI propio para la deriva; MLflow, FastAPI y \texttt{pytest}; un mapa con \texttt{folium} o \texttt{matplotlib} para las rutas.
+
+\begin{table}[H]
+\centering\small
+\caption{Opción (c): hitos semanales.}\label{tab:hitos-c}
+\begin{tabularx}{\textwidth}{@{}c>{\raggedright\arraybackslash}X@{}}
+\toprule
+Semana & Hito \\
+\midrule
+1 & Concepto de operación y requisitos; generador de ciudad, pedidos, tiempos y degradación; gemelo de un día de operación; línea base; partición congelada. \\
+2 & Validación del gemelo (kilómetros, puntualidad, tasa de averías de la política histórica); techo con oráculo y política $T^{\ast}$; documento de diseño v0. \\
+3 & VRPTW diario con OR-Tools: tiempos, puntualidad, comparación de estrategias de búsqueda; certificación de un día pequeño con un PLEM o con programación dinámica. \\
+4 & Modelos de riesgo con censura y clasificador; validación temporal, AUC y calibración; estimación IPS de la política de inspección. \\
+5 & PLEM del plan de mantenimiento, acoplamiento con las rutas (disponibilidad y coste por riesgo); documento de diseño v1. \\
+6 & Ajuste de $\kappa$ y de los umbrales en validación; pruebas de estrés: pico de demanda del 30\,\%, taller con un solo puesto una semana, sensor congelado y lluvia (velocidades un 20\,\% menores). \\
+7 & Evaluación en los 5 meses de prueba con 5 semillas y CRN; intervalos por semana, VAN, CVaR, AMFE; detección del cambio de sensor del mes~21. \\
+8 & Informe, API de planificación nocturna, panel de riesgo y rutas, demostración. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Entregables específicos.} Además de E1 a E4: el mapa de las rutas de un día de prueba con los vehículos coloreados por riesgo; la curva de fiabilidad estimada con censura frente a la verdadera; el calendario de taller de una semana; la serie del PSI alrededor del cambio de sensor.
+
+\paragraph{Criterios de aceptación.}
+\begin{enumerate}[label=C\arabic*.]
+  \item \emph{Restricciones duras} (obligatorio): capacidad del taller, capacidad de los vehículos y jornada máxima (20:00) siempre respetadas; todo pedido se asigna o se subcontrata de forma explícita.
+  \item \emph{Mejora} (obligatorio): coste total (kilómetros, conductores, horas extra, retrasos, mantenimiento, averías y subcontratación) al menos un 8\,\% menor que el de la línea base en los 5 meses de prueba, con el extremo inferior del intervalo del 95\,\% pareado por semana de al menos el 4\,\%.
+  \item \emph{Servicio y averías} (obligatorio): al menos el 96\,\% de entregas en ventana y al menos un 30\,\% menos de averías en ruta que la línea base.
+  \item \emph{Modelo de riesgo} (obligatorio): AUC $\ge 0{,}80$ y error de calibración esperado $\le 0{,}03$ en la prueba temporal; el estimador de Weibull con censura recupera $\beta$ y $\theta$ con un error menor del 10\,\% en datos simulados con parámetros conocidos.
+  \item \emph{Cómputo y monitorización} (obligatorio): rutas del día en menos de 120~s y plan de mantenimiento en menos de 10~s; alarma de deriva en los 7 días siguientes al cambio de sensor, con no más de una falsa alarma por trimestre en el periodo estable.
+  \item \emph{Honestidad y reproducibilidad} (obligatorio): mejora frente a la alternativa $T^{\ast}$ con su intervalo, aunque contenga el cero; fracción capturada del margen hasta el techo; reproducción con una sola orden.
+  \item \emph{Excelencia}: captura de al menos el 40\,\% del margen entre la alternativa sencilla y el techo; estimación IPS dentro del intervalo del gemelo; $\Prob(\VAN<0)\le 10\,\%$.
+\end{enumerate}
+
+\begin{table}[p]
+\centering\footnotesize
+\caption{Rúbrica de la opción (c): operaciones (100 puntos).}\label{tab:rubrica-c}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.5cm}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Criterio & Peso & Excelente & Suficiente & Insuficiente \\
+\midrule
+Documento de diseño y requisitos & 10 & Decisiones acopladas bien delimitadas; requisitos con márgenes; las tres referencias, incluida $T^{\ast}$, en la semana~2 & Plantilla completa con alguna referencia tardía & Sin línea base o con la práctica actual como única referencia \\
+\addlinespace
+Datos y gemelo & 10 & Generador fiel, censura y registro de propensiones correctos, gemelo validado, partición congelada & Generador correcto y gemelo parcialmente validado & Sin censura, fugas o prueba usada para ajustar \\
+\addlinespace
+Rutas (VRPTW) & 15 & OR-Tools con ventanas y capacidad, comparación de estrategias, certificación en un caso pequeño, coste por riesgo & VRPTW correcto sin acoplamiento con el riesgo & Rutas infactibles o sin ventanas \\
+\addlinespace
+Plan de mantenimiento & 15 & PLEM de asignación con capacidad y coste de capacidad, precios sombra del taller, horizonte deslizante & Asignación correcta por reglas razonadas & Sin plan o incumple la capacidad \\
+\addlinespace
+Componente de IA & 15 & Supervivencia con censura y clasificador calibrado comparados por el coste de decisión; IPS & Un modelo bien validado y calibrado & Sin validación temporal o sin censura \\
+\addlinespace
+Evaluación & 15 & CRN con 5 semillas, intervalos por semana, ablaciones (sin riesgo en las rutas, sin plan) y cuatro pruebas de estrés & Intervalos correctos y alguna prueba de estrés & Solo medias o comparación no pareada \\
+\addlinespace
+Valor, riesgo y producción & 10 & VAN con Monte Carlo, CVaR, AMFE, PSI con detección del cambio de sensor, API & VAN determinista y PSI & Sin análisis de valor ni monitorización \\
+\addlinespace
+Código y demostración & 10 & Orden única, pruebas, registro, demostración con avería inyectada & Reproducible con pasos manuales & No reproducible \\
+\midrule
+\textbf{Total} & \textbf{100} & & & \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% =====================================================================
+\section{Calificación del proyecto}
+\label{sec:proy-calificacion}
+
+\begin{enumerate}[label=\arabic*.]
+  \item El proyecto se puntúa sobre 100 con la rúbrica de la opción elegida (\cref{tab:rubrica-a,tab:rubrica-b,tab:rubrica-c}). Dentro de cada criterio, «Excelente» corresponde al 90--100\,\% de su peso, «Suficiente» al 60--75\,\% e «Insuficiente» al 0--40\,\%.
+  \item Se aprueba con 70 puntos o más y con todos los criterios de aceptación obligatorios cumplidos. Si un criterio obligatorio no se cumple, la nota no puede superar 65 puntos, salvo que el informe demuestre con datos que el criterio es inalcanzable con el escenario nominal (por ejemplo, porque el techo está por debajo del umbral) y proponga y justifique uno revisado antes de la semana~6; en ese caso decide el profesor.
+  \item Cada criterio de excelencia cumplido y bien documentado puede compensar hasta 2 puntos perdidos en otros criterios, sin superar 100.
+  \item Se penaliza con 10 puntos cada semana de retraso del documento de diseño v0 o v1, porque esas revisiones existen para corregir el rumbo a tiempo.
+  \item La nota del hito combina examen y proyecto como se indica en las instrucciones: $0{,}4\cdot\text{examen}/10+0{,}6\cdot\text{proyecto}/10$, con al menos un 7 en cada parte.
+\end{enumerate}

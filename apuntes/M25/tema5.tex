@@ -1,0 +1,193 @@
+% =====================================================================
+\chapter{Casos de estudio: moldeo por inyección y hormigón}
+\label{tema:5}
+% =====================================================================
+
+Este tema reúne las piezas de los anteriores en dos casos completos: el ajuste de la inyectora, que se ha ido desarrollando desde el \cref{tema:1}, y la formulación de un hormigón con menos emisiones de CO$_2$. Ambos usan datos sintéticos generados por los simuladores de la Parte~5 de la práctica; la revisión de Fernandes \emph{et al.}~\cite{fernandes} sobre modelado y optimización del moldeo por inyección y el trabajo de Ament \emph{et al.}~\cite{ament} sobre hormigón sostenible con optimización bayesiana son las referencias de los procesos reales. La metodología sigue las guías de Montgomery~\cite[§1.5]{montgomery} y Garnett~\cite[cap.~9]{garnett}.
+
+\section{Del problema al optimizador}
+
+\begin{algoritmo}[Lista de diseño de un optimizador experimental]\label{alg:lista}
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Objetivo}: una cifra con unidades y su justificación económica (coste por pieza buena, emisiones por m$^3$). Si hay varias, decidir si se escalariza o se busca el frente de Pareto.
+  \item \emph{Variables}: las que se pueden fijar en planta, con rangos seguros acordados con quien opera el proceso; escala lineal o logarítmica.
+  \item \emph{Restricciones}: clasificarlas (conocidas, caras, ocultas, de seguridad) según el \cref{tema:1}.
+  \item \emph{Ruido}: de dónde viene, cuánto vale (réplicas o un estudio previo) y si es heterocedástico.
+  \item \emph{Presupuesto y logística}: número de ensayos, cuántos en paralelo, cuánto tarda cada uno y si hay fidelidades más baratas.
+  \item \emph{Cribado}: un factorial o una fracción para descartar variables y detectar interacciones.
+  \item \emph{Bucle}: diseño inicial, sustituto, adquisición, recomendación (\cref{alg:bo}).
+  \item \emph{Parada y confirmación}: criterio de parada (\cref{tema:6}) y ensayos repetidos en la recomendación.
+  \item \emph{Registro}: guardar cada ensayo con su contexto (lote de material, turno, operario) para poder reutilizarlo.
+\end{enumerate}
+\end{algoritmo}
+
+\begin{figure}[ht]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},
+  caja/.style={draw,rounded corners,align=center,minimum height=0.95cm,thick,fill=white},
+  dato/.style={draw,align=center,minimum height=0.95cm,dashed}]
+  \node[dato] (reg) at (0,0) {registro de\\ensayos};
+  \node[caja] (mod) at (3.3,0.9) {sustituto del\\objetivo $\mu_f,\sigma_f$};
+  \node[caja] (res) at (3.3,-0.9) {sustitutos de las\\restricciones $\mu_c,\sigma_c$};
+  \node[caja] (adq) at (6.9,0) {adquisición\\(EI restringida, lote $q$)};
+  \node[caja] (seg) at (10.3,0) {filtro de\\seguridad};
+  \node[caja] (ope) at (10.3,-2.2) {aprobación\\del responsable};
+  \node[caja] (pla) at (6.9,-2.2) {planta:\\ensayo y medida};
+  \draw[->,thick] (reg) -- (mod); \draw[->,thick] (reg) -- (res);
+  \draw[->,thick] (mod) -- (adq); \draw[->,thick] (res) -- (adq);
+  \draw[->,thick] (adq) -- (seg); \draw[->,thick] (seg) -- (ope);
+  \draw[->,thick] (ope) -- (pla); \draw[->,thick] (pla) -| (reg);
+\end{tikzpicture}
+\caption{Arquitectura de un optimizador experimental en planta. Las restricciones conocidas actúan en el filtro de seguridad, que descarta propuestas fuera de la ventana operativa antes de que lleguen a la persona responsable.}
+\label{fig:arquitectura}
+\end{figure}
+
+La comparación con la práctica tradicional de variar un factor cada vez (OFAT) muestra por qué se necesita todo lo anterior.
+
+\begin{ejemplo}[Un factor cada vez en un valle oblicuo]\label{ej:ofat}
+Sea $f(u_1,u_2)=(u_1-u_2)^2+0{,}05\,(u_1+u_2-2)^2$, con mínimo $f=0$ en $(1,1)$. Partiendo de $(0,0)$, se optimiza primero $u_1$ con $u_2=0$: $\partial f/\partial u_1=2u_1+0{,}1(u_1-2)=0$ da $u_1=0{,}0952$. Después se optimiza $u_2$ con $u_1$ fijo: $-2(u_1-u_2)+0{,}1(u_1+u_2-2)=0$ da $u_2=(1{,}9u_1+0{,}2)/2{,}1=0{,}1814$. Tras una pasada, el experimentador está en $(0{,}095;0{,}181)$ con $f=0{,}156$, lejos del óptimo, y cada nueva pasada avanza poco porque el valle es oblicuo: la interacción $u_1u_2$ (el término cruzado) hace que la mejor elección de una variable dependa de la otra. Un modelo de segundo orden ajustado con un CCD localiza el mínimo con una sola resolución (\cref{prop:estacionario}). Montgomery~\cite[§5.2]{montgomery} da el argumento general de la ventaja de los factoriales sobre OFAT.
+\end{ejemplo}
+
+\section{Caso A: el ajuste completo de la inyectora}
+
+\begin{ejemplo}[Inyectora: de la receta del operario al óptimo confirmado]\label{ej:casoA}
+Se sigue el \cref{alg:lista} con los datos sintéticos de los temas anteriores.
+
+\emph{1–5. Formulación.} Coste por pieza buena con restricción de alabeo $w\le0{,}45$~mm (\cref{ej:inyectora}); tres variables con rangos seguros; ruido binomial en los defectos (desviación $0{,}0126$~€ en el coste) y de medida en el alabeo ($0{,}009$~mm con 20 piezas); 30 lotes de unas dos horas, dos por turno.
+
+\emph{6. Cribado.} El factorial $2^3$ del \cref{ej:factorial} muestra que el alabeo depende de $T$, de $t_e$ y de su interacción, pero no de $P$ en el rango ensayado. Se mantienen las tres variables porque $P$ controla los defectos, pero se sabe ya que la restricción obligará a alargar el enfriamiento o a bajar la temperatura.
+
+\emph{7. Bucle.} Optimización bayesiana con EI restringida, 10 lotes iniciales y 20 secuenciales (\cref{ej:bo-inyectora}), o 10 rondas de 2 lotes. Mediana de 10 repeticiones: regret $0{,}0066$~€ con lotes de uno y $0{,}0044$~€ con lotes de dos.
+
+\emph{8. Confirmación.} En la repetición de la práctica tomada como ejemplo, el optimizador recomienda $T=200$~°C, $P=84{,}4$~MPa y $t_e=17{,}9$~s, con coste real $0{,}800$~€ y alabeo $0{,}447$~mm. Es un óptimo local en una esquina del dominio, solo dos céntimos peor que el global: la región de bajo coste es una cresta larga a lo largo de la frontera del alabeo, en la que temperatura y presión se compensan (como ya sugería el análisis canónico del \cref{ej:ccd}). Antes de cambiar la receta se ejecutan 5 lotes de confirmación: la media de 5 lotes tiene una desviación de $0{,}0126/\sqrt5=0{,}0056$~€, suficiente para distinguir el nuevo ajuste ($0{,}80$~€) del antiguo ($0{,}87$~€) con holgura. El ahorro confirmado, unos 7 céntimos por pieza, es del $8\,\%$.
+
+\emph{Variante con dos objetivos.} Si la dirección prefiere decidir entre defectos y tiempo de ciclo, los mismos ensayos proporcionan un frente de Pareto: de los 183 lotes que cumplen el alabeo en las 10 repeticiones, 39 son no dominados, con un hipervolumen de $334{,}6$ (unidades \%·s) respecto a la referencia $(20\,\%;\ 45\ \text{s})$. El coste por pieza buena es una escalarización particular de ese frente, con pesos dados por los precios.
+\end{ejemplo}
+
+\section{Caso B: un hormigón con menos CO\texorpdfstring{$_2$}{2}}
+
+El cemento es responsable de una fracción importante de las emisiones globales de CO$_2$, lo que motiva sustituir parte de él por adiciones como las cenizas volantes~\cite{ament}. La dificultad es que la resistencia, que se mide rompiendo probetas a los 28 días, baja con la sustitución.
+
+\begin{definicion}[Resistencia característica y resistencia media objetivo]\label{def:fck}
+La resistencia característica $f_{ck}$ es el cuantil del $5\,\%$ de la resistencia a compresión a 28 días. Si la resistencia de las amasadas de una mezcla es normal con media $f_{cm}$ y desviación $\sigma_p$ (variabilidad de producción), $f_{ck}=f_{cm}-1{,}645\,\sigma_p$, y para garantizar $f_{ck}$ la mezcla debe tener $f_{cm}\ge f_{ck}+1{,}645\,\sigma_p$.
+\end{definicion}
+
+La fórmula es el cuantil de la normal (módulo~0.8, §6.3): $\Pr[f<f_{cm}-1{,}645\sigma_p]=\Phi(-1{,}645)=0{,}05$.
+
+\begin{ejemplo}[Formulación de la mezcla]\label{ej:hormigon}
+\emph{Variables.} Relación agua/conglomerante $a/c\in[0{,}35;0{,}60]$, fracción de cemento sustituida por cenizas $s\in[0;0{,}40]$ y contenido de conglomerante $b\in[280;450]$~kg/m$^3$.
+
+\emph{Restricción conocida.} El agua, $(a/c)\,b$, debe estar entre 160 y 195~kg/m$^3$ para que el hormigón sea trabajable. Es barata: se comprueba sin ensayar y se usa para filtrar candidatos.
+
+\emph{Objetivo conocido.} Con factores de emisión de $0{,}93$~kg CO$_2$e por kg de cemento, $0{,}03$ por kg de cenizas y 45~kg/m$^3$ por áridos y transporte (valores de orden de magnitud para el curso), $\gwp(x)=0{,}93\,b(1-s)+0{,}03\,bs+45$~kg~CO$_2$e/m$^3$.
+
+\emph{Restricción cara.} Para un C30 con $\sigma_p=4$~MPa, $f_{28}(x)\ge 30+1{,}645\cdot4=36{,}58$~MPa. Cada ensayo es una amasada con probetas rotas a 7 y 28 días; el ruido de la media de las probetas es de unos 2~MPa. El simulador usa una ley del tipo de Abrams, $f_{28}=105\cdot 8^{-a/c}$~MPa sin cenizas, corregida por la sustitución y por el contenido de conglomerante.
+
+\emph{Partida y óptimo.} La mezcla habitual, $(0{,}50;\ 0;\ 350)$, da $f_{28}=37{,}12$~MPa y $\gwp=370{,}5$. El óptimo del simulador es $(0{,}4225;\ 0{,}225;\ 379)$, con $\gwp=320{,}7$ ($-13{,}4\,\%$) y $f_{28}=36{,}58$ justo en el límite: se baja la relación agua/conglomerante para poder sustituir un $22\,\%$ del cemento, y el agua queda en su mínimo de 160~kg/m$^3$.
+\end{ejemplo}
+
+\begin{observacion}[Objetivo conocido, restricción desconocida]\label{obs:objconocido}
+Cuando el objetivo $g$ es una fórmula conocida y lo caro es la restricción, la mejora en un candidato es determinista, $I(x)=\max(g^*-g(x),0)$, y la EI restringida de la \cref{prop:eic} se reduce a
+\[
+\alpha(x)=\max\bigl(g^*-g(x),0\bigr)\cdot\Pr\bigl[f_{28}(x)\ge 36{,}58\bigr]=\max\bigl(g^*-g(x),0\bigr)\cdot\Phi\Bigl(\frac{\mu_{28}(x)-36{,}58}{\sigma_{28}(x)}\Bigr).
+\]
+Solo hay que modelar lo que no se conoce. La misma idea mejora el caso de la inyectora, cuyo tiempo de ciclo es conocido: basta modelar la fracción defectuosa.
+\end{observacion}
+
+\begin{ejemplo}[Programa semanal con optimización bayesiana]\label{ej:casoB}
+Se ensayan 6 mezclas iniciales de un LHS filtrado por la restricción de agua y 4 semanas de 3 mezclas, elegidas con la adquisición de la \cref{obs:objconocido} y el creyente del kriging: 18 amasadas en total. La recomendación final minimiza el GWP entre las mezclas con probabilidad posterior de cumplir la resistencia de al menos $0{,}9$. En 6 repeticiones del estudio (Parte~5 de la práctica):
+\begin{center}\small
+\begin{tabular}{@{}cccccc@{}}
+\toprule
+Repetición & $a/c$ & $s$ & $b$ (kg/m$^3$) & GWP & $f_{28}$ real (MPa) \\
+\midrule
+0 & 0{,}451 & 0{,}127 & 357 & 335{,}8 & 37{,}79 \\
+1 & 0{,}462 & 0{,}118 & 348 & 331{,}7 & 37{,}12 \\
+2 & 0{,}418 & 0{,}202 & 385 & 333{,}2 & 38{,}08 \\
+3 & 0{,}469 & 0{,}116 & 343 & 328{,}1 & 36{,}54 \\
+4 & 0{,}448 & 0{,}166 & 361 & 327{,}0 & 36{,}80 \\
+5 & 0{,}450 & 0{,}132 & 357 & 334{,}8 & 37{,}78 \\
+\bottomrule
+\end{tabular}
+\end{center}
+El GWP mediano es $332{,}4$~kg/m$^3$: un $10{,}3\,\%$ menos que la mezcla habitual y $11{,}7$ por encima del óptimo. La distancia al óptimo es el precio de la prudencia: con 18 amasadas y 2~MPa de ruido, el modelo no puede afirmar con probabilidad $0{,}9$ que una mezcla en el límite cumple, y en cinco de las seis repeticiones recomienda mezclas con un margen de 0,2 a 1,5~MPa. En la sexta, la mezcla recomendada queda $0{,}04$~MPa por debajo del objetivo: por eso la recomendación se confirma con amasadas de prueba antes de usarla en obra.
+
+\emph{Baja fidelidad.} La resistencia a 7 días llega tres semanas antes. En los 18 ensayos de una repetición, la correlación entre $f_7$ y $f_{28}$ es $0{,}85$, pero el cociente $f_7/f_{28}$ baja de $0{,}68$ sin cenizas a $0{,}55$ con un $30\,\%$, porque las cenizas reaccionan más despacio. Usar $f_7$ como sustituto directo penalizaría precisamente las mezclas con cenizas; un modelo multifidelidad debe aprender esa dependencia (\cref{eje:5-fidelidad}).
+\end{ejemplo}
+
+\begin{ejemplo}[Casos reales publicados]\label{ej:reales}
+Ament, Witte, Garg y Kusuma~\cite{ament} formularon el diseño de mezclas de hormigón como un problema con dos objetivos, resistencia a compresión y potencial de calentamiento global, propusieron un modelo de procesos gaussianos para predecir la resistencia a partir de relativamente pocas medidas y ejecutaron optimización bayesiana multiobjetivo con ensayos reales de las mezclas propuestas; según los autores, las mezclas obtenidas consiguen mejores compromisos que las basadas en la práctica industrial, y el código es abierto. En química de síntesis, Shields \emph{et al.}~\cite{shields} compararon la optimización bayesiana con químicos expertos en la optimización de reacciones y encontraron que el algoritmo alcanzaba buenos resultados en menos experimentos de media y con resultados más consistentes.
+\end{ejemplo}
+
+\begin{table}[ht]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}p{3.3cm}@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+Ax, interfaz \texttt{Client}~\cite{ax} & Pedir ensayos (\texttt{get\_next\_trials}), registrar resultados (\texttt{complete\_trial}), restricciones de resultado, ensayos pendientes & MIT & Campañas en planta o laboratorio con varias personas \\
+BoTorch~\cite{botorch} & Adquisiciones con objetivos conocidos, restricciones y multifidelidad & MIT & Formulaciones a medida como la \cref{obs:objconocido} \\
+pyDOE3, \texttt{scipy.stats.qmc} & Cribado y diseño inicial & BSD & Fases 6 y 7 de la lista \\
+Sustainable\-Concrete~\cite{ament} & Código de los modelos y del bucle de Ament \emph{et al.} & Código abierto (GitHub) & Punto de partida para mezclas reales \\
+Hoja de cálculo o base de datos & Registro de ensayos con contexto & — & Siempre: es el activo más valioso \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para desplegar un optimizador experimental.}
+\label{tab:tec5}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores5}
+\begin{enumerate}
+  \item \emph{Optimizar el simulador y no la planta}: un sustituto ajustado a simulaciones hereda sus sesgos; las conclusiones se confirman con ensayos reales.
+  \item \emph{Ignorar la deriva}: un lote nuevo de polímero o de cemento cambia la respuesta; se registra como variable de contexto o se reinicia el estudio.
+  \item \emph{Recomendaciones sin margen}: un óptimo en la frontera de una restricción de calidad o de seguridad se incumple la mitad de las veces.
+  \item \emph{Ensayos imposibles}: proponer mezclas no trabajables o presiones fuera de la máquina por no filtrar las restricciones conocidas.
+  \item \emph{Usar la baja fidelidad como si fuera la alta}: el ensayo a 7 días subestima de forma distinta según la composición.
+  \item \emph{Perder la trazabilidad}: sin registro del contexto de cada ensayo, los datos no sirven para el siguiente estudio.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Montgomery~\cite{montgomery}, §1.5 «Guidelines for Designing Experiments», §5.2 «The Advantage of Factorials» y §11.6 «Mixture Experiments».
+\item Fernandes \emph{et al.}~\cite{fernandes}, revisión del modelado y la optimización del moldeo por inyección.
+\item Ament \emph{et al.}~\cite{ament}, hormigón sostenible mediante optimización bayesiana.
+\item Shields \emph{et al.}~\cite{shields}, optimización bayesiana de reacciones químicas.
+\item Garnett~\cite{garnett}, cap.~9 «Implementation» y apéndice~D (bibliografía comentada de aplicaciones).
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-lista}
+Aplique los puntos 1 a 5 del \cref{alg:lista} a la optimización de una fermentación para producir un aroma: variables temperatura (28–37~°C), pH (5,0–7,0), glucosa inicial (20–80~g/L) e inóculo (1–10~\%); objetivo, título de producto a las 72~h; 4 biorreactores en paralelo; cada tanda dura 4 días.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-fck}
+(a) Calcule la resistencia media objetivo de un C25 con $\sigma_p=3{,}5$~MPa y con $\sigma_p=5$~MPa. (b) Si una planta reduce su variabilidad de 5 a 3,5~MPa, ¿cuántos MPa de margen gana? (c) Con la ley $f_{28}=105\cdot8^{-a/c}$, halle la $a/c$ máxima en cada caso y cuánto puede aumentar gracias a la reducción de la variabilidad.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-abrams}
+Tres amasadas sin cenizas dan $(a/c,\ f_{28})=(0{,}40;\ 45{,}7)$, $(0{,}50;\ 37{,}1)$ y $(0{,}60;\ 30{,}2)$ (MPa). (a) Ajuste la ley de Abrams $f=A/B^{a/c}$ por mínimos cuadrados sobre $\log f$. (b) Halle la $a/c$ máxima que garantiza $36{,}58$~MPa. (c) ¿Por qué conviene ajustar en escala logarítmica?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-adquisicion}
+Con $g^*=335$~kg~CO$_2$e/m$^3$, tres candidatos tienen $(\gwp,\ \Pr[f_{28}\ge36{,}58])$: $X_1=(325;\ 0{,}70)$, $X_2=(300;\ 0{,}10)$, $X_3=(340;\ 0{,}99)$. Calcule la adquisición de la \cref{obs:objconocido} y ordene los candidatos. Calcule también el GWP, el agua y el coste (cemento $0{,}13$~€/kg, cenizas $0{,}05$~€/kg, 55~€/m$^3$ fijos) de la mezcla $(0{,}45;\ 0{,}15;\ 360)$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-mezclas}
+Un conglomerante se forma con cemento, cenizas y escoria en fracciones $x_1+x_2+x_3=1$, $x_i\ge0$. (a) Describa la región como un símplice y dibújela. (b) Liste los puntos del diseño de retícula $\{3,2\}$ (fracciones $0$, $\tfrac12$, $1$). (c) Si además $x_1\ge0{,}5$, ¿qué puntos quedan y cuál es la nueva región?
+\fuente{adaptado de Montgomery~\cite{montgomery}, §11.6 «Mixture Experiments», y de STAT~503~\cite{psu503}, lección~11.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-fidelidad}
+Una amasada con $s=0{,}20$ da $f_7=22{,}0$~MPa. (a) Con el cociente $f_7/f_{28}=0{,}68-0{,}45s$, estime $f_{28}$. (b) Si el cociente tiene una incertidumbre de $\pm0{,}03$ (una desviación típica), propague la incertidumbre a $f_{28}$ con la aproximación lineal. (c) ¿Se puede decidir ya que la mezcla cumple $36{,}58$~MPa con probabilidad $0{,}9$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-ofat}
+(a) Demuestre que si $f(u)=\sum_jf_j(u_j)$ (sin interacciones), una sola pasada de un factor cada vez con minimización exacta en cada variable encuentra el mínimo global. (b) Para $f(u_1,u_2)=(u_1-u_2)^2+0{,}05(u_1+u_2-2)^2$, reproduzca la pasada del \cref{ej:ofat} y calcule el punto tras una segunda pasada. (c) Relacione el resultado con el número de condición de la hessiana y con el descenso por coordenadas del módulo~7.
+\fuente{adaptado de Montgomery~\cite{montgomery}, §5.2 «The Advantage of Factorials».}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-fermentacion}
+Diseño razonado. Para la fermentación del \cref{eje:5-lista}, con un presupuesto de 40 tandas (10 semanas) y la posibilidad de medir el título a las 24~h como baja fidelidad, diseñe el optimizador completo: cribado, diseño inicial, sustitutos, adquisición por lotes de 4, uso de la baja fidelidad, regla de parada y confirmación. Justifique cada elección con resultados de los temas~2 a~4 y estime cuántas tandas dedica a cada fase.
+\end{ejercicio}

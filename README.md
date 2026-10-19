@@ -1,13 +1,13 @@
 # Anatomía de un LLM
 
-Curso de fundamentos matemáticos y computacionales de los grandes modelos de lenguaje, en español. Parte del nivel de primer curso de ingeniería, con una Fase 0 que repasa todas las matemáticas previas (demostraciones, conjuntos y funciones, álgebra, trigonometría, cálculo, probabilidad y estadística), y llega hasta el preentrenamiento a escala, el ajuste a preferencias, los agentes y la interpretabilidad.
+Curso de fundamentos matemáticos y computacionales de los grandes modelos de lenguaje, en español. Parte del nivel de primer curso de ingeniería, con una Fase 0 que repasa todas las matemáticas previas (demostraciones, conjuntos y funciones, álgebra, trigonometría, cálculo, probabilidad y estadística), y llega hasta el preentrenamiento a escala, el ajuste a preferencias, los agentes y la interpretabilidad. La Fase VI aplica todo lo anterior al diseño y la construcción de optimizadores con IA para procesos industriales, logística, energía y software 3D, con casos concretos y cuadernos ejecutables.
 
 **Campus web:** https://nava98.github.io/anatomia-de-un-llm/
 
 ## Contenido
 
-- **Apuntes** de 32 módulos (1840 páginas): una Fase 0 de repaso con 9 módulos y 23 módulos en 5 fases, organizados en temas con definiciones, teoremas, demostraciones y ejercicios graduados: ★ comprensión, ★★ cálculo a mano, ★★★ demostración. Son 1628 ejercicios con solución completa paso a paso en el apéndice de cada documento; una parte está adaptada de cursos y libros universitarios, con la fuente indicada.
-- **Seis exámenes de hito**, uno por fase, con test, problemas, proyecto de fase, solucionario y tabla de autoevaluación.
+- **Apuntes** de 37 módulos (2194 páginas): una Fase 0 de repaso con 9 módulos, 23 módulos en 5 fases y una Fase VI aplicada con 5 módulos, organizados en temas con definiciones, teoremas, demostraciones y ejercicios graduados: ★ comprensión, ★★ cálculo a mano, ★★★ demostración. Son 1874 ejercicios con solución completa paso a paso en el apéndice de cada documento; una parte está adaptada de cursos y libros universitarios, con la fuente indicada.
+- **Siete exámenes de hito**, el último con el proyecto final del curso,, uno por fase, con test, problemas, proyecto de fase, solucionario y tabla de autoevaluación.
 - **Prácticas** en cuadernos de Python (NumPy, Matplotlib y PyTorch).
 - **Campus web** (carpeta `docs/`): visor de los PDF, índice de ejercicios con acceso al enunciado y a la solución, prácticas ejecutables en el navegador con Pyodide, tests con corrección automática y tarjetas de repaso.
 
@@ -82,10 +82,21 @@ Curso de fundamentos matemáticos y computacionales de los grandes modelos de le
 | 23 | Interpretabilidad y seguridad | 61 | 39 | [PDF](docs/pdf/540-F5-M23-apuntes-interpretabilidad.pdf) | [LaTeX](apuntes/M23/) | [Cuaderno](practicas/542-F5-M23-practica.ipynb) |
 | H5 | *Examen de hito 5* | 34 | 7 | [PDF](docs/pdf/590-F5-H5-examen.pdf) | [LaTeX](apuntes/H5/) | — |
 
+### Fase VI. Diseño y construcción de optimizadores con IA (semanas 37–44)
+
+| Módulo | Título | Páginas | Ejercicios | Apuntes | Fuentes | Práctica |
+|---|---|--:|--:|---|---|---|
+| 24 | Formular y resolver problemas de optimización | 66 | 46 | [PDF](docs/pdf/610-F6-M24-apuntes-formulacion.pdf) | [LaTeX](apuntes/M24/) | [Cuaderno](practicas/612-F6-M24-practica.ipynb) |
+| 25 | Modelos sustitutos, diseño de experimentos y optimización bayesiana | 72 | 50 | [PDF](docs/pdf/620-F6-M25-apuntes-optimizacion-bayesiana.pdf) | [LaTeX](apuntes/M25/) | [Cuaderno](practicas/622-F6-M25-practica.ipynb) |
+| 26 | Control óptimo, gemelos digitales y aprendizaje por refuerzo para procesos | 70 | 48 | [PDF](docs/pdf/630-F6-M26-apuntes-control-rl.pdf) | [LaTeX](apuntes/M26/) | [Cuaderno](practicas/632-F6-M26-practica.ipynb) |
+| 27 | Optimización geométrica y software 3D | 70 | 53 | [PDF](docs/pdf/640-F6-M27-apuntes-geometria-3d.pdf) | [LaTeX](apuntes/M27/) | [Cuaderno](practicas/642-F6-M27-practica.ipynb) |
+| 28 | LLM como optimizadores y del prototipo a la producción | 76 | 49 | [PDF](docs/pdf/650-F6-M28-apuntes-llm-produccion.pdf) | [LaTeX](apuntes/M28/) | [Cuaderno](practicas/652-F6-M28-practica.ipynb) |
+| H6 | *Examen de hito 6* | 50 | 5 | [PDF](docs/pdf/690-F6-H6-examen.pdf) | [LaTeX](apuntes/H6/) | — |
+
 ## Estructura del repositorio
 
 ```
-apuntes/          fuentes LaTeX: estilo-apuntes.sty, latexmkrc y una carpeta por módulo (P01–P09 de la Fase 0 y M01–M23) y por examen (H0–H5)
+apuntes/          fuentes LaTeX: estilo-apuntes.sty, latexmkrc y una carpeta por módulo (P01–P09 de la Fase 0 y M01–M28) y por examen (H0–H6)
 docs/             campus web (GitHub Pages) y PDF compilados en docs/pdf/
 practicas/        cuadernos de Jupyter de cada módulo
 ```

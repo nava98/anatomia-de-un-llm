@@ -1,0 +1,157 @@
+% =====================================================================
+\chapter{Guía para construir un optimizador con IA en cualquier ámbito}
+\label{tema:6}
+% =====================================================================
+
+Este tema reúne la fase~VI en un procedimiento. No es un algoritmo, sino una disciplina de ingeniería: el orden en que conviene tomar las decisiones y los documentos que deben quedar escritos. Sigue la estructura del curso 16.842 «Fundamentals of Systems Engineering» del MIT~\cite{mit16842}, que recorre el modelo en V (partes interesadas y concepto de operación, requisitos con márgenes, arquitectura, exploración del espacio de alternativas, revisión preliminar del diseño), las clases~1 y~2 del curso CS329S de Stanford~\cite{cs329s} y el capítulo~2 de Huyen~\cite{huyen} para el planteamiento de sistemas con aprendizaje automático, y la lista de pruebas de Breck \emph{et al.}~\cite{breck}. Cada paso remite al módulo donde se estudió su contenido.
+
+\section{Los doce pasos}
+
+\begin{enumerate}[label=\textbf{\arabic*.},leftmargin=1.6em]
+  \item \textbf{La decisión y sus responsables.} ¿Qué se decide, quién lo decide hoy, con qué frecuencia y con qué horizonte? ¿Quién usará el sistema, quién responde de sus errores y quién puede pararlo? Entregable: concepto de operación de una página.
+  \item \textbf{Objetivo, indicadores y restricciones.} Un objetivo escalar, los indicadores que se vigilan sin optimizarlos, las restricciones duras (seguridad, ley, física) y las blandas, cada una con su unidad y su fuente (módulo~24, tema~1). Entregable: requisitos numéricos con márgenes.
+  \item \textbf{Línea base y techo de valor.} Coste de la práctica actual, de la mejor alternativa sencilla sin IA y de una política con información perfecta (\cref{prop:techo}). Si el techo no compensa el coste del proyecto, se para aquí.
+  \item \textbf{Datos.} Inventario de fuentes, frecuencias, calidad, retrasos, disponibilidad en el instante de decidir, propiedad y protección; versionado desde el primer día (\cref{tema:4}).
+  \item \textbf{Formulación y familia de métodos.} El mapa del módulo~24 (tema~1, §1.3): programación matemática, optimización bayesiana para experimentos caros (módulo~25), control y RL para decisiones secuenciales (módulo~26), optimización geométrica (módulo~27), búsqueda de programas cuando lo que se busca es una regla (\cref{tema:1}).
+  \item \textbf{Modelos predictivos o sustitutos.} Qué se predice, con qué horizonte y con qué métrica de decisión; validación temporal y selección con presupuesto (\cref{tema:3}).
+  \item \textbf{Resolvedor, salvaguardas y respaldo.} Tiempo máximo de cálculo, comprobación independiente de las restricciones duras, política de respaldo.
+  \item \textbf{Evaluación fuera de línea.} Sobre históricos (sin fugas), en un gemelo con números aleatorios comunes y, si hay registros con propensiones, con estimadores contrafactuales (\cref{tema:4}).
+  \item \textbf{Piloto.} Modo sombra y después experimento con tamaño calculado (\cref{prop:tamano}) y criterio de aceptación escrito antes de empezar.
+  \item \textbf{Despliegue.} API con contrato, interfaz que explica y permite anular, registro de decisiones, versiones y vuelta atrás.
+  \item \textbf{Monitorización y reentrenamiento.} Entradas, predicciones, decisiones, anulaciones e indicadores; disparadores y periodo de reentrenamiento (\cref{prop:reentreno}).
+  \item \textbf{Valor, riesgo, normativa y ciclo de vida.} Intervalos para la mejora, VAN, AMFE, encaje regulatorio, documentación y criterios de retirada (\cref{tema:5}).
+\end{enumerate}
+
+\begin{proposicion}[Techo de valor]\label{prop:techo}
+Sea $f(x,\theta)$ el coste de la decisión $x\in\mathcal{X}$ cuando el estado incierto es $\theta$, y sea $\hat x$ cualquier regla de decisión que solo use información disponible antes de decidir. Entonces
+\[
+\E\bigl[f(\hat x,\theta)\bigr]\ \ge\ \E\Bigl[\min_{x\in\mathcal{X}}f(x,\theta)\Bigr].
+\]
+En consecuencia, ninguna mejora de la predicción puede reducir el coste esperado de la mejor regla sin información por debajo del coste con información perfecta, y la diferencia entre ambos (el valor de la información perfecta del módulo~24, tema~6, definición~6.6) acota lo que puede ganarse prediciendo mejor.
+\end{proposicion}
+
+\begin{proof}
+Para cada realización de $\theta$ y de la información, $\hat x$ es un punto de $\mathcal{X}$, luego $f(\hat x,\theta)\ge\min_{x\in\mathcal{X}}f(x,\theta)$. Tomando esperanzas se conserva la desigualdad.
+\end{proof}
+
+En el caso del mantenimiento, una política que conoce el futuro e interviene cada máquina en la última ventana antes de que fuera a fallar cuesta de media $76\,170$~€/año en el gemelo (sin límite de técnicos), frente a $193\,670$ de la política por edad y $159\,300$ del optimizador. Este solo captura un 29\,\% del margen que deja la alternativa sencilla frente a la información perfecta: hay espacio para mejores sensores o mejores modelos, y el paso~3 permite estimar cuánto valdrían antes de pagarlos.
+
+\section{Plantilla de documento de diseño}
+
+El \cref{tab:plantilla} es la plantilla que se rellena antes de escribir código y se actualiza en cada revisión. Su objetivo no es la burocracia, sino forzar que las decisiones difíciles (qué es éxito, qué no se puede violar, contra qué se compara) se tomen pronto y por escrito, como en la revisión preliminar de diseño de 16.842~\cite{mit16842}.
+
+\begin{table}[h]
+\centering\small
+\caption{Plantilla del documento de diseño de un optimizador con IA.}\label{tab:plantilla}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.6cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Sección & Preguntas que debe responder \\
+\midrule
+1. Contexto y decisión & ¿Qué se decide, cada cuánto, con qué horizonte? ¿Qué pasa hoy? \\
+2. Partes interesadas & ¿Quién decide, quién ejecuta, quién responde, quién puede parar el sistema? \\
+3. Objetivo y requisitos & Objetivo, indicadores, restricciones duras y blandas con unidades; requisitos de latencia, disponibilidad y precisión con márgenes. \\
+4. Línea base y techo & Coste actual, mejor alternativa sencilla, coste con información perfecta; valor máximo alcanzable. \\
+5. Datos & Fuentes, calidad, retrasos, disponibilidad en el instante de decidir, versionado, protección. \\
+6. Formulación y método & Modelo matemático; familia elegida y alternativas descartadas con su motivo. \\
+7. Modelos y validación & Qué se predice; división temporal; métricas de predicción y de decisión; selección. \\
+8. Salvaguardas y respaldo & Comprobaciones independientes; política de respaldo; tiempo máximo de cálculo. \\
+9. Evaluación fuera de línea & Históricos, gemelo, contrafactual; resultados con intervalos. \\
+10. Piloto & Diseño, tamaño, duración, criterio de aceptación fijado de antemano. \\
+11. Despliegue y supervisión & API, interfaz, modos de operación, registro, vuelta atrás. \\
+12. Monitorización & Señales, umbrales, acciones, reentrenamiento. \\
+13. Valor y riesgo & VAN con incertidumbre, AMFE, pruebas de estrés, encaje normativo. \\
+14. Ciclo de vida & Responsable del mantenimiento, revisiones periódicas, criterios de retirada. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Mini-caso A: secuenciación de formatos en una fábrica de bebidas}
+
+\begin{ejemplo}[Cambios de formato]\label{ej:mini-fabrica}
+\emph{1--2. Decisión y objetivo.} Cada semana, el jefe de producción fija el orden en que una línea embotella cuatro formatos: agua de 0{,}5~L (A), agua de 1{,}5~L (B), zumo de 1~L (C) y bebida de soja (D, con alérgeno). El objetivo es minimizar el tiempo total de cambio de formato; restricción dura: tras D, limpieza completa de 90~min antes de cualquier otro producto (seguridad alimentaria); indicadores: nivel de servicio y existencias. \emph{3. Línea base.} El orden actual es A--C--D--B, con un ciclo de $45+30+90+25=190$~min (tiempos de cambio en minutos: A$\to$B 20, A$\to$C 45, A$\to$D 40, B$\to$A 25, B$\to$C 35, B$\to$D 45, C$\to$A 60, C$\to$B 55, C$\to$D 30, D$\to$cualquiera 90). \emph{5. Método.} Es un viajante asimétrico (módulo~24, tema~3); con cuatro formatos basta enumerar los $3!=6$ ciclos que empiezan en A; con veinte se usaría CP-SAT o un PLEM. Los tamaños de lote salen de la previsión de demanda (módulo~24, tema~6). \emph{Resultado.} El ciclo A--B--C--D cuesta $20+35+30+90=175$~min, el mínimo de los seis (los demás: 190, 210, 215, 225 y 235). Con tres ciclos por semana se ahorran 45~min de línea parada, unos 1350~€/semana a 1800~€/h. \emph{7--12.} Salvaguarda: el plan se valida contra las reglas de alérgenos del sistema de calidad antes de publicarse; respaldo: el orden actual; seguimiento: minutos de cambio reales frente a planificados.
+\end{ejemplo}
+
+\section{Mini-caso B: presupuesto de geometría en un videojuego}
+
+\begin{ejemplo}[Niveles de detalle con presupuesto]\label{ej:mini-3d}
+\emph{1--2.} En la compilación de cada escena, una herramienta elige el nivel de detalle (LOD) de cada objeto para minimizar el error visual en pantalla con un presupuesto de triángulos que garantiza los 16{,}7~ms por fotograma en la consola de referencia (restricción dura), como en la selección de niveles de detalle del módulo~27 (tema~5, §5.4). Regla de dirección de arte: el personaje principal nunca baja de LOD0. \emph{3--5.} Línea base: un LOD fijo por distancia. Es una mochila de elección múltiple (PLEM); los parámetros del simplificador de mallas se ajustan aparte con optimización bayesiana (módulo~25). \emph{Datos de una escena}, en miles de triángulos y error ponderado en píxeles: personaje (LOD0: 60 y 0; LOD1: 25 y 1{,}0; LOD2: 10 y 4{,}0), edificio (80 y 0; 30 y 0{,}6; 12 y 2{,}5) y árboles (50 y 0; 15 y 0{,}8; 5 y 3{,}0); presupuesto: 100\,000 triángulos. \emph{Resultado.} Sin la regla, lo óptimo es LOD1 para los tres (70\,000 triángulos, error $2{,}4$). Con el personaje en LOD0, lo óptimo es edificio en LOD2 y árboles en LOD1 (87\,000 triángulos, error $3{,}3$): la regla cuesta $0{,}9$ unidades de error, un dato útil para discutirla con dirección de arte. \emph{8--11.} Evaluación fuera de línea en integración continua: se renderizan escenas de prueba con cámaras fijas y se mide el percentil 99 del tiempo de fotograma; seguimiento con la telemetría de las versiones de prueba; revisión humana de los recursos principales.
+\end{ejemplo}
+
+\section{Mini-caso C: asignación de trabajos en un centro de datos}
+
+\begin{ejemplo}[Heurística de colocación y refrigeración]\label{ej:mini-cpd}
+\emph{1--2.} Un operador de centros de datos decide en línea en qué servidor se coloca cada máquina virtual (CPU y memoria). Objetivo: minimizar los \emph{recursos varados}, es decir, la capacidad libre de un recurso que no se puede usar porque el otro está agotado; restricciones duras: no sobrecomprometer la memoria y respetar las reglas de antiafinidad. \emph{3.} Línea base: \emph{best fit} sobre el recurso dominante. Caso publicado: la heurística de AlphaEvolve para Borg recupera de media un 0{,}7\,\% de la capacidad de cómputo de la flota de Google~\cite{ae-blog}. Como orden de magnitud hipotético (no extrapolable sin evaluación propia), en una flota de 20\,000 servidores con un coste total de 2500~€ por servidor y año, recuperar un 0{,}7\,\% equivaldría a 140 servidores, unos 350\,000~€/año. \emph{5--8.} Método: búsqueda de programas (\cref{tema:1}) sobre la función de prioridad, con un evaluador que reproduce trazas históricas en un simulador del planificador; separación de las trazas por semanas y por clúster para medir la generalización; la regla resultante se lee y se simplifica antes de desplegarla. \emph{9--11.} Despliegue gradual en un clúster de prueba con la regla actual como respaldo y vigilancia de los recursos varados y de los trabajos rechazados. La \emph{refrigeración} del mismo centro es otro optimizador, de control, con su propio caso publicado (módulo~26, tema~5, §5.5)~\cite{deepmind}.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~6: pila de referencia de un optimizador con IA.}\label{tab:tec6}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.5cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.1cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Capa & Herramientas habituales & Licencia o tipo & Cuándo elegirla \\
+\midrule
+Datos y versionado & DVC~\cite{dvc}, Great Expectations & abiertas (Apache~2.0) & desde el primer prototipo \\
+Modelos & scikit-learn, PyTorch; Optuna~\cite{optuna} para el ajuste & abiertas (BSD-3; BSD-3; MIT) & según el tipo de datos (\cref{tema:3}) \\
+Decisión & SciPy/HiGHS, OR-Tools, CVXPY (módulo~24); BoTorch (módulo~25) & abiertas & según la estructura del problema \\
+Búsqueda con LLM & OpenEvolve~\cite{openevolve}, DSPy~\cite{dspy} & abiertas (Apache~2.0; MIT) & reglas o cadenas de llamadas con evaluador fiable \\
+Servicio & FastAPI~\cite{fastapi}, contenedores, Kubernetes~\cite{k8s} & abiertas (MIT; Apache~2.0) & integración con otros sistemas \\
+Seguimiento & MLflow~\cite{mlflow}, Evidently~\cite{evidently} & abiertas (Apache~2.0) & trazabilidad y deriva \\
+Escala & Ray~\cite{ray} & abierta (Apache~2.0) & simulaciones y ajustes en paralelo \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores6}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Empezar por el modelo}: elegir la técnica antes de definir la decisión, el objetivo y la línea base.
+  \item \emph{No calcular el techo} (\cref{prop:techo}) y descubrir al final que el problema no daba para más.
+  \item \emph{Requisitos sin margen}: si la latencia máxima es 200~ms y cada componente se diseña para 200~ms, el sistema no la cumple.
+  \item \emph{Optimizar el indicador equivocado}: el sistema hace exactamente lo que dice el objetivo, no lo que se quería decir.
+  \item \emph{Olvidar a las personas}: un optimizador que los usuarios no entienden se anula o se ignora; uno en el que confían demasiado propaga sus errores.
+  \item \emph{Proyecto sin dueño tras el despliegue}: sin responsable de mantenimiento, el modelo se degrada en silencio.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item MIT 16.842~\cite{mit16842}, programa del curso y tareas A1--A5.
+\item CS329S~\cite{cs329s}, clases~1 «Understanding machine learning production» y~2 «ML and Data Systems Fundamentals»; C.~Huyen~\cite{huyen}, cap.~2.
+\item E.~Breck \emph{et al.}~\cite{breck}, como lista de comprobación antes del despliegue.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-orden}
+Un equipo propone: «entrenaremos un transformer con los datos de los sensores, lo desplegaremos en la nube y, cuando funcione, mediremos el ahorro». Identifique qué pasos de la guía faltan o están desordenados y escriba el orden correcto de las cinco primeras tareas.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-margenes}
+El planificador semanal de mantenimiento debe responder en 2~s como máximo desde que el técnico pulsa «recalcular». Componentes: lectura de datos, cálculo de características, predicción, resolución del programa entero y presentación. (a) Reparta el tiempo dejando un margen del 25\,\% en el nivel de sistema y explique cómo asignaría el resto según la variabilidad de cada componente. (b) Si las mediciones de los componentes en el percentil~99 son 0{,}30; 0{,}15; 0{,}05; 0{,}70 y 0{,}20~s, ¿se cumple el requisito con margen? ¿Qué componente revisaría?
+\fuente{adaptado de MIT 16.842 \emph{Fundamentals of Systems Engineering}, otoño de 2015, tarea~A2 «Requirements definition and analysis, margins allocation»~\cite{mit16842}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-alternativas}
+Para el mantenimiento se consideran tres conceptos: (I) reglas por edad, (II) predicción y programa entero, (III) aprendizaje por refuerzo sobre el gemelo. Con pesos $0{,}4$ (coste esperado), $0{,}2$ (interpretabilidad), $0{,}2$ (esfuerzo de implantación) y $0{,}2$ (riesgo), y puntuaciones de 1 a 5 (5 = mejor) I: $(2,5,5,4)$, II: $(4,4,3,4)$, III: $(5,2,1,2)$: (a) calcule la puntuación ponderada; (b) determine qué conceptos son de Pareto; (c) discuta la sensibilidad al peso del coste: ¿para qué peso (repartiendo el resto a partes iguales) empataría III con II?
+\fuente{adaptado de MIT 16.842 \emph{Fundamentals of Systems Engineering}, otoño de 2015, tarea~A4 «Tradespace exploration, concept selection»~\cite{mit16842}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-techo}
+En el caso del mantenimiento: la práctica actual cuesta $330\,290$~€/año, la política por edad $193\,670$, el optimizador $159\,300$ y la política con información perfecta $76\,170$ (medias del gemelo). (a) ¿Qué fracción del margen total (práctica actual frente a información perfecta) captura la política por edad, y qué fracción el optimizador? (b) Un sensor nuevo cuesta 30\,000~€ de inversión y 3000~€/año; ¿qué fracción del margen restante debería capturar en 5 años al 8\,\% para tener VAN positivo?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-formatos}
+En el \cref{ej:mini-fabrica}, el área de calidad exige además que el zumo (C) no vaya inmediatamente después de la bebida de soja (D) aunque haya limpieza. (a) ¿Cambia el óptimo? (b) Si el tiempo de limpieza tras D baja a 60~min, recalcule los seis ciclos. (c) Con 8 formatos, ¿cuántos ciclos distintos habría que enumerar?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-lod}
+En el \cref{ej:mini-3d}, (a) compruebe por enumeración el óptimo con y sin la regla del personaje; (b) ¿qué presupuesto mínimo hace falta para que la regla no cueste nada? (c) formule el problema general como PLEM con variables binarias $z_{ok}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-simpson}
+Se evalúa el optimizador en dos plantas. En la planta 1 evita 81 de 87 averías previsibles y la política anterior 234 de 270; en la planta 2, 192 de 263 y 55 de 80. (a) Calcule las tasas por planta y globales. (b) Explique la paradoja. (c) ¿Cómo debe presentarse la evaluación en el documento de diseño?
+\fuente{adaptado de CS329S, Stanford, invierno de 2022, clase~6 «Offline evaluation», ejemplo de evaluación por segmentos y paradoja de Simpson~\cite{cs329s}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-diseno}
+Rellene la plantilla del \cref{tab:plantilla} para un optimizador de la climatización de un almacén frigorífico de 20\,000~m$^{3}$ con tarifa eléctrica horaria, placas solares y una restricción de temperatura del producto entre $-22$ y $-18$~ºC. Para cada sección, indique qué módulo del curso aporta el contenido y qué número concreto mediría primero.
+\end{ejercicio}

@@ -1,0 +1,235 @@
+% =====================================================================
+\chapter{Control predictivo basado en modelo}
+\label{tema:3}
+% =====================================================================
+
+El PID corrige el error presente; no sabe que mañana a las 10 la electricidad será cara, ni que la potencia de la bomba de calor está limitada. El \emph{control predictivo basado en modelo} (MPC) usa un modelo para predecir el futuro, resuelve en cada instante un problema de optimización con restricciones sobre un horizonte y aplica solo la primera decisión. Este tema sigue los capítulos~1 y~2 de Rawlings, Mayne y Diehl~\cite{rmd}, las clases~16 («Linear quadratic regulator: Discrete-time finite horizon») a~18 de EE363 de Stanford~\cite{ee363} y la clase~10 de CS285~\cite{cs285}, que presenta el control óptimo y la planificación como punto de partida del RL basado en modelos. La aplicación a edificios sigue la revisión de Drgoňa \emph{et al.}~\cite{drgona}.
+
+\section{Control óptimo de horizonte finito: el regulador lineal cuadrático}
+
+\begin{definicion}[Problema de control óptimo de horizonte finito]\label{def:ocp}
+Dados el modelo $x_{k+1}=f(x_k,u_k)$, un coste de etapa $\ell(x,u)$, un coste terminal $V_f(x)$, conjuntos admisibles $\Xset$, $\Uset$, $\Xset_f$ y un estado inicial $x$, el problema de horizonte $N$ es
+\[
+\begin{aligned}
+\mathbb P_N(x):\quad V_N^{0}(x)=\min_{u_0,\dots,u_{N-1}}\ &\sum_{j=0}^{N-1}\ell(x_j,u_j)+V_f(x_N)\\
+\text{s.a.}\quad &x_0=x,\quad x_{j+1}=f(x_j,u_j),\quad x_j\in\Xset,\quad u_j\in\Uset,\quad x_N\in\Xset_f .
+\end{aligned}
+\]
+\end{definicion}
+
+Sin restricciones, con modelo lineal y costes cuadráticos, el problema tiene solución explícita.
+
+\begin{teorema}[LQR de horizonte finito]\label{teo:lqr}
+Sean $x_{k+1}=Ax_k+Bu_k$, $\ell(x,u)=x\T Qx+u\T Ru$ y $V_f(x)=x\T P_fx$, con $Q\succeq0$, $P_f\succeq0$ y $R\succ0$, sin restricciones. Se define hacia atrás $P_N=P_f$ y, para $k=N-1,\dots,0$,
+\[
+K_k=(R+B\T P_{k+1}B)^{-1}B\T P_{k+1}A,\qquad P_k=Q+A\T P_{k+1}A-A\T P_{k+1}B\,K_k .
+\]
+Entonces el coste óptimo desde $x$ en el instante $k$ es $V_k(x)=x\T P_kx$ y la decisión óptima es $u_k=-K_kx_k$.
+\end{teorema}
+
+\begin{proof}
+Por inducción hacia atrás con la ecuación de Bellman $V_k(x)=\min_u\{\ell(x,u)+V_{k+1}(Ax+Bu)\}$ (módulo~21, tema~1). Para $k=N$, $V_N=x\T P_fx$. Si $V_{k+1}(z)=z\T P_{k+1}z$ con $P_{k+1}\succeq0$, la función a minimizar es
+\[
+\begin{aligned}
+&x\T Qx+u\T Ru+(Ax+Bu)\T P_{k+1}(Ax+Bu)\\
+&\qquad=x\T(Q+A\T P_{k+1}A)x+2u\T B\T P_{k+1}Ax+u\T(R+B\T P_{k+1}B)u .
+\end{aligned}
+\]
+Como $M=R+B\T P_{k+1}B\succ0$, es estrictamente convexa en $u$ y su gradiente $2B\T P_{k+1}Ax+2Mu$ se anula en $u=-M^{-1}B\T P_{k+1}Ax=-K_kx$. Sustituyendo, el valor mínimo es $x\T(Q+A\T P_{k+1}A-A\T P_{k+1}BM^{-1}B\T P_{k+1}A)x=x\T P_kx$. Además $P_k\succeq0$, porque es el mínimo de una suma de términos no negativos.
+\end{proof}
+
+\begin{ejemplo}[LQR escalar]\label{ej:lqr}
+Sea $x_{k+1}=x_k+u_k$ con $Q=R=P_f=1$ y $N=2$. Hacia atrás: $P_2=1$; $K_1=1/(1+1)=0{,}5$, $P_1=1+1-0{,}5=1{,}5$; $K_0=1{,}5/2{,}5=0{,}6$, $P_0=1+1{,}5-1{,}5\cdot0{,}6=1{,}6$. Desde $x_0=1$: $u_0=-0{,}6$, $x_1=0{,}4$, $u_1=-0{,}2$, $x_2=0{,}2$, y el coste es $1+0{,}36+0{,}16+0{,}04+0{,}04=1{,}6=P_0x_0^{2}$. Con horizonte infinito, el punto fijo $P=1+P-P^{2}/(1+P)$ da $P^{2}-P-1=0$, $P=(1+\sqrt5)/2=1{,}618$ y $K=P/(1+P)=0{,}618$.
+\end{ejemplo}
+
+\section{El horizonte deslizante}
+
+\begin{definicion}[Control predictivo]\label{def:mpc}
+En cada instante $k$ se mide (o se estima) el estado $x_k$, se resuelve $\mathbb P_N(x_k)$, se aplica la primera decisión $u_k=u_0^{*}(x_k)$, se descarta el resto y se repite en $k+1$. La ley de control implícita $\kappa_N(x)=u_0^{*}(x)$ es una realimentación del estado.
+\end{definicion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth,every node/.style={font=\small},xscale=1.05,yscale=0.9]
+\draw[->] (0,0) -- (10.6,0) node[right]{tiempo};
+\draw[->] (0,0) -- (0,3.2);
+\draw[dashed] (3,0) -- (3,3) node[above]{$k$};
+\draw[dashed] (9,0) -- (9,3) node[above]{$k+N$};
+\draw[thick] (0.2,0.8) -- (0.8,1.0) -- (1.4,1.4) -- (2.0,1.5) -- (2.6,1.8) -- (3,1.9);
+\node[above] at (1.4,1.55) {pasado medido};
+\draw[thick,dashed] (3,1.9) -- (4,2.2) -- (5,2.35) -- (6,2.4) -- (7,2.45) -- (8,2.5) -- (9,2.5);
+\node[above] at (6.3,2.5) {predicción $\hat x_{j}$};
+\draw[fill=black!25] (3,0.3) rectangle (4,0.9);
+\draw (4,0.3) rectangle (5,0.7); \draw (5,0.3) rectangle (6,0.6); \draw (6,0.3) rectangle (7,0.5);
+\draw (7,0.3) rectangle (8,0.45); \draw (8,0.3) rectangle (9,0.42);
+\node[below] at (3.5,0) {$u_0^{*}$};
+\node[below] at (6.5,0) {secuencia optimizada};
+\draw[->] (3.5,1.0) to[bend left=30] node[above,pos=0.6]{se aplica} (4.3,1.55);
+\end{tikzpicture}
+\caption{Horizonte deslizante: se optimiza una secuencia de $N$ decisiones, se aplica la primera y se repite con la nueva medida.}
+\label{fig:horizonte}
+\end{figure}
+
+La realimentación procede de volver a resolver con cada nueva medida: si una perturbación desvía la planta de la predicción, el siguiente problema parte del estado real. Que la ley resultante estabilice la planta no es automático, porque el controlador optimiza un horizonte finito que se desplaza. El resultado clásico pide unos ingredientes terminales~\cite[cap.~2]{rmd}.
+
+\begin{teorema}[Factibilidad recursiva y estabilidad]\label{teo:mpc}
+Supóngase que $f(0,0)=0$, que $\ell(x,u)\ge c\norm{x}^{2}$ con $c>0$, y que existen un conjunto terminal $\Xset_f\subseteq\Xset$ y una ley local $\kappa_f$ tales que, para todo $x\in\Xset_f$: $\kappa_f(x)\in\Uset$, $f(x,\kappa_f(x))\in\Xset_f$ y $V_f\bigl(f(x,\kappa_f(x))\bigr)-V_f(x)\le-\ell\bigl(x,\kappa_f(x)\bigr)$. Si $\mathbb P_N(x_0)$ es factible, entonces: (i) $\mathbb P_N(x_k)$ es factible para todo $k$; (ii) $V_N^{0}(x_{k+1})\le V_N^{0}(x_k)-\ell\bigl(x_k,\kappa_N(x_k)\bigr)$, y (iii) $x_k\to0$.
+\end{teorema}
+
+\begin{proof}
+Sea $(u_0^{*},\dots,u_{N-1}^{*})$ óptima desde $x_k$, con estados $x_0^{*}=x_k,\dots,x_N^{*}\in\Xset_f$. Tras aplicar $u_0^{*}$, $x_{k+1}=x_1^{*}$. La secuencia desplazada $(u_1^{*},\dots,u_{N-1}^{*},\kappa_f(x_N^{*}))$ es factible desde $x_{k+1}$: respeta las restricciones hasta $x_N^{*}$ y, por la invariancia de $\Xset_f$, lleva a $f(x_N^{*},\kappa_f(x_N^{*}))\in\Xset_f$. Esto prueba (i). Su coste es
+\[
+V_N^{0}(x_k)-\ell(x_k,u_0^{*})-V_f(x_N^{*})+\ell\bigl(x_N^{*},\kappa_f(x_N^{*})\bigr)+V_f\bigl(f(x_N^{*},\kappa_f(x_N^{*}))\bigr)\le V_N^{0}(x_k)-\ell(x_k,u_0^{*}),
+\]
+por la condición de decrecimiento de $V_f$; el óptimo desde $x_{k+1}$ no es mayor que el coste de esta secuencia, lo que prueba (ii). Sumando (ii) de $0$ a $K-1$, $c\sum_{k<K}\norm{x_k}^{2}\le\sum_{k<K}\ell(x_k,u_k)\le V_N^{0}(x_0)-V_N^{0}(x_K)\le V_N^{0}(x_0)$, porque $V_N^{0}\ge0$. La serie $\sum\norm{x_k}^{2}$ converge, luego $x_k\to0$.
+\end{proof}
+
+En el caso lineal-cuadrático, la elección habitual es $V_f(x)=x\T Px$ con $P$ la solución de la ecuación de Riccati de horizonte infinito y $\kappa_f=-Kx$ el LQR, y $\Xset_f$ un conjunto en el que el LQR no viola ninguna restricción. En la práctica industrial se usan a menudo horizontes largos sin ingredientes terminales explícitos, y la estabilidad se comprueba por simulación.
+
+\section{El MPC lineal con restricciones como programa cuadrático}
+
+Con modelo lineal, la trayectoria predicha es lineal en las decisiones. Sean $U=(u_0,\dots,u_{N-1})$ y $X=(x_1,\dots,x_N)$. Por recursión, $x_j=A^{j}x_0+\sum_{i<j}A^{j-1-i}Bu_i$, es decir,
+\begin{equation}\label{eq:condensada}
+X=\Phi x_0+\Gamma U,\qquad \Phi=\begin{pmatrix}A\\A^{2}\\\vdots\\A^{N}\end{pmatrix},\qquad \Gamma=\begin{pmatrix}B&0&\cdots&0\\AB&B&\cdots&0\\\vdots&&\ddots&\\A^{N-1}B&A^{N-2}B&\cdots&B\end{pmatrix}.
+\end{equation}
+
+\begin{proposicion}[El MPC lineal-cuadrático es un QP estrictamente convexo]\label{prop:qp}
+Sean $\bar Q=\diag(Q,\dots,Q,P_f)\succeq0$ y $\bar R=\diag(R,\dots,R)\succ0$. El coste $\sum_{j<N}(x_j\T Qx_j+u_j\T Ru_j)+x_N\T P_fx_N$ vale
+\[
+J(U)=U\T HU+2x_0\T F\T U+x_0\T(Q+\Phi\T\bar Q\Phi)x_0,\qquad H=\Gamma\T\bar Q\Gamma+\bar R,\quad F=\Gamma\T\bar Q\Phi,
+\]
+y $H\succ0$. Con restricciones lineales sobre $U$ y $X$ (límites de actuadores, de velocidad de cambio, de estados), el problema es un programa cuadrático estrictamente convexo con, a lo sumo, una solución.
+\end{proposicion}
+
+\begin{proof}
+Se sustituye \eqref{eq:condensada} en $X\T\bar QX+U\T\bar RU+x_0\T Qx_0$ y se agrupan términos. Para todo $v\ne0$, $v\T Hv=\norm{\bar Q^{1/2}\Gamma v}^{2}+v\T\bar Rv\ge v\T\bar Rv>0$. Las restricciones lineales en $X$ son lineales en $U$ por \eqref{eq:condensada}, de modo que el conjunto factible es un poliedro convexo; una función estrictamente convexa tiene a lo sumo un minimizador en un convexo (módulo~4, tema~5).
+\end{proof}
+
+\begin{ejemplo}[MPC con restricción en la entrada]\label{ej:mpc-qp}
+En el \cref{ej:lqr} se añade $\abs{u_j}\le0{,}5$. Con $x_0=1$, $\Phi=(1,1)\T$ y $\Gamma=\bigl(\begin{smallmatrix}1&0\\1&1\end{smallmatrix}\bigr)$, el coste es $J=3+2(2u_0+u_1)+3u_0^{2}+2u_0u_1+2u_1^{2}$, con $H=\bigl(\begin{smallmatrix}3&1\\1&2\end{smallmatrix}\bigr)$. El óptimo sin restricciones, $(-0{,}6;\ -0{,}2)$, viola la cota. Fijando $u_0=-0{,}5$ y minimizando en $u_1$, $\partial J/\partial u_1=2+2u_0+4u_1=0$ da $u_1=-0{,}25$, con $J=1{,}625$. Es el óptimo: en ese punto $\partial J/\partial u_0=4+6u_0+2u_1=0{,}5>0$, de modo que aumentar $u_0$ empeora el coste y disminuirlo no está permitido; $0{,}5$ es el multiplicador de la restricción activa.
+\end{ejemplo}
+
+\begin{definicion}[Restricciones blandas]\label{def:blandas}
+Una restricción de estado $g(x_j)\le0$ puede volver infactible el problema si una perturbación saca la planta del conjunto admisible. Se \emph{ablanda} con una holgura $s_j\ge0$: $g(x_j)\le s_j$, y se añade $\rho\sum_js_j$ al coste.
+\end{definicion}
+
+\begin{proposicion}[Penalización exacta]\label{prop:exacta}
+Sea el problema convexo $\min f(z)$ s.a. $g_i(z)\le0$, con solución $z^{*}$ y multiplicadores de Karush--Kuhn--Tucker $\lambda_i^{*}\ge0$. Si $\rho\ge\max_i\lambda_i^{*}$, entonces $z^{*}$ minimiza también $f(z)+\rho\sum_i\max\{g_i(z),0\}$, que es la versión con holguras óptimas.
+\end{proposicion}
+
+\begin{proof}
+Para todo $z$, como $\rho\ge\lambda_i^{*}\ge0$ y $\max\{g_i,0\}\ge g_i$,
+\[
+f(z)+\rho\sum_i\max\{g_i(z),0\}\ge f(z)+\sum_i\lambda_i^{*}g_i(z)=L(z,\lambda^{*})\ge L(z^{*},\lambda^{*})=f(z^{*}).
+\]
+La segunda desigualdad se debe a que $L(\cdot,\lambda^{*})$ es convexa y su gradiente se anula en $z^{*}$ (estacionariedad de KKT); la igualdad final, a la holgura complementaria $\lambda_i^{*}g_i(z^{*})=0$. En $z=z^{*}$ todas las penalizaciones son nulas y se alcanza la cota.
+\end{proof}
+
+Es la versión convexa del teorema~17.3 de Nocedal y Wright~\cite[§17.2]{nw}. En la práctica: si $\rho$ es suficientemente grande, las holguras solo se activan cuando el problema con restricciones duras es infactible; si es pequeño, el optimizador «compra» violaciones de confort cuando le salen baratas. En el \cref{ej:mpc-qp}, con la restricción $u_0\ge-0{,}5$ ablandada, cualquier $\rho\ge0{,}5$ reproduce la solución dura.
+
+\begin{definicion}[MPC económico]\label{def:empc}
+Cuando el coste de etapa es un coste económico (euros de energía, producción, emisiones) en lugar de una desviación respecto a una consigna, se habla de \emph{MPC económico}. Si el modelo es lineal y el coste y las restricciones son lineales, el problema es un programa lineal.
+\end{definicion}
+
+\section{Cálculo en tiempo real y modelos no lineales}
+
+Cada problema debe resolverse en una fracción del periodo de muestreo. Los QP de MPC lineal se resuelven con métodos de punto interior, de conjunto activo o de separación de operadores como OSQP~\cite{osqp}, que se benefician de arrancar desde la solución anterior desplazada (\emph{warm start}). Con modelo no lineal, $\mathbb P_N$ es un programa no lineal (NMPC) y no convexo en general. Las técnicas estándar~\cite[cap.~8]{rmd} son el \emph{disparo múltiple} (los estados de cada paso son también variables, con la dinámica como restricción de igualdad, lo que mejora el condicionamiento) y la \emph{iteración en tiempo real}: un solo paso de programación cuadrática secuencial por instante, que aprovecha que el problema cambia poco de un instante al siguiente. CasADi~\cite{casadi} proporciona la diferenciación automática y la formulación; acados~\cite{acados} y do-mpc~\cite{dompc} construyen sobre ellas resolvedores rápidos y herramientas completas de MPC y de \emph{estimación de horizonte móvil}, que es el problema dual de estimar el estado a partir de las últimas medidas.
+
+\section{MPC con modelo aprendido}
+
+El modelo del MPC puede ser el identificado en el \cref{tema:2}:
+\begin{enumerate}
+  \item \emph{Modelo lineal en las entradas} (ARX o NARX lineal en $u$ con coeficientes que dependen de perturbaciones previstas): el MPC sigue siendo un QP o un LP. Es la opción preferida cuando basta.
+  \item \emph{Red neuronal}: $\hat f_\theta$ entra en las restricciones de igualdad del NLP. Los gradientes que necesita el optimizador son productos vector-jacobiano de la red, que proporciona la retropropagación (módulo~10, §5.4, donde se ve que los adjuntos son multiplicadores de Lagrange de la dinámica). Lazic \emph{et al.}~\cite{lazic} optimizaron así un MPC con modelo ARX directamente con Adam (módulo~7, §5.3) en TensorFlow, parametrizando las acciones con una tangente hiperbólica para respetar sus límites.
+  \item \emph{Robustez frente al error de modelo}: la \cref{prop:acumula} permite \emph{endurecer} las restricciones con un margen que crece con el horizonte, $\underline T+\varepsilon(1-L^{j})/(1-L)$ en el paso $j$; un margen constante es la versión más simple.
+\end{enumerate}
+
+\begin{ejemplo}[Caso de estudio: arbitraje con una batería]\label{ej:bateria-lp}
+\emph{Datos.} Una batería de $1$ kWh y $1$ kW, vacía al inicio, ve los precios $(0{,}10;\ 0{,}30;\ 0{,}05;\ 0{,}25)$ €/kWh en cuatro horas consecutivas. Sean $c_t,d_t\ge0$ la energía cargada y descargada en la hora $t$ (lado red) y $e_t$ la almacenada, con rendimientos de carga y descarga $\eta_c=\eta_d=\eta$.
+
+\emph{Formulación.} $\max\sum_tp_t(d_t-c_t)$ s.a. $e_{t+1}=e_t+\eta c_t-d_t/\eta$, $0\le e_t\le1$, $0\le c_t,d_t\le1$, $e_0=0$: un programa lineal.
+
+\emph{Solución.} Con $\eta=1$ conviene cargar en las horas~1 y~3 y descargar en las~2 y~4: beneficio $(0{,}30-0{,}10)+(0{,}25-0{,}05)=0{,}40$ €. Con $\eta=0{,}9$, cargar $1$ kWh de red almacena $0{,}9$ kWh y devuelve $0{,}81$ kWh: el primer ciclo deja $0{,}30\cdot0{,}81-0{,}10=0{,}143$ € y el segundo $0{,}25\cdot0{,}81-0{,}05=0{,}1525$ €, en total $0{,}2955$ €. Un ciclo solo es rentable si el cociente entre precios de venta y de compra supera $1/\eta^{2}=1{,}235$ (\cref{eje:3-bateria}).
+
+\emph{Escala real} (cuaderno, Parte~8). Con $10$ kWh, $5$ kW, $\eta=0{,}95$, un coste de degradación de $0{,}01$ €/kWh y 24 precios horarios, el LP da un beneficio de $1{,}884$ € y $1{,}90$ ciclos equivalentes en el día.
+\end{ejemplo}
+
+\begin{ejemplo}[Caso de estudio: MPC económico de la zona]\label{ej:caso-mpc}
+\emph{Formulación.} Con el modelo identificado del \cref{ej:caso-id}, $\hat T_{j+1}=\theta_1\hat T_j+b_jP_j+d_j$, donde $b_j=\theta_2+\theta_3\Text{}_{,j}$ y $d_j$ agrupa los términos de $\Text$, $G$ y la constante, y con previsiones de 24~h ($N=96$) de temperatura exterior, ganancias y precio, en cada instante se resuelve
+\[
+\min_{P,s}\ \Dt\sum_{j=0}^{N-1}(c_jP_j+\rho\,s_j)\quad\text{s.a.}\quad 0\le P_j\le3,\quad \underline T_{j+1}+m-s_j\le\hat T_{j+1}\le\overline T_{j+1}-m+s_j,\quad s_j\ge0,
+\]
+con $\rho=2$ €/(K·h) y un margen $m=0{,}3$ K. Es un LP con 289 variables.
+
+\emph{Elección del método.} El modelo es lineal en $P$ y las previsiones son conocidas: un LP se resuelve en milisegundos y su óptimo es global; no hay motivo para un NMPC.
+
+\emph{Resultados} (cuaderno, Parte~4). El MPC consume $171{,}1$ kWh, algo menos que el PI ($175{,}4$), y cuesta $19{,}28$ € frente a $21{,}06$ €, un $8{,}4$~\% menos, sin violar el confort. El ahorro no procede de calentar menos, sino de calentar \emph{antes}: precalienta en valle hasta el borde superior admisible y deja que la temperatura descienda durante la punta, usando la masa térmica como batería. Sin margen ($m=0$) el coste baja a $18{,}76$ €, pero el error de modelo y el ruido producen $3{,}54$ K·h de violación del confort. Cada LP tarda unos 4~ms con Clarabel.
+\end{ejemplo}
+
+\begin{table}[htbp]
+\centering\footnotesize
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.0cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+CVXPY~\cite{cvxpy} & lenguaje de modelado de problemas convexos; parámetros para resolver repetidamente & libre (Apache-2.0) & MPC lineal (LP, QP) en Python y prototipos \\
+OSQP~\cite{osqp}, Clarabel, HiGHS & resolvedores de QP, cónicos y de LP & libres (Apache-2.0, MIT) & bajo CVXPY o embebidos \\
+CasADi~\cite{casadi} & diferenciación automática simbólica, NLP, integradores, interfaz a IPOPT & libre (LGPL-3) & NMPC y estimación con modelos físicos o neuronales \\
+acados~\cite{acados} & NMPC y estimación en tiempo real (iteración en tiempo real, HPIPM), generación de código C & libre (BSD-2) & sistemas embebidos y muestreo rápido \\
+do-mpc~\cite{dompc} & MPC no lineal, robusto multietapa y estimación de horizonte móvil sobre CasADi & libre (LGPL-3) & prototipos completos de NMPC en Python \\
+Pyomo & modelado algebraico de LP, MILP y NLP & libre (BSD-3) & planificación con variables enteras \\
+MPC comerciales de los fabricantes de DCS & MPC multivariable industrial integrado con el sistema de control & comercial & refinerías y plantas químicas con soporte del fabricante \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para el control predictivo.}
+\label{tab:tec3}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores3}
+(i) \emph{Horizonte demasiado corto}: si no ve el siguiente periodo caro, el MPC no precalienta. (ii) \emph{Restricciones de estado duras}: una perturbación vuelve infactible el problema y el controlador se queda sin respuesta; hay que ablandarlas y prever una acción de respaldo. (iii) \emph{Optimismo del modelo}: el optimizador lleva la planta al borde de las restricciones, justo donde el error de modelo cuesta caro; se necesitan márgenes (\cref{ej:caso-mpc}). (iv) \emph{Previsiones perfectas en la evaluación}: comparar un MPC con previsiones reales de la meteorología frente a un PID sobrestima el beneficio si en la simulación se le dan las observadas. (v) \emph{Tiempo de cálculo}: un NLP que a veces no converge en el periodo de muestreo necesita un límite de iteraciones y una solución de reserva (la anterior desplazada). (vi) \emph{Mal escalado} de variables y restricciones, que degrada la precisión de los resolvedores.
+\end{observacion}
+
+\begin{lecturas}
+\item J.~B. Rawlings, D.~Q. Mayne y M.~M. Diehl~\cite{rmd}, caps.~1 «Getting Started with Model Predictive Control», 2 «Model Predictive Control: Regulation» y~8 «Numerical Optimal Control».
+\item Stanford EE363~\cite{ee363}, clases~16 a~18 sobre el regulador lineal cuadrático.
+\item J.~Drgoňa \emph{et al.}~\cite{drgona}, «All you need to know about model predictive control for buildings».
+\item N.~Lazic \emph{et al.}~\cite{lazic}, «Data center cooling using model-predictive control».
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-deslizante}
+Explique por qué el MPC aplica solo la primera decisión del plan óptimo aunque el plan entero sea óptimo para el modelo. ¿Qué ocurriría si aplicara las $N$ decisiones en lazo abierto y la previsión de temperatura exterior se equivocara en $2$ K?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-lqr}
+Para $x_{k+1}=2x_k+u_k$ con $Q=1$, $R=1$, $P_f=0$ y $N=2$: (a) calcule $P_1$, $K_1$, $P_0$ y $K_0$ con la recursión de Riccati; (b) calcule la secuencia óptima y el coste desde $x_0=1$ y compruebe que coincide con $P_0x_0^{2}$; (c) obtenga $P$ y $K$ de horizonte infinito y el autovalor del lazo cerrado.
+\fuente{adaptado de Stanford EE363, clase~16 «Linear quadratic regulator: Discrete-time finite horizon»~\cite{ee363}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-condensada}
+Para $x_{k+1}=ax_k+bu_k$ con $a=0{,}9$, $b=0{,}5$ y $N=3$, escriba $\Phi$ y $\Gamma$ de \eqref{eq:condensada}. Con $Q=1$, $R=0{,}1$ y $P_f=1$, calcule $H$ y compruebe que es definida positiva.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-bateria}
+(a) Demuestre que, en el \cref{ej:bateria-lp}, comprar $1$ kWh a precio $p_c$ y venderlo después a $p_v$ con rendimientos $\eta$ de carga y descarga es rentable si y solo si $p_v/p_c>1/\eta^{2}$. (b) Con $\eta=0{,}9$ y los precios del ejemplo, compruebe el beneficio de $0{,}2955$ € y diga qué pasaría si el segundo par de precios fuera $(0{,}20;\ 0{,}24)$. (c) Añada un coste de degradación de $0{,}02$ € por kWh cargado o descargado (lado red) y recalcule.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-precalentar}
+La zona del \cref{ej:rc} ($\tau=15$ h, $\Dt=0{,}25$ h) puede precalentarse a las 6~h en valle ($0{,}10$ €/kWh) para necesitar menos calor a las 10~h, en punta ($0{,}22$ €/kWh). (a) ¿Qué fracción de un exceso de temperatura conseguido a las 6~h queda a las 10~h? (b) ¿Cuál es el precio efectivo del calor almacenado de esa forma y conviene precalentar? (c) Repita con $\tau=5$ h (edificio ligero) y con un COP a las 6~h de $2{,}4$ frente a $2{,}9$ a las 10~h.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-blanda}
+En el \cref{ej:mpc-qp}, sustituya la restricción dura $u_0\ge-0{,}5$ por una blanda con holgura $s\ge0$ y penalización $\rho s$. Resuelva el problema para $\rho=0{,}2$ y para $\rho=1$ y relacione el resultado con la \cref{prop:exacta}.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-riccati}
+Demuestre que, en el \cref{teo:lqr}, la matriz $P_k$ es simétrica y semidefinida positiva para todo $k$, y que $P_k$ no disminuye cuando aumenta el horizonte restante si $P_f=0$: $x\T P_kx\le x\T P_{k-1}x$. Interprete el resultado.
+\fuente{adaptado de J.~B. Rawlings, D.~Q. Mayne y M.~M. Diehl, \emph{Model Predictive Control}, 2.ª ed., cap.~1 «Getting Started with Model Predictive Control», regulador lineal cuadrático~\cite{rmd}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-terminal}
+Para $x_{k+1}=x_k+u_k$, $\ell=x^{2}+u^{2}$ y $\abs{u}\le0{,}5$: (a) compruebe que $V_f(x)=1{,}618\,x^{2}$ y $\kappa_f(x)=-0{,}618\,x$ satisfacen la condición de decrecimiento del \cref{teo:mpc}; (b) calcule el mayor intervalo $\Xset_f=[-\bar x,\bar x]$ en el que $\kappa_f$ respeta la restricción y es invariante; (c) explique por qué, con estos ingredientes, el MPC es estable para cualquier $N\ge1$ desde cualquier estado inicial factible.
+\fuente{adaptado de J.~B. Rawlings, D.~Q. Mayne y M.~M. Diehl, \emph{Model Predictive Control}, 2.ª ed., cap.~2 «Model Predictive Control: Regulation», ingredientes terminales~\cite{rmd}.}
+\end{ejercicio}

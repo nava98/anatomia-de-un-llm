@@ -1,0 +1,201 @@
+% =====================================================================
+\chapter{Optimización de instrucciones, de sistemas con LLM y de código}
+\label{tema:2}
+% =====================================================================
+
+Un sistema construido con modelos de lenguaje tiene muchos parámetros que no son números: las instrucciones de cada llamada, los ejemplos que se incluyen, el orden de los pasos, el número de muestras que se votan. Este tema los trata como variables de decisión de un problema de optimización de caja negra con un objetivo medido sobre datos. Sigue a Yang \emph{et al.} para OPRO~\cite{opro}, a Khattab \emph{et al.} para DSPy~\cite{dspy} y a Opsahl-Ong \emph{et al.} para MIPRO~\cite{mipro}; la autoconsistencia, a Wang \emph{et al.}~\cite{wang-sc} y al módulo~22 (tema~1, §1.4); el sesgo del ganador, a Smith y Winkler~\cite{smith}; la optimización de código y la medida de tiempos, a la clase~10 «Measurement and Timing» del curso 6.172 del MIT~\cite{mit6172}.
+
+\section{Instrucciones como variables de decisión}
+
+\begin{definicion}[Optimización de instrucciones]\label{def:prompt-opt}
+Sea $\mathcal{I}$ un conjunto de instrucciones (textos), $M$ un modelo de lenguaje fijo, $D_{\mathrm{val}}=\{(x_i,y_i)\}_{i=1}^{n}$ un conjunto de validación y $m(\hat y,y)\in[0,1]$ una métrica (por ejemplo, $\Ind[\hat y=y]$). El problema es
+\[
+\max_{p\in\mathcal{I}}\ J(p),\qquad J(p)=\E_{(x,y)}\bigl[m(M(p,x),y)\bigr],\qquad \hat J(p)=\frac1n\sum_{i=1}^{n}m\bigl(M(p,x_i),y_i\bigr).
+\]
+Es un problema de caja negra (módulo~24, definición~5.1), discreto, ruidoso (el estimador $\hat J$ tiene varianza $J(1-J)/n$ si $m$ es binaria) y caro (cada evaluación son $n$ llamadas al modelo).
+\end{definicion}
+
+\begin{definicion}[OPRO]\label{def:opro}
+\emph{Optimization by PROmpting}~\cite{opro} usa un segundo LLM como optimizador. En cada paso se le da un \emph{meta-prompt} con: una descripción de la tarea y unos pocos ejemplos, y la \emph{trayectoria}: las mejores instrucciones encontradas hasta el momento con su puntuación, ordenadas de menor a mayor. El LLM optimizador genera nuevas instrucciones; se evalúan con el LLM que resuelve la tarea, se añaden a la trayectoria y se repite. En los experimentos del artículo, la trayectoria conserva las 20 mejores, se generan 8 instrucciones por paso con temperatura~1 y la puntuación es la exactitud sobre un subconjunto fijo del conjunto de entrenamiento.
+\end{definicion}
+
+OPRO es una búsqueda evolutiva como la del \cref{tema:1}, con dos diferencias: el «programa» es un texto y la memoria es la propia trayectoria, que el LLM lee para inferir qué rasgos se asocian a puntuaciones altas. Los autores informan de que las mejores instrucciones encontradas superan a las diseñadas por personas hasta en 8 puntos en GSM8K y hasta en 50 en tareas de Big-Bench Hard~\cite{opro}; también advierten de que, en el problema del viajante, el LLM se mantiene cerca de las heurísticas clásicas con 50 ciudades, pero en instancias mayores la inserción más lejana supera a todos los modelos probados.
+
+\begin{definicion}[Programa de modelos de lenguaje y su compilación]\label{def:dspy}
+En DSPy~\cite{dspy}, un \emph{programa de LM} es un grafo de \emph{módulos}; cada módulo tiene una \emph{firma} declarativa (entradas y salidas con nombre, por ejemplo \texttt{pregunta, contexto -> respuesta}) y unos parámetros: su instrucción y sus demostraciones. Un \emph{optimizador} (antes llamado \emph{teleprompter}) recibe el programa, un conjunto de entrenamiento y una métrica, y elige los parámetros de todos los módulos para maximizar la métrica del programa completo. Por ejemplo, el arranque de demostraciones ejecuta el programa sobre los ejemplos de entrenamiento y conserva como demostraciones las trazas que superan la métrica.
+\end{definicion}
+
+Khattab \emph{et al.} informan de que los programas compilados superan a los mismos programas con pocos ejemplos estándar en más de un 25\,\% con GPT-3.5 y un 65\,\% con llama2-13b-chat~\cite{dspy}. MIPRO~\cite{mipro} optimiza conjuntamente instrucciones y demostraciones de cada módulo sin etiquetas intermedias: propone instrucciones teniendo en cuenta los datos y el programa, y usa evaluaciones en minilotes para ajustar un modelo sustituto del objetivo, como la optimización bayesiana del módulo~25 (tema~4); obtiene mejoras de hasta 13 puntos de exactitud con Llama-3-8B.
+
+\section{El sesgo del ganador}
+
+Todas estas técnicas eligen el máximo de muchas estimaciones ruidosas. El resultado es predecible.
+
+\begin{proposicion}[Maldición del optimizador]\label{prop:maldicion}
+Sean $K$ candidatos con valores verdaderos $J_1,\dots,J_K$ y estimaciones $\hat J_k=J_k+\varepsilon_k$ con $\E[\varepsilon_k]=0$, y sea $\hat k=\argmax_k\hat J_k$. Entonces:
+\begin{enumerate}
+  \item $\E[\hat J_{\hat k}]\ \ge\ \max_k J_k\ \ge\ \E[J_{\hat k}]$: la puntuación de validación del elegido sobrestima en media su valor verdadero.
+  \item Si cada $\varepsilon_k\sim\mathcal{N}(0,\sigma^{2})$ (no necesariamente independientes), $\E[\max_k\varepsilon_k]\le\sigma\sqrt{2\ln K}$. En particular, si todos los $J_k$ son iguales, el sesgo $\E[\hat J_{\hat k}-J_{\hat k}]$ está entre $0$ y $\sigma\sqrt{2\ln K}$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Como el máximo de variables aleatorias es mayor o igual que cada una, $\E[\max_k\hat J_k]\ge\E[\hat J_l]=J_l$ para todo $l$, luego $\E[\hat J_{\hat k}]\ge\max_l J_l$. Por otra parte, $J_{\hat k}\le\max_l J_l$ siempre, y tomando esperanzas se obtiene la segunda desigualdad. (ii) Para $t>0$, por la desigualdad de Jensen (módulo~6, tema~2, §2.1) aplicada a la función convexa $\exp$,
+\[
+e^{t\,\E[\max_k\varepsilon_k]}\le\E\bigl[e^{t\max_k\varepsilon_k}\bigr]=\E\bigl[\max_k e^{t\varepsilon_k}\bigr]\le\sum_{k=1}^{K}\E\bigl[e^{t\varepsilon_k}\bigr]=K\,e^{t^{2}\sigma^{2}/2},
+\]
+donde se ha usado la función generadora de momentos de la normal. Tomando logaritmos, $\E[\max_k\varepsilon_k]\le\ln K/t+t\sigma^{2}/2$, y el mínimo en $t=\sqrt{2\ln K}/\sigma$ vale $\sigma\sqrt{2\ln K}$. Si los $J_k$ son iguales, $\hat J_{\hat k}-J_{\hat k}=\max_k\varepsilon_k$, que tiene esperanza no negativa por (i) y acotada por lo anterior.
+\end{proof}
+
+\begin{ejemplo}[Veinte instrucciones igual de buenas]\label{ej:maldicion}
+Veinte instrucciones tienen la misma exactitud verdadera, $0{,}70$, y se evalúan con $n=100$ ejemplos. Cada estimación tiene desviación típica $\sigma=\sqrt{0{,}7\cdot0{,}3/100}=0{,}0458$. La cota da un sesgo de a lo sumo $0{,}0458\sqrt{2\ln 20}=0{,}0458\cdot 2{,}448=0{,}112$; la simulación del cuaderno, con 20\,000 repeticiones, da un sesgo medio de $0{,}083$. La instrucción «ganadora» aparenta un 78\,\% cuando vale un 70\,\%. Es la misma lección que las comparaciones múltiples del módulo~0.9 (tema~5, §5.6) y que la sobreoptimización de la recompensa del módulo~21 (tema~6, §6.4).
+\end{ejemplo}
+
+\begin{corolario}[Protocolo de evaluación]\label{cor:protocolo}
+Para estimar sin sesgo el valor de un sistema optimizado se necesita un conjunto de \emph{prueba} que no haya intervenido en ninguna elección (ni de instrucciones, ni de ejemplos, ni de hiperparámetros), igual que en la separación en entrenamiento, validación y prueba del módulo~8 (tema~1, §1.4). Su error típico, $\sqrt{J(1-J)/n_{\mathrm{test}}}$, fija la resolución con la que se pueden comparar sistemas.
+\end{corolario}
+
+\section{Caso de estudio: clasificación de partes de avería}
+
+\begin{ejemplo}[Optimizar las instrucciones de un clasificador]\label{ej:caso-prompt}
+\emph{Problema.} El departamento de mantenimiento de una planta de envasado recibe partes de avería en texto libre y quiere clasificarlos con un LLM en seis categorías (eléctrica, mecánica, neumática, sensores, software, otras) para encaminarlos al técnico adecuado. Se dispone de 100 partes etiquetados para validación y de 1000 para prueba.
+
+\emph{Variables.} La instrucción se construye con seis decisiones: papel asignado al modelo (ninguno, técnico, experto), formato de salida (libre, JSON, una palabra), número de ejemplos (0, 2, 4, 8), indicación de razonamiento (no, «paso a paso», «enumera los síntomas primero»), idioma de las etiquetas (español, inglés) y posición de la lista de etiquetas (antes o después del parte). Hay $3\cdot3\cdot4\cdot3\cdot2\cdot2=432$ instrucciones.
+
+\emph{Simulación.} Como el cuaderno no llama a ningún modelo, la exactitud verdadera de cada instrucción se define con una función sintética con interacciones (por ejemplo, pedir «una palabra» y a la vez razonar perjudica), cuyo máximo es $0{,}730$ y cuya media sobre las 432 es $0{,}580$. Evaluar una instrucción es observar una binomial de 100 ensayos.
+
+\emph{Métodos.} (a) Búsqueda aleatoria de 96 instrucciones. (b) Un optimizador de tipo OPRO con 12 pasos de 8 propuestas: guarda las 20 mejores, parte de una de las 3 mejores y cambia una o dos decisiones, eligiendo cada opción con una softmax de la puntuación media de las instrucciones de la trayectoria que la contienen (un sustituto sencillo de lo que el LLM infiere al leer la trayectoria).
+
+\emph{Resultado.} En 200 repeticiones, la instrucción elegida por OPRO tiene una exactitud verdadera media de $0{,}701$ y la elegida por búsqueda aleatoria, $0{,}692$; pero sus puntuaciones de validación son $0{,}791$ y $0{,}774$. El optimismo es de unos 9 puntos en ambos casos, como predice la \cref{prop:maldicion}. Con los 1000 partes de prueba, el error típico es $\sqrt{0{,}7\cdot0{,}3/1000}=0{,}0145$ y el intervalo del 95\,\% tiene una semiamplitud de unos $2{,}8$ puntos: suficiente para confirmar que la instrucción supera el 67\,\% que obtiene el sistema actual de reglas, insuficiente para distinguir entre las dos estrategias de búsqueda.
+\end{ejemplo}
+
+\section{La autoconsistencia como problema de optimización}
+
+La autoconsistencia (módulo~22, definición~1.14) devuelve la respuesta más votada entre $m$ muestras. Más muestras dan más exactitud y más coste; el número de muestras es una variable de decisión.
+
+\begin{proposicion}[Incremento de la exactitud del voto]\label{prop:incremento}
+Sea $P_m$ la probabilidad de que la mayoría de $m$ (impar) respuestas independientes sea correcta cuando cada una lo es con probabilidad $p>1/2$ (módulo~22, proposición~1.16). Entonces
+\[
+\Delta_m:=P_{m+2}-P_m=\binom{m}{\frac{m-1}{2}}\bigl(p(1-p)\bigr)^{\frac{m+1}{2}}(2p-1)>0,\qquad \frac{\Delta_{m+2}}{\Delta_m}=\frac{4(m+2)}{m+3}\,p(1-p)<1 .
+\]
+\end{proposicion}
+
+\begin{proof}
+Al pasar de $m$ a $m+2$ votos, el resultado de la mayoría solo puede cambiar si tras $m$ votos la diferencia entre aciertos y fallos es exactamente uno. Si hay $(m+1)/2$ aciertos, la mayoría pasa a ser incorrecta si los dos votos nuevos fallan (probabilidad $(1-p)^2$); si hay $(m-1)/2$ aciertos, pasa a ser correcta si los dos aciertan (probabilidad $p^2$). Como $\binom{m}{(m+1)/2}=\binom{m}{(m-1)/2}$,
+\[
+\Delta_m=\binom{m}{\frac{m-1}{2}}\Bigl[p^{\frac{m-1}{2}}(1-p)^{\frac{m+1}{2}}p^{2}-p^{\frac{m+1}{2}}(1-p)^{\frac{m-1}{2}}(1-p)^{2}\Bigr]=\binom{m}{\frac{m-1}{2}}\bigl(p(1-p)\bigr)^{\frac{m+1}{2}}\bigl(p-(1-p)\bigr).
+\]
+Para el cociente, $\binom{m+2}{(m+1)/2}\big/\binom{m}{(m-1)/2}=\frac{(m+2)(m+1)}{\frac{m+1}{2}\cdot\frac{m+3}{2}}=\frac{4(m+2)}{m+3}$, y se multiplica por $p(1-p)$. Como $4p(1-p)<1$ para $p\ne 1/2$ y $(m+2)/(m+3)<1$, el cociente es menor que~1.
+\end{proof}
+
+\begin{corolario}[Número óptimo de muestras]\label{cor:m-optimo}
+Si una respuesta correcta vale $V$ y cada muestra cuesta $c$, el beneficio neto $V P_m-cm$ (con $m$ impar) se maximiza en el primer $m$ tal que $V\Delta_m<2c$.
+\end{corolario}
+
+\begin{proof}
+Pasar de $m$ a $m+2$ cambia el beneficio en $V\Delta_m-2c$. Como $\Delta_m$ decrece (\cref{prop:incremento}), estos cambios forman una sucesión decreciente: son positivos hasta cierto $m$ y negativos a partir de él, de modo que el máximo está en el primer $m$ con $V\Delta_m-2c<0$.
+\end{proof}
+
+Con $p=0{,}65$, $V=0{,}50$~€ y $c=0{,}01$~€: $\Delta_1=0{,}0683$, $\Delta_3=0{,}0466$ y $\Delta_5=0{,}0353$; $V\Delta_3=0{,}0233\ge0{,}02$ pero $V\Delta_5=0{,}0177<0{,}02$, de modo que $m^{*}=5$, con exactitud $P_5=0{,}765$ y beneficio neto $0{,}332$~€ por parte. La hipótesis de independencia es optimista (módulo~22, ejemplo~1.17): conviene estimar $P_m$ con datos y aplicar el mismo criterio.
+
+\section{Optimización de código con agentes}
+
+Un agente de programación (módulo~22, tema~6) puede usarse como optimizador de un programa existente. El planteamiento correcto es el de un problema con restricciones:
+\[
+\min_{\pi}\ t(\pi)\quad\text{s.a.}\quad \pi \text{ supera todas las pruebas},\quad \text{memoria}(\pi)\le \bar M,\quad \text{coste del agente}\le B,
+\]
+donde $t$ es el tiempo de ejecución en una carga representativa. Las pruebas son una \emph{restricción dura}, no un término del objetivo: un programa más rápido que falla una prueba no es una solución. Es el mismo principio del evaluador del \cref{tema:1}.
+
+\begin{proposicion}[Ley de Amdahl]\label{prop:amdahl}
+Si una fracción $f$ del tiempo de ejecución se acelera en un factor $a>1$ y el resto no cambia, la aceleración global es
+\[
+A=\frac{1}{(1-f)+f/a}<\frac{1}{1-f}.
+\]
+\end{proposicion}
+
+\begin{proof}
+Si el tiempo original es $t$, el nuevo es $(1-f)t+ft/a$, y $A$ es el cociente. Como $f/a>0$, el denominador es mayor que $1-f$.
+\end{proof}
+
+La ley dice dónde empezar: por lo que el \emph{perfilador} muestra que ocupa más tiempo. Un agente que no perfila tiende a optimizar lo que parece lento en el código, no lo que lo es.
+
+\begin{ejemplo}[Caso de estudio: acelerar un servicio de planificación]\label{ej:caso-codigo}
+Un servicio calcula cada noche las rutas de reparto; tarda 40~min y debe bajar de 20 para dejar margen. El perfilado asigna un 55\,\% del tiempo al cálculo de distancias, un 25\,\% a la serialización de resultados y un 20\,\% al resto. El agente propone vectorizar el cálculo de distancias (factor~4) y cambiar el serializador (factor~5). Por la \cref{prop:amdahl}: solo la primera mejora da $A=1/(0{,}45+0{,}1375)=1{,}70$ (23{,}5~min); solo la segunda, $1/(0{,}75+0{,}05)=1{,}25$; las dos, $1/(0{,}20+0{,}1375+0{,}05)=2{,}58$ (15{,}5~min), que cumple el objetivo. Aunque las distancias se hicieran instantáneas, sin tocar lo demás no se bajaría de $40\cdot0{,}45=18$~min.
+
+\emph{Medida.} Siguiendo la clase~10 del curso 6.172 del MIT~\cite{mit6172}: el tiempo de un programa determinista solo puede aumentar por interferencias (otros procesos, interrupciones, escalado de frecuencia), así que el \emph{mínimo} de varias repeticiones es el estimador más robusto; las versiones deben ejecutarse \emph{intercaladas} y no una tras otra, para que el calentamiento de la máquina no favorezca a la primera; y para resumir cocientes de tiempos entre varias cargas se usa la \emph{media geométrica}. Criterio de aceptación: en 20 pares intercalados, la versión nueva debe ganar al menos 15 veces; bajo la hipótesis de que ambas son igual de rápidas, $\Prob(\text{Bin}(20,1/2)\ge15)=0{,}021$.
+
+\emph{Presupuesto.} Cada iteración del agente cuesta tokens y una ejecución de las pruebas; se fija un máximo de iteraciones y se detiene la búsqueda cuando dos iteraciones seguidas no superan el criterio de aceptación.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~2.}\label{tab:tec2}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.5cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.1cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+DSPy~\cite{dspy} & programas de LM declarativos y optimizadores de instrucciones y demostraciones (incluido MIPRO) & abierta (MIT) & sistemas de varias llamadas con una métrica clara \\
+OPRO~\cite{opro} & método: un LLM como optimizador a partir de la trayectoria & artículo con código de los autores & instrucciones de una sola llamada; problemas pequeños \\
+promptfoo & conjuntos de pruebas y comparación de instrucciones y modelos & abierta (MIT) & evaluación de regresión de instrucciones \\
+pytest, pytest-benchmark & pruebas como restricción y medidas de tiempo repetidas & abiertas (MIT; BSD-2) & optimización de código en Python \\
+perf, py-spy, Scalene & perfilado de CPU y memoria & abiertas (GPL-2.0; MIT; Apache~2.0) & antes de pedir al agente que optimice nada \\
+asv & seguimiento del rendimiento a lo largo del historial del código & abierta (BSD-3) & evitar regresiones de rendimiento \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores2}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Informar de la puntuación de validación del ganador} como si fuera su rendimiento (\cref{prop:maldicion}).
+  \item \emph{Validación demasiado pequeña}: con $n=100$, el error típico ronda los 5 puntos; diferencias de 2 puntos son ruido.
+  \item \emph{Contaminación}: ejemplos de prueba que acaban como demostraciones o en la trayectoria del optimizador (módulo~22, tema~3, §3.4).
+  \item \emph{Cambiar de modelo sin reoptimizar}: las instrucciones óptimas dependen del modelo; una actualización del proveedor puede degradarlas sin aviso.
+  \item \emph{Pruebas débiles como restricción}: si las pruebas no cubren un caso, el agente puede «acelerar» eliminándolo.
+  \item \emph{Medir una sola vez, o primero A y luego B}, y declarar una mejora que es ruido.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item C.~Yang \emph{et al.}~\cite{opro}, §§2 y~4--5.
+\item O.~Khattab \emph{et al.}~\cite{dspy} y K.~Opsahl-Ong \emph{et al.}~\cite{mipro}.
+\item J.~E. Smith y R.~L. Winkler~\cite{smith}, sobre la maldición del optimizador.
+\item MIT 6.172~\cite{mit6172}, clase~10 «Measurement and Timing».
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-meta}
+Escriba (en español y en forma esquemática) el meta-prompt de OPRO para el \cref{ej:caso-prompt}: qué partes contiene, en qué orden aparece la trayectoria y por qué, y qué información \emph{no} debe contener.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:2-metrica}
+En DSPy, un optimizador necesita una métrica que reciba un ejemplo y una predicción y devuelva un número o un booleano. Para un sistema que responde preguntas sobre manuales de mantenimiento recuperando fragmentos, proponga una métrica que exija a la vez que la respuesta sea correcta y que el fragmento recuperado la contenga, y explique qué ocurre en la compilación si la métrica solo comprueba la respuesta.
+\fuente{adaptado de CS224U, Stanford~\cite{cs224u}, tarea «Few-shot OpenQA with DSPy», función de validación del contexto y la respuesta.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-maldicion}
+Se comparan $K=50$ instrucciones con $n=200$ ejemplos de validación; todas tienen exactitud verdadera $0{,}80$. (a) Calcule $\sigma$ y la cota de la \cref{prop:maldicion}. (b) ¿Cuántos ejemplos harían falta para que la cota del sesgo fuera de 2 puntos? (c) ¿Y si solo se comparan $K=5$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-voto}
+Con $p=0{,}7$, $V=0{,}20$~€ y $c=0{,}004$~€ por muestra: (a) calcule $\Delta_1$, $\Delta_3$, $\Delta_5$ y $\Delta_7$ con la \cref{prop:incremento}; (b) obtenga $m^{*}$ con el \cref{cor:m-optimo}; (c) calcule $P_{m^{*}}$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-amdahl}
+Un programa de simulación pasa un 70\,\% del tiempo en un bucle numérico, un 20\,\% en lectura de datos y un 10\,\% en el resto. (a) ¿Qué aceleración global se obtiene si el agente acelera el bucle un factor 8? (b) ¿Qué factor haría falta en el bucle para una aceleración global de 2? (c) ¿Es posible una aceleración global de 4 sin tocar la lectura?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-medida}
+Se miden dos versiones A y B de un programa en cinco cargas; los tiempos mínimos (en s) son A: $2{,}0$; $4{,}0$; $1{,}0$; $8{,}0$; $3{,}0$ y B: $1{,}6$; $4{,}4$; $0{,}5$; $8{,}0$; $2{,}4$. (a) Calcule los cocientes $t_B/t_A$, su media aritmética y su media geométrica. (b) Calcule los cocientes $t_A/t_B$ y sus dos medias. (c) Explique por qué la media geométrica es la única de las dos que da conclusiones coherentes en (a) y (b). (d) En 20 pares intercalados, B gana 14 veces; ¿basta con el criterio del \cref{ej:caso-codigo}?
+\fuente{adaptado de MIT 6.172, otoño de 2018, clase~10 «Measurement and Timing» (resumen de cocientes con la media geométrica y comparación de dos programas)~\cite{mit6172}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-cota}
+Demuestre que, si $\varepsilon_1,\dots,\varepsilon_K$ son independientes $\mathcal{N}(0,\sigma^{2})$, $\E[\max_k\varepsilon_k]$ es creciente en $K$. Después, con $K=2$, calcule $\E[\max(\varepsilon_1,\varepsilon_2)]$ exactamente (use que $\max(a,b)=\frac{a+b}{2}+\frac{\abs{a-b}}{2}$) y compárelo con la cota $\sigma\sqrt{2\ln 2}$.
+\fuente{adaptado de J.~E. Smith y R.~L. Winkler~\cite{smith} (sesgo del máximo de estimaciones con error).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-diseno}
+Diseñe el protocolo completo para optimizar con DSPy un asistente que redacta órdenes de trabajo a partir de partes de avería: división de los datos, métrica (y cómo se valida la propia métrica si usa un LLM como juez), presupuesto de llamadas, criterio para aceptar la nueva versión frente a la actual con un intervalo de confianza, y qué hacer cuando el proveedor actualice el modelo.
+\end{ejercicio}

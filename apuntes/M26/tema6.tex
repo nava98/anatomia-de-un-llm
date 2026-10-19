@@ -1,0 +1,184 @@
+% =====================================================================
+\chapter{Puesta en producción en planta}
+\label{tema:6}
+% =====================================================================
+
+Un controlador que funciona en el gemelo digital está a mitad de camino. En planta hay operadores que deben entender y poder anular lo que hace, alarmas que no deben saturarlos, un sistema de control básico y otro de seguridad que no se pueden comprometer, una red industrial que es un objetivo de ciberataques y un marco normativo. Este tema recorre esos requisitos. La arquitectura por capas sigue el capítulo~15 («Architecture and System Design») de Åström y Murray~\cite{am}; la gestión de alarmas, la norma ISA-18.2~\cite{isa182}; la seguridad funcional, IEC~61511~\cite{iec61511}; la ciberseguridad, la guía NIST SP~800-82~\cite{nist} y la serie IEC~62443~\cite{iec62443}; la validación y el seguimiento de modelos, el curso CS329S de Stanford~\cite{cs329s} y Sculley \emph{et al.}~\cite{sculley}, y la regulación, el Reglamento europeo de inteligencia artificial~\cite{aiact}. Las normas son documentos de pago: aquí se usa solo lo que sus organismos difunden públicamente.
+
+\section{Arquitectura por capas}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth,every node/.style={font=\small},
+  capa/.style={draw,minimum width=8.2cm,minimum height=0.8cm,align=center}]
+\node[capa] (opt) at (0,0) {planificación y optimización económica (horas, días)};
+\node[capa] (sup) at (0,-1.2) {control supervisor: MPC o política de RL (minutos)};
+\node[capa,fill=black!6] (fil) at (0,-2.4) {filtro de seguridad y validación de consignas};
+\node[capa] (bas) at (0,-3.6) {control básico: PID en DCS o PLC (segundos)};
+\node[capa] (pro) at (0,-4.8) {proceso: sensores y actuadores};
+\draw (-6.6,0.4) rectangle (-4.5,-5.2); \node[align=center] at (-5.55,-2.4) {operador\\(HMI,\\alarmas)};
+\draw (4.5,-3.2) rectangle (7.2,-5.2); \node[align=center] at (5.85,-4.2) {sistema\\instrumentado\\de seguridad\\(independiente)};
+\draw[->] (opt) -- (sup);
+\draw[->] (sup) -- node[right,font=\footnotesize]{consignas} (fil);
+\draw[->] (fil) -- (bas);
+\draw[<->] (bas) -- (pro);
+\draw[<->] (pro.east) -- (4.5,-4.8);
+\draw[<->] (-4.5,-1.2) -- (sup.west);
+\draw[<->] (-4.5,-3.6) -- (bas.west);
+\end{tikzpicture}
+\caption{Arquitectura por capas: la capa de IA escribe consignas acotadas sobre el control básico; el sistema de seguridad es independiente de ambas.}
+\label{fig:capas}
+\end{figure}
+
+La \cref{fig:capas} resume el principio de diseño: cada capa trabaja en una escala de tiempo y confía en la inferior. El MPC o la política de RL \emph{no} mueven válvulas: envían consignas a los PID existentes, que siguen funcionando si la capa superior falla. Entre ambas, un filtro valida cada consigna. El \emph{sistema instrumentado de seguridad} (SIS), que detiene el proceso ante condiciones peligrosas, es independiente de todo lo anterior, con sus propios sensores y lógica, y se diseña según IEC~61511~\cite{iec61511}, la aplicación al sector de procesos de la seguridad funcional de IEC~61508, que asigna a cada función de seguridad un nivel de integridad (SIL, de 1 a 4). Ningún componente de aprendizaje automático forma parte del SIS. El caso de Google~\cite{gamblegao} sigue el mismo esquema: la IA en la nube propone, el sistema local verifica y aplica, y las reglas clásicas quedan como respaldo.
+
+\section{Modos de operación y lazo humano}
+
+\begin{definicion}[Modos de operación]\label{def:modos}
+Se distinguen tres modos de creciente autonomía: \emph{asesor} (el sistema recomienda y el operador decide y ejecuta), \emph{supervisado} (el sistema ejecuta dentro de límites y el operador vigila y puede intervenir en cualquier momento) y \emph{autónomo con supervisión} (el sistema opera con salvaguardas automáticas y el operador interviene por excepción). En todos ellos el operador puede volver al control básico.
+\end{definicion}
+
+Un despliegue prudente recorre los modos en orden y solo avanza cuando hay evidencia: el caso de los centros de datos pasó de recomendaciones en 2016~\cite{evansgao} a control autónomo con supervisión en 2018~\cite{gamblegao}. El paso entre modos no debe provocar saltos en los actuadores.
+
+\begin{proposicion}[Transferencia sin saltos]\label{prop:bumpless}
+Sea un PI en forma posicional, $u_k=K_ce_k+I_k$, que toma el control en el instante $k_0$ de un sistema que aplicaba $u_{k_0-1}$. Si se inicializa $I_{k_0}=u_{k_0-1}-K_ce_{k_0}$, entonces $u_{k_0}=u_{k_0-1}$.
+\end{proposicion}
+
+\begin{proof}
+Por sustitución: $u_{k_0}=K_ce_{k_0}+u_{k_0-1}-K_ce_{k_0}=u_{k_0-1}$. A partir de ahí el PI evoluciona con su ley; la salida es continua en el cambio.
+\end{proof}
+
+Con la zona del \cref{ej:caso-pi}, si la capa supervisora aplicaba $1{,}2$ kW y el error al recuperar el PI es de $0{,}4$ K, el integrador se inicializa en $1{,}2-1{,}429\cdot0{,}4=0{,}629$ kW. El mismo principio se aplica al pasar del PI al MPC: el MPC debe penalizar los cambios de la acción respecto a la última aplicada.
+
+\section{Alarmas}
+
+La norma ANSI/ISA-18.2, base de la internacional IEC~62682~\cite{isa182}, organiza la gestión de alarmas en un ciclo de vida (filosofía, identificación, racionalización, diseño, implantación, operación, mantenimiento, seguimiento, gestión del cambio y auditoría) y da referencias de carga: alrededor de 150 alarmas al día (una cada 10 minutos de media) se considera muy probablemente aceptable y alrededor de 300 al día (dos cada 10 minutos), el máximo manejable. Una alarma solo debe existir si exige una acción del operador. Una capa de IA añade fuentes nuevas que hay que racionalizar con el mismo criterio: residuos del modelo fuera de banda, proximidad a restricciones, salidas a modo de respaldo, pérdida de comunicación con la capa supervisora o predicciones con incertidumbre alta.
+
+\section{Validación y despliegue}
+
+\begin{definicion}[Etapas de validación]\label{def:validar}
+(i) \emph{Validación fuera de línea}: el controlador se evalúa en el gemelo y sobre históricos, con escenarios no usados en su diseño. (ii) \emph{Modo sombra}: el controlador calcula sus decisiones con datos en tiempo real, pero no las aplica; se comparan con las del sistema existente y se comprueba que serían seguras. (iii) \emph{Experimento en planta}: se alterna el controlador nuevo y el existente por periodos (días o semanas) y se mide la diferencia con un diseño de comparación pareada~\cite[cap.~2]{montgomery}. (iv) \emph{Despliegue con seguimiento}: se vigilan los residuos del modelo, la distribución de las entradas y los indicadores, con criterios de vuelta atrás definidos de antemano.
+\end{definicion}
+
+\begin{ejemplo}[Contraste del ahorro]\label{ej:contraste}
+Durante 20 días laborables se alternan el MPC y el PI en días emparejados por temperatura exterior. Las diferencias diarias de coste (PI menos MPC) tienen media $\bar d=1{,}20$ € y desviación típica $s=1{,}50$ €. El estadístico es $t=\bar d/(s/\sqrt{20})=1{,}20/0{,}3354=3{,}58$, con 19 grados de libertad: $p=0{,}002$. El intervalo de confianza del 95~\% es $1{,}20\pm2{,}093\cdot0{,}3354=[0{,}50;\ 1{,}90]$ € al día (módulo~0.9, §4.4 y §5.3). El ahorro es significativo, pero su magnitud es incierta en un factor cercano a~4: conviene seguir midiendo.
+\end{ejemplo}
+
+Los modelos degradan: cambian los equipos, el uso del edificio o el producto, y las relaciones aprendidas dejan de valer. Sculley \emph{et al.}~\cite{sculley} describen cómo un sistema de aprendizaje automático acumula «deuda técnica» por dependencias de datos ocultas, bucles de realimentación (el controlador cambia los datos con los que se reentrenará) y configuración, y las clases~10 y~11 de CS329S~\cite{cs329s} tratan la detección de cambios de distribución y el seguimiento. En control, la señal de seguimiento más útil es el residuo del modelo en simulación libre sobre ventanas recientes: un sesgo sostenido indica que hay que recalibrar el gemelo.
+
+\section{El filtro de seguridad}
+
+\begin{definicion}[Filtro de seguridad]\label{def:filtro}
+Sea un modelo $x_{k+1}=f(x_k,u_k,w_k)$ con perturbación acotada $w_k\in W$ y un conjunto seguro $\Sset_{\mathrm{seg}}$. Para cada $x$ se define el conjunto de acciones seguras $\Uset_{\mathrm{seg}}(x)=\{u\in\Uset:\ f(x,u,w)\in\Sset_{\mathrm{seg}}\ \forall w\in W\}$. El \emph{filtro de seguridad} sustituye la acción propuesta $u^{\mathrm{p}}$ por su proyección $u=\proy_{\Uset_{\mathrm{seg}}(x)}(u^{\mathrm{p}})$.
+\end{definicion}
+
+\begin{proposicion}[Invariancia bajo el filtro]\label{prop:invariancia}
+Si $\Uset_{\mathrm{seg}}(x)\ne\emptyset$ para todo $x\in\Sset_{\mathrm{seg}}$ y $x_0\in\Sset_{\mathrm{seg}}$, entonces, cualquiera que sea la política que propone las acciones, $x_k\in\Sset_{\mathrm{seg}}$ para todo $k$ y toda secuencia de perturbaciones en $W$.
+\end{proposicion}
+
+\begin{proof}
+Por inducción. Si $x_k\in\Sset_{\mathrm{seg}}$, el conjunto $\Uset_{\mathrm{seg}}(x_k)$ no es vacío y la acción filtrada pertenece a él, luego $x_{k+1}=f(x_k,u_k,w_k)\in\Sset_{\mathrm{seg}}$ para todo $w_k\in W$, por definición de $\Uset_{\mathrm{seg}}$.
+\end{proof}
+
+La garantía es tan buena como el modelo y la cota de las perturbaciones: el filtro usa un modelo sencillo, conservador y verificable, no la red del agente. Cuando $\Uset_{\mathrm{seg}}$ es un intervalo, la proyección es un simple recorte. Se completa con límites de velocidad de cambio (Lazic \emph{et al.}~\cite{lazic} limitaban la variación de cada actuador entre pasos), un \emph{perro guardián} (\emph{watchdog}) que devuelve el control a los PID si la capa supervisora deja de enviar consignas válidas, y la transferencia sin saltos de la \cref{prop:bumpless}.
+
+\begin{ejemplo}[Caso de estudio: filtro para la zona]\label{ej:filtro}
+Con el modelo de la zona, $T_{k+1}=aT_k+bP_k+d_k$, $a=0{,}9835$, $b=0{,}23$ K/kW (COP de $2{,}8$) y la perturbación $d_k=(1-a)(\Text+RG)$ acotada por $\Text\in[-5,15]$ °C y $G\in[0,2]$ kW, es decir, $d\in[-0{,}0827;\ 0{,}4133]$ K, se toma $\Sset_{\mathrm{seg}}=[17,26]$ °C. El intervalo seguro es
+\[
+\Uset_{\mathrm{seg}}(T)=\Bigl[\max\Bigl\{0,\ \tfrac{17-aT-d_{\min}}{b}\Bigr\},\ \min\Bigl\{3,\ \tfrac{26-aT-d_{\max}}{b}\Bigr\}\Bigr].
+\]
+En $T=17$ °C vale $[1{,}579;\ 3]$ kW y en $T=26$ °C, $[0;\ 0{,}068]$ kW. Como los extremos son afines en $T$, no es vacío en todo $[17,26]$, y por la \cref{prop:invariancia} ninguna política, por mala que sea, saca la zona de ese intervalo mientras el modelo y las cotas sean válidos. En el reactor del \cref{ej:caso-reactor}, el filtro análogo limita la temperatura de camisa por debajo de la crítica y fuerza refrigeración máxima cerca del equilibrio inestable (cuaderno, Parte~9).
+\end{ejemplo}
+
+\section{Ciberseguridad de la tecnología de operación}
+
+Los sistemas de control industrial (tecnología de operación, OT) priorizan la disponibilidad y la seguridad física por encima de la confidencialidad, funcionan durante décadas con equipos difíciles de actualizar y usan protocolos diseñados sin autenticación. La guía NIST SP~800-82, revisión~3, de 2023~\cite{nist}, adapta la gestión de riesgos de ciberseguridad a este entorno. La serie IEC~62443~\cite{iec62443}, desarrollada por IEC e ISA, se organiza en cuatro bloques (general; políticas y procedimientos; sistema; componentes) y aporta dos conceptos centrales: la partición del sistema en \emph{zonas} de activos con requisitos de seguridad comunes, comunicadas solo por \emph{conductos} definidos, y los \emph{niveles de seguridad} SL~1 a SL~4, ligados a la capacidad del adversario que se quiere resistir, desglosados en siete requisitos fundamentales (identificación y autenticación, control de uso, integridad del sistema, confidencialidad de los datos, flujo de datos restringido, respuesta oportuna a eventos y disponibilidad de recursos).
+
+Para una capa de IA, de ahí se derivan reglas prácticas: (i) la capa supervisora vive en su propia zona y solo escribe consignas por un conducto autenticado y registrado, nunca acceso directo a los controladores; (ii) el sistema local valida cada consigna (el filtro de seguridad es también una defensa: limita el daño de una consigna maliciosa); (iii) si el modelo se ejecuta en la nube, la planta debe poder operar sin ella; (iv) los datos de entrenamiento son un activo: un atacante que los manipule puede inducir un modelo que se comporte mal en condiciones concretas, y (v) actualizar un modelo es un cambio en el sistema de control y pasa por la gestión del cambio.
+
+\section{Normas y regulación}
+
+\begin{table}[htbp]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Referencia & Ámbito & Qué implica para una capa de IA \\
+\midrule
+IEC 61508 / IEC 61511~\cite{iec61511} & seguridad funcional; sistemas instrumentados de seguridad en procesos & la IA queda fuera del SIS; el análisis de riesgos debe considerar sus modos de fallo \\
+ANSI/ISA-18.2, IEC 62682~\cite{isa182} & gestión de alarmas & racionalizar las alarmas nuevas; vigilar la carga del operador \\
+IEC 62443~\cite{iec62443}, NIST SP 800-82~\cite{nist} & ciberseguridad de sistemas de automatización & zonas y conductos; autenticación y registro de consignas \\
+Reglamento (UE) 2024/1689~\cite{aiact} & inteligencia artificial & los sistemas destinados a ser componentes de seguridad en la gestión y operación de infraestructuras críticas, como el suministro de agua, gas, calefacción o electricidad, se clasifican como de alto riesgo (anexo~III, punto~2) \\
+\bottomrule
+\end{tabularx}
+\caption{Marco normativo de referencia.}
+\label{tab:normas}
+\end{table}
+
+Los sistemas de alto riesgo del Reglamento de IA deben cumplir los requisitos de la sección~2 de su capítulo~III (artículos~8 a~15), entre ellos la gestión de riesgos, la gobernanza de los datos, el registro de eventos, la supervisión humana (artículo~14: el sistema debe diseñarse para que las personas puedan entender sus límites, detectar anomalías, no confiar en exceso en sus salidas, anular sus decisiones y detenerlo de forma segura) y la precisión, robustez y ciberseguridad. Un optimizador de climatización de oficinas no suele ser un componente de seguridad; el control de una red de calefacción urbana o de una subestación puede serlo. La clasificación de cada caso es una cuestión jurídica que debe evaluarse con especialistas; lo que el módulo aporta es que la arquitectura de la \cref{fig:capas} facilita cumplir esos requisitos.
+
+\begin{table}[htbp]
+\centering\footnotesize
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.0cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+OPC UA & comunicación industrial con seguridad (autenticación, cifrado) & estándar abierto & leer medidas y escribir consignas desde la capa supervisora \\
+Historiadores de proceso & almacenamiento de series temporales de planta & comercial o libre & datos de identificación y de seguimiento \\
+MLflow u otros registros de modelos & versionado de modelos, datos y métricas & libre (Apache-2.0) & trazabilidad de qué modelo controló la planta y cuándo \\
+Contenedores y orquestación & despliegue reproducible de la capa supervisora & libre & separar entornos de prueba y producción \\
+Evidently, WhyLogs & seguimiento de distribuciones y de la deriva de los datos & libres & alarmas de degradación del modelo \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para la puesta en producción.}
+\label{tab:tec6}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores6}
+(i) \emph{Escribir directamente en los actuadores} desde la capa de IA, sin PID por debajo ni filtro. (ii) \emph{No definir el modo de respaldo} ni probar la transferencia, que falla precisamente el día en que hace falta. (iii) \emph{Inundar de alarmas} al operador con avisos del modelo que no exigen acción. (iv) \emph{Medir el ahorro antes-después} sin grupo de control: el tiempo meteorológico o la producción cambian a la vez. (v) \emph{Olvidar el seguimiento}: el modelo se degrada en silencio. (vi) \emph{Conectar la planta a la nube} sin zonas, conductos ni autenticación. (vii) \emph{Tratar la actualización de un modelo como un despliegue de software ordinario}, sin gestión del cambio ni validación en sombra.
+\end{observacion}
+
+\begin{lecturas}
+\item K.~J. Åström y R.~M. Murray~\cite{am}, cap.~15 «Architecture and System Design».
+\item NIST SP~800-82r3~\cite{nist}, \emph{Guide to Operational Technology (OT) Security}.
+\item C.~Gamble y J.~Gao~\cite{gamblegao}, sobre salvaguardas en el control autónomo de un centro de datos.
+\item D.~Sculley \emph{et al.}~\cite{sculley}, «Hidden technical debt in machine learning systems».
+\item CS329S~\cite{cs329s}, clases~8 «Deployment» y~10 sobre fallos, cambios de distribución y seguimiento.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-modos}
+Clasifique en asesor, supervisado o autónomo con supervisión: (a) un panel que propone cada mañana las consignas del día y el jefe de turno las introduce; (b) un MPC que escribe consignas cada 15 minutos con límites y que el operador puede desactivar; (c) el sistema de 2018 del centro de datos de Google descrito en el \cref{tema:5}. Justifique qué evidencia pediría para pasar de (a) a (b).
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-capas}
+Para la zona climatizada, asigne cada función a una capa de la \cref{fig:capas} y una escala de tiempo: seguimiento de la temperatura de impulsión; elección de las consignas horarias; parada de la bomba de calor por alta presión del refrigerante; previsión del precio de mañana; detección de que una sonda está averiada. Explique por qué la tercera no puede depender de la capa supervisora.
+\fuente{adaptado de K.~J. Åström y R.~M. Murray, \emph{Feedback Systems}, 2.ª ed., cap.~15 «Architecture and System Design», arquitecturas jerárquicas de control~\cite{am}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-alarmas}
+Una sala de control recibe de media 9 alarmas por hora en operación normal. (a) ¿Cuántas al día y cada 10 minutos? Compárelo con las referencias de ISA-18.2. (b) El nuevo MPC añadiría 3 alarmas por hora. ¿Qué ocurre con la carga? (c) Proponga cómo racionalizarlas.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-contraste}
+En el \cref{ej:contraste}: (a) verifique $t$, el valor~$p$ y el intervalo; (b) ¿qué desviación típica de las diferencias haría el ahorro no significativo al 5~\% con la misma media? (c) ¿Cuántos días harían falta para que la semiamplitud del intervalo fuera de $0{,}3$ € si $s=1{,}5$ €? (d) ¿Por qué el diseño emparejado es preferible a comparar 20 días de MPC de este invierno con 20 días de PI del invierno pasado?
+\fuente{adaptado de D.~C. Montgomery, \emph{Design and Analysis of Experiments}, cap.~2 «Simple Comparative Experiments», diseño de comparaciones pareadas~\cite{montgomery}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-deriva}
+El residuo en simulación libre del gemelo de la zona tiene, con el modelo bien calibrado, media nula y desviación típica $0{,}14$ K por muestra; se vigila la media diaria de 96 muestras. (a) Suponiendo independencia, calcule el error típico de la media diaria y un umbral de alarma de 3 errores típicos. (b) ¿Por qué la hipótesis de independencia es optimista en este caso y cómo afecta al umbral? (c) Proponga una regla que dispare la recalibración.
+\fuente{adaptado de Stanford CS329S, invierno de 2022, clase~10 «Diagnosis of ML system failures \& data distribution shifts \& monitoring»~\cite{cs329s}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-filtro}
+Con los datos del \cref{ej:filtro}: (a) calcule $\Uset_{\mathrm{seg}}(T)$ para $T=20$ °C y $T=25{,}9$ °C; (b) el agente propone $P=0{,}5$ kW a $25{,}9$ °C y $P=0$ kW a $17$ °C: ¿qué aplica el filtro?; (c) si la cota superior de $\Text$ fuera $35$ °C, ¿seguiría siendo invariante $[17,26]$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-invariancia}
+(a) Demuestre que, para un modelo escalar $x_{k+1}=ax_k+bu_k+w_k$ con $a>0$, $b>0$, $u\in[0,\bar u]$ y $w\in[w_{\min},w_{\max}]$, el intervalo $[x_{\min},x_{\max}]$ es invariante bajo el filtro si y solo si $\Uset_{\mathrm{seg}}$ no es vacío en sus dos extremos, y dé las dos condiciones explícitas. (b) Añada un límite de velocidad $\abs{u_k-u_{k-1}}\le\delta$ y explique por qué la invariancia ya no puede comprobarse solo en función de $x$.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-plan}
+Redacte el plan de puesta en producción del MPC de la zona en un edificio real: arquitectura y punto de inserción, modos y criterios de avance, alarmas nuevas, filtro y modo de respaldo, experimento de validación, seguimiento y recalibración, ciberseguridad y análisis regulatorio. Indique, para cada elemento, qué sección del módulo lo fundamenta.
+\end{ejercicio}

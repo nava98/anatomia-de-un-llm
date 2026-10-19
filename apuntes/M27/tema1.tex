@@ -1,0 +1,233 @@
+% =====================================================================
+\chapter{Representaciones 3D y su diferenciabilidad}
+\label{tema:1}
+% =====================================================================
+
+Antes de optimizar una forma hay que decidir cómo se describe con números. La elección no es neutral: determina qué cambios de forma son posibles (por ejemplo, si pueden aparecer agujeros), cuánta memoria hace falta y, sobre todo, si la magnitud que se quiere optimizar es una función derivable de los parámetros. Este tema presenta el esquema común de todos los optimizadores del módulo y repasa las representaciones clásicas y neuronales siguiendo la clase «Classical 3D Geometry Representations» del curso CS348n de Stanford~\cite{cs348n}, el artículo de DeepSDF~\cite{deepsdf}, el de \emph{marching cubes}~\cite{mc} y el de las codificaciones con tablas \emph{hash} de Müller \emph{et al.}~\cite{ingp}.
+
+\section{El optimizador geométrico}
+
+\begin{definicion}[Optimizador geométrico]\label{def:opt-geom}
+Sea $\Theta\subseteq\R^n$ un conjunto de parámetros de diseño. Un \emph{optimizador geométrico} resuelve
+\[
+\min_{\theta\in\Theta}\ J(\theta)=\mathcal{L}\bigl(S(G(\theta))\bigr)\quad\text{sujeto a}\quad g_j(\theta)\le 0,\ j=1,\dots,m,
+\]
+donde $G$ construye una geometría a partir de $\theta$, $S$ la evalúa (un simulador físico, que devuelve campos como desplazamientos o temperaturas, o un renderizador, que devuelve imágenes), $\mathcal{L}$ resume la evaluación en un número (flexibilidad, calor disipado, error frente a fotografías) y las $g_j$ expresan restricciones de fabricación, de volumen o de presupuesto.
+\end{definicion}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[node distance=0.55cm and 0.75cm, every node/.style={font=\small},
+  caja/.style={draw, rounded corners=2pt, minimum height=0.9cm, align=center, inner sep=4pt},
+  flecha/.style={-{Stealth[length=2.2mm]}, thick}]
+\node[caja] (th) {parámetros\\ $\theta$};
+\node[caja, right=of th] (g) {geometría\\ $G(\theta)$};
+\node[caja, right=of g] (s) {simulador o\\ renderizador $S$};
+\node[caja, right=of s] (l) {pérdida\\ $\mathcal{L}$};
+\draw[flecha] (th) -- (g); \draw[flecha] (g) -- (s); \draw[flecha] (s) -- (l);
+\draw[flecha, dashed] (l.south) -- ++(0,-0.9) -| node[pos=0.25, below] {gradiente $\nabla_\theta J$: adjunto o diferenciación automática} (th.south);
+\node[caja, above=0.55cm of s, dotted] (sus) {sustituto $\hat s(\theta)$};
+\draw[flecha, dotted] (th.north) |- (sus.west); \draw[flecha, dotted] (sus.east) -| (l.north);
+\end{tikzpicture}
+\caption{Esquema común de los optimizadores del módulo. La rama punteada sustituye el simulador por un modelo aprendido (\cref{tema:3}).}
+\label{fig:cadena}
+\end{figure}
+
+El gradiente $\nabla_\theta J$ puede obtenerse de tres maneras. Las diferencias finitas (módulo~4, tema~6) necesitan $n+1$ evaluaciones de $S$ y son inviables cuando $n$ es del orden de miles. El modo inverso de la diferenciación automática o, cuando $S$ resuelve un sistema de ecuaciones, el método adjunto (módulo~10, §5.4, y \cref{tema:2}) calculan el gradiente completo con un coste comparable a una o dos evaluaciones, independientemente de $n$. Y cuando $S$ no es derivable o es demasiado caro, se aprende un sustituto $\hat s$ con unas decenas de evaluaciones y se optimiza sobre él (\cref{tema:3}). En los tres casos, la primera condición es que la geometría $G(\theta)$ dependa de $\theta$ de forma suave, y eso depende de la representación.
+
+\section{Representaciones explícitas: mallas, nubes de puntos y vóxeles}
+
+\begin{definicion}[Malla triangular]\label{def:malla}
+Una \emph{malla triangular} es un par $(V,F)$ formado por una lista de vértices $v_1,\dots,v_{\abs{V}}\in\R^3$ y una lista de caras, cada una un triplete ordenado $(a,b,c)$ de índices de vértices. El orden de los índices define la orientación de la cara y su normal $n_f=(v_b-v_a)\times(v_c-v_a)/\norm{(v_b-v_a)\times(v_c-v_a)}$. El conjunto $E$ de aristas está formado por los pares no ordenados de vértices consecutivos de alguna cara. La malla es \emph{cerrada} si cada arista pertenece exactamente a dos caras, y está \emph{orientada de forma coherente} si cada arista compartida se recorre en sentidos opuestos en sus dos caras.
+\end{definicion}
+
+\begin{proposicion}\label{prop:3f2e}
+En una malla triangular cerrada, $2\abs{E}=3\abs{F}$. En particular, el número de caras es par.
+\end{proposicion}
+
+\begin{proof}
+Se cuentan de dos maneras los pares (arista, cara que la contiene). Cada cara tiene tres aristas, luego hay $3\abs{F}$ pares; cada arista está en exactamente dos caras, luego hay $2\abs{E}$ pares. Como $3\abs{F}=2\abs{E}$ es par, $\abs{F}$ es par.
+\end{proof}
+
+La característica de Euler $\chi=\abs{V}-\abs{E}+\abs{F}$ de una malla cerrada y conexa que no se corta a sí misma depende solo de su topología: $\chi=2-2g$, donde $g$ es el género o número de «asas» (0 para una esfera, 1 para un toro). Este resultado de topología se admite sin demostración.
+
+\begin{corolario}\label{cor:euler}
+Si una malla triangular cerrada tiene $\chi=2$ (topología de esfera), entonces $\abs{F}=2\abs{V}-4$ y $\abs{E}=3\abs{V}-6$.
+\end{corolario}
+
+\begin{proof}
+De la \cref{prop:3f2e}, $\abs{E}=\tfrac32\abs{F}$. Sustituyendo en $\abs{V}-\abs{E}+\abs{F}=2$ se obtiene $\abs{V}-\tfrac12\abs{F}=2$, es decir, $\abs{F}=2\abs{V}-4$, y entonces $\abs{E}=\tfrac32(2\abs{V}-4)=3\abs{V}-6$.
+\end{proof}
+
+El corolario da una regla de memoria útil: una malla cerrada tiene aproximadamente el doble de caras que de vértices. Con posiciones en coma flotante de 32 bits (12 bytes por vértice) e índices enteros de 32 bits (12 bytes por cara), cuesta unos 36 bytes por vértice.
+
+\begin{definicion}[Nube de puntos y distancia de Chamfer]\label{def:chamfer}
+Una \emph{nube de puntos} es un conjunto finito $A\subset\R^3$, opcionalmente con normales. La \emph{distancia de Chamfer} entre dos nubes $A$ y $B$ es
+\[
+\CD(A,B)=\frac{1}{\abs{A}}\sum_{a\in A}\min_{b\in B}\norm{a-b}^2+\frac{1}{\abs{B}}\sum_{b\in B}\min_{a\in A}\norm{a-b}^2 .
+\]
+\end{definicion}
+
+La distancia de Chamfer es derivable respecto a las coordenadas de los puntos salvo en los empates del mínimo: el gradiente respecto a $a$ empuja $a$ hacia su vecino más próximo en $B$. Es la pérdida habitual para ajustar nubes de puntos~\cite{cmu16825}. Una \emph{rejilla de vóxeles} de resolución $n$ guarda un valor (ocupación, densidad o distancia) en cada una de las $n^3$ celdas de una caja; es la representación más sencilla de derivar, porque cada parámetro es un valor de celda, pero su memoria crece con el cubo de la resolución.
+
+\begin{proposicion}[Volumen de una malla cerrada y su gradiente]\label{prop:volumen}
+Sea $(V,F)$ una malla triangular cerrada, orientada de forma coherente con normales hacia fuera, que encierra la región $\Omega$. Entonces
+\[
+\Vol(\Omega)=\frac16\sum_{(a,b,c)\in F}\det(v_a,v_b,v_c)=\frac16\sum_{(a,b,c)\in F}v_a\cdot(v_b\times v_c),
+\]
+y la derivada respecto a la posición de un vértice $v_i$ es $\nabla_{v_i}\Vol=\frac16\sum v_b\times v_c$, sumando sobre las caras que contienen a $i$, escritas en el orden cíclico $(i,b,c)$.
+\end{proposicion}
+
+\begin{proof}
+Por el teorema de la divergencia aplicado al campo $\phi(x)=x/3$, cuya divergencia vale~1, $\Vol(\Omega)=\frac13\int_{\partial\Omega}x\cdot n\,dA$. Sobre una cara plana $x\cdot n$ es constante e igual a $v_a\cdot n_f$, y el área por la normal es $A_fn_f=\frac12(v_b-v_a)\times(v_c-v_a)$. Por tanto, la cara aporta $\frac13 v_a\cdot\frac12(v_b-v_a)\times(v_c-v_a)$. Desarrollando el producto vectorial, $(v_b-v_a)\times(v_c-v_a)=v_b\times v_c-v_b\times v_a-v_a\times v_c$, y los dos últimos términos son perpendiculares a $v_a$; queda $\frac16 v_a\cdot(v_b\times v_c)$, que es el producto mixto (0.7, §1.4). El determinante es lineal en cada columna e invariante por permutaciones cíclicas, así que cada cara que contiene a $v_i$ puede escribirse como $\det(v_i,v_b,v_c)$, cuyo gradiente respecto a $v_i$ es $v_b\times v_c$.
+\end{proof}
+
+\begin{ejemplo}\label{ej:tetra}
+Sea el tetraedro de vértices $v_0=0$, $v_1=(a,0,0)$, $v_2=(0,a,0)$, $v_3=(0,0,a)$ con $a=30$ mm y caras orientadas hacia fuera $(0,2,1)$, $(0,1,3)$, $(0,3,2)$ y $(1,2,3)$. Las tres primeras contienen el origen y aportan determinante nulo; la cuarta aporta $\det(v_1,v_2,v_3)=a^3$. Luego $\Vol=a^3/6=4500$ mm³. Para $v_3$, las caras que lo contienen, en orden cíclico, son $(3,0,1)$, $(3,2,0)$ y $(3,1,2)$, y $\nabla_{v_3}\Vol=\frac16(v_0\times v_1+v_2\times v_0+v_1\times v_2)=\frac16(0,0,a^2)=(0,0,150)$ mm². Es lo esperado: $\Vol=\frac13\cdot\text{base}\cdot\text{altura}$ con base $a^2/2=450$ mm², luego $\partial\Vol/\partial(\text{altura})=150$ mm².
+\end{ejemplo}
+
+\section{Representaciones implícitas y funciones de distancia con signo}
+
+\begin{definicion}[Superficie implícita y SDF]\label{def:sdf}
+Una función continua $f:\R^3\to\R$ define el sólido $\Omega=\{f\le 0\}$ y la superficie implícita $\{f=0\}$. Se dice que $f$ es una \emph{función de distancia con signo} (SDF) de $\Omega$ si $f(x)=-\operatorname{dist}(x,\partial\Omega)$ para $x\in\Omega$ y $f(x)=\operatorname{dist}(x,\partial\Omega)$ fuera de $\Omega$.
+\end{definicion}
+
+Por ejemplo, $f(x)=\norm{x-c}-r$ es la SDF de la bola de centro $c$ y radio $r$, y en todo punto $x\ne c$ su gradiente $\nabla f=(x-c)/\norm{x-c}$ tiene norma~1.
+
+\begin{proposicion}[Una SDF es 1-lipschitziana]\label{prop:lipschitz}
+Si $f$ es la SDF de $\Omega$, entonces $\abs{f(x)-f(y)}\le\norm{x-y}$ para todo $x,y$. En consecuencia, en los puntos en que $f$ es derivable, $\norm{\nabla f}\le 1$.
+\end{proposicion}
+
+\begin{proof}
+Sea $d(x)=\operatorname{dist}(x,\partial\Omega)$. Si $x$ e $y$ están del mismo lado, para todo $z\in\partial\Omega$ se tiene $d(x)\le\norm{x-z}\le\norm{x-y}+\norm{y-z}$; tomando el ínfimo en $z$, $d(x)\le\norm{x-y}+d(y)$, y por simetría $\abs{d(x)-d(y)}\le\norm{x-y}$. Si están en lados opuestos, el segmento que los une corta $\partial\Omega$ en algún punto $z$ (por continuidad de $f$ y el teorema de Bolzano), y $\abs{f(x)-f(y)}=d(x)+d(y)\le\norm{x-z}+\norm{z-y}=\norm{x-y}$. Para la consecuencia, $\abs{\nabla f(x)\cdot u}=\lim_{t\to 0^+}\abs{f(x+tu)-f(x)}/t\le 1$ para todo vector unitario $u$; con $u=\nabla f/\norm{\nabla f}$ se obtiene $\norm{\nabla f}\le 1$.
+\end{proof}
+
+De hecho, una SDF cumple casi en todas partes la \emph{ecuación eikonal} $\norm{\nabla f}=1$, y su gradiente sobre la superficie es la normal exterior. Las operaciones booleanas son inmediatas: si $f_1$ y $f_2$ describen $\Omega_1$ y $\Omega_2$, entonces $\min(f_1,f_2)$ describe la unión, $\max(f_1,f_2)$ la intersección y $\max(f_1,-f_2)$ la diferencia $\Omega_1\setminus\Omega_2$. Los conjuntos son exactos, aunque los valores resultantes pueden ser solo cotas de la distancia (por ejemplo, dentro de una unión). Esta robustez de las operaciones es el argumento del modelado implícito que usan herramientas comerciales como nTop, que publica que sus operaciones booleanas, desfases y redondeos no fallan, y que modula celosías y espesores con campos escalares procedentes de simulaciones~\cite{ntop}.
+
+Para fabricar o renderizar con rasterización hay que convertir $f$ en una malla. El algoritmo de \emph{marching cubes}~\cite{mc} evalúa $f$ en los nodos de una rejilla y, en cada arista con cambio de signo entre $f_0<0$ y $f_1>0$, coloca un vértice por interpolación lineal en la fracción $t=f_0/(f_0-f_1)$ de la arista; una tabla indexada por el patrón de signos de los ocho vértices del cubo da los triángulos. El coste es una evaluación de $f$ por nodo, $n^3$ en total, y el error de posición es del orden del paso de la rejilla.
+
+\section{Campos neuronales}
+
+Un \emph{campo neuronal} representa $f$ con una red, $f_\varphi(x)$, típicamente un perceptrón multicapa (módulo~9). DeepSDF~\cite{deepsdf} ajusta una red de ocho capas de 512 unidades a valores de SDF muestreados con la pérdida $L^1$ recortada
+\[
+\ell\bigl(f_\varphi(x),s\bigr)=\bigl\lvert\clip(f_\varphi(x),-\delta,\delta)-\clip(s,-\delta,\delta)\bigr\rvert,
+\]
+con $\delta=0{,}1$, que concentra la capacidad cerca de la superficie. Para representar una familia de formas, DeepSDF asigna a cada forma un código latente $z_i$ que se optimiza junto con los pesos, con un término $\norm{z_i}^2/\sigma^2$ que procede de un prior gaussiano (un \emph{autodecodificador}); a una forma nueva se le asigna su código optimizando solo $z$ con los pesos congelados. La analogía con un LLM es directa: los códigos $z_i$ desempeñan el papel de las filas de la matriz de embeddings (módulo~12, §4.1), que también son parámetros libres aprendidos por descenso de gradiente.
+
+Cuando no se dispone de valores de SDF sino solo de puntos de la superficie, se impone $f_\varphi=0$ en ellos y se añade la regularización eikonal $\E_x\bigl[(\norm{\nabla_xf_\varphi(x)}-1)^2\bigr]$, cuyo gradiente respecto a $x$ se obtiene por diferenciación automática~\cite{cs348nhw2}. Los perceptrones con entradas $(x,y,z)$ aprenden mal los detalles finos; dos remedios son la codificación posicional sinusoidal (\cref{tema:4}), análoga a la del Transformer (módulo~14, §4.2), y las rejillas multirresolución de vectores entrenables indexadas con funciones \emph{hash}, con las que Müller \emph{et al.} entrenan campos neuronales de calidad en segundos~\cite{ingp}.
+
+\section{Diferenciabilidad y elección de la representación}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}Xr@{}}
+\toprule
+Representación & Parámetros derivables & Cambios de topología & Memoria \\
+\midrule
+Malla & posiciones de los vértices (conectividad fija) & no, salvo remallado & 4,1 MB \\
+Nube de puntos & coordenadas de los puntos & no aplica (sin superficie) & --- \\
+Vóxeles (ocupación) & valor de cada celda & sí & 0,29--2,3 MB \\
+SDF en rejilla & valor de cada nodo & sí & 9,2 MB \\
+Campo neuronal & pesos de la red & sí & 7,4 MB \\
+\bottomrule
+\end{tabularx}
+\caption{Comparación para un soporte que cabe en una caja de $120\times 60\times 40$ mm con resolución de 0,5 mm. Vóxeles: $240\cdot 120\cdot 80=2\,304\,000$ celdas (1 bit o 1 byte por celda). SDF: 4 bytes por nodo. Malla: superficie de la caja $28\,800$ mm² en triángulos rectángulos de catetos 0,5 mm, $230\,400$ caras y $115\,200$ vértices. Red: 8 capas de 512 unidades, $1{,}84\cdot 10^{6}$ parámetros de 4 bytes.}
+\label{tab:repr}
+\end{table}
+
+El \cref{tab:repr} resume el compromiso. Una malla con conectividad fija es compacta y es lo que consumen los motores y las impresoras, pero su optimización no puede abrir agujeros; las representaciones volumétricas (densidades, SDF, campos) sí pueden, y por eso la optimización de topología (\cref{tema:2}) trabaja con densidades por elemento. En todas ellas la derivabilidad se refiere a la magnitud que se evalúa: el volumen de una malla es un polinomio en las coordenadas (\cref{prop:volumen}), pero la imagen rasterizada de esa misma malla es constante a trozos (\cref{tema:4}).
+
+\section{Caso de estudio: ajuste de una esfera a un escaneo parcial}
+
+\begin{ejemplo}[Ajuste algebraico frente a ajuste geométrico]\label{ej:esfera}
+\emph{Contexto.} En una inspección dimensional, un escáner 3D captura solo la parte superior de un alojamiento esférico: 300 puntos de un casquete de $40^\circ$ de semiapertura, con ruido gaussiano isótropo de desviación $0{,}5$ mm. Los valores nominales son centro $c^\star=(12;\,-5;\,30)$ mm y radio $r^\star=25$ mm (en el cuaderno, los datos se generan con semilla fija).
+
+\emph{Formulación A (algebraica).} Como $\norm{x}^2=2c\cdot x+(r^2-\norm{c}^2)$, el problema
+\[
+\min_{c,\,k}\ \sum_{i=1}^{300}\bigl(\norm{x_i}^2-2c\cdot x_i-k\bigr)^2
+\]
+es de mínimos cuadrados lineales en $(c,k)$ (módulo~8, §2.2), con $r=\sqrt{k+\norm{c}^2}$.
+
+\emph{Formulación B (geométrica).} Se minimizan los residuos de la SDF, que son las distancias euclídeas de los puntos a la esfera:
+\[
+\min_{c,\,r}\ \sum_{i=1}^{300}\rho_i^2,\qquad \rho_i=\norm{x_i-c}-r,\qquad \frac{\partial\rho_i}{\partial(c,r)}=\Bigl(-\frac{(x_i-c)^\T}{\norm{x_i-c}},\ -1\Bigr).
+\]
+Es un problema no lineal; se resuelve por Gauss--Newton, $\Delta=\arg\min_\Delta\norm{J\Delta+\rho}^2$, partiendo de la solución algebraica.
+
+\emph{Elección del método.} Con ruido gaussiano en las coordenadas, el residuo geométrico es (aproximadamente) el que corresponde a la máxima verosimilitud; el residuo algebraico pondera cada punto por un factor $\norm{x_i-c}+r$ y está sesgado cuando los datos cubren solo una parte de la superficie. La formulación A, barata y sin iteraciones, sirve como inicialización.
+
+\emph{Resultado.} El ajuste algebraico da $r=23{,}977$ mm, un error de $-1{,}02$ mm, y un error de centro de $1{,}24$ mm, con residuo cuadrático medio de $0{,}491$ mm. Gauss--Newton converge en 8 iteraciones a $r=25{,}418$ mm (error $+0{,}42$ mm), error de centro $0{,}39$ mm y residuo medio $0{,}477$ mm. El residuo es del orden del ruido, como debe ser; el error que queda en $r$ refleja que, con un casquete de $40^\circ$, el radio y la coordenada $z$ del centro están muy correlacionados: alejar el centro y aumentar el radio casi no cambia la superficie observada. La conclusión práctica es medir más superficie o fijar el radio nominal y ajustar solo el centro.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia & Cuándo elegirla \\
+\midrule
+trimesh & cargar, reparar y medir mallas (volumen, estanqueidad) & MIT & validación y utilidades en Python puro \\
+Open3D & nubes de puntos, registro, reconstrucción & MIT & datos de escáner y visualización \\
+PyMeshLab & filtros de MeshLab (remallado, simplificación) & GPL-3.0 & procesado por lotes con algoritmos maduros \\
+libigl & geometría discreta (laplacianos, parametrización) & MPL-2.0 & investigación y prototipos de procesado de geometría \\
+scikit-image & \emph{marching cubes} sobre rejillas & BSD-3 & extraer mallas de SDF o densidades \\
+PyTorch3D & mallas y nubes por lotes, pérdidas y renderizado derivables & BSD & ajuste de formas con gradientes en PyTorch \\
+Kaolin (NVIDIA) & operadores 3D derivables y conversiones & Apache-2.0 & ecosistema NVIDIA con GPU \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías del tema~1. Licencias según los metadatos publicados por cada proyecto.}
+\label{tab:tec1}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores1}
+(i) \emph{Unidades y escala}: mezclar milímetros y metros, o normalizar la forma a $[-1,1]^3$ sin guardar la escala, invalida tolerancias y pérdidas. (ii) \emph{Normales invertidas o malla abierta}: el volumen de la \cref{prop:volumen} cambia de signo o deja de tener sentido; hay que validar antes de medir (\cref{tema:6}). (iii) \emph{Una función implícita no es una SDF}: $\norm{x}^2-r^2$ tiene la misma superficie que $\norm{x}-r$, pero sus valores no son distancias; sin regularización eikonal, una pérdida que use valores de $f$ como distancias (espesores, márgenes) se equivoca. (iv) \emph{Resolución de extracción}: \emph{marching cubes} con un paso mayor que el espesor de una pared la hace desaparecer. (v) \emph{Fugas de datos al evaluar un campo neuronal}: medir el error en los mismos puntos usados para ajustarlo sobrestima la calidad; se evalúa en puntos nuevos o con la distancia de Chamfer frente a la malla de referencia. (vi) \emph{Ajustes algebraicos en datos parciales}: como en el \cref{ej:esfera}, son sesgados; deben refinarse con el residuo geométrico.
+\end{observacion}
+
+\begin{lecturas}
+\item L.~Guibas, CS348n~\cite{cs348n}: clases «Classical 3D Geometry Representations» y «Generative Models I» (DeepSDF).
+\item J.~J. Park \emph{et al.}~\cite{deepsdf}: §3 (SDF con redes y pérdida recortada) y §4 (autodecodificador).
+\item W.~E. Lorensen y H.~E. Cline~\cite{mc}: el algoritmo de \emph{marching cubes}.
+\item T.~Müller \emph{et al.}~\cite{ingp}: codificación multirresolución con tablas \emph{hash}.
+\item CMU 16-825~\cite{cmu16825}, tarea~2, §1 «Exploring loss functions»: ajuste de vóxeles, nubes y mallas.
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-repr}
+Indique, justificándolo, qué representación conviene en cada caso: (a) una optimización que debe poder abrir agujeros en una pieza; (b) un recurso que se cargará en un motor de videojuegos; (c) la salida bruta de un escáner LiDAR; (d) el ajuste de una forma a fotografías con PyTorch3D partiendo de una esfera.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-tetra-cubo}
+Construya las listas de caras de un tetraedro y de un cubo triangulado (cada cara cuadrada dividida en dos triángulos). Cuente vértices, aristas y caras y compruebe la característica de Euler y la \cref{prop:3f2e}.
+\fuente{adaptado de CMU 16-825, «Learning for 3D Vision» (S.~Tulsiani), tarea~1, §2.1 «Constructing a Tetrahedron» y §2.2 «Constructing a Cube»~\cite{cmu16825}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-euler}
+Una icosfera obtenida subdividiendo tres veces un icosaedro tiene $1280$ caras y es cerrada con topología de esfera. Calcule $\abs{E}$ y $\abs{V}$ y la memoria en bytes de la malla con posiciones \texttt{float32} e índices \texttt{int32}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-sdf}
+Sean la esfera $f_e(x)=\norm{x}-20$ y la caja centrada de semilados $(10,10,5)$, con SDF $f_b$ (todo en mm). Calcule $f_e$, $f_b$, la unión, la intersección y la diferencia caja menos esfera en $p_1=(0,0,0)$, $p_2=(15,0,0)$ y $p_3=(0,0,12)$. La SDF de una caja de semilados $b$ es $f_b(x)=\norm{\max(q,0)}+\min(\max_i q_i,0)$, con $q=\abs{x}-b$ componente a componente.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-mc}
+(a) En una arista de \emph{marching cubes} que va de $x=2$ mm, con $f=-0{,}3$, a $x=3$ mm, con $f=0{,}5$, ¿dónde se coloca el vértice? (b) Calcule la distancia de Chamfer entre $A=\{(0,0),(1,0)\}$ y $B=\{(0,1),(2,0)\}$ en el plano.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-clamp}
+Una red predice $f_\varphi=0{,}05$; $0{,}30$; $-0{,}08$; $-0{,}40$ en cuatro puntos cuyas SDF verdaderas son $0{,}02$; $0{,}12$; $0{,}15$; $-0{,}02$. Calcule la pérdida $L^1$ recortada media con $\delta=0{,}1$ e interprete los términos nulos.
+\fuente{adaptado de Stanford CS348n (L.~Guibas, primavera de 2023), tarea~2, problema~1(a) «Supervised SDF fitting»~\cite{cs348nhw2}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-vol}
+Para el tetraedro del \cref{ej:tetra} con $a=30$ mm, calcule $\nabla_{v_1}\Vol$ con la \cref{prop:volumen} y compruebe el resultado con la fórmula base por altura. ¿Cuánto cambia el volumen si $v_1$ se desplaza $0{,}5$ mm en la dirección $x$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-eikonal}
+(a) Demuestre que $f(x)=\norm{x-c}-r$ cumple $\norm{\nabla f}=1$ en todo $x\ne c$. (b) Sea $g=\varphi\circ f$ con $\varphi$ derivable, estrictamente creciente y $\varphi(0)=0$. Demuestre que $g$ describe el mismo sólido y que $\norm{\nabla g}=\varphi'(f)$. (c) Para $g(x)=\norm{x}^2-4$ (es decir, $\varphi(t)=t^2+4t$ con $r=2$), calcule el término eikonal $(\norm{\nabla g}-1)^2$ en el punto $(2,0,0)$ de la superficie y explique qué corrige la regularización.
+\fuente{adaptado de Stanford CS348n (L.~Guibas, primavera de 2023), tarea~2, problema~1(b) «Eikonal training»~\cite{cs348nhw2}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-traslacion}
+Sea una malla triangular cerrada y orientada de forma coherente. (a) Demuestre que $\sum_{f}(v_b-v_a)\times(v_c-v_a)=0$. (b) Deduzca que la fórmula de la \cref{prop:volumen} no cambia al trasladar todos los vértices un mismo vector $t$, y que $\sum_i\nabla_{v_i}\Vol=0$.
+\end{ejercicio}

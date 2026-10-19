@@ -1,0 +1,134 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase VI — Módulo 27
+%  Optimización geométrica y software 3D
+%  Compilar: latexmk -r ../latexmkrc M27-geometria-3d.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 27}
+
+% Notación propia del módulo
+\newcommand{\xf}{\tilde{x}}
+\newcommand{\Emin}{E_{\min}}
+\newcommand{\rmin}{r_{\min}}
+\newcommand{\Vol}{\operatorname{Vol}}
+\newcommand{\IoU}{\operatorname{IoU}}
+\newcommand{\sigm}{\operatorname{sig}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\CD}{\operatorname{CD}}
+\newcommand{\T}{\top}
+\newcommand{\hx}{\hat{x}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-\do\/}\makeatother
+
+\hypersetup{pdftitle={Módulo 27. Optimización geométrica y software 3D},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase VI \textperiodcentered\ Diseño y construcción de optimizadores con IA}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 27\par}\vspace{0.3cm}
+{\LARGE Optimización geométrica y software 3D\par}
+\vspace{0.2cm}
+{\large Representaciones diferenciables, topología, simuladores, renderizado y pipelines 3D\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Un optimizador geométrico busca una forma: la distribución de material de una pieza, el perfil de una aleta, la malla de un objeto reconstruido a partir de fotografías o el nivel de detalle con que se dibuja una escena. En todos los casos aparece la misma cadena: unos parámetros generan una geometría, un simulador o un renderizador la evalúan, una pérdida resume el resultado y un gradiente, calculado con el método adjunto o con diferenciación automática, indica cómo modificar los parámetros. Este módulo estudia los eslabones de esa cadena y los ensambla en casos completos. Empieza por las representaciones 3D y su diferenciabilidad; sigue con la optimización de topología por el método SIMP, que es el ejemplo clásico de diseño guiado por sensibilidades adjuntas; continúa con los simuladores diferenciables y los modelos sustitutos neuronales, y con el renderizado diferenciable, que convierte la reconstrucción 3D (incluidos NeRF y el \emph{Gaussian splatting}) en un problema de descenso de gradiente. Los dos últimos temas pasan del laboratorio a la producción: la optimización de los pipelines de software 3D y videojuegos (simplificación de mallas, niveles de detalle, compresión de texturas, empaquetado UV, automatización con Blender y presupuestos de milisegundos), y la validación de la geometría producida por modelos generativos antes de fabricarla o cargarla en un motor. Sobre productos comerciales (Autodesk Fusion, nTop, Unreal Engine) solo se usa información pública, que se cita.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item describir mallas, nubes de puntos, vóxeles, funciones de distancia con signo y campos neuronales, decidir cuál conviene a un problema y calcular derivadas de magnitudes geométricas respecto a sus parámetros;
+  \item formular el problema de flexibilidad mínima con la interpolación SIMP, deducir sus sensibilidades por el método adjunto, justificar los filtros y la actualización por criterios de optimalidad, e implementar el caso de la viga MBB;
+  \item derivar a través de un simulador mediante el teorema de la función implícita, construir y validar un modelo sustituto y acotar el error que comete al optimizar sobre él;
+  \item explicar por qué la rasterización clásica no es diferenciable, cómo la suavizan los renderizadores diferenciables y cómo NeRF y el \emph{Gaussian splatting} se entrenan por descenso de gradiente;
+  \item plantear como problemas de optimización la simplificación de mallas por error cuádrico, la selección de niveles de detalle con un presupuesto de tiempo por fotograma, la compresión de texturas y el empaquetado UV;
+  \item validar automáticamente la geometría generada por IA (variedad, orientación, volumen, voladizos, espesor) y diseñar un bucle de generación y verificación robusto.
+\end{enumerate}
+
+\section*{Requisitos previos}
+De la Fase~0 se usan el producto vectorial y el producto mixto (0.7, §1.4), los multiplicadores de Lagrange (0.7, §5.4) y la independencia de sucesos (0.8, §4.4). Del módulo~3 se usan las matrices simétricas y el teorema espectral (tema~3) y el análisis de componentes principales (§5.4); del módulo~4, la regla de la cadena y el jacobiano (tema~2), la convexidad (tema~5) y la comprobación de gradientes por diferencias finitas (tema~6); del módulo~7, el descenso de gradiente (tema~2) y Adam (§5.3); del módulo~8, los mínimos cuadrados y las ecuaciones normales (§2.2) y la validación (§1.4 y §6.5); del módulo~9, el perceptrón multicapa (tema~1); del módulo~10, el modo inverso (tema~3), los productos vector-jacobiano (§4.3), el recálculo por puntos de control (§5.2) y los adjuntos como multiplicadores de Lagrange (§5.4), que son la base del método adjunto de este módulo; de los módulos~12 y~15, la tokenización y la generación autorregresiva, que reaparecen en los generadores de mallas; del módulo~17, el modelo \emph{roofline} (§2.2), y del módulo~21, la sobreoptimización de una recompensa aprendida (§6.4), que tiene un análogo exacto en la optimización sobre un sustituto o contra un validador.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cp{7.4cm}p{4.6cm}@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Representaciones 3D y su diferenciabilidad & \cite{cs348n}, \cite{deepsdf}, \cite{mc}, \cite{ingp} \\
+2 & Optimización de forma y de topología & \cite{bs}, \cite{andreassen}, \cite{sigmund99}, \cite{mit18s096} \\
+3 & Simuladores diferenciables y modelos sustitutos & \cite{kw}, \cite{johnson}, \cite{difftaichi}, \cite{fno} \\
+4 & Renderizado diferenciable y reconstrucción 3D & \cite{softras}, \cite{nerf}, \cite{gs}, \cite{cmu16825} \\
+5 & Optimización de pipelines de software 3D y videojuegos & \cite{garland}, \cite{nanite}, \cite{msbc}, \cite{ucsd190} \\
+6 & IA generativa para 3D y validación de la geometría & \cite{dreamfusion}, \cite{meshgpt}, \cite{cmu16825}, \cite{langelaar} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema combina teoría formal con al menos un caso de estudio desarrollado con datos numéricos (sintéticos, pero con unidades y órdenes de magnitud realistas), una tabla de tecnologías y una observación sobre los errores más frecuentes en la práctica. Termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ formulación y cálculo a mano, y $\star\star\star$ demostración o diseño razonado. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos para que puedan resolverse a mano. Las soluciones completas están en el \cref{ap:soluciones}. El cuaderno \texttt{M27-practica.ipynb} implementa los seis casos de estudio en numpy, scipy, scikit-learn y torch, y se ejecuta en una CPU en menos de un minuto.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. Las representaciones del tema~1 siguen la clase «Classical 3D Geometry Representations» del curso CS348n de Stanford~\cite{cs348n} y su tarea~2~\cite{cs348nhw2}, el artículo de DeepSDF~\cite{deepsdf} y el de \emph{marching cubes}~\cite{mc}. La optimización de topología del tema~2 sigue el capítulo~1 del libro de Bendsøe y Sigmund~\cite{bs}, el artículo fundacional de Bendsøe~\cite{bendsoe89}, los códigos de 99 y 88 líneas~\cite{sigmund99,andreassen}, el estudio de inestabilidades de Sigmund y Petersson~\cite{sigpet} y el análisis de filtros de Bourdin~\cite{bourdin}; el método adjunto se presenta como en las notas de cálculo matricial del MIT~\cite{mit18s096} y en las de S.~G. Johnson para 18.335J~\cite{johnson}. El tema~3 sigue los capítulos de modelos sustitutos de Kochenderfer y Wheeler~\cite{kw} y los artículos originales de DiffTaichi~\cite{difftaichi}, PINN~\cite{pinn}, FNO~\cite{fno} y MeshGraphNets~\cite{mgn}; la física de la aleta procede del capítulo~3 de Incropera \emph{et al.}~\cite{incropera}. El tema~4 sigue SoftRas~\cite{softras}, PyTorch3D~\cite{pytorch3d}, nvdiffrast~\cite{nvdiffrast}, NeRF~\cite{nerf}, el \emph{Gaussian splatting}~\cite{gs} y las tareas~2 y~3 del curso 16-825 de Carnegie Mellon~\cite{cmu16825}. El tema~5 sigue a Garland y Heckbert~\cite{garland}, las clases de simplificación de UCSD~\cite{ucsd190} y Princeton~\cite{cos526}, la presentación de Nanite~\cite{nanite} y la documentación de Microsoft~\cite{msbc} y de Blender~\cite{blenderapi}. El tema~6 sigue DreamFusion~\cite{dreamfusion}, Shap-E~\cite{shape}, MeshGPT~\cite{meshgpt}, la tarea~4 de 16-825~\cite{cmu16825} y el filtro de fabricación aditiva de Langelaar~\cite{langelaar}. Los casos industriales (soporte de asiento de General Motors, Autodesk Fusion, nTop) se describen solo con la información que sus autores han publicado~\cite{gmautodesk,fusiongd,ntop}.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\theta$ & parámetros de diseño (forma, densidades, coeficientes) \\
+$(V,F)$, $E$ & malla: vértices, caras (triángulos) y aristas; $\chi=\abs{V}-\abs{E}+\abs{F}$ es la característica de Euler \\
+$f:\R^3\to\R$ & función implícita o de distancia con signo (SDF): $f<0$ dentro, $f=0$ en la superficie \\
+$x_e\in[0,1]$, $\xf_e$ & densidad de diseño del elemento $e$ y densidad física (filtrada) \\
+$p$, $E_0$, $\Emin$ & exponente de penalización SIMP, módulo del material sólido y módulo mínimo \\
+$K$, $U$, $F$ & matriz de rigidez, desplazamientos y cargas, con $KU=F$ \\
+$c=F^\T U$ & flexibilidad (\emph{compliance}): trabajo de las cargas; cuanto menor, más rígida la pieza \\
+$k_0$, $u_e$ & matriz de rigidez del elemento con $E=1$ y desplazamientos de sus nodos \\
+$H_{ei}$, $\rmin$ & pesos del filtro y radio del filtro \\
+$R(u,\theta)=0$ & ecuaciones discretas de un simulador; $\lambda$ es el vector adjunto \\
+$\hat s$ & modelo sustituto de una respuesta simulada $s$ \\
+$\sigma(\cdot)$, $\sigm$ & densidad volumétrica (NeRF) y función sigmoide $\sigm(z)=1/(1+e^{-z})$ \\
+$\alpha_i$, $T_i$, $w_i$ & opacidad, transmitancia y peso de la muestra $i$ de un rayo \\
+$Q$ & cuádrica de error de un vértice (matriz simétrica $4\times 4$) \\
+$\bar v=(v,1)$ & coordenadas homogéneas de un punto $v\in\R^3$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

@@ -1,0 +1,205 @@
+% =====================================================================
+\chapter{Optimización de pipelines de software 3D y videojuegos}
+\label{tema:5}
+% =====================================================================
+
+En producción, la geometría no se optimiza solo para que una pieza sea rígida o una reconstrucción fiel, sino para que una escena quepa en un presupuesto: milisegundos por fotograma, megabytes de memoria de vídeo, tamaño de descarga. Este tema formula como problemas de optimización las decisiones habituales de un pipeline 3D: cuántos triángulos conservar al simplificar una malla, qué nivel de detalle dibujar, cómo comprimir texturas y cómo empaquetar sus mapas UV. Sigue el artículo de Garland y Heckbert sobre el error cuádrico~\cite{garland}, las clases de simplificación de UCSD~\cite{ucsd190} y Princeton~\cite{cos526}, la presentación de Nanite de Epic Games~\cite{nanite}, la documentación de compresión por bloques de Microsoft~\cite{msbc}, el artículo de mapas conformes por mínimos cuadrados~\cite{lscm} y la API de Python de Blender~\cite{blenderapi}.
+
+\section{El presupuesto de rendimiento como restricción}
+
+\begin{definicion}[Presupuesto por fotograma]\label{def:presupuesto}
+A una frecuencia objetivo de $\nu$ fotogramas por segundo corresponde un presupuesto de $1000/\nu$ ms por fotograma: 33,3 ms a 30 Hz, 16,7 ms a 60 Hz, 11,1 ms a 90 Hz (habitual en realidad virtual). Si la CPU prepara el fotograma $k+1$ mientras la GPU dibuja el $k$, el tiempo por fotograma es aproximadamente $\max(t_{\text{CPU}},t_{\text{GPU}})$, y cada uno debe caber en el presupuesto.
+\end{definicion}
+
+El presupuesto se reparte entre sistemas (geometría, iluminación, posprocesado, física, lógica) y cada partida actúa como una restricción $\sum_jt_j(\theta)\le B$ de un problema de optimización cuya función objetivo es la calidad visual. Dos detalles importan en la práctica. Primero, la restricción debe imponerse sobre un percentil alto (por ejemplo, el 99) del tiempo por fotograma y no sobre la media, porque los tirones que percibe el jugador son los fotogramas lentos. Segundo, los costes deben medirse en el hardware de destino: el modelo \emph{roofline} (módulo~17, §2.2) explica por qué una misma reducción de triángulos ahorra mucho cuando la GPU está limitada por el procesamiento de vértices y casi nada cuando lo está por el sombreado de píxeles.
+
+\section{Simplificación de mallas por error cuádrico}
+
+La simplificación reduce el número de triángulos colapsando aristas: los dos extremos se sustituyen por un único vértice y desaparecen las caras degeneradas. La cuestión es qué arista colapsar y dónde colocar el nuevo vértice. Garland y Heckbert~\cite{garland} lo resuelven con una medida de error que se acumula sumando matrices.
+
+\begin{definicion}[Cuádrica de error]\label{def:cuadrica}
+Sea un plano $n^\T x+d=0$ con $\norm{n}=1$ y sea $p=(n,d)\in\R^4$. Su \emph{cuádrica fundamental} es $K_p=pp^\T$. La cuádrica de un vértice es $Q_v=\sum_pK_p$, sumando sobre los planos de las caras que lo contienen, y el error de colocar el vértice en $v$ es $\Delta(v)=\bar v^\T Q\bar v$, con $\bar v=(v,1)$. Al colapsar $(v_1,v_2)$ se toma $Q=Q_1+Q_2$.
+\end{definicion}
+
+\begin{proposicion}[Propiedades del error cuádrico]\label{prop:qem}
+(a) $\Delta(v)=\sum_p(n_p^\T v+d_p)^2$ es la suma de los cuadrados de las distancias de $v$ a los planos. (b) $Q$ es simétrica y semidefinida positiva, y $\Delta$ es una función convexa de $v$. (c) Si $Q=\begin{psmallmatrix}A&b\\b^\T&c\end{psmallmatrix}$ con $A\in\R^{3\times3}$ invertible, el minimizador es $v^\star=-A^{-1}b$, solución del sistema lineal que se obtiene al sustituir la última fila de $Q$ por $(0,0,0,1)$; $A$ es invertible si y solo si las normales de los planos generan $\R^3$.
+\end{proposicion}
+
+\begin{proof}
+(a) $\bar v^\T pp^\T\bar v=(p^\T\bar v)^2=(n^\T v+d)^2$, que es la distancia al cuadrado al plano porque $\norm{n}=1$; sumando sobre los planos se obtiene la fórmula. (b) Cada $pp^\T$ es simétrica y $y^\T pp^\T y=(p^\T y)^2\ge 0$; la suma conserva ambas propiedades. $\Delta(v)=v^\T Av+2b^\T v+c$ con $A=\sum_pn_pn_p^\T$ semidefinida positiva, luego es convexa (módulo~4, tema~5). (c) El gradiente $2Av+2b$ se anula en $v^\star=-A^{-1}b$, que es mínimo global por convexidad. Las tres primeras filas del sistema modificado son $Av+b=0$ y la cuarta fija la coordenada homogénea a~1. Por último, $y^\T Ay=\sum_p(n_p^\T y)^2=0$ si y solo si $y$ es ortogonal a todas las normales, así que $A$ es definida positiva (e invertible) si y solo si las normales generan $\R^3$.
+\end{proof}
+
+\begin{ejemplo}[Una esquina]\label{ej:esquina}
+Un vértice en el origen con tres caras en los planos $x=0$, $y=0$ y $z=0$ tiene $A=I$ y $b=0$: su posición óptima es el origen, con error nulo, y moverlo a $(0{,}1;\ 0{,}2;\ 0{,}3)$ cuesta $0{,}01+0{,}04+0{,}09=0{,}14$. Si solo hubiera dos planos, $x=0$ y $z=0$, $A$ sería singular: todo el eje $y$ tendría error nulo, y el algoritmo recurre a evaluar los extremos y el punto medio de la arista~\cite[§4]{garland}.
+\end{ejemplo}
+
+El algoritmo calcula las cuádricas iniciales, el coste $\Delta(v^\star)$ de cada arista candidata y las guarda en un montículo; en cada paso colapsa la de menor coste y actualiza las vecinas~\cite[§4.1]{garland}. Cada vértice guarda solo 10 números (la matriz simétrica), y el artículo informa de que una malla de 69\,451 caras se simplifica en unos 15 s en el hardware de 1997. La simplificación por colapso de aristas es la que ofrecen el modificador \emph{Decimate} de Blender en modo \texttt{COLLAPSE}~\cite{blenderapi} y la biblioteca meshoptimizer~\cite{meshopt}, y Nanite usa expresamente el error cuádrico~\cite{nanite}. En el cuaderno, una esfera de 20 mm de radio con 528 caras se reduce a 200 caras con una desviación máxima de los vértices de 0,30 mm, conservando $\chi=2$.
+
+\section{Niveles de detalle y error en pantalla}
+
+Un objeto lejano ocupa pocos píxeles, y dibujarlo con todos sus triángulos desperdicia tiempo. Los \emph{niveles de detalle} (LOD) son versiones simplificadas que se eligen según la distancia.
+
+\begin{proposicion}[Error proyectado]\label{prop:error-px}
+Con una cámara perspectiva de campo de visión vertical $\phi_v$ y una imagen de $H$ píxeles de alto, un error geométrico $\varepsilon$ a distancia $d$ ocupa aproximadamente
+\[
+\varepsilon_{\text{px}}=\frac{\varepsilon\,H}{2\,d\,\tan(\phi_v/2)}
+\]
+píxeles. En consecuencia, el nivel con error $\varepsilon$ puede usarse sin superar un umbral de $\tau$ píxeles a partir de la distancia $d^\star=\varepsilon H/\bigl(2\tau\tan(\phi_v/2)\bigr)$.
+\end{proposicion}
+
+\begin{proof}
+A distancia $d$, la altura visible es $2d\tan(\phi_v/2)$ y se reparte entre $H$ píxeles, de modo que un píxel mide $2d\tan(\phi_v/2)/H$. Dividiendo $\varepsilon$ por ese tamaño se obtiene $\varepsilon_{\text{px}}$, que es decreciente en $d$; despejando $\varepsilon_{\text{px}}=\tau$ se obtiene $d^\star$.
+\end{proof}
+
+Nanite, el sistema de geometría virtualizada de Unreal Engine~5, lleva la idea al extremo~\cite{nanite}: divide cada malla en grupos de 128 triángulos, los simplifica jerárquicamente con el error cuádrico en un grafo acíclico dirigido de niveles, proyecta el error de simplificación a píxeles y, en cada fotograma, elige un corte del grafo en que el error queda por debajo de aproximadamente un píxel; los triángulos diminutos se rasterizan por software. Los autores informan de unos 25 millones de triángulos rasterizados por fotograma en su demostración.
+
+\section{Selección de niveles de detalle con presupuesto}
+
+\begin{definicion}[Mochila de elección múltiple]\label{def:mckp}
+Hay $G$ grupos de objetos; el grupo $g$ admite los niveles $\ell=0,\dots,L_g$, con coste $t_{g\ell}$ (ms) y pérdida de calidad $q_{g\ell}$. Se elige un nivel por grupo, $e=(\ell_1,\dots,\ell_G)$, resolviendo
+\[
+\min_e\ Q(e)=\sum_gq_{g\ell_g}\quad\text{sujeto a}\quad T(e)=\sum_gt_{g\ell_g}\le B .
+\]
+\end{definicion}
+
+Es un problema NP-difícil en general, pero pequeño en la práctica. La \emph{relajación lagrangiana} elimina la restricción: para cada $\lambda\ge 0$ se resuelve $\min_e\bigl[Q(e)+\lambda(T(e)-B)\bigr]$, que se separa por grupos (cada grupo elige el nivel que minimiza $q_{g\ell}+\lambda t_{g\ell}$). El multiplicador $\lambda$ es el «precio» de un milisegundo en unidades de calidad.
+
+\begin{proposicion}[Dualidad débil]\label{prop:dual}
+Sea $D(\lambda)=\min_e\bigl[Q(e)+\lambda(T(e)-B)\bigr]$ y $Q^\star$ el óptimo del problema con restricción. Para todo $\lambda\ge 0$, $D(\lambda)\le Q^\star$. Si la elección $e_\lambda$ que alcanza $D(\lambda)$ es factible y $\lambda\bigl(T(e_\lambda)-B\bigr)=0$, entonces $e_\lambda$ es óptima.
+\end{proposicion}
+
+\begin{proof}
+Sea $e^\star$ óptima. Como $T(e^\star)\le B$ y $\lambda\ge 0$, $D(\lambda)\le Q(e^\star)+\lambda(T(e^\star)-B)\le Q(e^\star)=Q^\star$. Si $e_\lambda$ es factible, $Q(e_\lambda)\ge Q^\star$; y con la condición de holgura complementaria, $Q(e_\lambda)=D(\lambda)\le Q^\star$. Luego $Q(e_\lambda)=Q^\star$.
+\end{proof}
+
+\begin{ejemplo}[Cuatro grupos de objetos en 4 ms]\label{ej:lod}
+\emph{Contexto.} Un juego a 60 Hz (16,7 ms por fotograma) reserva 4,0 ms de GPU para la geometría de cuatro grupos. Cada grupo tiene cuatro niveles generados con QEM; los costes se midieron en el hardware de destino y la pérdida de calidad es el error en pantalla medio (px) ponderado por la importancia visual del grupo:
+
+\begin{center}\small
+\begin{tabular}{@{}lcrrrr@{}}
+\toprule
+Grupo & Peso & LOD0 & LOD1 & LOD2 & LOD3 \\
+\midrule
+Árboles (400) & 1,0 & 3,20 / 0 & 1,70 / 0,6 & 0,90 / 1,5 & 0,45 / 4,0 \\
+Rocas (800) & 0,5 & 2,40 / 0 & 1,30 / 0,4 & 0,70 / 1,2 & 0,35 / 3,0 \\
+Edificios (60) & 1,5 & 1,80 / 0 & 1,00 / 0,3 & 0,55 / 0,9 & 0,30 / 2,5 \\
+Personajes (20) & 3,0 & 1,20 / 0 & 0,70 / 0,5 & 0,40 / 1,6 & 0,25 / 4,5 \\
+\bottomrule
+\end{tabular}
+\end{center}
+(cada celda: ms / px; entre paréntesis, número de instancias).
+
+\emph{Formulación.} La de la \cref{def:mckp} con $q_{g\ell}=w_g\cdot\text{px}_{g\ell}$ y $B=4{,}0$ ms. Todo en LOD0 cuesta 8,6 ms, más del doble del presupuesto.
+
+\emph{Métodos.} Con $4^4=256$ combinaciones, la enumeración es exacta e instantánea; la relajación lagrangiana escala a miles de grupos y da una cota inferior.
+
+\emph{Resultado.} De las 117 combinaciones factibles, la óptima es (LOD2, LOD2, LOD1, LOD0): árboles y rocas al nivel~2, edificios al~1 y personajes a máxima calidad, con 3,80 ms y pérdida ponderada $2{,}55$. La relajación lagrangiana alcanza su mejor cota, $D=2{,}30$, en $\lambda=1{,}25$, y la elección asociada coincide con el óptimo; el hueco de dualidad ($0{,}25$) existe porque la elección es discreta y la holgura no se anula ($T=3{,}80<4$). En un motor, $\lambda$ se ajusta de un fotograma a otro según el tiempo medido, y la decisión por grupo se reduce a comparar $q_{g\ell}+\lambda t_{g\ell}$.
+\end{ejemplo}
+
+\section{Compresión de texturas}
+
+Las GPU leen texturas comprimidas por bloques sin descomprimirlas en memoria. Los formatos BC de Direct3D~\cite{msbc} codifican bloques de $4\times 4$ téxeles: BC1 usa 8 bytes por bloque (4 bits por téxel) para color RGB con alfa de un bit; BC4, 8 bytes para un canal; BC5, 16 bytes para dos canales; BC6H, 16 bytes para color HDR, y BC7, 16 bytes (8 bits por téxel) para RGB o RGBA de alta calidad, con ocho modos por bloque entre los que el codificador elige. Una cadena completa de mipmaps añade un tercio de memoria, porque $1+\tfrac14+\tfrac1{16}+\dots=\tfrac43$.
+
+Codificar un bloque BC1 es un problema de optimización: se eligen dos colores extremos $e_0,e_1$ y, para cada téxel, un índice de dos bits que selecciona uno de los colores de la paleta $\{e_0,\ e_1,\ \tfrac23e_0+\tfrac13e_1,\ \tfrac13e_0+\tfrac23e_1\}$, minimizando el error cuadrático. Fijados los índices, el problema en $(e_0,e_1)$ es de mínimos cuadrados lineales (módulo~8, §2.2), porque cada téxel se aproxima por $(1-w_i)e_0+w_ie_1$ con $w_i\in\{0,\tfrac13,\tfrac23,1\}$ conocido; fijados los extremos, cada índice se elige por cercanía. Alternar ambos pasos no aumenta nunca el error y termina en un número finito de pasos, como el algoritmo de las $k$-medias. La dirección inicial de $e_0e_1$ suele tomarse como la primera componente principal de los colores del bloque (módulo~3, §5.4).
+
+\section{Empaquetado UV}
+
+Para texturizar una malla se corta en \emph{cartas} que se aplanan en el plano (parametrización) y se colocan dentro de un cuadrado de textura (empaquetado). El aplanado se plantea como minimización de una distorsión; el método LSCM de Lévy \emph{et al.}~\cite{lscm} minimiza por mínimos cuadrados la desviación de la conformidad (preservación de ángulos), lo que lleva a un sistema lineal disperso. El empaquetado es una variante del problema de la mochila bidimensional: colocar rectángulos (o polígonos) sin solaparse maximizando el área útil o la densidad de téxeles uniforme, y es NP-difícil incluso para rectángulos. En la práctica se usan heurísticas voraces: por \emph{estantes} (ordenar por altura y llenar filas), \emph{skyline} o rectángulos máximos libres, con un margen (\emph{padding}) entre cartas para que los mipmaps no mezclen colores de cartas vecinas. Herramientas como xatlas automatizan la segmentación, la parametrización y el empaquetado.
+
+\section{Contenido procedural y automatización con Blender}
+
+Un pipeline reproducible genera los niveles de detalle, las texturas y las comprobaciones con scripts, no a mano. Blender expone su modelo de datos en Python (\texttt{bpy}); el siguiente script crea tres niveles de detalle de cada malla de una escena con el modificador \emph{Decimate} en modo de colapso de aristas~\cite{blenderapi}:
+
+\begin{center}
+\begin{minipage}{0.92\textwidth}
+\small
+\begin{verbatim}
+import bpy
+ratios = {"LOD1": 0.5, "LOD2": 0.25, "LOD3": 0.1}
+mallas = [o for o in bpy.data.objects if o.type == 'MESH']
+for obj in mallas:
+    for nombre, r in ratios.items():
+        copia = obj.copy()
+        copia.data = obj.data.copy()
+        copia.name = obj.name + "_" + nombre
+        bpy.context.collection.objects.link(copia)
+        mod = copia.modifiers.new(name="Decimate", type='DECIMATE')
+        mod.decimate_type = 'COLLAPSE'
+        mod.ratio = r     # fracción de triángulos que se conserva
+\end{verbatim}
+\end{minipage}
+\end{center}
+
+El mismo patrón sirve para el contenido procedural: un generador de rocas, edificios o vegetación es una función $G(\theta,\text{semilla})$ cuyos parámetros pueden ajustarse con optimización de caja negra contra métricas (número de triángulos, área de textura, tiempo de dibujado medido) o contra la valoración de un artista. Fijar las semillas y versionar los scripts hace que cada recurso sea reproducible, y permite integrar las comprobaciones del \cref{tema:6} en la integración continua.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+meshoptimizer & simplificación, orden de caché de vértices, sobredibujado, cuantización & MIT & optimizar mallas para la GPU en C/C++ \\
+Blender (\texttt{bpy}) & modelado, \emph{Decimate}, scripts de pipeline & GPL-3.0 & automatizar LOD, exportaciones y comprobaciones \\
+PyMeshLab & filtros de simplificación y reparación & GPL-3.0 & procesado por lotes fuera del motor \\
+xatlas & segmentación, parametrización y empaquetado UV & MIT & atlas de texturas o de iluminación automáticos \\
+DirectXTex & compresión BC1--BC7 y mipmaps & MIT & preparar texturas para Direct3D \\
+Basis Universal & texturas supercomprimidas transcodificables & Apache-2.0 & distribuir una textura para varias plataformas \\
+Unreal Engine (Nanite) & geometría virtualizada con LOD automático & comercial (licencia de Epic) & escenas con mallas de muy alta resolución \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías del tema~5. Licencias según los repositorios o la documentación pública.}
+\label{tab:tec5}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores5}
+(i) \emph{Optimizar la media}: un presupuesto cumplido en promedio con picos de 40 ms produce tirones; se mide el percentil 99. (ii) \emph{Medir en la máquina equivocada}: los costes de la mochila deben salir del hardware de destino. (iii) \emph{Saltos visibles al cambiar de LOD} (\emph{popping}): se mitigan con umbrales con histéresis o con transiciones graduales. (iv) \emph{Costuras}: simplificar sin bloquear los bordes de las cartas UV o de las normales rompe la textura; meshoptimizer distingue la simplificación que respeta la topología y las costuras de la que no~\cite{meshopt}. (v) \emph{Formato de compresión inadecuado}: comprimir mapas de normales con BC1 introduce artefactos; para dos canales se usa BC5. (vi) \emph{Empaquetado sin margen}: los mipmaps mezclan cartas vecinas. (vii) \emph{Sobreajuste a la escena de prueba}: un ajuste de presupuestos para una única cámara falla en el resto del nivel.
+\end{observacion}
+
+\begin{lecturas}
+\item M.~Garland y P.~S. Heckbert~\cite{garland}: §3--5 (contracción de pares, cuádricas y su obtención).
+\item UCSD CSE~190~\cite{ucsd190}, clase~8, y Princeton COS~526~\cite{cos526}, «Mesh Simplification».
+\item B.~Karis, R.~Stubbe y G.~Wihlidal~\cite{nanite}: \emph{Nanite: A Deep Dive}.
+\item Microsoft~\cite{msbc}: \emph{Texture Block Compression in Direct3D 11}.
+\item B.~Lévy \emph{et al.}~\cite{lscm}: mapas conformes por mínimos cuadrados.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-ms}
+Calcule el presupuesto por fotograma a 30, 60, 90, 120 y 144 Hz. Explique por qué un juego que cumple 16,7 ms de media puede verse mal a 60 Hz.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-quadric}
+Un vértice en el origen pertenece a dos caras contenidas en los planos $z=0$ y $x=0$. (a) Escriba su cuádrica $Q$. (b) Calcule el error de moverlo a $(0{,}1;\ 0{,}2;\ 0{,}3)$. (c) ¿Tiene solución única el sistema de la posición óptima? Describa el conjunto de posiciones de error nulo y qué hace el algoritmo en este caso.
+\fuente{adaptado de UCSD CSE~190 «Advanced Computer Graphics» (R.~Ramamoorthi, primavera de 2015), clase~8 «Mesh simplification»~\cite{ucsd190}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-tex}
+Calcule la memoria (MiB) de un mapa de normales de $2048\times 2048$ con cadena completa de mipmaps en RGBA8, en BC5 y en BC1. ¿Por qué se prefiere BC5 para normales?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-bc1}
+Cuatro téxeles en escala de grises valen $(10,\ 40,\ 70,\ 95)$ y se les asignan los pesos de paleta $w=(0,\ \tfrac13,\ \tfrac23,\ 1)$. Calcule por mínimos cuadrados los extremos $e_0,e_1$, los valores reconstruidos y el error cuadrático total.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-lod}
+Un nivel de detalle tiene un error geométrico de 2 mm. Con campo de visión vertical de $60^\circ$ y 1080 píxeles de alto, ¿a partir de qué distancia puede usarse con un error menor que 1 píxel? ¿Y con 2160 píxeles de alto?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-mochila}
+Dos grupos, con presupuesto de 2,5 ms. Grupo~1 (peso 1): LOD0 2,0 ms / 0 px, LOD1 1,2 / 1, LOD2 0,5 / 3. Grupo~2 (peso 2): LOD0 1,5 / 0, LOD1 0,8 / 0,5, LOD2 0,4 / 2. (a) Encuentre la elección óptima por enumeración. (b) Calcule $D(\lambda)$ para $\lambda=1{,}25$ y $\lambda=10/7$ y compruebe la \cref{prop:dual}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-shelf}
+Se empaquetan en un atlas de $1024\times 1024$ cartas rectangulares de $512\times 300$, $400\times 300$, $300\times 280$, $600\times 250$, $350\times 240$ y $500\times 200$ (anchura por altura, en téxeles) con la heurística de estantes: ordenar por altura decreciente y llenar filas de izquierda a derecha. ¿Caben? ¿Qué fracción del atlas se aprovecha?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-qem}
+Demuestre la \cref{prop:qem}. Demuestre además que la cuádrica acumulada $Q_1+Q_2$ mide la suma de distancias al cuadrado a la \emph{unión} de los planos de ambos vértices, y explique por qué el error de un colapso nunca es menor que el mayor de los errores que habría tenido cada vértice por separado en esa posición.
+\fuente{adaptado de Princeton COS~526 (T.~Funkhouser, otoño de 2006), «Mesh Simplification»~\cite{cos526}, y de M.~Garland y P.~S. Heckbert~\cite[§4--5]{garland}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-dual}
+Demuestre la \cref{prop:dual} y demuestre que $D(\lambda)$ es una función cóncava de $\lambda$. Explique por qué en el \cref{ej:lod} la cota no alcanza el óptimo.
+\end{ejercicio}

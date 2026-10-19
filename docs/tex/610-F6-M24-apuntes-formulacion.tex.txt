@@ -1,0 +1,2325 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase VI — Módulo 24
+%  Formular y resolver problemas de optimización
+%  Compilar: latexmk -r ../latexmkrc M24-formulacion.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+\usepackage{makecell}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 24}
+
+% Notación propia del módulo
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\st}{\text{s.a.}\ }
+\newcommand{\T}{^{\mathsf{T}}}
+\newcommand{\Lag}{\mathcal{L}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\eur}{\text{\,€}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-\do\/}\makeatother
+
+\hypersetup{pdftitle={Módulo 24. Formular y resolver problemas de optimización},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase VI \textperiodcentered\ Diseño y construcción de optimizadores con IA}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 24\par}\vspace{0.3cm}
+{\LARGE Formular y resolver problemas de optimización\par}
+\vspace{0.2cm}
+{\large Programación lineal y entera, restricciones, convexidad, metaheurísticas y decisiones con predicciones\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Un optimizador basado en IA no empieza con una red neuronal, sino con una pregunta bien planteada: qué se decide, con qué datos, qué se quiere mejorar y qué no se puede violar. Este módulo abre la fase~VI enseñando ese oficio. Primero se estudia cómo pasar de un problema real a un modelo matemático y cómo encaja ese modelo en la arquitectura completa de un sistema que predice, decide y se vigila a sí mismo; con ello se traza el mapa de métodos que recorre la fase. Después se estudian las familias de problemas que la industria resuelve a diario con resolvedores maduros: programación lineal y entera mixta, con la dualidad y los precios sombra; problemas combinatorios y programación por restricciones, con rutas de reparto y programación de talleres; optimización convexa y condiciones de Karush--Kuhn--Tucker, con el despacho económico de energía; metaheurísticas y optimización multiobjetivo, con la distribución en planta. El último tema trata el momento en que el aprendizaje automático entra en la formulación: los parámetros del modelo se predicen y la decisión debe tener en cuenta el error de esa predicción. Cada tema se apoya en un caso de estudio con datos numéricos que el cuaderno de prácticas implementa y comprueba.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item traducir un problema de decisión a un modelo con variables, parámetros, objetivo y restricciones; distinguir el objetivo de los indicadores de seguimiento, y reformular valores absolutos y criterios minimax como problemas lineales;
+  \item describir la arquitectura de un optimizador con IA (datos, modelo predictivo, modelo de optimización, resolvedor, decisión y monitorización) y elegir la familia de métodos adecuada para un problema dado;
+  \item plantear y resolver programas lineales y enteros mixtos, escribir el dual, demostrar la dualidad débil y la holgura complementaria, interpretar los precios sombra y modelizar decisiones lógicas con variables binarias y cotas big-M válidas;
+  \item explicar la ramificación y acotación, formular problemas de rutas con ventanas horarias y de programación de talleres, y obtener cotas inferiores que midan la calidad de una solución;
+  \item reconocer problemas convexos, aplicar las condiciones KKT, interpretar los multiplicadores como sensibilidades y resolver modelos con CVXPY;
+  \item aplicar recocido simulado, algoritmos genéticos y CMA-ES a problemas de caja negra, y calcular frentes de Pareto con NSGA-II conociendo las limitaciones de la suma ponderada;
+  \item combinar predicción y optimización (predecir y después optimizar, vendedor de periódicos, programación estocástica en dos etapas, decisión robusta) y evaluar las decisiones fuera de muestra sin fugas de datos.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~0.7 (tema~5, §5.4) se usan los multiplicadores de Lagrange, y del módulo~0.9, los cuantiles (tema~1), los intervalos de confianza (tema~4) y la regresión lineal (tema~6). Del módulo~4 se usan el gradiente (tema~1), el hessiano (tema~4) y la convexidad de conjuntos y funciones (tema~5); del módulo~5, la esperanza, la distribución normal (tema~3) y el método de Monte Carlo (tema~5, §5.3); del módulo~7, el planteamiento de problemas de optimización, la convexidad y las condiciones de optimalidad (tema~1, §§1.2--1.3) y el descenso de gradiente (tema~2); del módulo~8, la separación en entrenamiento, validación y prueba (tema~1, §1.4), la regresión lineal (tema~2) y la generalización (tema~5). Las referencias al aprendizaje por refuerzo remiten al módulo~21 (tema~1: procesos de decisión de Markov) y las referencias a los modelos de lenguaje como agentes, al módulo~22 (tema~6). La distribución de Boltzmann que aparece en el recocido simulado se estudió en el módulo~6 (tema~5, §5.2).
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{4.2cm}@{}}
+\toprule
+Tema & Contenido y caso de estudio & Fuentes principales \\
+\midrule
+1 & Del problema real al modelo; anatomía de un optimizador con IA; mapa de métodos. Caso: fábrica de piensos & \cite{bt}, \cite{mit15053}, \cite{kw}, \cite{deepmind}, \cite{orion} \\
+2 & Programación lineal y entera mixta: dualidad, precios sombra, big-M, ramificación y acotación. Caso: plan de producción de una cervecera & \cite{bt}, \cite{amp}, \cite{mit15053}, \cite{landdoig}, \cite{highs} \\
+3 & Problemas combinatorios y programación por restricciones. Casos: reparto con ventanas horarias y taller \emph{job-shop} & \cite{mit15053}, \cite{solomon}, \cite{ortools-vrptw}, \cite{ortools-js}, \cite{johnson} \\
+4 & Optimización continua y convexa: KKT y CVXPY. Caso: despacho económico de energía & \cite{bv}, \cite{nw}, \cite{wood}, \cite{cvxpy} \\
+5 & Metaheurísticas, optimización sin derivadas y multiobjetivo. Caso: distribución en planta & \cite{kw}, \cite{kirkpatrick}, \cite{hansen}, \cite{nsga2} \\
+6 & Predecir y después optimizar; programación estocástica y robusta. Caso: plan de cerveza fresca con demanda predicha & \cite{bl}, \cite{ee364stoch}, \cite{spo}, \cite{bk}, \cite{bsim} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Cada tema contiene teoría formal, un caso de estudio con datos numéricos, una tabla de tecnologías, una observación sobre errores frecuentes en la práctica, una lista de lecturas y ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ formulación y cálculo a mano, y $\star\star\star$ demostración o diseño razonado. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos. Las soluciones completas están en el \cref{ap:soluciones}. El cuaderno \texttt{M24-practica.ipynb} implementa los seis casos de estudio paso a paso y comprueba con un segundo método (enumeración, condiciones de optimalidad o simulación) todos los resultados numéricos que aparecen en estos apuntes.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La formulación y la programación lineal siguen el libro de Bertsimas y Tsitsiklis~\cite{bt}, texto del curso 6.251J del MIT~\cite{mit6251}, y el curso 15.053 del MIT (Orlin y Nasrabadi, 2013)~\cite{mit15053}, cuyas clases sobre formulaciones, análisis de sensibilidad y precios sombra, programación entera y ramificación y acotación, y viajante de comercio se citan por su número, igual que sus hojas de problemas~\cite{mit15053ps}; varios ejercicios proceden del libro de Bradley, Hax y Magnanti~\cite{amp}, que es el texto de ese curso. La optimización convexa sigue a Boyd y Vandenberghe~\cite{bv} (curso EE364a de Stanford) y, para las condiciones de optimalidad con restricciones, el capítulo~12 de Nocedal y Wright~\cite{nw}. Las metaheurísticas, la optimización multiobjetivo y la optimización con incertidumbre siguen a Kochenderfer y Wheeler~\cite{kw} y los artículos originales: Kirkpatrick, Gelatt y Vecchi~\cite{kirkpatrick} para el recocido, Hansen~\cite{hansen} para CMA-ES y Deb \emph{et al.}~\cite{nsga2} para NSGA-II. La programación estocástica sigue a Birge y Louveaux~\cite{bl} y a las transparencias de EE364a~\cite{ee364stoch}; la optimización robusta, a Bertsimas y Sim~\cite{bsim} y a Ben-Tal, El Ghaoui y Nemirovski~\cite{btn}; la integración de predicción y decisión, a Elmachtoub y Grigas~\cite{spo} y a Bertsimas y Kallus~\cite{bk}. Las aplicaciones industriales citadas (la refrigeración de los centros de datos de Google~\cite{deepmind} y el sistema de rutas ORION de UPS~\cite{orion}) se describen solo con la información que sus autores han publicado. Las herramientas se describen según su documentación oficial~\cite{highs,ortools-vrptw,ortools-js,ortools-cpsat,cvxpy,cvxpydoc,pulp}.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$x\in\R^{n}$, $\mathcal{X}$ & vector de decisión y conjunto factible \\
+$f$, $g_i$, $h_j$ & función objetivo, restricciones de desigualdad ($g_i\le 0$) y de igualdad ($h_j=0$) \\
+$\theta$, $\hat\theta$ & parámetros (datos) del problema y su estimación o predicción \\
+$c,A,b$ & datos de un programa lineal $\max\{c\T x: Ax\le b,\ x\ge 0\}$ \\
+$y$, $y^{*}$ & variables duales; precios sombra en el óptimo \\
+$z^{*}$, $z_{\mathrm{LP}}$ & valor óptimo de un problema y de su relajación lineal \\
+$M$ & constante de las restricciones big-M \\
+$\Lag(x,\lambda,\nu)$ & lagrangiana con multiplicadores $\lambda\ge 0$ (desigualdades) y $\nu$ (igualdades) \\
+$T$ & temperatura del recocido simulado \\
+$\succ$ & dominancia de Pareto ($u\succ v$: $u$ domina a $v$) \\
+$\xi$, $\Xi$ & parámetro incierto y conjunto de incertidumbre \\
+$c_u$, $c_o$ & coste unitario por defecto y por exceso (vendedor de periódicos) \\
+$F$, $F^{-1}$ & función de distribución y función cuantil \\
+hL, MW, MWh, h & hectolitros, megavatios, megavatios hora, horas \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Del problema real al modelo matemático}
+\label{tema:1}
+% =====================================================================
+
+Antes de elegir un algoritmo hay que saber qué se decide, qué se quiere mejorar y qué no se puede violar. Este tema fija el vocabulario de la modelización siguiendo el capítulo~1 de Bertsimas y Tsitsiklis~\cite{bt}, la clase~1 («Formulations») del curso 6.251J del MIT~\cite{mit6251} y la clase~2 («Formulations of linear and non-linear programs») del curso 15.053~\cite{mit15053}; describe la arquitectura de un sistema que predice y decide, con dos aplicaciones industriales publicadas~\cite{deepmind,orion}, y traza el mapa de métodos que recorre la fase, con el capítulo~1 de Kochenderfer y Wheeler~\cite{kw} como guía.
+
+\section{Elementos de un modelo de optimización}
+
+Un problema real llega como una descripción verbal: «queremos producir lo más rentable posible sin parar la línea y sin dejar a ningún cliente sin pedido». Modelizar consiste en separar lo que se elige de lo que se sabe y en escribir con precisión lo que se quiere y lo que se exige.
+
+\begin{definicion}[Problema de optimización]\label{def:prob-opt}
+Un \emph{problema de optimización} es
+\[
+\min_{x\in X}\ f(x)\qquad \st g_i(x)\le 0\ \ (i=1,\dots,m),\qquad h_j(x)=0\ \ (j=1,\dots,p),
+\]
+donde $x$ es el vector de \emph{variables de decisión}, $X$ un conjunto básico (por ejemplo $\R^{n}$, $\R^{n}_{\ge 0}$ o $\Z^{n_1}\times\R^{n_2}$), $f$ la \emph{función objetivo} y $g_i,h_j$ las \emph{restricciones}. El \emph{conjunto factible} es $\mathcal{X}=\{x\in X: g_i(x)\le 0,\ h_j(x)=0\}$. Un punto $x^{*}\in\mathcal{X}$ es \emph{óptimo (global)} si $f(x^{*})\le f(x)$ para todo $x\in\mathcal{X}$, y \emph{óptimo local} si la desigualdad se cumple en $\mathcal{X}\cap B(x^{*},r)$ para algún $r>0$. El problema es \emph{infactible} si $\mathcal{X}=\varnothing$ y \emph{no acotado} si $\inf_{\mathcal{X}}f=-\infty$.
+\end{definicion}
+
+\begin{definicion}[Datos, decisiones e indicadores]\label{def:elementos}
+En un modelo se distinguen:
+\begin{enumerate}[label=(\alph*)]
+  \item los \emph{parámetros} o datos $\theta$ (precios, capacidades, demandas, tiempos), que el decisor no controla y que pueden ser inciertos o predichos;
+  \item las \emph{variables de decisión} $x$, que el decisor fija;
+  \item las \emph{restricciones duras}, que ninguna decisión puede violar (seguridad, física, contratos), y las \emph{restricciones blandas}, que pueden violarse con una penalización en el objetivo;
+  \item el \emph{objetivo} $f(x;\theta)$, un único escalar que se optimiza;
+  \item los \emph{indicadores clave} (KPIs, \emph{key performance indicators}): magnitudes que se miden para vigilar el sistema (utilización, nivel de servicio, emisiones, tiempo de cálculo) y que no tienen por qué coincidir con el objetivo.
+\end{enumerate}
+\end{definicion}
+
+\begin{observacion}
+El objetivo es una decisión de diseño: si se optimiza el coste y se vigila el nivel de servicio, conviene comprobar que el óptimo del coste no hunde el servicio. Cuando varios KPIs son igualmente importantes, el problema es multiobjetivo (\cref{tema:5}). Optimizar un indicador que solo aproxima lo que se quiere conduce a la ley de Goodhart que el módulo~21 estudió como sobreoptimización de la recompensa.
+\end{observacion}
+
+Muchos modelos que no parecen lineales lo son tras una reformulación. Las tres siguientes son las más útiles.
+
+\begin{proposicion}[Reformulaciones elementales]\label{prop:reform}
+\begin{enumerate}
+  \item Maximizar $f$ equivale a minimizar $-f$: $\max_{\mathcal{X}}f=-\min_{\mathcal{X}}(-f)$, con los mismos puntos óptimos.
+  \item Una igualdad $h(x)=0$ equivale a las dos desigualdades $h(x)\le 0$ y $-h(x)\le 0$; una desigualdad $a\T x\le b$ equivale a $a\T x+s=b$ con una \emph{holgura} $s\ge 0$.
+  \item Una variable libre $x_j\in\R$ puede sustituirse por $x_j=x_j^{+}-x_j^{-}$ con $x_j^{\pm}\ge 0$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) $f(x^{*})\ge f(x)$ para todo $x$ si y solo si $-f(x^{*})\le -f(x)$ para todo $x$. (ii) Un número es nulo si y solo si es a la vez $\le 0$ y $\ge 0$; y $a\T x\le b$ si y solo si $s=b-a\T x\ge 0$. (iii) Todo real es diferencia de dos no negativos (por ejemplo, $x^{+}=\max(x,0)$ y $x^{-}=\max(-x,0)$), y toda diferencia de no negativos es un real; la correspondencia conserva los valores de $f$ y de las restricciones.
+\end{proof}
+
+\begin{proposicion}[Epígrafe de un máximo]\label{prop:minimax}
+Sean $f_1,\dots,f_k$ funciones sobre $\mathcal{X}$. Los problemas
+\[
+\text{(P)}\ \ \min_{x\in\mathcal{X}}\ \max_{i}f_i(x)\qquad\text{y}\qquad \text{(Q)}\ \ \min_{x\in\mathcal{X},\,t\in\R}\ t\ \ \st f_i(x)\le t\ \ (i=1,\dots,k)
+\]
+tienen el mismo valor óptimo, y $x^{*}$ es óptimo de (P) si y solo si $(x^{*},\max_i f_i(x^{*}))$ es óptimo de (Q). Si las $f_i$ son afines y $\mathcal{X}$ es un poliedro, (Q) es un programa lineal.
+\end{proposicion}
+
+\begin{proof}
+Para cada $x$ fijo, el menor $t$ factible en (Q) es $t=\max_i f_i(x)$. Minimizar (Q) en $t$ primero y en $x$ después da exactamente (P). Si $(x,t)$ es óptimo de (Q), necesariamente $t=\max_if_i(x)$, porque en otro caso podría reducirse $t$.
+\end{proof}
+
+\begin{proposicion}[Suma de valores absolutos]\label{prop:abs}
+El problema $\min_{x\in\mathcal{X}}\sum_{i=1}^{k}\abs{a_i\T x-b_i}$ equivale a
+\[
+\min_{x\in\mathcal{X},\,e\in\R^{k}}\ \sum_{i=1}^{k}e_i\qquad\st -e_i\le a_i\T x-b_i\le e_i\quad(i=1,\dots,k).
+\]
+\end{proposicion}
+
+\begin{proof}
+Es la \cref{prop:minimax} aplicada término a término, porque $\abs{r}=\max(r,-r)$: para $x$ fijo, el menor $e_i$ factible es $\abs{a_i\T x-b_i}$, y la suma se minimiza por separado en cada $e_i$.
+\end{proof}
+
+\begin{ejemplo}[Caso de estudio: la fábrica de piensos]\label{ej:piensos}
+Una fábrica de piensos compuestos elabora pienso de engorde y pienso de puesta. Cada tonelada pasa por el molino y por la granuladora, con los tiempos del \cref{tab:piensos}. La dirección quiere el plan semanal de máximo margen; el departamento comercial informa de que no se pueden colocar más de 160~t semanales de pienso de puesta.
+
+\begin{table}[h]
+\centering\small
+\caption{Datos del caso de la fábrica de piensos.}\label{tab:piensos}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+ & Engorde ($E$) & Puesta ($P$) & Disponible \\
+\midrule
+Molino (h/t) & 0,5 & 0,5 & 100 h/semana \\
+Granuladora (h/t) & 0,6 & 0,3 & 90 h/semana \\
+Margen (€/t) & 40 & 30 & \\
+Demanda máxima (t/semana) & --- & 160 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\emph{Variables:} $E,P\ge 0$, toneladas por semana. \emph{Parámetros:} los de la tabla. \emph{Objetivo y restricciones:}
+\[
+\max\ 40E+30P\quad\st 0{,}5E+0{,}5P\le 100,\quad 0{,}6E+0{,}3P\le 90,\quad P\le 160,\quad E,P\ge 0.
+\]
+Dividiendo, las dos primeras restricciones son $E+P\le 200$ y $2E+P\le 300$. La región factible es el pentágono de la \cref{fig:piensos}, de vértices $(0,0)$, $(150,0)$, $(100,100)$, $(40,160)$ y $(0,160)$. Evaluando el margen en ellos: $0$, $6000$, $7000$, $6400$ y $4800$~€. El óptimo es $\bm{E^{*}=P^{*}=100}$~t con un margen de \textbf{7000~€/semana}. La elección del método es inmediata: dos variables continuas y todo lineal, luego programación lineal; con dos variables basta el método gráfico, y con miles, un resolvedor como HiGHS (\cref{tema:2}).
+
+\emph{KPIs del plan:} utilización del molino $100/100=100\,\%$, utilización de la granuladora $(60+30)/90=100\,\%$ y demanda de puesta cubierta $100/160=62{,}5\,\%$ del potencial. Los dos recursos están saturados; el \cref{tema:2} calculará cuánto vale una hora más de cada uno.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[x=0.028cm,y=0.022cm,font=\small,>={Stealth[length=2mm]}]
+  \fill[gray!20] (0,0)--(150,0)--(100,100)--(40,160)--(0,160)--cycle;
+  \draw[->] (0,0)--(215,0) node[below] {$E$ (t)};
+  \draw[->] (0,0)--(0,250) node[left] {$P$ (t)};
+  \draw[thick] (0,200)--(200,0);
+  \node[anchor=south west,font=\footnotesize] at (2,201) {molino};
+  \draw[thick] (60,180)--(150,0);
+  \node[anchor=south,font=\footnotesize] at (66,181) {granuladora};
+  \draw[thick,dashed] (0,160)--(200,160) node[right] {$P=160$};
+  \draw[dotted,thick] (40,180)--(175,0);
+  \node[anchor=west,font=\footnotesize] at (176,22) {$40E+30P=7000$};
+  \fill (100,100) circle (2.2pt) node[right=3pt] {$(100,100)$};
+  \foreach \x in {50,100,150} \draw (\x,0)--(\x,-4) node[below] {\x};
+  \draw (200,0)--(200,-4);
+  \foreach \y in {50,100,150,200} \draw (0,\y)--(-4,\y) node[left] {\y};
+\end{tikzpicture}
+\caption{Región factible del caso de los piensos (sombreada) y recta de nivel óptima.}
+\label{fig:piensos}
+\end{figure}
+
+\section{Anatomía de un optimizador con IA}
+
+En la industria el modelo matemático es una pieza de un sistema mayor que se ejecuta de forma periódica (cada semana, cada hora, cada cinco minutos). La \cref{fig:anatomia} muestra sus componentes.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},node distance=4mm and 5mm,
+  caja/.style={draw,thick,rounded corners=2pt,align=center,inner sep=2pt,minimum height=11mm,text width=2.25cm,font=\footnotesize}]
+  \node[caja] (dat) {datos\\(sensores, ERP, históricos)};
+  \node[caja,right=of dat] (pred) {modelo\\predictivo\\$\hat\theta=m_\phi(\cdot)$};
+  \node[caja,right=of pred] (opt) {modelo de\\optimización\\$\min f(x;\hat\theta)$};
+  \node[caja,right=of opt] (sol) {resolvedor\\(HiGHS, CP-SAT, \dots)};
+  \node[caja,below=9mm of sol] (dec) {decisión\\+ salvaguardas};
+  \node[caja,left=of dec] (pla) {planta,\\red o negocio};
+  \node[caja,left=of pla] (mon) {monitorización\\(KPIs, deriva, alarmas)};
+  \node[caja,left=of mon,text width=1.9cm] (hum) {supervisión\\humana};
+  \draw[->,thick] (dat)--(pred); \draw[->,thick] (pred)--(opt); \draw[->,thick] (opt)--(sol);
+  \draw[->,thick] (sol)--(dec); \draw[->,thick] (dec)--(pla); \draw[->,thick] (pla)--(mon);
+  \draw[->,thick] (mon)--(hum);
+  \draw[->,thick,dashed] (mon.north) -- node[right,font=\scriptsize] {reentrenar} (pred.south);
+  \draw[->,thick,dashed] (hum.north) -- node[right,font=\scriptsize] {corregir} (dat.south);
+\end{tikzpicture}
+\caption{Arquitectura de un optimizador con IA. Las flechas continuas forman el ciclo de decisión; las discontinuas, el de aprendizaje y supervisión.}
+\label{fig:anatomia}
+\end{figure}
+
+\begin{definicion}[Optimizador con IA]\label{def:optimizador-ia}
+Un \emph{optimizador con IA} es un procedimiento que, a partir de observaciones $w$ (contexto: fecha, temperatura, estado de la planta), produce una decisión
+\[
+\hat x(w)\in\argmin_{x\in\mathcal{X}(\hat\theta)}\ f\bigl(x;\hat\theta\bigr),\qquad \hat\theta=m_\phi(w),
+\]
+donde $m_\phi$ es un modelo aprendido de datos con parámetros $\phi$ que predice los parámetros inciertos del problema (o el propio valor de una decisión), y el conjunto factible incluye las restricciones de seguridad. La calidad del sistema se mide por el coste real $f(\hat x(w);\theta)$ con el $\theta$ verdadero, no por el error de predicción.
+\end{definicion}
+
+Los componentes de la \cref{fig:anatomia} son:
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Datos}: históricos, tiempo real y datos maestros (capacidades, recetas, tarifas). Su calidad limita todo lo demás.
+  \item \emph{Modelo predictivo}: estima demandas, tiempos, rendimientos o el estado futuro del sistema (regresión, árboles, redes; módulos~8--11).
+  \item \emph{Modelo de optimización}: la formulación de la \cref{def:prob-opt}, con los parámetros predichos y las restricciones duras.
+  \item \emph{Resolvedor}: el algoritmo elegido según la estructura (\cref{sec:mapa}).
+  \item \emph{Decisión con salvaguardas}: comprobaciones independientes del modelo (límites físicos, cambios máximos entre periodos, plan de respaldo) antes de ejecutar.
+  \item \emph{Monitorización}: KPIs, error de predicción, deriva de los datos, tiempo de cálculo y tasa de intervenciones humanas; disparan el reentrenamiento o la revisión del modelo.
+\end{enumerate}
+
+\begin{ejemplo}[Dos sistemas publicados]\label{ej:casos-reales}
+\emph{Refrigeración de centros de datos de Google (DeepMind, 2016).} Según la descripción publicada por sus autores~\cite{deepmind}, se entrenó un conjunto de redes neuronales profundas con datos históricos de miles de sensores (temperaturas, potencias, velocidades de bombas, consignas) para predecir la eficiencia energética media futura (PUE, cociente entre la energía total del edificio y la consumida por los equipos informáticos); otros dos conjuntos de redes predecían la temperatura y la presión de la hora siguiente para comprobar que las acciones recomendadas respetaban los límites de operación. El sistema redujo de forma consistente un 40\,\% la energía usada en refrigeración, lo que equivalía a una reducción del 15\,\% de la sobrecarga de PUE. Es exactamente la arquitectura de la \cref{fig:anatomia}: modelos predictivos, un optimizador de las consignas y restricciones de seguridad predichas.
+
+\emph{Rutas de UPS (ORION).} Holland \emph{et al.}~\cite{orion} describen el sistema que planifica a diario las rutas de unos 55\,000 conductores en Estados Unidos. Los autores estiman, con el despliegue completo, una reducción de unos 100 millones de millas recorridas al año, de 10 millones de galones de combustible y un ahorro anual de 300 a 400 millones de dólares. El núcleo es un problema de rutas con ventanas horarias (\cref{tema:3}), con reglas operativas que los conductores deben poder aceptar.
+\end{ejemplo}
+
+\section{Mapa de métodos de la fase}\label{sec:mapa}
+
+La estructura matemática del problema, no la moda, decide el método. El \cref{tab:mapa} resume la elección; la \cref{fig:arbol} la presenta como árbol de decisión.
+
+\begin{table}[h]
+\centering\small
+\caption{Mapa de métodos: estructura del problema, familia y herramienta típica.}\label{tab:mapa}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Estructura & Familia & Métodos y herramientas \\
+\midrule
+objetivo y restricciones lineales, variables continuas & PL (LP) & símplex, punto interior; HiGHS (\cref{tema:2}) \\
+lineal con decisiones discretas (sí/no, lotes, turnos) & PLEM (MILP) & ramificación y acotación con cortes; HiGHS, SCIP, Gurobi (\cref{tema:2}) \\
+secuenciación, rutas, asignación con lógica compleja & combinatoria, programación por restricciones & CP-SAT, OR-Tools Routing, búsqueda local (\cref{tema:3}) \\
+convexo y diferenciable (cuadrático, cónico) & optimización convexa & punto interior; CVXPY con Clarabel u OSQP (\cref{tema:4}) \\
+no convexo y diferenciable & programación no lineal & SQP, punto interior, multiarranque; SciPy (\cref{tema:4}) \\
+caja negra barata, sin derivadas & metaheurísticas & recocido, genéticos, CMA-ES, NSGA-II (\cref{tema:5}) \\
+caja negra cara (simulación, experimento) & optimización bayesiana & modelo sustituto gaussiano y función de adquisición~\cite{garnett,frazier} \\
+decisiones secuenciales con incertidumbre & control y RL & control predictivo, aprendizaje por refuerzo (módulo~21)~\cite{sb} \\
+parámetros inciertos que se predicen & predecir y optimizar, estocástica, robusta & SAA, recurso, conjuntos de incertidumbre (\cref{tema:6}) \\
+espacio de programas o heurísticas & búsqueda con LLM y evaluador & FunSearch~\cite{funsearch}, AlphaEvolve~\cite{alphaevolve}, OPRO~\cite{opro} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\footnotesize,>={Stealth[length=1.8mm]},
+  preg/.style={draw,thick,rounded corners=6pt,align=center,inner sep=2pt,text width=2.5cm,fill=gray!8},
+  hoja/.style={draw,thick,align=center,inner sep=2pt,text width=2.3cm}]
+  \node[preg] (q1) at (0,0) {¿se puede evaluar $f$ con una fórmula?};
+  \node[preg] (q2) at (-3.5,-1.6) {¿hay variables discretas?};
+  \node[preg] (q5) at (4,-1.6) {¿cada evaluación es cara?};
+  \node[hoja] (h2) at (-5.7,-3.3) {PLEM (lineal) o CP (lógica)};
+  \node[preg] (q3) at (-2,-3.3) {¿todo es lineal?};
+  \node[hoja] (h1) at (-3.9,-5.0) {PL};
+  \node[preg] (q4) at (-0.2,-5.0) {¿es convexo?};
+  \node[hoja] (h3) at (-2,-6.7) {convexa (CVXPY)};
+  \node[hoja] (h4) at (1.6,-6.7) {no lineal local con multiarranque};
+  \node[hoja] (h5) at (2.5,-3.3) {optimización bayesiana};
+  \node[hoja] (h6) at (5.4,-3.3) {metaheurísticas};
+  \draw[->] (q1) -- node[above left] {sí} (q2);
+  \draw[->] (q1) -- node[above right] {no (caja negra)} (q5);
+  \draw[->] (q2) -- node[left] {sí} (h2);
+  \draw[->] (q2) -- node[right] {no} (q3);
+  \draw[->] (q3) -- node[left] {sí} (h1);
+  \draw[->] (q3) -- node[right] {no} (q4);
+  \draw[->] (q4) -- node[left] {sí} (h3);
+  \draw[->] (q4) -- node[right] {no} (h4);
+  \draw[->] (q5) -- node[left] {sí} (h5);
+  \draw[->] (q5) -- node[right] {no} (h6);
+\end{tikzpicture}
+\caption{Árbol de decisión simplificado para elegir la familia de métodos. Los problemas con parámetros inciertos o decisiones secuenciales se tratan en el \cref{tema:6} y en los módulos posteriores.}
+\label{fig:arbol}
+\end{figure}
+
+\begin{observacion}[Modelos de lenguaje en la optimización]\label{obs:llm}
+Los LLM intervienen en la optimización de dos formas distintas. Como \emph{asistentes de formulación}, traducen un enunciado en lenguaje natural a un modelo para un resolvedor clásico; OptiMUS~\cite{optimus} es un ejemplo publicado para PL y PLEM, y su salida debe verificarse como cualquier código. Como \emph{generadores de candidatos} dentro de un bucle evolutivo con un evaluador automático, proponen programas o soluciones que el evaluador puntúa: FunSearch~\cite{funsearch} encontró así construcciones matemáticas y heurísticas de empaquetado, AlphaEvolve~\cite{alphaevolve} extendió la idea a algoritmos completos y OPRO~\cite{opro} usa el propio LLM como optimizador de instrucciones. En ambos casos la garantía procede del evaluador o del resolvedor, no del modelo de lenguaje; los módulos posteriores de la fase desarrollan este enfoque.
+\end{observacion}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~1: lenguajes de modelización y resolvedores generales.}\label{tab:tec1}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+SciPy (\texttt{optimize}) & PL y PLEM con HiGHS, mínimos cuadrados, no lineal local & abierta (BSD-3) & prototipos y modelos pequeños sin dependencias extra \\
+PuLP~\cite{pulp} & modelizar PL/PLEM y enviarlos a CBC, HiGHS, SCIP, Gurobi\dots & abierta (MIT) & modelos lineales legibles en Python \\
+Pyomo & modelización algebraica general (lineal y no lineal) & abierta (BSD-3) & modelos grandes, con estructura por índices y varios resolvedores \\
+OR-Tools~\cite{ortools-cpsat} & CP-SAT, rutas, flujos, PL (GLOP) & abierta (Apache~2.0) & combinatoria, programación y rutas \\
+CVXPY~\cite{cvxpy} & optimización convexa disciplinada & abierta (Apache~2.0) & problemas convexos con verificación automática \\
+Gurobi, CPLEX & resolvedores comerciales de PL/PLEM/cuadráticos & comercial (licencia académica gratuita) & PLEM grandes en producción con exigencia de tiempo \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes al modelizar]\label{obs:errores1}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Unidades inconsistentes}: mezclar horas y minutos o toneladas y kilogramos produce soluciones absurdas que el resolvedor da por buenas. Conviene anotar la unidad de cada parámetro y escalar los coeficientes a magnitudes parecidas, lo que además mejora la estabilidad numérica.
+  \item \emph{Optimizar el KPI equivocado}: minimizar el coste sin restricción de servicio puede ser óptimo y desastroso; hay que revisar los KPIs de la solución, no solo el valor del objetivo.
+  \item \emph{Restricciones de seguridad blandas}: una penalización finita siempre puede compensarse con suficiente ahorro; lo que no se puede violar debe ser una restricción dura.
+  \item \emph{Infactibilidad sin diagnóstico}: cuando el modelo es infactible conviene añadir variables de holgura penalizadas para saber qué restricción falla.
+  \item \emph{Datos maestros desactualizados}: capacidades o tiempos que ya no son los reales invalidan la decisión aunque el algoritmo sea perfecto.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Bertsimas y Tsitsiklis~\cite{bt}, cap.~1 (formulaciones; lectura de la clase~1 de MIT 6.251J~\cite{mit6251}).
+\item MIT 15.053~\cite{mit15053}, clases~1 «Introduction» y~2 «Formulations of linear and non-linear programs».
+\item Kochenderfer y Wheeler~\cite{kw}, cap.~1 «Introduction».
+\item R.~Evans y J.~Gao~\cite{deepmind} y C.~Holland \emph{et al.}~\cite{orion}, para los dos sistemas industriales.
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-elementos}
+Un invernadero de 1~ha controla cada hora la apertura de ventanas, la calefacción y la inyección de CO$_2$. Se dispone de una predicción de radiación y temperatura exterior. La temperatura interior debe estar entre 16 y 28~ºC; la concentración de CO$_2$ no debe superar 1000~ppm por seguridad de los trabajadores; se quiere maximizar el crecimiento estimado menos el coste energético. Identifique variables de decisión, parámetros (indicando cuáles se predicen), objetivo, restricciones duras y blandas, y proponga tres KPIs que no coincidan con el objetivo.
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:1-mapa}
+Asigne a cada problema la familia del \cref{tab:mapa} y justifique la elección en una línea: (a) mezcla de materias primas de mínimo coste con requisitos nutricionales lineales; (b) decidir qué 5 de 20 almacenes abrir, con costes fijos y de transporte lineales; (c) ajustar 8 parámetros de un simulador de horno que tarda 2~h por ejecución; (d) asignar 300 tareas con precedencias a 12 máquinas; (e) despachar generadores con costes cuadráticos convexos; (f) regular cada minuto la temperatura de un reactor ante perturbaciones.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-abs}
+Convierta en un programa lineal el problema $\min\ \abs{x_1}+2\abs{x_2}$ s.a. $x_1+x_2\ge 4$, $x_1-x_2\le 2$, y resuélvalo.
+\fuente{adaptado de Bertsimas y Tsitsiklis~\cite{bt}, cap.~1, reformulación de objetivos lineales a trozos (lectura de la clase~1 de MIT 6.251J~\cite{mit6251}).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-correos}
+Una oficina de correos necesita, de lunes a domingo, al menos 17, 13, 15, 19, 14, 16 y 11 empleados. Cada empleado trabaja cinco días consecutivos y descansa dos. (a) Formule el problema de contratar el mínimo número de empleados; explique por qué conviene tomar como variable el número de empleados que \emph{empiezan} cada día. (b) Sumando las siete restricciones, obtenga una cota inferior del óptimo. (c) La relajación lineal vale $22{,}33$ y el óptimo entero, $23$; interprete los tres números.
+\fuente{adaptado de MIT 15.053, primavera de 2013, clase~2 «Formulations of linear and non-linear programs», ejemplo de los turnos de correos~\cite{mit15053}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-piensos}
+En el caso de los piensos (\cref{ej:piensos}), el margen del pienso de puesta sube a 45~€/t. Encuentre el nuevo plan óptimo con el método de los vértices y calcule sus KPIs. ¿Para qué intervalo de márgenes $m_P$ del pienso de puesta sigue siendo óptimo $(100,100)$?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-minimax}
+Tres turbinas tienen pérdidas (en kW) que dependen de un reparto $x\in[0,10]$: $x-1$, $-2x+8$ y $0{,}5x+1$. Formule como programa lineal el problema de minimizar la mayor de las tres pérdidas y resuélvalo gráficamente.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-desviaciones}
+Para penalizar la falta y el exceso de personal se escribe $\sum_j a_{ij}x_j+d_i-e_i=r_i$ con $d_i,e_i\ge 0$ y se minimiza $\sum_i(\alpha d_i+\beta e_i)$ con $\alpha,\beta>0$. Demuestre que en toda solución óptima se cumple $d_ie_i=0$ para todo $i$, de modo que $d_i$ y $e_i$ son exactamente la falta y el exceso. ¿Sigue siendo cierto si el objetivo es $\sum_i(5d_i^{2}+e_i^{2})$?
+\fuente{adaptado de MIT 15.053, primavera de 2013, clase~2, modificación con penalizaciones por falta y exceso de personal~\cite{mit15053}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-diseno}
+Diseñe, siguiendo la \cref{fig:anatomia}, el optimizador del invernadero del \cref{eje:1-elementos}: qué datos recoger, qué predecir y con qué modelo, qué familia de optimización usar si el modelo térmico es lineal en los controles, qué salvaguardas independientes añadir y qué cinco magnitudes monitorizar para decidir cuándo reentrenar. Justifique cada elección.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Programación lineal y entera mixta}
+\label{tema:2}
+% =====================================================================
+
+La programación lineal y la entera mixta resuelven la mayor parte de los problemas de planificación de la industria: producción, mezclas, transporte, turnos, inversiones. Este tema sigue los capítulos~2 a~5, 10 y~11 de Bertsimas y Tsitsiklis~\cite{bt}, que son las lecturas del curso 6.251J del MIT~\cite{mit6251}, y las clases~6 («Sensitivity analysis and shadow prices»), 10--12 (programación entera y ramificación y acotación) del curso 15.053~\cite{mit15053}, con los capítulos~3 («Sensitivity Analysis») y~9 («Integer Programming») de Bradley, Hax y Magnanti~\cite{amp}. La ramificación y acotación procede de Land y Doig~\cite{landdoig}; el resolvedor de referencia es HiGHS~\cite{highs,hh}.
+
+\section{Programas lineales y vértices}
+
+\begin{definicion}[Programa lineal]\label{def:pl}
+Un \emph{programa lineal} (PL) en forma canónica es
+\[
+z^{*}=\max\ c\T x\qquad\st Ax\le b,\quad x\ge 0,
+\]
+con $A\in\R^{m\times n}$, $b\in\R^{m}$ y $c\in\R^{n}$. Su conjunto factible $\mathcal{P}=\{x: Ax\le b,\ x\ge 0\}$ es un \emph{poliedro}. Un punto $v\in\mathcal{P}$ es un \emph{vértice} si no es combinación convexa $\lambda u+(1-\lambda)w$ de dos puntos distintos $u,w\in\mathcal{P}$ con $\lambda\in(0,1)$; equivalentemente, si en $v$ hay $n$ restricciones activas linealmente independientes~\cite{bt}.
+\end{definicion}
+
+\begin{teorema}[Teorema fundamental de la programación lineal]\label{teo:vertice}
+Si $\mathcal{P}$ es no vacío y acotado, el PL tiene un óptimo que es un vértice de $\mathcal{P}$.
+\end{teorema}
+
+\begin{proof}
+Un poliedro acotado y no vacío tiene un número finito de vértices $v_1,\dots,v_K$ y todo punto suyo es combinación convexa de ellos (teorema de representación; Bertsimas y Tsitsiklis~\cite{bt}, cap.~2). Sea $x\in\mathcal{P}$ con $x=\sum_k\lambda_kv_k$, $\lambda_k\ge 0$, $\sum_k\lambda_k=1$. Entonces
+\[
+c\T x=\sum_k\lambda_k\,c\T v_k\le\Bigl(\sum_k\lambda_k\Bigr)\max_k c\T v_k=\max_k c\T v_k .
+\]
+Luego el vértice con mayor $c\T v_k$ es óptimo.
+\end{proof}
+
+El \emph{método símplex} (Dantzig) explota el teorema: recorre vértices adyacentes mejorando el objetivo hasta que ninguna arista mejora. Los \emph{métodos de punto interior} avanzan por el interior del poliedro y tienen complejidad polinómica. HiGHS implementa ambos (su símplex dual revisado paralelo se describe en~\cite{hh}) y un resolvedor de PLEM; SciPy lo usa en \texttt{linprog} y \texttt{milp}~\cite{highs}.
+
+\section{Dualidad y precios sombra}
+
+\begin{definicion}[Problema dual]\label{def:dual}
+El \emph{dual} del PL de la \cref{def:pl} es
+\[
+w^{*}=\min\ b\T y\qquad\st A\T y\ge c,\quad y\ge 0.
+\]
+Cada variable dual $y_i$ corresponde a la restricción $i$ del primal.
+\end{definicion}
+
+\begin{teorema}[Dualidad débil]\label{teo:dual-debil}
+Si $x$ es factible para el primal e $y$ para el dual, entonces $c\T x\le b\T y$. En consecuencia $z^{*}\le w^{*}$, y si $c\T x=b\T y$ ambos son óptimos.
+\end{teorema}
+
+\begin{proof}
+Como $x\ge 0$ y $A\T y\ge c$, se tiene $c\T x\le (A\T y)\T x=y\T(Ax)$. Como $y\ge 0$ y $Ax\le b$, $y\T(Ax)\le y\T b$. Encadenando, $c\T x\le b\T y$. Si hay igualdad, ningún primal factible puede superar $c\T x$ (estaría por encima de $b\T y$) y ningún dual puede bajar de $b\T y$.
+\end{proof}
+
+\begin{teorema}[Dualidad fuerte]\label{teo:dual-fuerte}
+Si el primal tiene óptimo, también lo tiene el dual y $z^{*}=w^{*}$ (Bertsimas y Tsitsiklis~\cite{bt}, cap.~4).
+\end{teorema}
+
+\begin{corolario}[Holgura complementaria]\label{cor:holgura}
+Sean $x$ e $y$ factibles. Ambos son óptimos si y solo si
+\[
+y_i\,\bigl(b_i-(Ax)_i\bigr)=0\ \ \text{para todo }i\qquad\text{y}\qquad x_j\,\bigl((A\T y)_j-c_j\bigr)=0\ \ \text{para todo }j.
+\]
+\end{corolario}
+
+\begin{proof}
+En la demostración de la dualidad débil, $b\T y-c\T x=\sum_i y_i(b_i-(Ax)_i)+\sum_j x_j((A\T y)_j-c_j)$, suma de términos no negativos. Por la dualidad fuerte, ambos son óptimos si y solo si la diferencia es cero, es decir, si y solo si todos los términos se anulan.
+\end{proof}
+
+La holgura complementaria tiene una lectura económica directa: un recurso que sobra (restricción no activa) tiene precio cero, y un producto que no se fabrica no cubre con su margen el valor de los recursos que consumiría.
+
+\begin{proposicion}[Precios sombra]\label{prop:sombra}
+Sea $z^{*}(b)$ el valor óptimo en función del término independiente. La función $z^{*}$ es cóncava en el conjunto de $b$ con primal factible y acotado, y si $y^{*}$ es una solución dual óptima para $b$, para todo $b'$ de ese conjunto
+\[
+z^{*}(b')\le z^{*}(b)+(y^{*})\T(b'-b).
+\]
+Si el dual óptimo es único, $z^{*}$ es diferenciable en $b$ con $\partial z^{*}/\partial b_i=y_i^{*}$: el \emph{precio sombra} $y_i^{*}$ es lo que aumenta el valor óptimo por unidad adicional del recurso $i$, mientras la base óptima no cambia.
+\end{proposicion}
+
+\begin{proof}
+La factibilidad dual ($A\T y\ge c$, $y\ge 0$) no depende de $b$, así que $y^{*}$ es factible para el dual del problema con $b'$. Por la dualidad débil y la fuerte,
+\[
+z^{*}(b')\le (b')\T y^{*}=b\T y^{*}+(b'-b)\T y^{*}=z^{*}(b)+(y^{*})\T(b'-b).
+\]
+Además $z^{*}(b')=\min_{y\in D}(b')\T y$, con $D$ el poliedro dual, es un mínimo de funciones lineales de $b'$ y por tanto cóncava. Una función cóncava con un único supergradiente en un punto es diferenciable en él.
+\end{proof}
+
+\begin{ejemplo}[Precios sombra en la fábrica de piensos]\label{ej:sombra-piensos}
+En el \cref{ej:piensos}, las restricciones activas en $(100,100)$ son el molino y la granuladora; la demanda de puesta no lo es ($100<160$), luego $y_3^{*}=0$. Por la holgura complementaria, como $E,P>0$, las dos restricciones duales son igualdades:
+\[
+0{,}5y_1+0{,}6y_2=40,\qquad 0{,}5y_1+0{,}3y_2=30 .
+\]
+Restando, $0{,}3y_2=10$, de donde $y_2^{*}=33{,}33$~€/h y $y_1^{*}=(30-10)/0{,}5=40$~€/h. Comprobación: $b\T y^{*}=100\cdot 40+90\cdot 33{,}33=7000$~€, el valor primal. Una hora más de granuladora vale $33{,}33$~€ (el cuaderno lo confirma resolviendo con 91~h: $7033{,}33$~€), y no merece la pena pagar más de 40~€ por una hora extra de molino.
+\end{ejemplo}
+
+\section{Programación entera mixta}
+
+\begin{definicion}[PLEM y relajación lineal]\label{def:plem}
+Un \emph{programa lineal entero mixto} (PLEM, en inglés MILP) es un PL en el que un subconjunto $J$ de variables debe ser entero: $\max\{c\T x: Ax\le b,\ x\ge 0,\ x_j\in\Z\ (j\in J)\}$. Su \emph{relajación lineal} es el mismo problema sin la condición de integralidad; su valor se denota $z_{\mathrm{LP}}$.
+\end{definicion}
+
+\begin{proposicion}[La relajación acota]\label{prop:relajacion}
+En un problema de maximización, $z^{*}\le z_{\mathrm{LP}}$; en uno de minimización, $z^{*}\ge z_{\mathrm{LP}}$. Si la solución de la relajación cumple la integralidad, es óptima para el PLEM.
+\end{proposicion}
+
+\begin{proof}
+El conjunto factible del PLEM está contenido en el de la relajación, y el máximo sobre un conjunto mayor no es menor. Si el óptimo de la relajación es entero, es factible para el PLEM y alcanza una cota de su valor, luego es óptimo.
+\end{proof}
+
+La diferencia relativa entre el mejor valor entero conocido (el \emph{incumbente}) y la mejor cota se llama \emph{gap}; los resolvedores se detienen cuando es menor que una tolerancia (por defecto, del orden de $10^{-4}$).
+
+Las variables binarias $y\in\{0,1\}$ permiten modelizar decisiones lógicas con restricciones lineales:
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{coste fijo o de preparación}: $x\le My$ con coste $fy$ en el objetivo; si se produce ($x>0$), se paga $f$;
+  \item \emph{lote mínimo}: $Ly\le x\le My$; o no se produce, o se producen al menos $L$ unidades;
+  \item \emph{implicación} «si se elige $A$, se elige $B$»: $y_A\le y_B$; \emph{exclusión}: $y_A+y_B\le 1$; \emph{al menos $k$ de $n$}: $\sum_i y_i\ge k$;
+  \item \emph{disyunción} «se cumple $a\T x\le b$ o $d\T x\le e$»: $a\T x\le b+M\delta$, $d\T x\le e+M(1-\delta)$, $\delta\in\{0,1\}$.
+\end{enumerate}
+
+\begin{proposicion}[Validez y fuerza de una cota big-M]\label{prop:bigm}
+Sea $\mathcal{X}$ el conjunto factible sin la restricción $x\le My$ y sea $U=\sup\{x: x\in\mathcal{X}\}$.
+\begin{enumerate}
+  \item La restricción $x\le My$, con $y\in\{0,1\}$, no elimina ninguna solución con $y=1$ si y solo si $M\ge U$.
+  \item Si $U\le M\le M'$, la relajación lineal con $M$ está contenida en la relajación con $M'$; la menor cota válida, $M=U$, da la relajación más ajustada.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) Con $y=1$ la restricción es $x\le M$, que no corta nada si y solo si $M\ge x$ para todo $x$ factible, es decir, $M\ge U$. (ii) En la relajación, $y\in[0,1]$; si $(x,y)$ cumple $x\le My$ con $y\ge 0$, entonces $x\le My\le M'y$. Por tanto cualquier punto de la relajación con $M$ pertenece a la relajación con $M'$.
+\end{proof}
+
+Con una $M$ grande la relajación permite valores de $y$ diminutos, por ejemplo $y=x/M$, y paga solo una fracción del coste fijo: la cota es mala y el árbol de búsqueda crece. Una $M$ desmesurada causa además errores numéricos, porque los resolvedores trabajan con tolerancias del orden de $10^{-6}$ a $10^{-9}$.
+
+\section{Ramificación y acotación}
+
+La \emph{ramificación y acotación} (\emph{branch and bound})~\cite{landdoig} explora un árbol de subproblemas. En cada nodo se resuelve la relajación lineal con las cotas acumuladas. Para un problema de maximización:
+\begin{enumerate}[label=\arabic*.]
+  \item si la relajación es infactible, el nodo se \emph{poda};
+  \item si su valor no supera el del incumbente, se poda \emph{por cota}: ningún descendiente puede mejorar (\cref{prop:relajacion});
+  \item si la solución es entera, se actualiza el incumbente y se poda;
+  \item si no, se elige una variable $x_j$ con valor fraccionario $x_j^{*}$ y se crean dos hijos con $x_j\le\lfloor x_j^{*}\rfloor$ y $x_j\ge\lceil x_j^{*}\rceil$.
+\end{enumerate}
+Si todas las variables enteras están acotadas, el árbol es finito y el incumbente final es óptimo: cada nodo podado lo es con una justificación válida y las ramas cubren todos los enteros factibles. Si los coeficientes del objetivo son enteros, el valor de cualquier solución entera también lo es, y un nodo puede podarse cuando $\lfloor z_{\mathrm{LP}}\rfloor$ no supera al incumbente. Los resolvedores modernos añaden preproceso, planos de corte (desigualdades válidas que eliminan soluciones fraccionarias; clase~13 de~\cite{mit15053}), heurísticas primales y reglas de ramificación elaboradas.
+
+\begin{ejemplo}[Caso de estudio: plan semanal de una cervecera]\label{ej:cervecera}
+Una cervecera planifica cuatro semanas de tres cervezas. La demanda prevista (hL) es
+\begin{center}\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+ & sem.~1 & sem.~2 & sem.~3 & sem.~4 & total \\
+\midrule
+Lager & 120 & 140 & 160 & 190 & 610 \\
+IPA & 60 & 50 & 80 & 100 & 290 \\
+Tostada & 40 & 50 & 30 & 60 & 180 \\
+\midrule
+total & 220 & 240 & 270 & 350 & 1080 \\
+\bottomrule
+\end{tabular}
+\end{center}
+La capacidad de fermentación es $C=280$~hL/semana. Los costes variables son $c=(60,85,70)$~€/hL; el almacenamiento en frío cuesta $h=(4,8,4)$~€/hL y semana (la IPA pierde aroma y se penaliza más); cada semana en que se elabora una cerveza se paga una preparación y limpieza de $f=500$~€, y si se elabora, el lote mínimo es de $L=20$~hL (un fermentador). El inventario inicial y el final son nulos.
+
+\emph{Variables:} $x_{pt}\ge 0$ (hL elaborados), $I_{pt}\ge 0$ (hL en inventario al final de la semana) e $y_{pt}\in\{0,1\}$ (se elabora $p$ en la semana $t$). \emph{Modelo:}
+\begin{align*}
+\min\ &\sum_{p,t}\bigl(c_px_{pt}+h_pI_{pt}+f\,y_{pt}\bigr)\\
+\st\ &I_{p,t-1}+x_{pt}-I_{pt}=d_{pt}\quad(I_{p,0}=0),\qquad \sum_p x_{pt}\le C,\\
+&L\,y_{pt}\le x_{pt}\le M_{pt}\,y_{pt},\qquad M_{pt}=\min\Bigl(C,\ \sum_{s\ge t}d_{ps}\Bigr).
+\end{align*}
+Por la \cref{prop:bigm}, $M_{pt}$ es la menor cota válida: no se puede elaborar más que la capacidad ni, con inventario final nulo, más que la demanda pendiente. \emph{Elección del método:} 12 binarias y 24 continuas con estructura lineal; PLEM con HiGHS. \emph{Por qué no basta un PL:} sin binarias el coste de preparación desaparece y el plan sería producir cada semana su demanda, con nueve preparaciones adicionales que nadie ha pagado.
+
+\emph{Resultado} (cuaderno, parte~2). Coste mínimo \textbf{79\,390~€}: coste variable 73\,850~€ (fijo, porque se produce toda la demanda), almacenamiento 1040~€ y nueve preparaciones, 4500~€. Un plan óptimo es
+\begin{center}\small
+\begin{tabular}{@{}lcccc@{\qquad}cccc@{}}
+\toprule
+ & \multicolumn{4}{c}{elaboración $x_{pt}$ (hL)} & \multicolumn{4}{c}{inventario $I_{pt}$ (hL)} \\
+ & 1 & 2 & 3 & 4 & 1 & 2 & 3 & 4 \\
+\midrule
+Lager & 120 & 140 & 170 & 180 & 0 & 0 & 10 & 0 \\
+IPA & 110 & 0 & 80 & 100 & 50 & 0 & 0 & 0 \\
+Tostada & 40 & 140 & 0 & 0 & 0 & 90 & 60 & 0 \\
+\midrule
+total & 270 & 280 & 250 & 280 & & & & \\
+\bottomrule
+\end{tabular}
+\end{center}
+La IPA de la semana~2 y la Tostada de las semanas~3 y~4 se adelantan para ahorrar preparaciones (guardar 50~hL de IPA una semana cuesta 400~€, menos que una preparación), y 10~hL de Lager se adelantan a la semana~3 porque la semana~4 está saturada. La relajación lineal vale $77\,284{,}36$~€, de modo que el \emph{gap} de integralidad es $(79\,390-77\,284{,}36)/79\,390=2{,}65\,\%$; HiGHS cierra ese gap en el nodo raíz, gracias a su preproceso y a sus planos de corte. La enumeración de los $2^{12}=4096$ patrones de preparación, resolviendo un PL para cada uno, confirma el óptimo.
+
+\emph{Precios sombra.} Fijando las binarias en su valor óptimo y resolviendo el PL resultante, la capacidad solo tiene precio en la semana~4: $4$~€/hL. Un hectolitro más de fermentación esa semana evitaría adelantar un hectolitro de Lager a la semana~3 y ahorraría su almacenamiento. El precio sombra es local: solo se adelantan 10~hL, así que la capacidad adicional vale 4~€/hL para los primeros 10~hL y nada a partir de ahí. Resolviendo de nuevo con 290 y 300~hL en la semana~4 se obtiene $79\,350$~€ en ambos casos: un fermentador extra de 20~hL vale como mucho $10\cdot 4=40$~€, no $20\cdot 4=80$~€.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~2: programación lineal y entera mixta.}\label{tab:tec2}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.3cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+HiGHS~\cite{highs} & PL (símplex dual, punto interior), PLEM, cuadrático & abierta (MIT) & resolvedor abierto de referencia; incluido en SciPy \\
+SciPy \texttt{linprog}/\texttt{milp} & interfaz matricial a HiGHS, con duales & abierta (BSD-3) & modelos pequeños y docencia \\
+PuLP~\cite{pulp} & modelización por nombres; CBC, HiGHS, SCIP\dots & abierta (MIT) & modelos de planificación legibles \\
+SCIP & PLEM y no lineal entero, con cortes y ramificación configurables & abierta (Apache~2.0 desde la 8.0.3) & investigación y PLEM difíciles sin licencia comercial \\
+Gurobi, CPLEX & PL/PLEM a gran escala & comercial & producción con exigencias de tiempo y soporte \\
+OR-Tools (GLOP, MathOpt) & PL y envoltorio de resolvedores & abierta (Apache~2.0) & si ya se usa OR-Tools para rutas o CP \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en PL y PLEM]\label{obs:errores2}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Big-M desmesuradas}: relajaciones flojas, árboles enormes y soluciones con $y=10^{-7}$ que el resolvedor acepta por tolerancia. Hay que derivar la menor $M$ válida de los datos.
+  \item \emph{Leer duales de un PLEM como si fuera un PL}: solo tienen sentido con las enteras fijas y valen mientras no cambie la parte discreta.
+  \item \emph{Degeneración}: si hay más restricciones activas que variables, el dual puede no ser único y el precio sombra depende del sentido del cambio (derivadas laterales distintas).
+  \item \emph{Óptimos alternativos}: otro plan con el mismo coste puede ser operativamente preferible; conviene un segundo objetivo de desempate.
+  \item \emph{Simetría}: fermentadores o camiones idénticos generan soluciones equivalentes que multiplican el árbol; se rompe con restricciones de orden.
+  \item \emph{Confiar en el gap por defecto}: un gap del 1\,\% sobre millones de euros puede ser mucho dinero; se fija según el problema y se informa junto con la solución.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Bertsimas y Tsitsiklis~\cite{bt}, caps.~2--5 (geometría, símplex, dualidad, sensibilidad) y~10--11 (programación entera), según el calendario de MIT 6.251J~\cite{mit6251}.
+\item MIT 15.053~\cite{mit15053}, clases~6 «Sensitivity analysis and shadow prices», 10--11 (formulaciones enteras) y~12 «Branch and bound».
+\item Bradley, Hax y Magnanti~\cite{amp}, cap.~3 «Sensitivity Analysis» y cap.~9 «Integer Programming», §§9.1--9.6.
+\item A.~H. Land y A.~G. Doig~\cite{landdoig}, artículo original de la ramificación y acotación.
+\end{lecturas}
+
+\section*{Ejercicios del tema 2}
+\addcontentsline{toc}{section}{Ejercicios del tema 2}
+
+\begin{ejercicio}{1}{eje:2-holgura}
+En el \cref{ej:sombra-piensos}, explique con la holgura complementaria por qué el precio sombra de la demanda de pienso de puesta es cero y por qué las dos restricciones duales se cumplen con igualdad. ¿Qué precio máximo pagaría la fábrica por una hora extra de granuladora?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-dual}
+Escriba el dual del PL de los piensos, compruebe que $y^{*}=(40;\ 33{,}33;\ 0)$ es factible y verifique la dualidad fuerte.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-outdoors}
+Una empresa fabrica sillas, bancos y mesas de jardín. Por unidad consumen $1{,}2$, $1{,}7$ y $1{,}2$~h de curvado (1000~h disponibles), $0{,}8$, $0$ y $2{,}3$~h de soldadura (1200~h) y $2$, $3$ y $4{,}5$~kg de tubo (2000~kg), con márgenes de 3, 3 y 5~\$. El plan óptimo es 700 sillas y $133{,}33$ mesas, con margen $2766{,}67$~\$; los precios sombra son $1{,}1667$~\$/h (curvado), 0 (soldadura) y $0{,}80$~\$/kg (tubo), y el lado derecho del tubo puede aumentar hasta 555,56~kg sin cambiar de base. (a) Un proveedor ofrece tubo a $0{,}70$~\$/kg: ¿conviene comprar 550~kg y cuánto aumenta el margen neto? (b) ¿Qué margen mínimo debe tener un toldo que consuma $1{,}8$~h de curvado, $0{,}5$~h de soldadura y $1{,}3$~kg de tubo para que merezca fabricarse?
+\fuente{adaptado de MIT 15.053, primavera de 2013, hoja de problemas~4, problema~1~\cite{mit15053ps}, basado en Bradley, Hax y Magnanti, cap.~3, ejercicio~1~\cite{amp}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-bb}
+Resuelva $\max\ x_1+5x_2$ s.a. $-4x_1+3x_2\le 6$, $3x_1+2x_2\le 18$, $x_1,x_2\ge 0$ enteros por ramificación y acotación, resolviendo cada relajación gráficamente. Dibuje el árbol.
+\fuente{adaptado de Bradley, Hax y Magnanti, cap.~9, ejercicio~10~\cite{amp}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-mochila}
+Seis inversiones tienen valor actual neto $(33,45,25,17,39,23)$ y requieren $(10,14,8,6,12,8)$ unidades de capital; el presupuesto es 28. (a) Formule el problema. (b) Resuelva la relajación lineal ordenando por rentabilidad (valor por unidad de capital). (c) La cartera $\{1,4,5\}$ vale 89: calcule el gap. (d) Ramifique sobre la variable fraccionaria y calcule las cotas de los dos hijos. ¿Puede podarse alguno?
+\fuente{adaptado de MIT 15.053, primavera de 2013, hoja de problemas~6, problema~2~\cite{mit15053ps}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-logica}
+Sean $x_1,x_2\in\{0,1\}$. Escriba restricciones lineales que definan $w=x_1\wedge x_2$ e $y=x_1\vee x_2$ sin variables auxiliares, y $z=x_1\oplus x_2$ (o exclusivo) con una variable auxiliar. Compruebe las cuatro combinaciones.
+\fuente{adaptado de MIT 15.053, primavera de 2013, hoja de problemas~5, problema~3~\cite{mit15053ps}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:2-bigm}
+En el caso de la cervecera (\cref{ej:cervecera}): (a) calcule $M_{pt}$ para la Lager en la semana~3 y para la IPA en la semana~4; (b) si la Lager de la semana~3 se elabora en una cantidad de 170~hL, ¿qué valor mínimo puede tomar $y$ en la relajación con $M=280$ y con $M=10^{4}$? ¿Qué parte del coste de preparación se «paga» en cada caso? (c) Exprese con binarias la regla «si se elabora IPA en una semana, no se elabora Tostada esa misma semana».
+\fuente{adaptado de MIT 15.053, primavera de 2013, hoja de problemas~5, problema~4 (elegir la menor $M$ válida)~\cite{mit15053ps}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:2-concava}
+Demuestre que, para un PL de maximización con dual factible, la función $z^{*}(b)$ es cóncava y lineal a trozos en el conjunto de $b$ donde el primal es factible. Deduzca que el valor de una hora adicional de un recurso no puede aumentar al disponer de más horas (rendimientos decrecientes).
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Problemas combinatorios y programación por restricciones}
+\label{tema:3}
+% =====================================================================
+
+Rutas, secuencias y calendarios tienen un número de soluciones que crece de forma factorial con el tamaño. Este tema estudia cómo formularlos y qué herramientas los resuelven en la práctica. Sigue la clase~17 («Traveling salesman problem») del curso 15.053 del MIT~\cite{mit15053} para la complejidad y las heurísticas, el capítulo~10 de Bertsimas y Tsitsiklis~\cite{bt} para las formulaciones enteras, el artículo de Solomon~\cite{solomon} para las rutas con ventanas horarias, el de Johnson~\cite{johnson} para el taller con dos máquinas y la documentación de OR-Tools~\cite{ortools-vrptw,ortools-js,ortools-cpsat} para la programación por restricciones.
+
+\section{Explosión combinatoria}
+
+\begin{proposicion}[Número de circuitos]\label{prop:circuitos}
+Con $n\ge 3$ ciudades y distancias simétricas hay $(n-1)!/2$ circuitos hamiltonianos distintos.
+\end{proposicion}
+
+\begin{proof}
+Fijando la ciudad de salida (un circuito no depende de dónde empiece), las $n-1$ restantes pueden ordenarse de $(n-1)!$ maneras. Cada circuito y su recorrido en sentido contrario tienen la misma longitud y se cuentan dos veces; como $n\ge 3$, son ordenaciones distintas.
+\end{proof}
+
+Con $n=20$ hay $19!/2\approx 6{,}1\cdot 10^{16}$ circuitos. El problema del viajante (TSP) es NP-difícil: no se conoce un algoritmo polinómico, y encontrarlo daría uno para todos los problemas NP-completos~\cite{mit15053}. En la práctica se combinan tres enfoques:
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{métodos exactos}: PLEM con ramificación, cortes y generación de columnas, o programación dinámica para instancias pequeñas; dan el óptimo y una cota;
+  \item \emph{heurísticas constructivas}: vecino más próximo, inserción, ahorros; dan una solución rápida;
+  \item \emph{búsqueda local y metaheurísticas}: intercambios 2-opt y 3-opt, recolocación de clientes, búsqueda local guiada, recocido (\cref{tema:5}).
+\end{enumerate}
+
+\begin{definicion}[Movimiento 2-opt]\label{def:2opt}
+Dado un circuito $(\dots,a,b,\dots,c,d,\dots)$, el movimiento 2-opt elimina las aristas $(a,b)$ y $(c,d)$ y añade $(a,c)$ y $(b,d)$, invirtiendo el tramo de $b$ a $c$. La longitud cambia en $\Delta=d(a,c)+d(b,d)-d(a,b)-d(c,d)$; el movimiento se aplica si $\Delta<0$. Un circuito es \emph{2-óptimo} si ningún movimiento 2-opt lo mejora.
+\end{definicion}
+
+En el plano euclídeo, un circuito con dos aristas que se cruzan nunca es 2-óptimo: deshacer el cruce lo acorta, por la desigualdad triangular aplicada a los dos triángulos que forman las diagonales (\cref{eje:3-2opt}).
+
+\section{Rutas de vehículos con ventanas horarias}
+
+\begin{definicion}[VRPTW]\label{def:vrptw}
+En el \emph{problema de rutas de vehículos con ventanas horarias} (VRPTW) se tiene un depósito $0$, clientes $1,\dots,n$ con demanda $q_i$, tiempo de servicio $s_i$ y ventana $[a_i,b_i]$, una flota de $K$ vehículos de capacidad $Q$ y tiempos de viaje $t_{ij}$. Se buscan rutas que empiecen y acaben en el depósito, visiten cada cliente exactamente una vez, no superen la capacidad y empiecen cada servicio dentro de su ventana (se puede esperar si se llega antes de $a_i$), minimizando el tiempo total de viaje.
+\end{definicion}
+
+Una formulación PLEM usa $x_{ij}\in\{0,1\}$ (un vehículo va de $i$ a $j$), el instante de inicio de servicio $T_i$ y la carga acumulada $u_i$:
+\begin{align*}
+\min\ &\sum_{i\ne j}t_{ij}x_{ij}\\
+\st\ &\sum_{j}x_{ij}=1,\quad \sum_{j}x_{ji}=1\quad(i=1,\dots,n),\qquad \sum_j x_{0j}\le K,\\
+&T_j\ge T_i+s_i+t_{ij}-M_{ij}(1-x_{ij})\quad(i\ne j,\ j\ge 1),\qquad a_i\le T_i\le b_i,\\
+&u_j\ge u_i+q_j-Q(1-x_{ij})\quad(i\ne j,\ j\ge 1),\qquad q_i\le u_i\le Q .
+\end{align*}
+Las restricciones de tiempo y de carga eliminan además los subcircuitos, porque a lo largo de un ciclo sin depósito $T$ debería crecer indefinidamente.
+
+\begin{proposicion}[Cota big-M de las ventanas]\label{prop:bigm-tw}
+La restricción temporal con $M_{ij}=\max(0,\ b_i+s_i+t_{ij}-a_j)$ es válida: si $x_{ij}=1$ impone la llegada correcta y si $x_{ij}=0$ no elimina ninguna combinación de instantes que respete las ventanas.
+\end{proposicion}
+
+\begin{proof}
+Si $x_{ij}=1$ la restricción es $T_j\ge T_i+s_i+t_{ij}$, la propagación del tiempo. Si $x_{ij}=0$ queda $T_j\ge T_i+s_i+t_{ij}-M_{ij}$. Como $T_i\le b_i$ y $T_j\ge a_j$, el lado derecho es a lo sumo $b_i+s_i+t_{ij}-M_{ij}\le a_j\le T_j$ cuando $M_{ij}\ge b_i+s_i+t_{ij}-a_j$; la restricción se cumple sola.
+\end{proof}
+
+Con más de unas decenas de clientes, la formulación anterior es lenta, y los resolvedores de rutas usan búsqueda local sobre las propias rutas. OR-Tools modela el tiempo como una \emph{dimensión}: una variable acumulada por nodo, con una holgura que representa la espera y un rango que impone la ventana~\cite{ortools-vrptw}.
+
+\begin{ejemplo}[Caso de estudio: reparto de barriles con ventanas horarias]\label{ej:vrptw}
+El almacén de la cervecera del \cref{ej:cervecera} abastece a ocho bares con dos furgonetas de 22 barriles. Las coordenadas (km) y los datos de cada bar son:
+\begin{center}\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lccccccccc@{}}
+\toprule
+Nodo & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 & 8 \\
+\midrule
+$x$ (km) & 0 & 2 & 5 & 6 & 3 & $-2$ & $-5$ & $-6$ & $-3$ \\
+$y$ (km) & 0 & 6 & 4 & $-1$ & $-5$ & $-6$ & $-2$ & 3 & 5 \\
+barriles & --- & 4 & 6 & 5 & 3 & 7 & 4 & 5 & 6 \\
+apertura (min) & 0 & 60 & 0 & 120 & 30 & 150 & 0 & 60 & 150 \\
+cierre (min) & 300 & 120 & 90 & 180 & 120 & 240 & 90 & 150 & 210 \\
+\bottomrule
+\end{tabular}
+\end{center}
+Los tiempos se miden en minutos desde las 8:00; el almacén cierra a los 300~min. En ciudad se usa la distancia de Manhattan y una velocidad media de 30~km/h, es decir, $t_{ij}=2(\abs{x_i-x_j}+\abs{y_i-y_j})$~min; cada descarga dura $s=10$~min. La demanda total es de 40 barriles para una capacidad de 44.
+
+\emph{Elección del método.} Con ocho clientes el problema puede resolverse de forma exacta por programación dinámica sobre subconjuntos (etiquetas no dominadas de hora de llegada y tiempo de viaje para cada subconjunto y último cliente), lo que sirve para certificar la solución de OR-Tools; con cientos de clientes solo quedaría la búsqueda local.
+
+\emph{Resultado} (cuaderno, parte~3a). OR-Tools, con construcción por el arco más barato y búsqueda local guiada durante 2~s, encuentra un tiempo total de viaje de \textbf{152~min}, y la programación dinámica certifica que es óptimo:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Furgoneta & Ruta y llegadas (min) & Carga y viaje \\
+\midrule
+1 & $0\to 1\,(60)\to 2\,(80)\to 4\,(112)\to 3\,(136)\to 0\,(160)$ & 18 barriles, 76~min \\
+2 & $0\to 6\,(14)\to 7\,(60)\to 8\,(150)\to 5\,(184)\to 0\,(210)$ & 22 barriles, 76~min \\
+\bottomrule
+\end{tabular}
+\end{center}
+La primera furgoneta espera 44~min ante el bar~1 (llega a los 16, abre a los 60); la segunda espera 24~min en el bar~7 (llega a los 36, abre a los 60) y 70~min en el bar~8 (llega a los 80, abre a los 150): las ventanas, no la distancia, dominan la solución. Un KPI útil aquí es el tiempo de espera, que el objetivo no penaliza; si se quisiera reducir habría que añadirlo al objetivo o negociar las ventanas.
+\end{ejemplo}
+
+\section{Programación por restricciones y taller}
+
+\begin{definicion}[Problema de satisfacción de restricciones]\label{def:csp}
+Un \emph{problema de satisfacción de restricciones} consta de variables $v_1,\dots,v_k$ con dominios finitos $D_1,\dots,D_k$ y un conjunto de restricciones, cada una una relación sobre algunas variables. La \emph{programación por restricciones} (CP) lo resuelve alternando \emph{propagación} (eliminar de los dominios valores que no pueden formar parte de ninguna solución) y \emph{búsqueda} (fijar una variable y retroceder si se llega a un dominio vacío). Con un objetivo, se añade la restricción «objetivo mejor que el incumbente» cada vez que se encuentra una solución.
+\end{definicion}
+
+La CP brilla cuando las restricciones son lógicas o de secuenciación, difíciles de expresar linealmente. Sus restricciones globales encapsulan estructuras frecuentes con propagadores eficientes: \texttt{AllDifferent}, \texttt{NoOverlap} (intervalos que no se solapan en un recurso), \texttt{Cumulative} (recurso con capacidad). CP-SAT, de OR-Tools, combina propagación de restricciones con técnicas de resolvedores SAT y de programación entera, y exige coeficientes enteros~\cite{ortools-cpsat}.
+
+\begin{definicion}[Job-shop]\label{def:jobshop}
+En el problema de \emph{taller} (\emph{job-shop}) hay $J$ trabajos; el trabajo $j$ es una secuencia de operaciones $(m_{j1},p_{j1}),\dots,(m_{jk_j},p_{jk_j})$ que deben ejecutarse en ese orden, cada una en una máquina $m$ y con duración $p$. Cada máquina procesa una operación a la vez y sin interrupción. Se minimiza el \emph{makespan} $C_{\max}$, el instante en que termina el último trabajo.
+\end{definicion}
+
+En CP-SAT cada operación es un intervalo $[S_{jk},S_{jk}+p_{jk})$; se impone $S_{j,k+1}\ge S_{jk}+p_{jk}$, una restricción \texttt{NoOverlap} por máquina y $C_{\max}\ge S_{jk_j}+p_{jk_j}$~\cite{ortools-js}. En PLEM, cada par de operaciones en la misma máquina necesita una binaria de orden y dos restricciones big-M, y la relajación lineal resultante es muy débil.
+
+\begin{proposicion}[Cotas inferiores del makespan]\label{prop:cota-ms}
+Para todo programa factible,
+\[
+C_{\max}\ \ge\ \max\Bigl(\max_{m}\sum_{(j,k):\,m_{jk}=m}p_{jk},\ \ \max_j\sum_{k}p_{jk}\Bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+Las operaciones de la máquina $m$ no se solapan y empiezan en instantes $\ge 0$, así que la última termina como pronto en la suma de sus duraciones. Las operaciones de un trabajo se ejecutan en serie, así que el trabajo termina como pronto en la suma de las suyas. $C_{\max}$ es mayor o igual que cualquier instante de fin.
+\end{proof}
+
+\begin{ejemplo}[Caso de estudio: taller mecánico]\label{ej:jobshop}
+Un taller recibe cuatro pedidos que pasan por torno (T), fresadora (F) y taladro (D) en el orden indicado, con duraciones en horas:
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Pedido & Operaciones (máquina, h) \\
+\midrule
+P1 & (T, 3), (F, 2), (D, 2) \\
+P2 & (F, 4), (T, 2), (D, 1) \\
+P3 & (D, 3), (T, 3), (F, 2) \\
+P4 & (T, 2), (D, 3), (F, 3) \\
+\bottomrule
+\end{tabular}
+\end{center}
+Las cargas son 10~h (torno), 11~h (fresadora) y 9~h (taladro), y los pedidos duran 7, 7, 8 y 8~h; por la \cref{prop:cota-ms}, $C_{\max}\ge 11$~h. \emph{Elección del método:} secuenciación con recursos disyuntivos, CP-SAT. Con cuatro pedidos se puede además enumerar el orden de los pedidos en cada máquina, $(4!)^{3}=13\,824$ combinaciones, y construir para cada una el programa que adelanta cada operación al máximo.
+
+\emph{Resultado} (cuaderno, parte~3b). CP-SAT demuestra que el óptimo es $\bm{C_{\max}=12}$~h, y la enumeración lo confirma. Un programa óptimo es: torno P4 [0,2], P1 [2,5], P2 [5,7], P3 [7,10]; fresadora P2 [0,4], P1 [5,7], P4 [7,10], P3 [10,12]; taladro P3 [0,3], P4 [3,6], P1 [7,9], P2 [9,10]. La cota de 11~h no se alcanza: la fresadora, que es el cuello de botella, no puede empezar el trabajo de P1 hasta que este sale del torno. La diferencia entre la cota y el óptimo es la información que un jefe de taller necesita para negociar plazos.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~3: combinatoria, rutas y programación por restricciones.}\label{tab:tec3}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+OR-Tools CP-SAT~\cite{ortools-cpsat} & CP con intervalos, \texttt{NoOverlap}, \texttt{Cumulative}; también PLEM con coeficientes enteros & abierta (Apache~2.0) & programación de talleres, turnos y calendarios \\
+OR-Tools Routing~\cite{ortools-vrptw} & VRP con capacidades, ventanas, recogidas y entregas & abierta (Apache~2.0) & rutas reales de decenas a miles de paradas \\
+PLEM (HiGHS, SCIP, Gurobi) & formulaciones con binarias de orden o de arco & abierta o comercial & instancias pequeñas, o con fuerte estructura lineal \\
+Programación dinámica propia & exacto sobre subconjuntos & código propio & certificar instancias pequeñas \\
+Heurísticas propias (2-opt, inserción) & solución rápida y controlable & código propio & tiempo real o reglas de negocio muy específicas \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en problemas combinatorios]\label{obs:errores3}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Tiempos de viaje irreales}: distancias en línea recta o velocidades medias sin franja horaria producen rutas que no se pueden cumplir; los tiempos deben proceder de la red viaria y, a ser posible, del histórico.
+  \item \emph{Reglas tácitas no modelizadas}: conductores que no aceptan rutas que cruzan la ciudad, máquinas que requieren un operario concreto. Las soluciones que ignoran esas reglas no se ejecutan; en ORION, que las rutas fueran aceptables para los conductores fue parte del diseño~\cite{orion}.
+  \item \emph{Comparar heurísticas sin cota}: sin una cota inferior no se sabe si una solución está a un 1\,\% o a un 30\,\% del óptimo.
+  \item \emph{Límites de tiempo sin semilla ni registro}: con búsqueda local y paralelismo, dos ejecuciones pueden dar soluciones distintas; para auditar hay que fijar semilla, número de hilos y límite.
+  \item \emph{Escalar CP-SAT con reales}: CP-SAT exige enteros; redondear tiempos de forma descuidada introduce infactibilidades o pérdida de precisión.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item MIT 15.053~\cite{mit15053}, clase~17 «Networks 3: Traveling salesman problem» (complejidad, vecino más próximo, 2-opt y 3-opt, recocido).
+\item Bertsimas y Tsitsiklis~\cite{bt}, cap.~10 (formulaciones de programación entera).
+\item M.~M. Solomon~\cite{solomon}, heurísticas e instancias de referencia para el VRPTW.
+\item Documentación de OR-Tools: «Vehicle Routing Problem with Time Windows»~\cite{ortools-vrptw} y «The Job Shop Problem»~\cite{ortools-js}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-contar}
+Calcule el número de circuitos distintos de un TSP simétrico con 10 y con 20 ciudades. ¿Cuánto tardaría en evaluarlos todos un ordenador que evalúa $10^{9}$ circuitos por segundo? Compare con la tabla de la clase~17 de 15.053.
+\fuente{adaptado de MIT 15.053, primavera de 2013, clase~17, tabla de fuerza bruta frente a una cota polinómica~\cite{mit15053}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-ruta}
+Con los datos del \cref{ej:vrptw}, compruebe que la ruta $0\to 1\to 2\to 4\to 3\to 0$ es factible calculando la hora de llegada y la espera en cada bar, y su tiempo de viaje. Después compruebe que la ruta $0\to 3\to 1\to 0$ es infactible.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-2opt}
+Cuatro puntos tienen coordenadas $A=(0,0)$, $B=(4,0)$, $C=(4,3)$ y $D=(0,3)$. (a) Calcule la longitud euclídea del circuito $A\to C\to B\to D\to A$ y la del que resulta de aplicar el movimiento 2-opt que elimina las aristas cruzadas. (b) Demuestre que en el plano, si dos aristas $(a,b)$ y $(c,d)$ de un circuito se cruzan, el movimiento 2-opt correspondiente reduce la longitud.
+\fuente{adaptado de MIT 15.053, primavera de 2013, clase~17, heurística 2-opt~\cite{mit15053}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-cuñas}
+Una emisora de radio programa anuncios de 12, 18, 22, 35, 40 y 59~s en bloques de 60~s. (a) Formule como PLEM el problema de usar el mínimo número de bloques. (b) Obtenga una cota inferior con la suma de duraciones y encuentre una solución que la alcance.
+\fuente{adaptado de MIT 15.053, primavera de 2013, hoja de problemas~5, problema~1~\cite{mit15053ps}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-johnson}
+Cinco piezas pasan por una sierra y después por una pulidora, con tiempos (h) $J1=(3,6)$, $J2=(5,2)$, $J3=(1,2)$, $J4=(6,6)$, $J5=(7,5)$. La regla de Johnson coloca primero, en orden creciente del tiempo en la primera máquina, las piezas con $p_1\le p_2$, y después, en orden decreciente del tiempo en la segunda, las piezas con $p_1>p_2$. Aplíquela y calcule el makespan. ¿Qué cota inferior da la \cref{prop:cota-ms}?
+\fuente{adaptado de S.~M. Johnson~\cite{johnson}, regla para dos máquinas en serie.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-bigm}
+Para el \cref{ej:vrptw}, calcule la cota $M_{ij}$ de la \cref{prop:bigm-tw} para los arcos $1\to 2$, $8\to 5$ y $3\to 1$. Demuestre que el arco $3\to 1$ no puede formar parte de ninguna ruta factible y describa un preproceso que elimine de antemano todos los arcos de ese tipo.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-cota}
+(a) Demuestre la \cref{prop:cota-ms}. (b) Construya una instancia de dos trabajos y dos máquinas en la que la cota se alcance y otra en la que no. (c) Razone por qué, en el \cref{ej:jobshop}, la fresadora no puede terminar antes de las 12~h: estudie qué operaciones deben preceder a la primera tarea de la fresadora que no sea la de P2.
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Optimización continua y convexa}
+\label{tema:4}
+% =====================================================================
+
+Cuando las variables son continuas y el problema es convexo, todo mínimo local es global, existen certificados de optimalidad y los multiplicadores tienen interpretación económica. Este tema sigue los capítulos~4 («Convex optimization problems») y~5 («Duality»), en especial las secciones~5.5 («Optimality conditions») y~5.6 («Perturbation and sensitivity analysis»), de Boyd y Vandenberghe~\cite{bv}, texto del curso EE364a de Stanford; el capítulo~12 de Nocedal y Wright~\cite{nw} para las condiciones de Karush--Kuhn--Tucker en problemas no convexos; y el capítulo~3 («Economic Dispatch of Thermal Units and Methods of Solution») de Wood, Wollenberg y Sheblé~\cite{wood} para el caso de estudio. Las herramientas son CVXPY~\cite{cvxpy,cvxpydoc} y SciPy. El módulo~7 (tema~1) introdujo la convexidad en el contexto del entrenamiento; aquí se añaden las restricciones.
+
+\section{Problemas convexos}
+
+\begin{definicion}[Problema convexo]\label{def:convexo}
+El problema de la \cref{def:prob-opt} es \emph{convexo} si $X=\R^{n}$, $f$ y las $g_i$ son funciones convexas y las $h_j$ son afines, $h_j(x)=a_j\T x-b_j$. Su conjunto factible es entonces convexo, como intersección de subniveles de funciones convexas e hiperplanos.
+\end{definicion}
+
+\begin{teorema}[Local implica global]\label{teo:local-global}
+En un problema convexo, todo óptimo local es óptimo global.
+\end{teorema}
+
+\begin{proof}
+Sea $x^{*}$ óptimo local en $\mathcal{X}\cap B(x^{*},r)$ y supóngase que existe $\tilde x\in\mathcal{X}$ con $f(\tilde x)<f(x^{*})$. Para $\theta\in(0,1]$ el punto $x_\theta=(1-\theta)x^{*}+\theta\tilde x$ es factible, por la convexidad de $\mathcal{X}$, y $f(x_\theta)\le(1-\theta)f(x^{*})+\theta f(\tilde x)<f(x^{*})$, por la de $f$. Tomando $\theta$ pequeño, $x_\theta\in B(x^{*},r)$, lo que contradice la optimalidad local.
+\end{proof}
+
+Las clases convexas más usadas, de menor a mayor generalidad, son la programación lineal, la cuadrática (objetivo $\tfrac12x\T Px+q\T x$ con $P\succeq 0$ y restricciones lineales), la cónica de segundo orden y la semidefinida. CVXPY sigue las reglas de la \emph{programación convexa disciplinada} (DCP): construye las expresiones con funciones atómicas de curvatura conocida y reglas de composición que garantizan la convexidad, de modo que rechaza un modelo cuya convexidad no puede certificar, y lo traduce a la forma cónica que aceptan resolvedores como Clarabel, SCS u OSQP~\cite{cvxpy,cvxpydoc}.
+
+\section{Lagrangiana, dualidad y condiciones KKT}
+
+\begin{definicion}[Lagrangiana y función dual]\label{def:lagrangiana}
+Para el problema de la \cref{def:prob-opt} con $X=\R^{n}$, la \emph{lagrangiana} es
+\[
+\Lag(x,\lambda,\nu)=f(x)+\sum_{i=1}^{m}\lambda_ig_i(x)+\sum_{j=1}^{p}\nu_jh_j(x),\qquad\lambda\ge 0,
+\]
+y la \emph{función dual} es $q(\lambda,\nu)=\inf_x\Lag(x,\lambda,\nu)$.
+\end{definicion}
+
+\begin{proposicion}[Dualidad débil]\label{prop:dual-debil-conv}
+Si $\lambda\ge 0$, entonces $q(\lambda,\nu)\le f(x)$ para todo $x$ factible; por tanto $q(\lambda,\nu)\le p^{*}$, el valor óptimo.
+\end{proposicion}
+
+\begin{proof}
+Si $x$ es factible, $g_i(x)\le 0$ y $h_j(x)=0$, luego $\sum_i\lambda_ig_i(x)+\sum_j\nu_jh_j(x)\le 0$ y $\Lag(x,\lambda,\nu)\le f(x)$. El ínfimo sobre todos los $x$ es menor o igual que el valor en ese $x$.
+\end{proof}
+
+En un problema convexo que cumple la \emph{condición de Slater} (existe un punto estrictamente factible, $g_i(x)<0$ para las restricciones no afines), la dualidad es fuerte: $\max q=p^{*}$ (Boyd y Vandenberghe~\cite{bv}, cap.~5).
+
+\begin{teorema}[Condiciones de Karush--Kuhn--Tucker]\label{teo:kkt}
+Sean $f$, $g_i$ y $h_j$ diferenciables. Se dice que $(x^{*},\lambda^{*},\nu^{*})$ cumple las condiciones KKT si
+\begin{enumerate}
+  \item \emph{factibilidad primal}: $g_i(x^{*})\le 0$, $h_j(x^{*})=0$;
+  \item \emph{factibilidad dual}: $\lambda^{*}\ge 0$;
+  \item \emph{holgura complementaria}: $\lambda_i^{*}g_i(x^{*})=0$ para todo $i$;
+  \item \emph{estacionariedad}: $\nabla f(x^{*})+\sum_i\lambda_i^{*}\nabla g_i(x^{*})+\sum_j\nu_j^{*}\nabla h_j(x^{*})=0$.
+\end{enumerate}
+Si el problema es convexo y se cumplen las condiciones KKT, $x^{*}$ es óptimo global. Si el problema es convexo y cumple la condición de Slater, todo óptimo satisface las KKT para algún $(\lambda^{*},\nu^{*})$~\cite{bv}. En problemas no convexos, las KKT son necesarias en un mínimo local bajo una cualificación de restricciones, pero no suficientes~\cite{nw}.
+\end{teorema}
+
+\begin{proof}[Demostración de la suficiencia]
+Con $\lambda^{*}\ge 0$ y $h_j$ afines, $x\mapsto\Lag(x,\lambda^{*},\nu^{*})$ es convexa y diferenciable, y por (iv) su gradiente se anula en $x^{*}$; una función convexa alcanza su mínimo donde se anula el gradiente, así que $q(\lambda^{*},\nu^{*})=\Lag(x^{*},\lambda^{*},\nu^{*})$. Por (i) y (iii), $\Lag(x^{*},\lambda^{*},\nu^{*})=f(x^{*})$. Para cualquier $x$ factible, por la \cref{prop:dual-debil-conv}, $f(x)\ge q(\lambda^{*},\nu^{*})=f(x^{*})$.
+\end{proof}
+
+\begin{proposicion}[Multiplicadores como sensibilidades]\label{prop:sensibilidad}
+Sea el problema convexo perturbado $\min f(x)$ s.a. $g_i(x)\le u_i$, $h_j(x)=w_j$, con valor óptimo $p^{*}(u,w)$, y sea $(\lambda^{*},\nu^{*})$ dual óptimo del problema sin perturbar con dualidad fuerte. Entonces
+\[
+p^{*}(u,w)\ \ge\ p^{*}(0,0)-\lambda^{*\mathsf{T}}u-\nu^{*\mathsf{T}}w ,
+\]
+y si $p^{*}$ es diferenciable en $(0,0)$, $\partial p^{*}/\partial u_i=-\lambda_i^{*}$ y $\partial p^{*}/\partial w_j=-\nu_j^{*}$.
+\end{proposicion}
+
+\begin{proof}
+Para $x$ factible en el problema perturbado, $f(x)\ge f(x)+\sum_i\lambda_i^{*}(g_i(x)-u_i)+\sum_j\nu_j^{*}(h_j(x)-w_j)\ge q(\lambda^{*},\nu^{*})-\lambda^{*\mathsf{T}}u-\nu^{*\mathsf{T}}w$, y $q(\lambda^{*},\nu^{*})=p^{*}(0,0)$. Tomando el ínfimo en $x$ se obtiene la desigualdad. Si $p^{*}$ es diferenciable, la desigualdad dice que el plano $p^{*}(0,0)-\lambda^{*\mathsf{T}}u-\nu^{*\mathsf{T}}w$ queda por debajo de la función y la toca en el origen, de modo que coincide con su plano tangente (Boyd y Vandenberghe~\cite{bv}, §5.6).
+\end{proof}
+
+Es la generalización de los precios sombra de la \cref{prop:sombra}: relajar una restricción activa abarata el óptimo, en primera aproximación, en su multiplicador por unidad.
+
+\section{Caso de estudio: despacho económico}
+
+\begin{ejemplo}[Despacho económico de tres grupos térmicos]\label{ej:despacho}
+Un operador debe cubrir una demanda de $D=850$~MW durante una hora con tres grupos térmicos. El coste horario de cada grupo, ajustado a sus curvas de consumo, es cuadrático, $C_i(P_i)=a_i+b_iP_i+c_iP_i^{2}$~(€/h):
+\begin{center}\small
+\begin{tabular}{@{}lccccc@{}}
+\toprule
+Grupo & $a_i$ (€/h) & $b_i$ (€/MWh) & $c_i$ (€/MW$^2$h) & $P_i^{\min}$ (MW) & $P_i^{\max}$ (MW) \\
+\midrule
+1 & 500 & 18 & 0,020 & 100 & 400 \\
+2 & 400 & 20 & 0,010 & 50 & 350 \\
+3 & 300 & 26 & 0,005 & 50 & 300 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\emph{Modelo.} $\min\sum_iC_i(P_i)$ s.a. $\sum_iP_i=D$ y $P_i^{\min}\le P_i\le P_i^{\max}$. Como $c_i>0$, el objetivo es convexo y las restricciones son lineales: es un programa cuadrático convexo y se cumple la condición de Slater (por ejemplo, $P=(300,300,250)$ es estrictamente factible en los límites). \emph{Elección del método:} KKT a mano para entender la solución, CVXPY para resolverla y verificarla.
+
+\emph{Condiciones KKT.} Con multiplicador $\lambda$ para el balance y $\mu_i^{\pm}\ge 0$ para los límites, la estacionariedad es $b_i+2c_iP_i-\lambda-\mu_i^{-}+\mu_i^{+}=0$. Si ningún grupo está en un límite, todos operan al mismo \emph{coste incremental}:
+\[
+b_i+2c_iP_i=\lambda\quad\Longrightarrow\quad P_i=\frac{\lambda-b_i}{2c_i}=25(\lambda-18),\ 50(\lambda-20),\ 100(\lambda-26).
+\]
+\emph{Paso 1.} Sumando e igualando a $D$: $175\lambda-4050=850$, de donde $\lambda=28$ y $P=(250,400,200)$; pero $P_2=400>350$ viola el límite.
+\emph{Paso 2.} Se fija $P_2=350$ (límite activo) y se reparte el resto, $500$~MW, entre los grupos 1 y 3: $25(\lambda-18)+100(\lambda-26)=500$, es decir, $125\lambda=3550$ y $\lambda=28{,}4$~€/MWh. Entonces $P_1=25\cdot 10{,}4=260$ y $P_3=100\cdot 2{,}4=240$~MW, ambos dentro de sus límites.
+\emph{Paso 3.} El multiplicador del límite del grupo~2 es $\mu_2^{+}=\lambda-(b_2+2c_2P_2)=28{,}4-27=1{,}4\ge 0$: las KKT se cumplen y, por el \cref{teo:kkt}, la solución es óptima.
+
+\emph{Resultado.} $\bm{P^{*}=(260,\ 350,\ 240)}$~MW, con coste \textbf{21\,985~€/h} ($6532+8625+6828$). El multiplicador $\lambda=28{,}4$~€/MWh es el precio marginal del sistema: por la \cref{prop:sensibilidad}, 10~MW más de demanda costarían unos $284$~€/h; el valor exacto, resolviendo de nuevo, es $284{,}4$~€/h, porque el coste es cuadrático. El multiplicador $\mu_2^{+}=1{,}4$~€/MWh indica cuánto se ahorraría por MW si el grupo~2 pudiera producir más. CVXPY reproduce la solución y devuelve los mismos multiplicadores (cuaderno, parte~4):
+\begin{verbatim}
+P = cp.Variable(3); bal = cp.sum(P) == D
+coste = cp.sum(a + cp.multiply(b, P) + cp.multiply(c, cp.square(P)))
+cp.Problem(cp.Minimize(coste), [bal, P >= Pmin, P <= Pmax]).solve()
+bal.dual_value   # 28,4 en valor absoluto (signo según convenio)
+\end{verbatim}
+\end{ejemplo}
+
+\begin{observacion}[Cuando se pierde la convexidad]\label{obs:noconvexo}
+El caso anterior deja de ser convexo con detalles realistas: costes con efecto de apertura de válvulas (términos sinusoidales), mínimos técnicos con arranque y parada (variables binarias, el problema de asignación de unidades del cap.~4 de~\cite{wood}) o mezclas con calidades que se multiplican por caudales (términos bilineales). Entonces las KKT son solo necesarias, los métodos locales (SQP, punto interior) pueden quedarse en óptimos locales y conviene arrancar desde varios puntos, usar un resolvedor global o reformular. En el ajuste de redes neuronales del módulo~7 el problema tampoco es convexo, pero allí basta con un buen mínimo local.
+\end{observacion}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~4: optimización continua.}\label{tab:tec4}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+CVXPY~\cite{cvxpy} & modelización convexa con verificación DCP y duales & abierta (Apache~2.0) & cualquier problema convexo de tamaño medio \\
+Clarabel, SCS, OSQP & resolvedores cónicos (Clarabel, SCS) y cuadráticos (OSQP) & abiertos (Apache~2.0; SCS, MIT) & los usa CVXPY; OSQP, para control predictivo rápido \\
+SciPy \texttt{minimize} & SLSQP, \texttt{trust-constr}, L-BFGS-B & abierta (BSD-3) & no lineal local con pocas variables \\
+Ipopt & punto interior no lineal a gran escala & abierta (EPL-2.0) & no lineal grande con derivadas (vía Pyomo o CasADi) \\
+Gurobi & cuadrático y no convexo bilineal global & comercial & mezclas y redes con términos bilineales \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en optimización continua]\label{obs:errores4}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Creer que el problema es convexo sin comprobarlo}: un coste cóncavo a trozos (descuentos por volumen) o una restricción $x_1x_2\ge k$ rompen la convexidad; DCP lo detecta, un resolvedor local no.
+  \item \emph{Signos de los duales}: cada herramienta tiene su convenio (\texttt{dual\_value} en CVXPY, \texttt{marginals} en SciPy); hay que comprobar el signo con una perturbación pequeña antes de usarlo como precio.
+  \item \emph{Escalado}: mezclar MW con €/MWh$^2$ produce coeficientes de órdenes muy distintos y tolerancias que no significan lo mismo en todas las restricciones.
+  \item \emph{Diferencias finitas en simuladores con ruido}: el gradiente numérico de una función ruidosa es basura; en ese caso conviene un método sin derivadas (\cref{tema:5}).
+  \item \emph{Ignorar los límites de validez del modelo}: una curva de coste ajustada entre 100 y 400~MW no dice nada a 450~MW; los límites técnicos deben ser restricciones duras.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Boyd y Vandenberghe~\cite{bv}, cap.~4 (§4.3 «Linear optimization problems», §4.4 «Quadratic optimization problems») y cap.~5 (§5.5 «Optimality conditions», §5.6 «Perturbation and sensitivity analysis»).
+\item Nocedal y Wright~\cite{nw}, cap.~12 (teoría de la optimización con restricciones).
+\item Wood, Wollenberg y Sheblé~\cite{wood}, cap.~3, despacho económico de grupos térmicos.
+\item Documentación de CVXPY~\cite{cvxpydoc}: «Disciplined Convex Programming» y variables duales.
+\end{lecturas}
+
+\section*{Ejercicios del tema 4}
+\addcontentsline{toc}{section}{Ejercicios del tema 4}
+
+\begin{ejercicio}{1}{eje:4-dcp}
+Indique si cada problema es convexo y por qué: (a) $\min x_1^{2}+x_2^{2}$ s.a. $x_1+x_2\ge 1$; (b) $\min -\log x_1-\log x_2$ s.a. $x_1+x_2=1$; (c) $\min x_1^{2}$ s.a. $x_1^{2}+x_2^{2}=1$; (d) $\min\ \max(x_1,x_2)$ s.a. $x\ge 0$, $x_1x_2\ge 1$; (e) $\min\ \norm{Ax-b}_2$ s.a. $\norm{x}_\infty\le 1$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-kkt}
+Resuelva con las condiciones KKT el problema $\min x_1^{2}+x_2^{2}$ s.a. $x_1+2x_2\ge 5$. Calcule el multiplicador e interprételo: ¿cuánto cambia aproximadamente el valor óptimo si el lado derecho pasa de 5 a $5{,}1$? Compruebe con el valor exacto.
+\fuente{adaptado de Boyd y Vandenberghe~\cite{bv}, cap.~5, §5.5 (condiciones KKT) y §5.6 (sensibilidad).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-despacho2}
+Dos grupos tienen costes $C_1=20P_1+0{,}01P_1^{2}$ y $C_2=18P_2+0{,}02P_2^{2}$ (€/h) y deben cubrir 500~MW, sin límites activos. Obtenga el despacho por la regla del coste incremental igual y el precio marginal. Compruebe el resultado con el coste total.
+\fuente{adaptado de Wood, Wollenberg y Sheblé~\cite{wood}, cap.~3, despacho económico por igualdad de costes incrementales.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-agua}
+Se reparte una potencia total de 1~W entre tres canales con niveles de ruido $\alpha=(0{,}5;\ 1;\ 1{,}5)$ para maximizar $\sum_i\log(\alpha_i+x_i)$ con $x\ge 0$ y $\sum_ix_i=1$. Escriba las KKT, deduzca que $x_i=\max(0,\ 1/\nu-\alpha_i)$ y calcule $\nu$ y la asignación.
+\fuente{adaptado de Boyd y Vandenberghe~\cite{bv}, cap.~5, §5.5, ejemplo del llenado de agua (\emph{water-filling}).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-sensib}
+En el \cref{ej:despacho}: (a) estime con $\lambda$ el ahorro de reducir la demanda en 20~MW y compárelo con el valor exacto; (b) ¿hasta qué demanda sigue activo solo el límite superior del grupo~2, si los demás límites no cambian?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:4-dual}
+Para el despacho sin límites técnicos del \cref{ej:despacho} (paso~1), calcule la función dual $q(\lambda)=\min_P\bigl[\sum_iC_i(P_i)-\lambda(\sum_iP_i-D)\bigr]$ de forma explícita y compruebe que su máximo se alcanza en $\lambda=28$ y vale lo mismo que el coste primal.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:4-primer-orden}
+Sea $f$ convexa y diferenciable y $\mathcal{X}$ convexo. Demuestre que $x^{*}\in\mathcal{X}$ minimiza $f$ en $\mathcal{X}$ si y solo si $\nabla f(x^{*})\T(x-x^{*})\ge 0$ para todo $x\in\mathcal{X}$. Interprete la condición geométricamente y deduzca la condición $\nabla f(x^{*})=0$ cuando $x^{*}$ es interior.
+\fuente{adaptado de Boyd y Vandenberghe~\cite{bv}, cap.~4, criterio de optimalidad para funciones diferenciables.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Metaheurísticas, optimización sin derivadas y multiobjetivo}
+\label{tema:5}
+% =====================================================================
+
+Cuando el objetivo solo puede evaluarse (un simulador, un código heredado, un ensayo) o cuando la estructura del problema es tan irregular que ningún resolvedor exacto escala, se recurre a métodos que solo usan evaluaciones de $f$. Este tema sigue los capítulos~7 («Direct Methods»), 8 («Stochastic Methods»), 9 («Population Methods») y~12 («Multiobjective Optimization») de Kochenderfer y Wheeler~\cite{kw}, la clase~17 del curso 15.053~\cite{mit15053} para el recocido, y los artículos originales de Kirkpatrick, Gelatt y Vecchi~\cite{kirkpatrick} (recocido simulado), Hansen~\cite{hansen} (CMA-ES) y Deb \emph{et al.}~\cite{nsga2} (NSGA-II).
+
+\section{Optimización de caja negra}
+
+\begin{definicion}[Problema de caja negra]\label{def:caja-negra}
+Un problema $\min_{x\in\mathcal{X}}f(x)$ es de \emph{caja negra} si solo se dispone de un oráculo que devuelve $f(x)$ (quizá con ruido) para cada $x$ consultado, sin gradientes ni estructura explícita. Su coste se mide por el \emph{número de evaluaciones}.
+\end{definicion}
+
+Hay dos regímenes. Si cada evaluación es barata (milisegundos), se pueden permitir miles o millones de evaluaciones y se usan metaheurísticas. Si es cara (horas de simulación o un experimento de planta), cada evaluación debe elegirse con cuidado con un modelo sustituto, como en la optimización bayesiana~\cite{garnett,frazier}, que la fase desarrolla más adelante. Los métodos directos locales, como Nelder--Mead o Powell (cap.~7 de~\cite{kw}), son adecuados cuando el problema es continuo, de pocas variables y con un único valle.
+
+\section{Recocido simulado}
+
+El recocido simulado~\cite{kirkpatrick} imita el enfriamiento lento de un metal. Desde una solución $x$ se propone un vecino $x'$ (por ejemplo, intercambiar dos departamentos) con un mecanismo simétrico, $\Prob(x\to x')=\Prob(x'\to x)$, y se acepta con la probabilidad de Metropolis
+\[
+\alpha(x,x')=\min\Bigl(1,\ e^{-(f(x')-f(x))/T}\Bigr),
+\]
+donde la temperatura $T>0$ disminuye según un calendario, típicamente $T_{k+1}=\rho T_k$ con $\rho\in(0{,}9;\ 0{,}999)$. Con $T$ alta se aceptan muchos empeoramientos y se explora; con $T$ baja solo se aceptan mejoras y se explota.
+
+\begin{proposicion}[Distribución estacionaria de Boltzmann]\label{prop:boltzmann}
+Sea $\mathcal{X}$ finito, la propuesta simétrica e irreducible y $T$ fija. La cadena de Markov del recocido satisface el equilibrio detallado con
+\[
+\pi_T(x)=\frac{e^{-f(x)/T}}{\sum_{z\in\mathcal{X}}e^{-f(z)/T}},
+\]
+que es por tanto una distribución estacionaria. Cuando $T\to 0$, $\pi_T$ se concentra uniformemente en el conjunto de mínimos globales.
+\end{proposicion}
+
+\begin{proof}
+Para $x\ne x'$, la probabilidad de transición es $P(x,x')=\Prob(x\to x')\,\alpha(x,x')$. Supóngase $f(x')\ge f(x)$. Entonces $\alpha(x,x')=e^{-(f(x')-f(x))/T}$ y $\alpha(x',x)=1$, y
+\[
+\pi_T(x)P(x,x')\propto e^{-f(x)/T}\,\Prob(x\to x')\,e^{-(f(x')-f(x))/T}=e^{-f(x')/T}\,\Prob(x'\to x)\propto\pi_T(x')P(x',x).
+\]
+El caso $f(x')<f(x)$ es simétrico. Sumando el equilibrio detallado sobre $x$ se obtiene $\sum_x\pi_T(x)P(x,x')=\pi_T(x')$. Para el límite, sea $f^{*}=\min f$ y $\mathcal{X}^{*}$ el conjunto de minimizadores: $\pi_T(x)=e^{-(f(x)-f^{*})/T}/\sum_z e^{-(f(z)-f^{*})/T}$; el numerador tiende a~1 si $x\in\mathcal{X}^{*}$ y a~0 en otro caso, y el denominador tiende a $\abs{\mathcal{X}^{*}}$.
+\end{proof}
+
+La distribución de Boltzmann es la del módulo~6 (tema~5). La garantía de convergencia al óptimo exige calendarios logarítmicos, demasiado lentos; en la práctica se usa el geométrico y varias ejecuciones independientes.
+
+\section{Algoritmos genéticos y estrategias evolutivas}
+
+Un \emph{algoritmo genético} mantiene una población de soluciones y la renueva con tres operadores (cap.~9 de~\cite{kw}): \emph{selección} de padres favoreciendo a los mejores (por ejemplo, por torneo entre dos individuos al azar), \emph{cruce} que combina dos padres y \emph{mutación} que perturba un hijo. Con \emph{elitismo} los mejores pasan intactos a la generación siguiente. La representación debe respetar las restricciones: para permutaciones, el \emph{cruce por orden} (OX) copia un tramo del primer padre y completa los huecos con los genes que faltan en el orden en que aparecen en el segundo, de modo que el hijo sigue siendo una permutación.
+
+\begin{definicion}[CMA-ES]\label{def:cmaes}
+La \emph{estrategia evolutiva con adaptación de la matriz de covarianza} (CMA-ES)~\cite{hansen} optimiza en $\R^{n}$ manteniendo una distribución $\mathcal N(m,\sigma^{2}C)$. En cada generación:
+\begin{enumerate}[label=\arabic*.]
+  \item muestrea $\lambda$ candidatos $x_k=m+\sigma y_k$, con $y_k\sim\mathcal N(0,C)$, y los ordena por $f$;
+  \item actualiza la media con los $\mu$ mejores: $m\leftarrow\sum_{i=1}^{\mu}w_ix_{i:\lambda}$, con pesos positivos decrecientes que suman~1; la referencia propone $w_i\propto\ln\frac{\lambda+1}{2}-\ln i$;
+  \item actualiza $C$ con los pasos que tuvieron éxito (actualizaciones de rango uno y de rango $\mu$) y ajusta $\sigma$ comparando la longitud del camino evolutivo con la esperada bajo selección aleatoria.
+\end{enumerate}
+El \emph{tamaño efectivo de selección} es $\mu_{\mathrm{eff}}=1/\sum_iw_i^{2}$.
+\end{definicion}
+
+CMA-ES aprende la forma del valle: en un problema mal condicionado, $C$ tiende a una matriz proporcional a la inversa del hessiano, de modo que se comporta como un método de segundo orden sin derivadas. Es invariante a transformaciones monótonas de $f$ (solo usa el orden) y a rotaciones del espacio. Es una elección sólida para calibrar simuladores de caja negra con decenas de parámetros continuos y miles de evaluaciones posibles.
+
+\section{Optimización multiobjetivo}
+
+\begin{definicion}[Dominancia y frente de Pareto]\label{def:pareto}
+Sea $F=(f_1,\dots,f_k)$ un vector de objetivos que se minimizan. Se dice que $x$ \emph{domina} a $x'$, $x\succ x'$, si $f_i(x)\le f_i(x')$ para todo $i$ y $f_j(x)<f_j(x')$ para algún $j$. Un punto factible es \emph{Pareto-óptimo} si ningún otro punto factible lo domina. La imagen $F(\mathcal{X}^{\mathrm{P}})$ del conjunto de Pareto-óptimos es el \emph{frente de Pareto}.
+\end{definicion}
+
+\begin{proposicion}[Suma ponderada]\label{prop:suma-ponderada}
+Si $w_i>0$ para todo $i$ y $x^{*}$ minimiza $\sum_iw_if_i(x)$ en $\mathcal{X}$, entonces $x^{*}$ es Pareto-óptimo. El recíproco es falso: los puntos del frente que no están en la frontera de su envolvente convexa no minimizan ninguna suma ponderada.
+\end{proposicion}
+
+\begin{proof}
+Si algún $x$ dominase a $x^{*}$, sería $f_i(x)\le f_i(x^{*})$ para todo $i$, con desigualdad estricta en algún $j$; como todos los pesos son positivos, $\sum_iw_if_i(x)<\sum_iw_if_i(x^{*})$, en contra de la minimalidad. Para el recíproco, el \cref{ej:planta} da un contraejemplo.
+\end{proof}
+
+El método de la $\varepsilon$-restricción, $\min f_1$ s.a. $f_2\le\varepsilon$, sí alcanza los puntos no apoyados variando $\varepsilon$ (\cref{eje:5-eps}). Para problemas de caja negra, el \emph{NSGA-II}~\cite{nsga2} combina un algoritmo genético con dos ideas:
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{ordenación no dominada}: la población se divide en frentes $\mathcal{F}_1$ (no dominados), $\mathcal{F}_2$ (no dominados al quitar $\mathcal{F}_1$), etc., y el rango de un individuo es el índice de su frente;
+  \item \emph{distancia de aglomeración} (\emph{crowding distance}): dentro de un frente, para cada objetivo se ordenan los puntos, los extremos reciben distancia infinita y cada punto interior suma $(f_k^{\text{sig}}-f_k^{\text{ant}})/(f_k^{\max}-f_k^{\min})$; se prefieren los puntos aislados para mantener la diversidad.
+\end{enumerate}
+La selección por torneo compara primero el rango y después la distancia, y la nueva generación se forma con los mejores frentes de la unión de padres e hijos (elitismo).
+
+\begin{ejemplo}[Caso de estudio: distribución en planta]\label{ej:planta}
+Una nave industrial tiene seis módulos en una cuadrícula de $2\times 3$ con centros separados 20~m; las carretillas circulan por pasillos ortogonales, de modo que la distancia entre módulos es la de Manhattan. Hay que asignar seis departamentos: Recepción (R), Almacén (A), Mecanizado (M), Soldadura (S), Pintura (P) y Expedición (E). Los viajes diarios de carretilla entre departamentos son R--A: 30, A--M: 25, A--S: 10, A--E: 5, M--S: 20, M--P: 5, S--P: 25 y P--E: 30.
+
+\emph{Objetivos.} (1) Recorrido de carretillas $f_1(\pi)=\sum_{i<j}F_{ij}\,d_{\pi(i)\pi(j)}$ (m/día), con $\pi(i)$ el módulo del departamento $i$. (2) Riesgo por proximidad de departamentos incompatibles, $f_2(\pi)=\sum w_{ij}\cdot 20/d_{\pi(i)\pi(j)}$, con pesos 10 para soldadura--pintura (chispas y disolventes), 4 para mecanizado--pintura (polvo) y 3 para soldadura--almacén; vale $w_{ij}$ si los dos departamentos son contiguos y disminuye con la distancia.
+
+\emph{Elección del método.} Es un problema cuadrático de asignación, NP-difícil en general. Con seis departamentos hay $6!=720$ distribuciones, lo que permite certificar por enumeración lo que hacen las metaheurísticas; con 30 departamentos ($\approx 2{,}7\cdot 10^{32}$) solo quedarían estas.
+
+\emph{Resultados} (cuaderno, parte~5).
+\begin{enumerate}[label=(\alph*)]
+  \item El recorrido mínimo es \textbf{3400~m/día}, alcanzado por 16 distribuciones (simetrías de la cuadrícula). El recocido con intercambios, $T_0=500$, $\rho=0{,}995$ y 3000 iteraciones lo encuentra en las cinco semillas probadas.
+  \item El frente de Pareto tiene cuatro puntos: $(3400;\ 13{,}5)$, $(3700;\ 10{,}5)$, $(3900;\ 7{,}83)$ y $(4400;\ 6{,}83)$. El punto $(3700;\ 10{,}5)$ no lo alcanza ninguna suma ponderada: el segmento que une $(3400;\ 13{,}5)$ y $(3900;\ 7{,}83)$ pasa en $f_1=3700$ por $f_2=13{,}5-0{,}6\cdot 5{,}67=10{,}1<10{,}5$, de modo que el punto queda por encima de la envolvente convexa.
+  \item Un NSGA-II mínimo (población 40, 40 generaciones, cruce OX y mutación por intercambio) recupera los cuatro puntos del frente en 0,3~s.
+\end{enumerate}
+La \cref{fig:planta} muestra dos distribuciones del frente. Con $f_1$ mínimo, el flujo sigue una U (R--A--M abajo, S--P--E arriba), pero soldadura y pintura quedan contiguas. Separándolas cuesta 500~m/día más de carretilla y el riesgo baja de 13,5 a 7,83. Elegir entre ellas no es tarea del algoritmo, sino de quien conoce el valor relativo del riesgo y del tiempo de transporte.
+\end{ejemplo}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,cel/.style={draw,thick,minimum width=11mm,minimum height=9mm}]
+  \begin{scope}
+    \foreach \t [count=\i from 0] in {R,A,M} \node[cel] at (1.1*\i,0) {\t};
+    \foreach \t [count=\i from 0] in {E,P,S} \node[cel] at (1.1*\i,0.9) {\t};
+    \node[align=center] at (1.1,-0.95) {$f_1=3400$, $f_2=13{,}5$};
+  \end{scope}
+  \begin{scope}[xshift=5cm]
+    \foreach \t [count=\i from 0] in {R,A,M} \node[cel] at (1.1*\i,0) {\t};
+    \foreach \t [count=\i from 0] in {P,E,S} \node[cel] at (1.1*\i,0.9) {\t};
+    \node[align=center] at (1.1,-0.95) {$f_1=3900$, $f_2=7{,}83$};
+  \end{scope}
+\end{tikzpicture}
+\caption{Dos distribuciones Pareto-óptimas del caso de la planta. A la izquierda, mínimo recorrido; a la derecha, soldadura y pintura separadas por expedición.}
+\label{fig:planta}
+\end{figure}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~5: metaheurísticas y multiobjetivo.}\label{tab:tec5}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+\texttt{cma} (Hansen \emph{et al.}) & CMA-ES de referencia, con restricciones de caja y ruido & abierta (BSD-3) & calibrar simuladores continuos de caja negra \\
+pymoo~\cite{pymoo} & NSGA-II, NSGA-III, indicadores de calidad de frentes & abierta (Apache~2.0) & problemas multiobjetivo con operadores estándar \\
+SciPy \texttt{optimize} & recocido dual, evolución diferencial, Nelder--Mead, Powell & abierta (BSD-3) & continuo, pocas variables, sin dependencias extra \\
+Optuna & búsqueda de hiperparámetros (muestreadores TPE y CMA-ES, multiobjetivo) & abierta (MIT) & ajustar modelos o configuraciones con evaluaciones caras \\
+Código propio & recocido, búsqueda tabú, genéticos sobre una representación específica & propio & combinatoria con vecindarios propios del dominio \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes con metaheurísticas]\label{obs:errores5}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Conclusiones con una sola semilla}: un resultado estocástico se informa con varias ejecuciones (media, peor caso, dispersión) y con el mismo número de evaluaciones para todos los métodos comparados.
+  \item \emph{Ajustar hiperparámetros sobre la instancia de evaluación}: igual que en aprendizaje automático, es sobreajuste; se ajustan en instancias de entrenamiento y se evalúan en otras.
+  \item \emph{Restricciones como penalizaciones mal escaladas}: con penalización pequeña la solución final es infactible; con una enorme el paisaje se vuelve plano. Mejor representaciones que garanticen la factibilidad o una reparación explícita.
+  \item \emph{Ruido en la evaluación}: con un simulador estocástico, el mejor valor observado está sesgado a la baja (maldición del optimizador, \cref{tema:6}); hay que reevaluar el candidato final con nuevas réplicas.
+  \item \emph{Presentar el frente sin decidir}: un frente con cien puntos no es una decisión; hay que acordar con el usuario las preferencias o el punto de compromiso.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Kochenderfer y Wheeler~\cite{kw}, caps.~7 «Direct Methods», 8 «Stochastic Methods», 9 «Population Methods» y~12 «Multiobjective Optimization».
+\item S.~Kirkpatrick, C.~D. Gelatt y M.~P. Vecchi~\cite{kirkpatrick}, artículo original del recocido simulado.
+\item N.~Hansen~\cite{hansen}, tutorial de CMA-ES.
+\item K.~Deb \emph{et al.}~\cite{nsga2}, artículo original de NSGA-II.
+\end{lecturas}
+
+\section*{Ejercicios del tema 5}
+\addcontentsline{toc}{section}{Ejercicios del tema 5}
+
+\begin{ejercicio}{1}{eje:5-aceptacion}
+Un movimiento empeora el objetivo en $\Delta=50$. Calcule su probabilidad de aceptación con $T=100$ y con $T=25$. Con el calendario $T_{k+1}=0{,}99\,T_k$ y $T_0=500$, ¿cuántas iteraciones hacen falta para que $T<1$?
+\fuente{adaptado de MIT 15.053, primavera de 2013, clase~17, recocido simulado con enfriamiento $T:=0{,}99\,T$~\cite{mit15053}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-frentes}
+Seis soluciones de un problema con dos objetivos que se minimizan tienen imágenes $a=(1,9)$, $b=(2,7)$, $c=(3,8)$, $d=(4,4)$, $e=(5,5)$ y $f=(7,2)$. Calcule los frentes de la ordenación no dominada y el rango de cada solución.
+\fuente{adaptado de K.~Deb \emph{et al.}~\cite{nsga2}, ordenación rápida no dominada.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-crowding}
+Calcule la distancia de aglomeración de los puntos del primer frente del \cref{eje:5-frentes}. ¿Cuál se descartaría primero si hubiera que eliminar uno que no sea extremo?
+\fuente{adaptado de K.~Deb \emph{et al.}~\cite{nsga2}, distancia de aglomeración.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-apoyado}
+Con los cuatro puntos del frente del \cref{ej:planta}, demuestre que no existe ningún peso $w\in[0,1]$ tal que $(3700;\ 10{,}5)$ minimice $wf_1+(1-w)f_2$ entre ellos.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-ox}
+Aplique el cruce por orden (OX) a los padres $p_1=(1,2,3,4,5,6)$ y $p_2=(4,6,2,1,5,3)$ copiando de $p_1$ las posiciones 3 a~5 y rellenando el resto de izquierda a derecha con los genes que faltan en el orden en que aparecen en $p_2$. Compruebe que el hijo es una permutación.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:5-pesos}
+Para CMA-ES con $\lambda=6$ candidatos y $\mu=3$ padres, calcule los pesos $w_i\propto\ln\frac{\lambda+1}{2}-\ln i$, normalizados para sumar~1, y el tamaño efectivo $\mu_{\mathrm{eff}}$.
+\fuente{adaptado de N.~Hansen~\cite{hansen}, elección por defecto de los pesos de recombinación.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-eps}
+(a) Demuestre que toda solución óptima única de $\min f_1(x)$ s.a. $f_2(x)\le\varepsilon$ es Pareto-óptima. (b) Muestre con el \cref{ej:planta} que eligiendo $\varepsilon$ adecuadamente se obtiene el punto $(3700;\ 10{,}5)$, que la suma ponderada no alcanza.
+\fuente{adaptado de Kochenderfer y Wheeler~\cite{kw}, cap.~12, métodos de restricción para el frente de Pareto.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:5-metropolis}
+Demuestre que si la propuesta del recocido no es simétrica, la aceptación de Metropolis--Hastings $\alpha(x,x')=\min\bigl(1,\ e^{-(f(x')-f(x))/T}\,\Prob(x'\to x)/\Prob(x\to x')\bigr)$ restaura el equilibrio detallado con $\pi_T$. Explique por qué un error en esa corrección sesga la búsqueda hacia las regiones donde la propuesta concentra su masa.
+\fuente{adaptado de Kochenderfer y Wheeler~\cite{kw}, cap.~8, y de S.~Kirkpatrick \emph{et al.}~\cite{kirkpatrick}.}
+\end{ejercicio}
+
+% =====================================================================
+\chapter{Cuando la IA entra en la formulación: predecir y optimizar}
+\label{tema:6}
+% =====================================================================
+
+En los temas anteriores los datos eran conocidos. En la práctica la demanda, los tiempos de viaje o los rendimientos se \emph{predicen}, y la decisión hereda el error de la predicción. Este tema estudia cómo combinar ambos pasos. Sigue el capítulo~1 («Introduction and Examples») de Birge y Louveaux~\cite{bl} y las transparencias de programación estocástica del curso EE364a de Stanford~\cite{ee364stoch}; el capítulo~17 («Optimization under Uncertainty») de Kochenderfer y Wheeler~\cite{kw}; los artículos de Elmachtoub y Grigas~\cite{spo} y de Bertsimas y Kallus~\cite{bk} sobre la integración de predicción y decisión; el de Bertsimas y Sim~\cite{bsim} y el libro de Ben-Tal, El Ghaoui y Nemirovski~\cite{btn} para la optimización robusta, y el de Smith y Winkler~\cite{smith} para la maldición del optimizador.
+
+\section{Predecir y después optimizar}
+
+\begin{definicion}[Predecir y después optimizar]\label{def:pto}
+Sea un problema $\min_{x\in\mathcal{X}}\E[c(x,\xi)\mid w]$, donde $\xi$ es un parámetro incierto (la demanda) y $w$ el contexto observado (temperatura, festivos). El enfoque \emph{predecir y después optimizar} entrena un modelo $\hat\xi=m_\phi(w)$ y resuelve $\hat x(w)\in\argmin_{x\in\mathcal{X}}c(x,\hat\xi)$, sustituyendo el parámetro por su predicción puntual.
+\end{definicion}
+
+\begin{proposicion}[Cuándo basta la media]\label{prop:lineal}
+Si el coste es lineal en el parámetro, $c(x,\xi)=\xi\T x$, y $\mathcal{X}$ no depende de $\xi$, la decisión que minimiza el coste esperado condicionado es la que resulta de sustituir $\xi$ por su media condicionada $\E[\xi\mid w]$.
+\end{proposicion}
+
+\begin{proof}
+Por la linealidad de la esperanza, $\E[\xi\T x\mid w]=\E[\xi\mid w]\T x$ para todo $x\in\mathcal{X}$. Los dos problemas tienen el mismo objetivo y, por tanto, los mismos minimizadores.
+\end{proof}
+
+La proposición explica el éxito del enfoque cuando la incertidumbre está en los costes de un PL (rutas con tiempos inciertos y objetivo lineal) y su fracaso cuando el coste es no lineal en $\xi$: con inventario, el coste de quedarse corto y el de sobrar son distintos, y la media deja de ser suficiente. Incluso en el caso lineal, dos modelos con el mismo error cuadrático pueden inducir decisiones de calidad muy distinta: lo que importa no es el error en la predicción, sino el error en la decisión, que es lo que mide la pérdida SPO (\emph{smart predict-then-optimize}) de Elmachtoub y Grigas~\cite{spo} (\cref{eje:6-spo}). Bertsimas y Kallus~\cite{bk} proponen, en lugar de predecir un valor, aprender pesos sobre escenarios históricos parecidos al contexto y optimizar contra esa distribución empírica.
+
+\section{El vendedor de periódicos}
+
+\begin{definicion}[Problema del vendedor de periódicos]\label{def:newsvendor}
+Se decide una cantidad $q\ge 0$ antes de conocer la demanda $D$, con función de distribución $F$. Cada unidad que falta cuesta $c_u>0$ (margen perdido) y cada unidad que sobra, $c_o>0$ (coste menos valor de saldo). El coste esperado es
+\[
+G(q)=\E\bigl[c_u(D-q)^{+}+c_o(q-D)^{+}\bigr].
+\]
+\end{definicion}
+
+\begin{teorema}[Fractil crítico]\label{teo:fractil}
+Si $F$ es continua, $q^{*}=F^{-1}\!\bigl(c_u/(c_u+c_o)\bigr)$ minimiza $G$. Si $D$ es discreta, es óptimo el menor $q$ con $F(q)\ge c_u/(c_u+c_o)$.
+\end{teorema}
+
+\begin{proof}
+$G$ es convexa, porque $(D-q)^{+}$ y $(q-D)^{+}$ lo son en $q$ y la esperanza conserva la convexidad. Su derivada (lateral, en el caso discreto) es
+\[
+G'(q)=-c_u\,\Prob(D>q)+c_o\,\Prob(D\le q)=-c_u+(c_u+c_o)F(q),
+\]
+porque aumentar $q$ en $\mathrm{d}q$ ahorra $c_u\,\mathrm{d}q$ cuando falta producto y cuesta $c_o\,\mathrm{d}q$ cuando sobra. $G'(q)$ es no decreciente y cambia de signo donde $F(q)=c_u/(c_u+c_o)$. En el caso continuo, $G'(q^{*})=0$ y por convexidad $q^{*}$ es mínimo global. En el discreto, $G$ es lineal a trozos y su pendiente pasa a ser no negativa en el menor $q$ con $F(q)\ge c_u/(c_u+c_o)$.
+\end{proof}
+
+Si la demanda es normal, $q^{*}=\mu+\sigma\,\Phi^{-1}(c_u/(c_u+c_o))$: se produce por encima de la media cuando el margen perdido supera al coste del sobrante. Predecir la media, por precisa que sea, no basta; hace falta un \emph{cuantil}, y por tanto una estimación de la incertidumbre calibrada fuera de muestra.
+
+\section{Programación estocástica y robusta}
+
+\begin{definicion}[Programa estocástico en dos etapas]\label{def:dos-etapas}
+En un \emph{programa en dos etapas} se fija una decisión $x$ antes de observar $\xi$ y, una vez observado, una decisión de recurso $y$:
+\[
+\mathrm{RP}=\min_{x\in\mathcal{X}}\ c\T x+\E_\xi\bigl[Q(x,\xi)\bigr],\qquad Q(x,\xi)=\min_{y\in\mathcal{Y}(x,\xi)}q(\xi)\T y .
+\]
+La \emph{aproximación por media muestral} (SAA) sustituye la esperanza por la media sobre $S$ escenarios $\xi^{1},\dots,\xi^{S}$ y, si todo es lineal, da un único PL con una copia de $y$ por escenario~\cite{ee364stoch}.
+\end{definicion}
+
+\begin{definicion}[Valor de la solución estocástica y de la información perfecta]\label{def:vss}
+Para un problema de minimización, sea $\bar x$ la solución del \emph{problema del valor esperado} (sustituir $\xi$ por $\E\xi$), $\mathrm{EEV}=c\T\bar x+\E[Q(\bar x,\xi)]$ su coste esperado real, y $\mathrm{WS}=\E_\xi[\min_x(c\T x+Q(x,\xi))]$ el coste esperado si se conociera $\xi$ antes de decidir (\emph{wait-and-see}). Se definen el \emph{valor de la solución estocástica} $\mathrm{VSS}=\mathrm{EEV}-\mathrm{RP}$ y el \emph{valor esperado de la información perfecta} $\mathrm{EVPI}=\mathrm{RP}-\mathrm{WS}$~\cite{bl}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:vss}
+$\mathrm{WS}\le\mathrm{RP}\le\mathrm{EEV}$; en consecuencia, $\mathrm{VSS}\ge 0$ y $\mathrm{EVPI}\ge 0$.
+\end{proposicion}
+
+\begin{proof}
+$\mathrm{RP}\le\mathrm{EEV}$ porque $\bar x$ es factible y RP es el mínimo del coste esperado. Para la otra desigualdad, sea $x^{*}$ óptima de RP; para cada $\xi$, $\min_x(c\T x+Q(x,\xi))\le c\T x^{*}+Q(x^{*},\xi)$, y tomando esperanzas, $\mathrm{WS}\le\mathrm{RP}$.
+\end{proof}
+
+La \emph{optimización robusta} renuncia a la distribución y exige factibilidad o buen coste para todo $\xi$ de un \emph{conjunto de incertidumbre} $\Xi$: $\min_x\max_{\xi\in\Xi}c(x,\xi)$. Para restricciones lineales con coeficientes en una caja, el problema robusto sigue siendo lineal.
+
+\begin{proposicion}[Contrapartida robusta de una caja]\label{prop:robusta}
+Sea $x\ge 0$ y $a_j\in[\bar a_j-\delta_j,\ \bar a_j+\delta_j]$ con $\delta_j\ge 0$. La restricción $a\T x\le b$ se cumple para todos los $a$ de la caja si y solo si $(\bar a+\delta)\T x\le b$. Para $x$ de signo libre, la condición es $\bar a\T x+\delta\T\abs{x}\le b$, que se linealiza con la \cref{prop:abs}.
+\end{proposicion}
+
+\begin{proof}
+El máximo de $a\T x=\sum_ja_jx_j$ sobre la caja se alcanza eligiendo cada $a_j$ por separado: $\bar a_j+\delta_j$ si $x_j\ge 0$ y $\bar a_j-\delta_j$ si $x_j<0$, lo que da $\bar a\T x+\sum_j\delta_j\abs{x_j}$. La restricción se cumple para toda la caja si y solo si se cumple en ese máximo.
+\end{proof}
+
+La caja completa es muy conservadora: supone que todos los coeficientes toman su peor valor a la vez. Bertsimas y Sim~\cite{bsim} limitan a $\Gamma$ el número de coeficientes que se desvían y controlan así el \emph{precio de la robustez}: el coste que se paga por protegerse.
+
+\begin{observacion}[La maldición del optimizador]\label{obs:maldicion}
+Si se eligen la mejor de varias alternativas por su valor estimado, el valor estimado de la elegida sobrestima su valor real, aunque cada estimación sea insesgada: $\E[\max_i\hat J_i]\ge\max_i\E[\hat J_i]$~\cite{smith} (\cref{eje:6-maldicion}). Por eso el beneficio que promete un optimizador sobre datos predichos debe validarse con datos nuevos, nunca con los usados para elegir.
+\end{observacion}
+
+\section{Caso de estudio: plan de cerveza fresca con demanda predicha}
+
+\begin{ejemplo}[Cerveza sin pasteurizar con demanda predicha]\label{ej:fresca}
+La cervecera de los temas anteriores vende dos cervezas sin pasteurizar, IPA y Lager, que caducan en una semana. Cada lunes decide cuántos hectolitros envasar, $q=(q_1,q_2)$, con una capacidad conjunta de $K=260$~hL. Lo que no se vende se liquida a precio de saldo. Por hectolitro: precio $p=(300,220)$~€, coste $c=(70,60)$~€ y saldo $s=(20,10)$~€; por tanto $c_u=p-c=(230,160)$ y $c_o=c-s=(50,50)$, con fractiles críticos $0{,}821$ y $0{,}762$.
+
+\emph{Datos} (sintéticos, 208 semanas; cuaderno, parte~6). La demanda semanal depende de la temperatura media, de si hay festivo y de una tendencia de crecimiento, con ruido multiplicativo log-normal de desviación $0{,}22$ en escala logarítmica y correlación $0{,}5$ entre las dos cervezas. Su media pasa de $(72{,}5;\ 100{,}1)$~hL en los dos primeros años a $(91{,}1;\ 115{,}0)$~hL en el último.
+
+\emph{Protocolo sin fugas.} Las semanas 0--103 se usan para entrenar una regresión lineal del logaritmo de la demanda sobre temperatura, festivo y semana (módulo~8); las semanas 104--155, para medir los residuos fuera de muestra (desviación $0{,}21$ en ambas cervezas), y las 156--207, como periodo de prueba en el que se simula la operación. El error porcentual absoluto medio de la predicción de la media en prueba es del 18 y el 21\,\%.
+
+\emph{Decisiones comparadas.} (A) Envasar la media predicha. (B) Envasar el cuantil del fractil crítico, predicción por el cuantil empírico de los residuos (\cref{teo:fractil}). (C) SAA: un PL por semana con los 52 vectores de residuos de calibración como escenarios conjuntos, que respeta la capacidad y la correlación. (D) Robusto: envasar el peor caso de una caja del 90\,\% (cuantil del 5\,\% de los residuos). En las cuatro, si se supera la capacidad se reduce en proporción, salvo en C, que la incluye en el modelo.
+
+\emph{Resultados en las 52 semanas de prueba:}
+\begin{center}\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Decisión & \makecell{Beneficio medio\\(€/semana)} & \makecell{Peor\\semana (€)} & \makecell{Semanas sin rotura\\(IPA, Lager)} \\
+\midrule
+A: media predicha & 34\,145 & 16\,390 & 56\,\%, 50\,\% \\
+B: cuantil del fractil & 34\,595 & 15\,482 & 75\,\%, 62\,\% \\
+C: SAA con capacidad & 34\,615 & 15\,465 & 77\,\%, 60\,\% \\
+D: robusto (caja del 90\,\%) & 26\,562 & 16\,440 & 6\,\%, 8\,\% \\
+información perfecta & 36\,502 & 19\,105 & 81\,\%, 81\,\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+Usar la media en lugar del cuantil cuesta 450~€/semana, unos 23\,400~€/año: con márgenes altos, quedarse corto sale caro. SAA añade una mejora pequeña porque la capacidad solo limita en las semanas de más calor. La decisión robusta tiene la mejor peor semana, pero su beneficio medio es 8053~€/semana menor que el de SAA: ese es su precio de la robustez, que solo se justifica si una mala semana tuviera consecuencias graves (por ejemplo, de tesorería). La información perfecta acota lo que puede ganar cualquier mejora del modelo de predicción: 1887~€/semana sobre SAA. Incluso con ella hay semanas con rotura, porque la capacidad no alcanza en los picos de demanda.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~6: predecir y optimizar bajo incertidumbre.}\label{tab:tec6}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+scikit-learn & regresión, cuantiles (\texttt{GradientBoostingRegressor} con pérdida cuantílica), validación temporal & abierta (BSD-3) & modelos de predicción tabulares \\
+SciPy / HiGHS & PL de SAA con escenarios & abierta (BSD-3; MIT) & programas estocásticos lineales de tamaño medio \\
+CVXPY~\cite{cvxpy} & modelos robustos y con restricciones probabilísticas convexas & abierta (Apache~2.0) & contrapartidas robustas cónicas, CVaR \\
+Pyomo & modelos estocásticos por escenarios y descomposición & abierta (BSD-3) & problemas grandes en dos o más etapas \\
+PyTorch & capas de optimización diferenciables para aprender con la pérdida de decisión & abierta (BSD) & enfoques SPO o de aprendizaje orientado a la decisión \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes al combinar predicción y decisión]\label{obs:errores6}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Fugas de datos}: calibrar los cuantiles con residuos de entrenamiento (demasiado optimistas en modelos flexibles), usar variables que no se conocen al decidir (la temperatura real de la semana en vez de la previsión) o validar con particiones aleatorias en series temporales.
+  \item \emph{Optimizar contra la media}: correcto solo si el coste es lineal en el parámetro (\cref{prop:lineal}).
+  \item \emph{Evaluar la predicción y no la decisión}: un modelo con menos error cuadrático puede dar peores decisiones; se compara el beneficio simulado fuera de muestra.
+  \item \emph{Maldición del optimizador}: el beneficio previsto por el modelo para la decisión elegida está sesgado al alza (\cref{obs:maldicion}).
+  \item \emph{Deriva}: la tendencia del caso hace que un modelo entrenado sin la variable de semana quede desfasado; hay que monitorizar el error y reentrenar (\cref{fig:anatomia}).
+  \item \emph{Robustez sin calibrar}: una caja demasiado grande regala beneficio; su tamaño debe justificarse con el riesgo que se quiere cubrir.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Birge y Louveaux~\cite{bl}, cap.~1 «Introduction and Examples» (vendedor de periódicos y ejemplos en dos etapas).
+\item Transparencias de EE364a «Stochastic programming»~\cite{ee364stoch}: SAA, validación fuera de muestra y planificación de la producción con demanda incierta.
+\item Kochenderfer y Wheeler~\cite{kw}, cap.~17 «Optimization under Uncertainty».
+\item A.~N. Elmachtoub y P.~Grigas~\cite{spo}; D.~Bertsimas y N.~Kallus~\cite{bk}; D.~Bertsimas y M.~Sim~\cite{bsim}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-fugas}
+Señale la fuga de datos o el error de evaluación en cada caso: (a) los cuantiles de la demanda se estiman con los residuos del mismo conjunto con el que se entrenó un bosque aleatorio; (b) el modelo usa la temperatura media observada de la semana que se planifica; (c) se elige entre cinco planes el de mayor beneficio simulado y se informa de ese beneficio a la dirección; (d) la validación cruzada mezcla al azar semanas de 2023 y 2025.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-newsvendor}
+La demanda semanal de IPA fresca es normal con media 80~hL y desviación 16~hL; $c_u=230$ y $c_o=50$~€/hL. Calcule la cantidad óptima y compárela con la media. ¿Qué cantidad sería óptima si el saldo bajase a 0~€/hL?
+\fuente{adaptado de Birge y Louveaux~\cite{bl}, cap.~1, problema del vendedor de periódicos.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-spo}
+Hay que elegir una de dos rutas con costes reales $c=(1{,}0;\ 1{,}2)$~h. El modelo A predice $(1{,}25;\ 1{,}2)$ y el modelo B, $(0{,}75;\ 1{,}2)$. Calcule el error cuadrático de cada predicción, la ruta que elige cada modelo y su pérdida de decisión (coste real de la ruta elegida menos el óptimo). ¿Qué enseña el resultado?
+\fuente{adaptado de A.~N. Elmachtoub y P.~Grigas~\cite{spo}, motivación de la pérdida SPO.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-vss}
+Se envasa $q$ antes de conocer la demanda, que vale 60, 100 o 140~hL con probabilidades $0{,}3$, $0{,}4$ y $0{,}3$; precio 300, coste 70 y saldo 20~€/hL. Se maximiza el beneficio esperado. Calcule (a) la solución del valor esperado y su beneficio esperado real (EEV); (b) la solución estocástica (RP) con el \cref{teo:fractil}; (c) WS, VSS y EVPI, adaptando los signos a la maximización.
+\fuente{adaptado de Birge y Louveaux~\cite{bl}, cap.~1, valor de la solución estocástica y de la información perfecta.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-robusta}
+Un lote de 100~kg de pienso se mezcla con $x_1$~kg de maíz y $x_2$~kg de soja ($x_1+x_2=100$, $x\ge 0$) y debe contener al menos 18~kg de proteína: $a_1x_1+a_2x_2\ge 1800$, con $a_j$ el contenido de proteína en porcentaje. El contenido de proteína del maíz es $a_1\in[7;\ 9]$ y el de la soja, $a_2\in[42;\ 46]$ (\%). (a) Escriba la contrapartida robusta. (b) Calcule la mínima cantidad de soja con la caja completa y con los valores nominales. (c) ¿Cuál es el precio de la robustez si la soja cuesta 0,40~€/kg y el maíz 0,22~€/kg?
+\fuente{adaptado de D.~Bertsimas y M.~Sim~\cite{bsim}, contrapartida robusta de restricciones lineales.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-saa}
+Se dispone de cinco escenarios equiprobables de demanda: 72, 95, 88, 110 y 64~hL, con $c_u=230$ y $c_o=50$. Resuelva el problema SAA del vendedor de periódicos y compare la decisión con la que daría una normal ajustada a esos cinco valores. ¿Qué riesgo tiene usar tan pocos escenarios?
+\fuente{adaptado de las transparencias «Stochastic programming» de EE364a~\cite{ee364stoch}, método de Monte Carlo y validación fuera de muestra.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-fractil}
+Demuestre el \cref{teo:fractil} para una demanda discreta con valores $d_1<\dots<d_K$, comprobando que $G$ es lineal a trozos con vértices en los $d_k$ y calculando las pendientes laterales.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-maldicion}
+Sean $\hat J_1,\dots,\hat J_k$ estimaciones insesgadas de los valores $J_1,\dots,J_k$ de $k$ alternativas. (a) Demuestre que $\E[\max_i\hat J_i]\ge\max_iJ_i$. (b) Si $J_1=\dots=J_k=J$ y los errores son independientes $\mathcal N(0,\sigma^{2})$, calcule el sesgo de la alternativa elegida para $k=2$. (c) Proponga un procedimiento de validación que elimine el sesgo.
+\fuente{adaptado de J.~E. Smith y R.~L. Winkler~\cite{smith}.}
+\end{ejercicio}
+
+
+\appendix
+% =====================================================================
+\chapter{Soluciones de los ejercicios}
+\label{ap:soluciones}
+% =====================================================================
+
+Cada solución se presenta en cinco partes: datos, planteamiento, desarrollo, resultado y comprobación. En los pasos intermedios se redondea a cuatro cifras significativas salvo que se indique otra cosa. Los resultados numéricos de los casos de estudio se han comprobado con el cuaderno \texttt{M24-practica.ipynb}.
+
+% ---------------------------------------------------------------------
+\section{Tema 1}
+
+\begin{solucion}{eje:1-elementos}
+\datos invernadero de 1~ha con control horario de ventanas, calefacción y CO$_2$; predicción de radiación y temperatura exterior.
+\planteamiento clasificar cada elemento según la \cref{def:elementos}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Variables de decisión, por hora $t$: apertura de ventanas $v_t\in[0,1]$, potencia de calefacción $u_t\ge 0$ (kW) y caudal de CO$_2$ $g_t\ge 0$ (kg/h).
+  \item Parámetros: radiación $R_t$ y temperatura exterior $T^{\mathrm{ext}}_t$ (predichos); precio de la energía y del CO$_2$ (conocidos o predichos); coeficientes del modelo térmico y del modelo de crecimiento (estimados con datos).
+  \item Objetivo: $\max\sum_t\bigl[\text{crecimiento estimado}(T_t,\mathrm{CO}_{2,t},R_t)-p^{\mathrm{e}}_tu_t-p^{\mathrm{c}}g_t\bigr]$.
+  \item Restricciones duras: $\mathrm{CO}_{2,t}\le 1000$~ppm (seguridad de las personas), límites físicos de los actuadores y la dinámica térmica y de CO$_2$ del invernadero.
+  \item Restricción que conviene tratar como blanda: $16\le T_t\le 28$~ºC, con penalización por grado fuera de rango, porque una helada imprevista podría hacerla infactible; si el cultivo sufre daños irreversibles fuera del rango, debe ser dura.
+  \item KPIs distintos del objetivo: horas fuera del rango de temperatura, kWh por kilogramo producido, error de la predicción de temperatura interior, número de intervenciones manuales.
+\end{enumerate}
+\resultado \textbf{decisiones $v_t,u_t,g_t$; parámetros predichos $R_t,T^{\mathrm{ext}}_t$; objetivo crecimiento menos coste; CO$_2$ como restricción dura y temperatura como blanda; KPIs de confort, eficiencia, predicción y supervisión.}
+\comprobacion cada elemento es o bien elegible por el sistema (decisión) o bien externo (parámetro); ningún KPI coincide con el objetivo.
+\end{solucion}
+
+\begin{solucion}{eje:1-mapa}
+\datos seis problemas.
+\planteamiento identificar en cada uno el tipo de variables, la linealidad y el coste de evaluación (\cref{tab:mapa,fig:arbol}).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Variables continuas, todo lineal: \emph{PL}.
+  \item (b) Decisión binaria de apertura con costes lineales: \emph{PLEM} (localización con costes fijos).
+  \item (c) Caja negra de 2~h por evaluación y 8 variables continuas: \emph{optimización bayesiana}.
+  \item (d) Secuenciación con precedencias y recursos disyuntivos: \emph{programación por restricciones} (CP-SAT).
+  \item (e) Objetivo cuadrático convexo y restricciones lineales: \emph{optimización convexa} (programa cuadrático).
+  \item (f) Decisiones secuenciales con realimentación cada minuto: \emph{control predictivo o aprendizaje por refuerzo}.
+\end{enumerate}
+\resultado \textbf{(a) PL; (b) PLEM; (c) optimización bayesiana; (d) CP; (e) convexa; (f) control o RL.}
+\comprobacion en ningún caso se usa una metaheurística genérica donde existe un método que explota la estructura.
+\end{solucion}
+
+\begin{solucion}{eje:1-abs}
+\datos $\min\abs{x_1}+2\abs{x_2}$ s.a. $x_1+x_2\ge 4$, $x_1-x_2\le 2$.
+\planteamiento \cref{prop:reform} (iii): $x_j=x_j^{+}-x_j^{-}$; en el óptimo $\abs{x_j}=x_j^{+}+x_j^{-}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item PL: $\min x_1^{+}+x_1^{-}+2x_2^{+}+2x_2^{-}$ s.a. $x_1^{+}-x_1^{-}+x_2^{+}-x_2^{-}\ge 4$, $x_1^{+}-x_1^{-}-x_2^{+}+x_2^{-}\le 2$, todas $\ge 0$.
+  \item Es mejor hacer grande $x_1$ (coste 1) que $x_2$ (coste 2), pero $x_1\le 2+x_2$.
+  \item Con $x_1,x_2\ge 0$, el objetivo es $x_1+2x_2$; sobre la recta $x_1=2+x_2$, la restricción $x_1+x_2\ge 4$ da $x_2\ge 1$; el mínimo es $x_2=1$, $x_1=3$, con valor $3+2=5$.
+  \item Con $x_2<0$ haría falta $x_1\ge 4-x_2>4$ y $x_1\le 2+x_2<2$: imposible. Con $x_1<0$ haría falta $x_2>4$ y coste $>8$.
+\end{enumerate}
+\resultado $\bm{x^{*}=(3,1)}$, valor óptimo \textbf{5}.
+\comprobacion $3+1=4\ge 4$ y $3-1=2\le 2$ (ambas activas); HiGHS da el mismo resultado sobre el PL del paso~1.
+\end{solucion}
+
+\begin{solucion}{eje:1-correos}
+\datos demandas $r=(17,13,15,19,14,16,11)$ de lunes a domingo; cinco días seguidos de trabajo.
+\planteamiento variables $x_j$, empleados que empiezan el día $j$; cada día lo cubren los que empezaron ese día o en los cuatro anteriores.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\min\sum_{j=1}^{7}x_j$ s.a. $x_1+x_4+x_5+x_6+x_7\ge 17$ (lunes), $x_1+x_2+x_5+x_6+x_7\ge 13$, \dots, $x_3+x_4+x_5+x_6+x_7\ge 11$ (domingo), $x_j\ge 0$ enteros. Con la variable «empleados presentes el día $j$» no se puede expresar la regla de cinco días seguidos; con la variable de inicio la regla queda incorporada en los coeficientes.
+  \item (b) Cada $x_j$ aparece en exactamente cinco restricciones. Sumándolas: $5\sum_jx_j\ge\sum_jr_j=105$, luego $\sum_jx_j\ge 21$.
+  \item (c) La relajación ($22{,}33$) es una cota mejor que 21 porque usa las restricciones por separado; como el número de empleados es entero, el óptimo no puede bajar de $\lceil 22{,}33\rceil=23$; al encontrar una solución entera con 23, la cota redondeada demuestra que es óptima.
+\end{enumerate}
+\resultado \textbf{cota por suma: 21; relajación: $22{,}33$; óptimo entero: 23}, certificado por $\lceil 22{,}33\rceil=23$.
+\comprobacion la solución entera $x=(7,5,1,8,0,2,0)$ suma 23 y cubre el lunes con $7+8+0+2+0=17$ y el jueves con $7+5+1+8+0=21\ge 19$.
+\end{solucion}
+
+\begin{solucion}{eje:1-piensos}
+\datos vértices $(0,0)$, $(150,0)$, $(100,100)$, $(40,160)$, $(0,160)$; nuevo margen $40E+45P$.
+\planteamiento evaluar el objetivo en los vértices (\cref{teo:vertice}) y estudiar el cono de las restricciones activas.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Valores: $0$; $6000$; $4000+4500=8500$; $1600+7200=8800$; $7200$.
+  \item El óptimo es $(40,160)$ con 8800~€. KPIs: molino $0{,}5\cdot 200=100$~h (100\,\%); granuladora $24+48=72$~h (80\,\%); demanda de puesta cubierta al 100\,\%.
+  \item $(100,100)$ es óptimo si el gradiente $(40,m_P)$ es combinación no negativa de las normales activas $(1,1)$ y $(2,1)$: $(40,m_P)=\alpha(1,1)+\beta(2,1)$, es decir, $\beta=40-m_P\ge 0$ y $\alpha=2m_P-40\ge 0$.
+\end{enumerate}
+\resultado \textbf{con $m_P=45$: $(E,P)=(40,160)$ y 8800~€/semana; $(100,100)$ es óptimo para $20\le m_P\le 40$~€/t.}
+\comprobacion con $m_P=40$ empatan $(100,100)$ y $(40,160)$: $4000+4000=8000=1600+6400$; con $m_P=20$ empatan $(100,100)$ y $(150,0)$: $6000$ en ambos.
+\end{solucion}
+
+\begin{solucion}{eje:1-minimax}
+\datos $f_1=x-1$, $f_2=-2x+8$, $f_3=0{,}5x+1$, $x\in[0,10]$.
+\planteamiento \cref{prop:minimax}: $\min t$ s.a. $f_i(x)\le t$, $0\le x\le 10$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item PL: $\min t$ s.a. $x-1\le t$, $-2x+8\le t$, $0{,}5x+1\le t$, $0\le x\le 10$.
+  \item La envolvente superior decrece mientras domina $f_2$ y crece después. $f_2=f_3$ en $-2x+8=0{,}5x+1$, es decir, $x=2{,}8$, con valor $2{,}4$.
+  \item En $x=2{,}8$, $f_1=1{,}8<2{,}4$: la envolvente es $\max(f_2,f_3)$ en ese punto.
+\end{enumerate}
+\resultado $\bm{x^{*}=2{,}8}$, pérdida máxima \textbf{2,4~kW}.
+\comprobacion en $x=2{,}7$, $\max=f_2=2{,}6$; en $x=2{,}9$, $\max=f_3=2{,}45$; ambos mayores que $2{,}4$.
+\end{solucion}
+
+\begin{solucion}{eje:1-desviaciones}
+\datos $\sum_ja_{ij}x_j+d_i-e_i=r_i$, $d_i,e_i\ge 0$; objetivo $\sum_i(\alpha d_i+\beta e_i)$ con $\alpha,\beta>0$.
+\planteamiento por reducción al absurdo: si $d_i,e_i>0$, se construye una solución mejor.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sea una solución óptima con $d_i>0$ y $e_i>0$. Sea $\delta=\min(d_i,e_i)>0$.
+  \item Se define $d_i'=d_i-\delta\ge 0$, $e_i'=e_i-\delta\ge 0$; la restricción se mantiene porque $d_i'-e_i'=d_i-e_i$.
+  \item El objetivo baja en $(\alpha+\beta)\delta>0$, en contra de la optimalidad. Luego $d_ie_i=0$.
+  \item Con $5d_i^{2}+e_i^{2}$ el argumento es el mismo: $5(d_i-\delta)^{2}+(e_i-\delta)^{2}<5d_i^{2}+e_i^{2}$ porque ambos términos decrecen al reducir sus bases positivas.
+\end{enumerate}
+\resultado \textbf{en el óptimo $d_ie_i=0$ para todo $i$, con costes lineales positivos y también con el coste cuadrático.}
+\comprobacion es el argumento de la clase~2 de 15.053: con $d_1=1$ y $e_1=4$, restar 1 a ambos da $d_1=0$, $e_1=3$, mejor.
+\end{solucion}
+
+\begin{solucion}{eje:1-diseno}
+\datos invernadero del \cref{eje:1-elementos}; modelo térmico lineal en los controles.
+\planteamiento recorrer los bloques de la \cref{fig:anatomia}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Datos}: sensores interiores (temperatura, humedad, CO$_2$, radiación), estación exterior, consumo de energía, estado de actuadores y previsión meteorológica, con marca de tiempo y control de calidad.
+  \item \emph{Predicción}: modelo de regresión o red pequeña para radiación y temperatura exterior de las próximas 24~h a partir de la previsión oficial (corrige su sesgo local); modelo identificado del invernadero (lineal en los controles) validado en semanas no usadas para ajustarlo.
+  \item \emph{Optimización}: control predictivo con horizonte de 24~h repetido cada hora; con modelo lineal y coste lineal o cuadrático convexo es un PL o un problema cuadrático, resoluble en milisegundos con HiGHS u OSQP.
+  \item \emph{Salvaguardas}: un controlador de respaldo por reglas que abre ventanas si el CO$_2$ supera 1000~ppm o la temperatura 30~ºC, independiente del optimizador; límites de variación de los actuadores.
+  \item \emph{Monitorización}: error de la predicción de temperatura interior, horas fuera de rango, energía por kilogramo, frecuencia de actuación de las salvaguardas y tiempo de cálculo; si el error crece de forma sostenida, se reidentifica el modelo.
+\end{enumerate}
+\resultado \textbf{control predictivo lineal o cuadrático alimentado por predicciones corregidas, con salvaguardas por reglas independientes y monitorización del error de predicción y de los KPIs.}
+\comprobacion el diseño respeta la separación entre restricciones duras (salvaguardas) y objetivo, y cada bloque tiene un indicador que permite detectar su fallo.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 2}
+
+\begin{solucion}{eje:2-holgura}
+\datos óptimo $(100,100)$; holguras: molino 0, granuladora 0, demanda $160-100=60$.
+\planteamiento \cref{cor:holgura}.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $y_3(160-100)=0$ con holgura $60>0$ obliga a $y_3^{*}=0$: un recurso que sobra no tiene valor marginal.
+  \item $E=100>0$ obliga a que la restricción dual de $E$ sea activa: $0{,}5y_1+0{,}6y_2+0\cdot y_3=40$; igual con $P=100>0$: $0{,}5y_1+0{,}3y_2+y_3=30$.
+  \item Precio máximo por una hora de granuladora: su precio sombra, $33{,}33$~€, válido mientras la base no cambie.
+\end{enumerate}
+\resultado \textbf{$y_3^{*}=0$ porque la demanda no está saturada; las duales son igualdades porque se fabrican ambos productos; se pagarían como mucho 33,33~€/h.}
+\comprobacion el cuaderno resuelve con 91~h de granuladora y obtiene $7033{,}33$~€, exactamente $33{,}33$~€ más.
+\end{solucion}
+
+\begin{solucion}{eje:2-dual}
+\datos primal $\max 40E+30P$ s.a. $0{,}5E+0{,}5P\le 100$, $0{,}6E+0{,}3P\le 90$, $P\le 160$, $E,P\ge 0$.
+\planteamiento \cref{def:dual}: una variable por restricción, una restricción por variable.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Dual: $\min 100y_1+90y_2+160y_3$ s.a. $0{,}5y_1+0{,}6y_2\ge 40$, $0{,}5y_1+0{,}3y_2+y_3\ge 30$, $y\ge 0$.
+  \item Con $y^{*}=(40;\ 100/3;\ 0)$: $20+20=40\ge 40$ y $20+10+0=30\ge 30$. Factible.
+  \item $b\T y^{*}=4000+3000+0=7000$.
+\end{enumerate}
+\resultado \textbf{$y^{*}$ es dual factible y $b\T y^{*}=c\T x^{*}=7000$}: ambos son óptimos (\cref{teo:dual-debil}).
+\comprobacion la holgura complementaria se cumple: las dos restricciones duales son activas y $E,P>0$; $y_3=0$ y la demanda tiene holgura.
+\end{solucion}
+
+\begin{solucion}{eje:2-outdoors}
+\datos precios sombra $1{,}1667$ (curvado), 0 (soldadura), $0{,}80$ (tubo); aumento permitido del tubo: 555,56~kg; margen óptimo $2766{,}67$~\$.
+\planteamiento \cref{prop:sombra}: dentro del rango, el valor óptimo cambia en precio sombra por unidad; un producto nuevo compensa si su margen supera el valor de los recursos que consume.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) 550~kg está dentro del rango (550 < 555,56). Aumento del margen bruto: $550\cdot 0{,}80=440$~\$. Coste: $550\cdot 0{,}70=385$~\$. Ganancia neta: $55$~\$. Conviene.
+  \item (b) Valor de los recursos del toldo: $1{,}8\cdot 1{,}1667+0{,}5\cdot 0+1{,}3\cdot 0{,}80=2{,}10+1{,}04=3{,}14$~\$.
+\end{enumerate}
+\resultado \textbf{(a) sí: el margen sube 440~\$ y la ganancia neta es de 55~\$; (b) el toldo debe aportar más de 3,14~\$ por unidad.}
+\comprobacion resolviendo con 2550~kg de tubo se obtiene $3206{,}67=2766{,}67+440$~\$ (480 sillas y 353,33 mesas).
+\end{solucion}
+
+\begin{solucion}{eje:2-bb}
+\datos $\max x_1+5x_2$ s.a. $-4x_1+3x_2\le 6$, $3x_1+2x_2\le 18$, $x\in\Z^{2}_{\ge 0}$.
+\planteamiento ramificación y acotación en profundidad, ramificando en una variable fraccionaria.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Raíz: el óptimo de la relajación está en la intersección de las dos rectas: de $-4x_1+3x_2=6$ y $3x_1+2x_2=18$ sale $x=(42/17,\ 90/17)=(2{,}47;\ 5{,}29)$, $z=28{,}94$. Se ramifica en $x_2$.
+  \item $x_2\ge 6$: $-4x_1+18\le 6$ exige $x_1\ge 3$ y $3x_1+12\le 18$ exige $x_1\le 2$: infactible.
+  \item $x_2\le 5$: óptimo en $x_2=5$, $x_1=8/3$ (sobre $3x_1+2x_2=18$), $z=27{,}67$. Se ramifica en $x_1$.
+  \item $x_2\le 5$, $x_1\ge 3$: $x=(3;\ 4{,}5)$, $z=25{,}5$. Se ramifica en $x_2$: con $x_2\ge 5$ es infactible; con $x_2\le 4$, $x=(10/3;\ 4)$, $z=23{,}33$; se ramifica en $x_1$: $x_1\ge 4$ da $(4,3)$, $z=19$, primer incumbente; $x_1\le 3$ da $(3,4)$, $z=23$, nuevo incumbente.
+  \item $x_2\le 5$, $x_1\le 2$: $x=(2;\ 4{,}67)$, $z=25{,}33$. Con $x_2\ge 5$ es infactible; con $x_2\le 4$, $(2,4)$, $z=22<23$: podado por cota.
+\end{enumerate}
+\resultado \textbf{óptimo $x^{*}=(3,4)$, $z^{*}=23$}, frente a $28{,}94$ de la relajación (11 nodos en profundidad).
+\comprobacion $(3,4)$ cumple $-12+12=0\le 6$ y $9+8=17\le 18$; la enumeración de los enteros factibles confirma que ninguno supera 23.
+\end{solucion}
+
+\begin{solucion}{eje:2-mochila}
+\datos valores $v=(33,45,25,17,39,23)$, pesos $w=(10,14,8,6,12,8)$, presupuesto 28.
+\planteamiento la relajación de una mochila se resuelve llenando por orden de $v_j/w_j$ (Dantzig).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\max v\T x$ s.a. $w\T x\le 28$, $x\in\{0,1\}^{6}$.
+  \item (b) Ratios: $3{,}30$; $3{,}21$; $3{,}13$; $2{,}83$; $3{,}25$; $2{,}88$. Orden: 1, 5, 2, 3, 6, 4. Se toman $x_1=1$ (capital 10) y $x_5=1$ (22); quedan 6 para la 2, que pide 14: $x_2=6/14=0{,}4286$. Valor: $33+39+45\cdot 0{,}4286=91{,}29$.
+  \item (c) Como los valores son enteros, la cota útil es $\lfloor 91{,}29\rfloor=91$; gap $=(91{,}29-89)/89=2{,}6\,\%$, o $(91-89)/89=2{,}2\,\%$ con la cota entera.
+  \item (d) Rama $x_2=1$: quedan 14 de capital; 1 entra entero (4 de capital restante), 5 entra en $4/12$: $45+33+13=91$. Rama $x_2=0$: 1 y 5 (22), quedan 6 para la 3: $x_3=0{,}75$, $33+39+18{,}75=90{,}75$.
+  \item Ninguna rama puede podarse: $\lfloor 91\rfloor=91>89$ y $\lfloor 90{,}75\rfloor=90>89$.
+\end{enumerate}
+\resultado \textbf{relajación $91{,}29$ (cota 91); hijos $91$ y $90{,}75$; ninguno se poda.} El óptimo, 89, requiere 17 nodos en profundidad.
+\comprobacion $\{1,4,5\}$ usa $10+6+12=28$ y vale $33+17+39=89$; la enumeración de las 64 carteras no encuentra ninguna mejor.
+\end{solucion}
+
+\begin{solucion}{eje:2-logica}
+\datos $x_1,x_2\in\{0,1\}$.
+\planteamiento cotas superiores e inferiores que fuercen el valor lógico.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Conjunción: $w\le x_1$, $w\le x_2$, $w\ge x_1+x_2-1$, $w\ge 0$.
+  \item Disyunción: $y\ge x_1$, $y\ge x_2$, $y\le x_1+x_2$, $y\le 1$.
+  \item O exclusivo con $a=x_1\wedge x_2$ (restricciones del paso~1): $z=x_1+x_2-2a$.
+  \item Comprobación de $(x_1,x_2)$: $(0,0)$: $w=0$, $y=0$, $z=0$; $(1,0)$ y $(0,1)$: $w=0$, $y=1$, $z=1$; $(1,1)$: $w\ge 1$ luego $w=1$, $y=1$, $a=1$, $z=0$.
+\end{enumerate}
+\resultado \textbf{$w$: $w\le x_1$, $w\le x_2$, $w\ge x_1+x_2-1$; $y$: $y\ge x_1$, $y\ge x_2$, $y\le x_1+x_2$; $z=x_1+x_2-2a$ con $a=x_1\wedge x_2$.}
+\comprobacion las cuatro combinaciones reproducen las tablas de verdad, y en cada caso las restricciones fijan un único valor entero.
+\end{solucion}
+
+\begin{solucion}{eje:2-bigm}
+\datos $C=280$; demanda pendiente de Lager desde la semana~3: $160+190=350$; de IPA en la semana~4: 100.
+\planteamiento $M_{pt}=\min(C,\sum_{s\ge t}d_{ps})$ (\cref{prop:bigm}); en la relajación, el menor $y$ compatible con $x\le My$ es $x/M$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Lager, semana~3: $\min(280,350)=280$. IPA, semana~4: $\min(280,100)=100$.
+  \item (b) Con $x=170$ y $M=280$: $y\ge 0{,}607$, y se «paga» $0{,}607\cdot 500=303{,}6$~€ de preparación. Con $M=10^{4}$: $y\ge 0{,}017$ y se pagan $8{,}50$~€.
+  \item (c) $y_{\mathrm{IPA},t}+y_{\mathrm{Tost},t}\le 1$ para cada $t$.
+\end{enumerate}
+\resultado \textbf{(a) 280 y 100~hL; (b) $y\ge 0{,}607$ (303,6~€) frente a $y\ge 0{,}017$ (8,5~€); (c) $y_{\mathrm{IPA},t}+y_{\mathrm{Tost},t}\le 1$.}
+\comprobacion con la $M$ grande la relajación casi ignora las preparaciones y su cota empeora, como predice la \cref{prop:bigm}~(ii).
+\end{solucion}
+
+\begin{solucion}{eje:2-concava}
+\datos PL $\max\{c\T x: Ax\le b,\ x\ge 0\}$ con poliedro dual $D=\{y\ge 0: A\T y\ge c\}$ no vacío.
+\planteamiento por dualidad fuerte, $z^{*}(b)=\min_{y\in D}b\T y$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Si el primal es factible para $b$ y el dual es factible, el primal está acotado (\cref{teo:dual-debil}) y tiene óptimo; por la \cref{teo:dual-fuerte}, $z^{*}(b)=\min_{y\in D}b\T y$.
+  \item Si $D$ tiene vértices $y^{1},\dots,y^{K}$ y el mínimo se alcanza en un vértice (\cref{teo:vertice} aplicado al dual), $z^{*}(b)=\min_kb\T y^{k}$.
+  \item Un mínimo de funciones lineales de $b$ es cóncavo y lineal a trozos.
+  \item Para un recurso $i$, la función $\beta\mapsto z^{*}(b+\beta e_i)$ es cóncava en $\beta$, así que su pendiente (el precio sombra $y_i^{*}$) es no creciente en $\beta$.
+\end{enumerate}
+\resultado \textbf{$z^{*}(b)=\min_ky^{k\mathsf{T}}b$ es cóncava y lineal a trozos; el valor marginal de cada recurso no crece al aumentar su disponibilidad.}
+\comprobacion en la cervecera, la capacidad de la semana~4 vale 4~€/hL hasta 290~hL y 0 después: pendiente no creciente.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 3}
+
+\begin{solucion}{eje:3-contar}
+\datos $n=10$ y $n=20$; $10^{9}$ circuitos por segundo.
+\planteamiento \cref{prop:circuitos}: $(n-1)!/2$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $n=10$: $9!/2=362\,880/2=181\,440$ circuitos; tiempo $1{,}8\cdot 10^{-4}$~s.
+  \item $n=20$: $19!/2=1{,}216\cdot 10^{17}/2=6{,}08\cdot 10^{16}$; tiempo $6{,}08\cdot 10^{7}$~s, unos 1{,}9 años.
+\end{enumerate}
+\resultado \textbf{181\,440 circuitos (0,18~ms) y $6{,}08\cdot 10^{16}$ circuitos (casi 2 años).}
+\comprobacion la tabla de 15.053, con $10^{21}$ pasos por segundo, muestra el mismo crecimiento: $n!$ pasa de milisegundos con 20 ciudades a miles de años con 30.
+\end{solucion}
+
+\begin{solucion}{eje:3-ruta}
+\datos $t_{01}=16$, $t_{12}=10$, $t_{24}=22$, $t_{43}=14$, $t_{30}=14$; $s=10$; ventanas del \cref{ej:vrptw}.
+\planteamiento llegada $=\max(a_j,\ \text{salida}+t_{ij})$, con salida $=$ llegada $+\,s$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Bar 1: llega a los 16, espera hasta 60 (44~min), sale a los 70.
+  \item Bar 2: $70+10=80\le 90$; sale a los 90.
+  \item Bar 4: $90+22=112\in[30,120]$; sale a los 122.
+  \item Bar 3: $122+14=136\in[120,180]$; sale a los 146.
+  \item Almacén: $146+14=160\le 300$. Carga: $4+6+3+5=18\le 22$. Viaje: $16+10+22+14+14=76$~min.
+  \item Ruta $0\to 3\to 1$: llega al bar~3 a los 14, espera hasta 120, sale a los 130 y llega al bar~1 a los $130+22=152>120$: infactible.
+\end{enumerate}
+\resultado \textbf{la primera ruta es factible (llegadas 60, 80, 112, 136 y regreso a los 160; 76~min de viaje); la segunda no.}
+\comprobacion coincide con \texttt{evalua\_ruta} del cuaderno.
+\end{solucion}
+
+\begin{solucion}{eje:3-2opt}
+\datos $A=(0,0)$, $B=(4,0)$, $C=(4,3)$, $D=(0,3)$.
+\planteamiento \cref{def:2opt}; las aristas $(A,C)$ y $(B,D)$ son las diagonales y se cruzan.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $A\to C\to B\to D\to A$: $5+3+5+3=16$.
+  \item El 2-opt elimina $(A,C)$ y $(B,D)$, añade $(A,B)$ y $(C,D)$ e invierte el tramo: $A\to B\to C\to D\to A$, longitud $4+3+4+3=14$.
+  \item (b) Si $(a,b)$ y $(c,d)$ se cortan en $P$, por la desigualdad triangular $d(a,c)\le d(a,P)+d(P,c)$ y $d(b,d)\le d(b,P)+d(P,d)$. Sumando, $d(a,c)+d(b,d)\le d(a,b)+d(c,d)$, con desigualdad estricta salvo si los puntos están alineados.
+\end{enumerate}
+\resultado \textbf{de 16 a 14 (ahorro de 2); deshacer un cruce nunca alarga el circuito.}
+\comprobacion $\Delta=d(A,B)+d(C,D)-d(A,C)-d(B,D)=4+4-5-5=-2<0$.
+\end{solucion}
+
+\begin{solucion}{eje:3-cuñas}
+\datos duraciones 12, 18, 22, 35, 40, 59~s; bloques de 60~s.
+\planteamiento empaquetado en contenedores: $y_k=1$ si se usa el bloque $k$; $x_{ik}=1$ si el anuncio $i$ va en el bloque $k$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item PLEM: $\min\sum_ky_k$ s.a. $\sum_kx_{ik}=1$ para cada anuncio; $\sum_i\ell_ix_{ik}\le 60y_k$ para cada bloque; binarias, con $k=1,\dots,6$.
+  \item Cota: $\sum\ell_i=186$; $\lceil 186/60\rceil=4$.
+  \item Solución con 4 bloques: $\{59\}$, $\{40,18\}$, $\{35,22\}$, $\{12\}$ (o $\{40,12\}$, $\{35,22\}$, $\{59\}$, $\{18\}$).
+\end{enumerate}
+\resultado \textbf{4 bloques, óptimo por coincidir con la cota.}
+\comprobacion $40+18=58$, $35+22=57$; ningún par cabe con el anuncio de 59~s.
+\end{solucion}
+
+\begin{solucion}{eje:3-johnson}
+\datos $J1=(3,6)$, $J2=(5,2)$, $J3=(1,2)$, $J4=(6,6)$, $J5=(7,5)$.
+\planteamiento regla de Johnson y recurrencia $C_1\leftarrow C_1+p_1$, $C_2\leftarrow\max(C_2,C_1)+p_2$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $p_1\le p_2$: J1, J3, J4; por $p_1$ creciente: J3, J1, J4. $p_1>p_2$: J2, J5; por $p_2$ decreciente: J5, J2. Secuencia: J3, J1, J4, J5, J2.
+  \item J3: $C_1=1$, $C_2=3$. J1: $C_1=4$, $C_2=\max(3,4)+6=10$. J4: $C_1=10$, $C_2=16$. J5: $C_1=17$, $C_2=\max(16,17)+5=22$. J2: $C_1=22$, $C_2=\max(22,22)+2=24$.
+  \item Cota de la \cref{prop:cota-ms}: cargas $22$ y $21$, piezas de a lo sumo 13~h: $C_{\max}\ge 22$.
+\end{enumerate}
+\resultado \textbf{secuencia J3, J1, J4, J5, J2 con makespan 24~h}; cota 22~h.
+\comprobacion una cota más fina es la carga de la sierra más el menor $p_2$ de la última pieza, $22+2=24$, de modo que 24 es óptimo; la enumeración de las 120 secuencias lo confirma.
+\end{solucion}
+
+\begin{solucion}{eje:3-bigm}
+\datos $b_1=120$, $b_8=210$, $b_3=180$; $a_2=0$, $a_5=150$, $a_1=60$; $t_{12}=10$, $t_{85}=24$, $t_{31}=22$; $s=10$.
+\planteamiento $M_{ij}=\max(0,\ b_i+s+t_{ij}-a_j)$ (\cref{prop:bigm-tw}); un arco es imposible si $a_i+s+t_{ij}>b_j$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $M_{12}=120+10+10-0=140$.
+  \item $M_{85}=210+10+24-150=94$.
+  \item $M_{31}=180+10+22-60=152$.
+  \item El bar~3 no puede servirse antes de los 120~min; la llegada más temprana al bar~1 por ese arco es $120+10+22=152>120=b_1$. Ninguna ruta puede usar $3\to 1$.
+  \item Preproceso: eliminar todo arco con $a_i+s+t_{ij}>b_j$; en este caso hay 19 de los 56 arcos entre clientes.
+\end{enumerate}
+\resultado \textbf{$M_{12}=140$, $M_{85}=94$, $M_{31}=152$; el arco $3\to 1$ es infactible y se elimina, como otros 18.}
+\comprobacion la ruta óptima no usa ningún arco eliminado: sus arcos entre clientes son $1\to 2$, $2\to 4$, $4\to 3$, $6\to 7$, $7\to 8$ y $8\to 5$.
+\end{solucion}
+
+\begin{solucion}{eje:3-cota}
+\datos caso del \cref{ej:jobshop}; cota 11~h.
+\planteamiento (a) como en la \cref{prop:cota-ms}; (b) construcción; (c) análisis de casos suponiendo $C_{\max}=11$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Véase la demostración de la \cref{prop:cota-ms}.
+  \item (b) Se alcanza: J1 $=(M_1,2),(M_2,1)$, J2 $=(M_2,2),(M_1,1)$: se programa J1 en $M_1$ [0,2] y J2 en $M_2$ [0,2], después J1 en $M_2$ [2,3] y J2 en $M_1$ [2,3]; $C_{\max}=3=$ cota. No se alcanza: J1 $=(M_1,2),(M_2,2)$ y J2 $=(M_1,2),(M_2,2)$: la cota es 4, pero $M_2$ no puede empezar antes de las 2 y debe trabajar 4~h, así que $C_{\max}=6$.
+  \item (c) Con $C_{\max}=11$ la fresadora (11~h de carga) trabaja sin pausa de 0 a 11. En $t=0$ solo puede empezar P2 (las demás operaciones de fresadora van precedidas de otras): P2 ocupa [0,4].
+  \item En $t=4$ debe empezar otra: P3 y P4 necesitan antes $3+3=6$ y $2+3=5$~h, luego solo P1, que exige su torno (3~h) terminado: torno con P1 en [0,3] o [1,4]; fresadora con P1 en [4,6].
+  \item En $t=6$: P4 necesitaría torno y taladro terminados, pero el torno está ocupado por P1 hasta las 3 como pronto, y $3+2+3=8>6$. Luego P3, que necesita su taladro [0,3] y su torno de 3~h terminado a las 6: torno con P3 en [3,6], lo que obliga a P1 en [0,3]. Fresadora con P3 en [6,8].
+  \item En $t=8$, P4: su torno solo puede ir en [6,8] (el torno está ocupado hasta las 6) y su taladro en [8,11], de modo que su fresado empezaría a las 11. Contradicción.
+\end{enumerate}
+\resultado \textbf{la cota de 11~h es inalcanzable y $C_{\max}^{*}\ge 12$}; el programa del \cref{ej:jobshop} alcanza 12, luego es óptimo.
+\comprobacion CP-SAT y la enumeración de los 13\,824 órdenes del cuaderno dan 12~h.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 4}
+
+\begin{solucion}{eje:4-dcp}
+\datos cinco problemas.
+\planteamiento \cref{def:convexo}: objetivo convexo, desigualdades $g\le 0$ con $g$ convexa, igualdades afines.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Convexo: cuadrática definida positiva y restricción lineal.
+  \item (b) Convexo: $-\log$ es convexa y la igualdad es afín.
+  \item (c) No convexo: la igualdad $x_1^{2}+x_2^{2}=1$ no es afín (el conjunto es una circunferencia).
+  \item (d) Convexo aunque no lo parezca: $\max$ es convexa, y $\{x\ge 0: x_1x_2\ge 1\}$ es convexo (es $\{x>0: \log x_1+\log x_2\ge 0\}$, superconjunto de nivel de una función cóncava). Para DCP hay que escribirla como \texttt{geo\_mean(x) >= 1}.
+  \item (e) Convexo: norma de una función afín y restricción de norma.
+\end{enumerate}
+\resultado \textbf{convexos (a), (b), (d) y (e); no convexo (c).}
+\comprobacion (c) tiene dos mínimos en $(0,\pm 1)$, ambos globales, pero el conjunto no es convexo: el punto medio $(0,0)$ no es factible.
+\end{solucion}
+
+\begin{solucion}{eje:4-kkt}
+\datos $\min x_1^{2}+x_2^{2}$ s.a. $5-x_1-2x_2\le 0$.
+\planteamiento \cref{teo:kkt} con $g(x)=5-x_1-2x_2$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Estacionariedad: $(2x_1,2x_2)+\lambda(-1,-2)=0$, de donde $x=\tfrac{\lambda}{2}(1,2)$.
+  \item Si $\lambda=0$, $x=0$, infactible. Luego la restricción es activa: $\tfrac{\lambda}{2}(1+4)=5$, $\lambda=2$, $x=(1,2)$, $p^{*}=5$.
+  \item Sensibilidad: con lado derecho $u$, $x=\tfrac{u}{5}(1,2)$ y $p^{*}(u)=u^{2}/5$; $\mathrm{d}p^{*}/\mathrm{d}u=2u/5=2=\lambda$ en $u=5$.
+  \item Estimación: $\Delta p^{*}\approx 2\cdot 0{,}1=0{,}2$. Exacto: $5{,}1^{2}/5-5=5{,}202-5=0{,}202$.
+\end{enumerate}
+\resultado \textbf{$x^{*}=(1,2)$, $\lambda^{*}=2$; el valor óptimo sube unas 0,2 unidades (exactamente 0,202).}
+\comprobacion $x^{*}$ es la proyección del origen sobre la recta $x_1+2x_2=5$: distancia al cuadrado $25/5=5$.
+\end{solucion}
+
+\begin{solucion}{eje:4-despacho2}
+\datos $C_1=20P_1+0{,}01P_1^{2}$, $C_2=18P_2+0{,}02P_2^{2}$, $D=500$~MW.
+\planteamiento igual coste incremental: $20+0{,}02P_1=18+0{,}04P_2=\lambda$ y $P_1+P_2=500$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $P_1=50(\lambda-20)$, $P_2=25(\lambda-18)$.
+  \item $50\lambda-1000+25\lambda-450=500$, luego $75\lambda=1950$ y $\lambda=26$~€/MWh.
+  \item $P_1=300$~MW, $P_2=200$~MW.
+  \item Coste: $C_1=6000+900=6900$; $C_2=3600+800=4400$; total $11\,300$~€/h.
+\end{enumerate}
+\resultado $\bm{P=(300,200)}$~MW, $\bm{\lambda=26}$~€/MWh, coste \textbf{11\,300~€/h}.
+\comprobacion repartos vecinos son más caros: con $(301,199)$, $C_1=6926{,}01$ y $C_2=4374{,}02$, total $11\,300{,}03$.
+\end{solucion}
+
+\begin{solucion}{eje:4-agua}
+\datos $\max\sum_i\log(\alpha_i+x_i)$, $\alpha=(0{,}5;\ 1;\ 1{,}5)$, $\sum x_i=1$, $x\ge 0$.
+\planteamiento KKT del problema equivalente $\min-\sum\log(\alpha_i+x_i)$ con multiplicadores $\nu$ (igualdad) y $\lambda_i\ge 0$ ($-x_i\le 0$).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Estacionariedad: $-1/(\alpha_i+x_i)-\lambda_i+\nu=0$; holgura: $\lambda_ix_i=0$.
+  \item Si $x_i>0$: $\lambda_i=0$ y $x_i=1/\nu-\alpha_i$. Si $x_i=0$: $\lambda_i=\nu-1/\alpha_i\ge 0$, es decir, $1/\nu\le\alpha_i$. En ambos casos $x_i=\max(0,\ 1/\nu-\alpha_i)$.
+  \item Probando los tres canales activos: $3/\nu-3=1$, $1/\nu=4/3$, $x_3=4/3-1{,}5<0$: no vale.
+  \item Con los canales 1 y 2: $2/\nu-1{,}5=1$, $1/\nu=1{,}25$; $x=(0{,}75;\ 0{,}25;\ 0)$, y $1{,}25\le 1{,}5$ confirma $x_3=0$.
+\end{enumerate}
+\resultado $\bm{\nu=0{,}8}$, $\bm{x^{*}=(0{,}75;\ 0{,}25;\ 0)}$.
+\comprobacion $0{,}75+0{,}25=1$; el «nivel del agua» $\alpha_i+x_i$ es $1{,}25$ en los canales activos y el canal~3 ($\alpha_3=1{,}5$) queda por encima.
+\end{solucion}
+
+\begin{solucion}{eje:4-sensib}
+\datos $\lambda=28{,}4$; $P_2=350$ en su máximo; incrementales $18+0{,}04P_1$, $20+0{,}02P_2$, $26+0{,}01P_3$.
+\planteamiento (a) \cref{prop:sensibilidad} y nuevo cálculo; (b) mientras se mantenga la estructura de límites activos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Estimación: $20\cdot 28{,}4=568$~€/h.
+  \item Exacto con $D=830$: $25(\lambda-18)+100(\lambda-26)=480$, $\lambda=28{,}24$, $P=(256,350,224)$, coste $21\,418{,}6$~€/h; ahorro $21\,985-21\,418{,}6=566{,}4$~€/h.
+  \item (b) Al subir $D$, el primero en tocar un límite es el grupo~3 con $26+0{,}01P_3=\lambda$ y $P_3=300$, es decir, $\lambda=29$, $P_1=275$: $D=275+350+300=925$.
+  \item Al bajar $D$, el grupo~2 deja su máximo cuando $\lambda=20+0{,}02\cdot 350=27$: $P_1=225$, $P_3=100$, $D=675$.
+\end{enumerate}
+\resultado \textbf{(a) ahorro estimado 568~€/h, exacto 566,4~€/h; (b) para $675\le D\le 925$~MW solo está activo el máximo del grupo~2.}
+\comprobacion en ambos extremos los mínimos técnicos no se tocan ($P_1\ge 225>100$, $P_3\ge 100>50$).
+\end{solucion}
+
+\begin{solucion}{eje:4-dual}
+\datos $C_i=a_i+b_iP_i+c_iP_i^{2}$ con los datos del \cref{ej:despacho}, sin límites; $D=850$.
+\planteamiento minimizar la lagrangiana en cada $P_i$ por separado.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\min_{P_i}\bigl[a_i+(b_i-\lambda)P_i+c_iP_i^{2}\bigr]$ se alcanza en $P_i=(\lambda-b_i)/(2c_i)$ y vale $a_i-(\lambda-b_i)^{2}/(4c_i)$.
+  \item $q(\lambda)=\sum_ia_i-\sum_i(\lambda-b_i)^{2}/(4c_i)+\lambda D$.
+  \item $q'(\lambda)=-\sum_i(\lambda-b_i)/(2c_i)+D=0$ es la ecuación de balance: $\lambda=28$.
+  \item $q(28)=1200-\bigl(10^{2}/0{,}08+8^{2}/0{,}04+2^{2}/0{,}02\bigr)+28\cdot 850=1200-(1250+1600+200)+23\,800=21\,950$.
+  \item Primal en $P=(250,400,200)$: $6250+10\,000+5700=21\,950$.
+\end{enumerate}
+\resultado \textbf{$q(\lambda)=1200-\sum_i(\lambda-b_i)^{2}/(4c_i)+850\lambda$, máximo en $\lambda=28$ con valor 21\,950~€/h, igual al coste primal}: dualidad fuerte.
+\comprobacion $q''(\lambda)=-\sum_i1/(2c_i)=-175<0$: el punto crítico es un máximo.
+\end{solucion}
+
+\begin{solucion}{eje:4-primer-orden}
+\datos $f$ convexa y diferenciable, $\mathcal{X}$ convexo.
+\planteamiento desigualdad de primer orden de la convexidad, $f(x)\ge f(x^{*})+\nabla f(x^{*})\T(x-x^{*})$ (módulo~4, tema~5).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Suficiencia: si $\nabla f(x^{*})\T(x-x^{*})\ge 0$ para todo $x\in\mathcal{X}$, la desigualdad de primer orden da $f(x)\ge f(x^{*})$.
+  \item Necesidad: si existiera $x\in\mathcal{X}$ con $\nabla f(x^{*})\T(x-x^{*})<0$, la derivada direccional de $f$ en $x^{*}$ hacia $x$ sería negativa y, para $t>0$ pequeño, $x^{*}+t(x-x^{*})\in\mathcal{X}$ (convexidad) tendría $f$ menor que $f(x^{*})$.
+  \item Geometría: $-\nabla f(x^{*})$ forma un ángulo de al menos $90^{\circ}$ con toda dirección factible; el gradiente negativo «apunta hacia fuera» de $\mathcal{X}$.
+  \item Si $x^{*}$ es interior, las direcciones $\pm e_k$ son factibles: $\pm\partial_kf(x^{*})\ge 0$ implica $\nabla f(x^{*})=0$.
+\end{enumerate}
+\resultado \textbf{$x^{*}$ es óptimo si y solo si $\nabla f(x^{*})\T(x-x^{*})\ge 0$ para todo $x\in\mathcal{X}$; en el interior, $\nabla f(x^{*})=0$.}
+\comprobacion en el \cref{eje:4-kkt}, $\nabla f(1,2)=(2,4)$ y para $x$ factible $(2,4)\T(x-(1,2))=2(x_1+2x_2-5)\ge 0$.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 5}
+
+\begin{solucion}{eje:5-aceptacion}
+\datos $\Delta=50$; $T=100$ y $T=25$; $T_{k+1}=0{,}99T_k$, $T_0=500$.
+\planteamiento probabilidad $e^{-\Delta/T}$; $500\cdot 0{,}99^{k}<1$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $T=100$: $e^{-0{,}5}=0{,}6065$.
+  \item $T=25$: $e^{-2}=0{,}1353$.
+  \item $k>\ln 500/(-\ln 0{,}99)=6{,}2146/0{,}010050=618{,}3$, luego $k=619$.
+\end{enumerate}
+\resultado \textbf{60,65\,\% y 13,53\,\%; hacen falta 619 iteraciones.}
+\comprobacion $500\cdot 0{,}99^{619}=0{,}993<1$ y $500\cdot 0{,}99^{618}=1{,}004>1$.
+\end{solucion}
+
+\begin{solucion}{eje:5-frentes}
+\datos $a=(1,9)$, $b=(2,7)$, $c=(3,8)$, $d=(4,4)$, $e=(5,5)$, $f=(7,2)$.
+\planteamiento \cref{def:pareto}: se buscan los no dominados, se retiran y se repite.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $c$ está dominado por $b$ ($2\le 3$, $7\le 8$); $e$ por $d$ ($4\le 5$, $4\le 5$).
+  \item $a$, $b$, $d$ y $f$ no están dominados: cada uno es el mejor en $f_1$ entre los que tienen su $f_2$ o menos.
+  \item Sin el primer frente, $c$ y $e$ no se dominan entre sí ($3<5$ pero $8>5$).
+\end{enumerate}
+\resultado \textbf{$\mathcal{F}_1=\{a,b,d,f\}$ (rango 1) y $\mathcal{F}_2=\{c,e\}$ (rango 2).}
+\comprobacion la función \texttt{ordenacion\_no\_dominada} del cuaderno devuelve los mismos rangos.
+\end{solucion}
+
+\begin{solucion}{eje:5-crowding}
+\datos $\mathcal{F}_1$: $a=(1,9)$, $b=(2,7)$, $d=(4,4)$, $f=(7,2)$; rangos $f_1^{\max}-f_1^{\min}=6$, $f_2^{\max}-f_2^{\min}=7$.
+\planteamiento distancia de aglomeración de NSGA-II.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Orden por $f_1$: $a,b,d,f$; extremos $a$ y $f$: distancia infinita.
+  \item $b$: $(4-1)/6+(9-4)/7=0{,}5+0{,}7143=1{,}214$ (en $f_2$ sus vecinos son $d$ y $a$).
+  \item $d$: $(7-2)/6+(7-2)/7=0{,}8333+0{,}7143=1{,}548$.
+\end{enumerate}
+\resultado \textbf{$a,f$: $\infty$; $b$: 1,214; $d$: 1,548. Se descartaría primero $b$}, el más rodeado.
+\comprobacion la función \texttt{crowding} del cuaderno da los mismos valores con estos cuatro puntos.
+\end{solucion}
+
+\begin{solucion}{eje:5-apoyado}
+\datos $A=(3400;\ 13{,}5)$, $B=(3700;\ 10{,}5)$, $C=(3900;\ 7{,}833)$, $D=(4400;\ 6{,}833)$.
+\planteamiento para cada $w$, comparar $B$ con $A$ y con $C$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $A$ es mejor que $B$ si $w\cdot 3400+(1-w)\,13{,}5<w\cdot 3700+(1-w)\,10{,}5$, es decir, $3(1-w)<300w$: $w>3/303=0{,}00990$.
+  \item $C$ es mejor que $B$ si $200w<2{,}667(1-w)$: $w<2{,}667/202{,}67=0{,}01316$.
+  \item Como $0{,}00990<0{,}01316$, todo $w\in[0,1]$ cumple alguna de las dos condiciones.
+\end{enumerate}
+\resultado \textbf{para todo $w$, $A$ o $C$ tiene menor suma ponderada que $B$}: $B$ no está apoyado.
+\comprobacion geométricamente, $B$ queda $0{,}4$ por encima del segmento $AC$ en $f_1=3700$.
+\end{solucion}
+
+\begin{solucion}{eje:5-ox}
+\datos $p_1=(1,2,3,4,5,6)$, $p_2=(4,6,2,1,5,3)$, tramo de las posiciones 3 a~5.
+\planteamiento copiar el tramo y rellenar con el orden de $p_2$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Tramo copiado: $(\_,\_,3,4,5,\_)$.
+  \item Genes de $p_2$ que faltan, en su orden: $6,2,1$ (se saltan 4, 5 y 3).
+  \item Relleno de izquierda a derecha: posiciones 1, 2 y 6 reciben 6, 2 y 1.
+\end{enumerate}
+\resultado \textbf{hijo $(6,2,3,4,5,1)$.}
+\comprobacion contiene cada número del 1 al 6 exactamente una vez.
+\end{solucion}
+
+\begin{solucion}{eje:5-pesos}
+\datos $\lambda=6$, $\mu=3$.
+\planteamiento $w_i'=\ln 3{,}5-\ln i$, normalizados.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $w'=(1{,}2528;\ 0{,}5596;\ 0{,}1542)$, suma $1{,}9665$.
+  \item $w=(0{,}6370;\ 0{,}2846;\ 0{,}0784)$.
+  \item $\sum w_i^{2}=0{,}4058+0{,}0810+0{,}0061=0{,}4929$; $\mu_{\mathrm{eff}}=2{,}029$.
+\end{enumerate}
+\resultado $\bm{w=(0{,}637;\ 0{,}285;\ 0{,}078)}$, $\bm{\mu_{\mathrm{eff}}\approx 2{,}03}$.
+\comprobacion $1\le\mu_{\mathrm{eff}}\le\mu=3$, con igualdad superior solo para pesos iguales.
+\end{solucion}
+
+\begin{solucion}{eje:5-eps}
+\datos problema $\min f_1$ s.a. $f_2\le\varepsilon$ con solución única $x^{*}$; frente del \cref{ej:planta}.
+\planteamiento reducción al absurdo; elegir $\varepsilon=10{,}5$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Si $x$ dominara a $x^{*}$: $f_2(x)\le f_2(x^{*})\le\varepsilon$, así que $x$ es factible, y $f_1(x)\le f_1(x^{*})$. Por la unicidad, $x=x^{*}$, que no puede dominarse a sí mismo.
+  \item (b) Con $\varepsilon=10{,}5$, las distribuciones con $f_2\le 10{,}5$ tienen $f_1\ge 3700$ (si alguna tuviera menos, dominaría a $(3700;\ 10{,}5)$ o tendría $f_2>10{,}5$), y el mínimo es $3700$.
+\end{enumerate}
+\resultado \textbf{(a) la solución única es Pareto-óptima; (b) $\varepsilon=10{,}5$ devuelve $(3700;\ 10{,}5)$.}
+\comprobacion en el cuaderno, filtrando las 720 distribuciones con $f_2\le 10{,}5$, el menor $f_1$ es 3700.
+\end{solucion}
+
+\begin{solucion}{eje:5-metropolis}
+\datos propuesta $\Prob(x\to x')$ no simétrica; aceptación de Metropolis--Hastings.
+\planteamiento comprobar $\pi_T(x)P(x,x')=\pi_T(x')P(x',x)$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Sea $r=\dfrac{\pi_T(x')\Prob(x'\to x)}{\pi_T(x)\Prob(x\to x')}$; la aceptación es $\alpha(x,x')=\min(1,r)$ y $\alpha(x',x)=\min(1,1/r)$.
+  \item Si $r\le 1$: $\pi_T(x)\Prob(x\to x')\,r=\pi_T(x')\Prob(x'\to x)=\pi_T(x')\Prob(x'\to x)\cdot 1$.
+  \item Si $r>1$: simétrico intercambiando papeles.
+  \item Sin la corrección, el flujo de $x$ a $x'$ es proporcional a $\Prob(x\to x')$, y la cadena pasa más tiempo donde la propuesta lleva más masa, aunque $f$ no sea mejor allí.
+\end{enumerate}
+\resultado \textbf{con la corrección se cumple el equilibrio detallado con $\pi_T$; sin ella, la distribución estacionaria se sesga hacia las regiones favorecidas por la propuesta.}
+\comprobacion con propuesta simétrica el cociente de propuestas vale~1 y se recupera la regla de la \cref{prop:boltzmann}.
+\end{solucion}
+
+% ---------------------------------------------------------------------
+\section{Tema 6}
+
+\begin{solucion}{eje:6-fugas}
+\datos cuatro prácticas.
+\planteamiento preguntar en cada caso qué información no estaría disponible al decidir o qué se usa dos veces.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Residuos dentro de muestra de un modelo flexible: casi nulos, cuantiles demasiado estrechos y producción insuficiente. Hay que usar residuos de un periodo de calibración.
+  \item (b) La temperatura real de la semana no se conoce el lunes: se debe usar la previsión disponible en ese momento.
+  \item (c) Maldición del optimizador: el beneficio del plan elegido está sesgado al alza; hay que reevaluarlo con datos nuevos.
+  \item (d) En series temporales, mezclar el futuro con el pasado en la validación permite que el modelo aprenda la tendencia futura; la validación debe respetar el orden temporal.
+\end{enumerate}
+\resultado \textbf{(a) calibración dentro de muestra; (b) variable no disponible al decidir; (c) sesgo de selección; (d) validación no temporal.}
+\comprobacion el protocolo del \cref{ej:fresca} (entrenamiento, calibración y prueba consecutivos) evita las cuatro.
+\end{solucion}
+
+\begin{solucion}{eje:6-newsvendor}
+\datos $D\sim\mathcal N(80,16^{2})$; $c_u=230$, $c_o=50$; después $c_o=70$.
+\planteamiento \cref{teo:fractil}: $q^{*}=\mu+\sigma\Phi^{-1}(c_u/(c_u+c_o))$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Fractil: $230/280=0{,}8214$; $\Phi^{-1}(0{,}8214)=0{,}9208$.
+  \item $q^{*}=80+16\cdot 0{,}9208=94{,}73$~hL, 14,7~hL por encima de la media.
+  \item Con saldo nulo, $c_o=70$: fractil $230/300=0{,}7667$, $\Phi^{-1}=0{,}7279$, $q^{*}=80+11{,}65=91{,}65$~hL.
+\end{enumerate}
+\resultado $\bm{q^{*}=94{,}7}$~\textbf{hL}; sin saldo, $\bm{91{,}6}$~\textbf{hL}.
+\comprobacion al encarecerse el sobrante, $q^{*}$ baja, como debe; ambos superan la media porque el fractil es mayor que $0{,}5$.
+\end{solucion}
+
+\begin{solucion}{eje:6-spo}
+\datos $c=(1{,}0;\ 1{,}2)$; $\hat c_A=(1{,}25;\ 1{,}2)$; $\hat c_B=(0{,}75;\ 1{,}2)$.
+\planteamiento error cuadrático $\norm{\hat c-c}^{2}$; decisión $\argmin_k\hat c_k$; pérdida $c_{\text{elegida}}-\min_kc_k$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Errores: A, $0{,}25^{2}=0{,}0625$; B, $(-0{,}25)^{2}=0{,}0625$.
+  \item A elige la ruta~2 ($1{,}2<1{,}25$): pérdida $1{,}2-1{,}0=0{,}2$~h.
+  \item B elige la ruta~1 ($0{,}75<1{,}2$): pérdida 0.
+\end{enumerate}
+\resultado \textbf{mismo error cuadrático (0,0625), pérdidas de decisión 0,2~h y 0~h.} Lo que importa es el orden que induce la predicción, no su exactitud media.
+\comprobacion en el caso lineal, la decisión solo depende de la predicción a través del $\argmin$ (\cref{prop:lineal}); SPO mide precisamente esa pérdida.
+\end{solucion}
+
+\begin{solucion}{eje:6-vss}
+\datos $D\in\{60,100,140\}$ con probabilidades $(0{,}3;\ 0{,}4;\ 0{,}3)$; $p=300$, $c=70$, $s=20$; $c_u=230$, $c_o=50$.
+\planteamiento beneficio $\pi(q,D)=300\min(q,D)-70q+20(q-D)^{+}$; en maximización, $\mathrm{VSS}=\mathrm{RP}-\mathrm{EEV}$ y $\mathrm{EVPI}=\mathrm{WS}-\mathrm{RP}$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) $\E D=100$, luego $\bar q=100$. Beneficios: $D=60$: $18\,000-7000+800=11\,800$; $D\ge 100$: $30\,000-7000=23\,000$. $\mathrm{EEV}=0{,}3\cdot 11\,800+0{,}7\cdot 23\,000=19\,640$~€.
+  \item (b) Fractil $0{,}8214$; $F(100)=0{,}7<0{,}8214\le F(140)=1$: $q^{*}=140$. Beneficios: $D=60$: $18\,000-9800+1600=9800$; $D=100$: $30\,000-9800+800=21\,000$; $D=140$: $42\,000-9800=32\,200$. $\mathrm{RP}=2940+8400+9660=21\,000$~€.
+  \item (c) $\mathrm{WS}=230\cdot\E D=230\cdot 100=23\,000$~€ (se produce exactamente $D$).
+  \item $\mathrm{VSS}=21\,000-19\,640=1360$~€; $\mathrm{EVPI}=23\,000-21\,000=2000$~€.
+\end{enumerate}
+\resultado \textbf{EEV $=19\,640$, RP $=21\,000$ ($q=140$), WS $=23\,000$; VSS $=1360$~€ y EVPI $=2000$~€.}
+\comprobacion se cumple $\mathrm{EEV}\le\mathrm{RP}\le\mathrm{WS}$ (\cref{prop:vss} en versión de maximización).
+\end{solucion}
+
+\begin{solucion}{eje:6-robusta}
+\datos $a_1\in[7,9]$, $a_2\in[42,46]$; $x_1+x_2=100$; precios $0{,}22$ y $0{,}40$~€/kg.
+\planteamiento para una restricción $\ge$ con $x\ge 0$, el peor caso usa las cotas inferiores (\cref{prop:robusta} con el signo cambiado).
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Contrapartida robusta: $7x_1+42x_2\ge 1800$.
+  \item (b) Robusta: $7(100-x_2)+42x_2\ge 1800$, $35x_2\ge 1100$, $x_2\ge 31{,}43$~kg. Nominal ($a=(8,44)$): $800+36x_2\ge 1800$, $x_2\ge 27{,}78$~kg.
+  \item (c) Coste nominal: $0{,}22\cdot 72{,}22+0{,}40\cdot 27{,}78=27{,}00$~€. Robusto: $0{,}22\cdot 68{,}57+0{,}40\cdot 31{,}43=27{,}66$~€.
+\end{enumerate}
+\resultado \textbf{soja mínima 31,43~kg (robusta) frente a 27,78~kg (nominal); precio de la robustez 0,66~€ por cada 100~kg (2,4\,\%).}
+\comprobacion con la mezcla robusta y los contenidos mínimos: $7\cdot 68{,}57+42\cdot 31{,}43=480+1320=1800$.
+\end{solucion}
+
+\begin{solucion}{eje:6-saa}
+\datos escenarios $64,72,88,95,110$ (ordenados), fractil $0{,}8214$.
+\planteamiento con la distribución empírica, el \cref{teo:fractil} discreto da el menor escenario con $\hat F\ge 0{,}8214$.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item $\hat F(95)=4/5=0{,}8<0{,}8214$; $\hat F(110)=1$: $q_{\mathrm{SAA}}=110$~hL.
+  \item Normal ajustada: media $85{,}8$, desviación muestral $18{,}31$; $q=85{,}8+0{,}9208\cdot 18{,}31=102{,}7$~hL.
+  \item Con cinco escenarios, el cuantil empírico salta de 95 a 110 y depende de un único valor extremo; la decisión tiene mucha varianza y su beneficio dentro de muestra está sesgado al alza.
+\end{enumerate}
+\resultado \textbf{SAA: 110~hL; normal ajustada: 102,7~hL}; con tan pocos escenarios, la decisión es inestable y hay que validarla fuera de muestra.
+\comprobacion las transparencias de EE364a recomiendan aumentar el número de muestras hasta que el valor fuera de muestra se estabilice.
+\end{solucion}
+
+\begin{solucion}{eje:6-fractil}
+\datos $D$ discreta con valores $d_1<\dots<d_K$ y probabilidades $p_k$.
+\planteamiento estudiar $G(q)=\sum_kp_k[c_u(d_k-q)^{+}+c_o(q-d_k)^{+}]$ entre dos valores consecutivos.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item Cada término es lineal en $q$ salvo en $d_k$, así que $G$ es lineal a trozos con vértices en los $d_k$.
+  \item En $(d_k,d_{k+1})$, las demandas $\le d_k$ son de sobrante y las demás de falta: pendiente $c_oF(d_k)-c_u(1-F(d_k))=(c_u+c_o)F(d_k)-c_u$.
+  \item La pendiente es no decreciente en $k$ (convexidad) y pasa de negativa a no negativa en el primer $k$ con $F(d_k)\ge c_u/(c_u+c_o)$.
+  \item El mínimo de una función convexa lineal a trozos está en el vértice donde cambia el signo de la pendiente: $q^{*}=d_k$ para ese $k$.
+\end{enumerate}
+\resultado \textbf{$q^{*}=\min\{d_k: F(d_k)\ge c_u/(c_u+c_o)\}$.}
+\comprobacion en el \cref{eje:6-vss}, $F(100)=0{,}7<0{,}8214\le F(140)$ da $q^{*}=140$, el valor obtenido allí.
+\end{solucion}
+
+\begin{solucion}{eje:6-maldicion}
+\datos $\E\hat J_i=J_i$; en (b), $\hat J_i=J+\varepsilon_i$ con $\varepsilon_i\sim\mathcal N(0,\sigma^{2})$ independientes.
+\planteamiento (a) desigualdad entre el máximo de esperanzas y la esperanza del máximo; (b) esperanza del máximo de dos normales.
+\pasos
+\begin{enumerate}[label=\arabic*.]
+  \item (a) Para cada $j$, $\max_i\hat J_i\ge\hat J_j$; tomando esperanzas, $\E[\max_i\hat J_i]\ge J_j$ para todo $j$, luego $\E[\max_i\hat J_i]\ge\max_jJ_j$.
+  \item (b) $\max(\varepsilon_1,\varepsilon_2)=\tfrac12(\varepsilon_1+\varepsilon_2)+\tfrac12\abs{\varepsilon_1-\varepsilon_2}$. Como $\varepsilon_1-\varepsilon_2\sim\mathcal N(0,2\sigma^{2})$ y $\E\abs{Z}=s\sqrt{2/\pi}$ para $Z\sim\mathcal N(0,s^{2})$: $\E\max=\tfrac12\sqrt{2}\sigma\sqrt{2/\pi}=\sigma/\sqrt{\pi}\approx 0{,}564\,\sigma$.
+  \item (c) Separar los datos: elegir la alternativa con un conjunto de escenarios o semanas y estimar su valor con otro independiente; o usar estimadores con contracción hacia la media.
+\end{enumerate}
+\resultado \textbf{(a) $\E[\max\hat J]\ge\max J$; (b) sesgo $\sigma/\sqrt{\pi}\approx 0{,}564\,\sigma$ con dos alternativas iguales; (c) validar con datos no usados para elegir.}
+\comprobacion una simulación con $10^{6}$ pares de normales estándar da una media del máximo de $0{,}565$, frente al valor teórico $1/\sqrt{\pi}=0{,}564$.
+\end{solucion}
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{optimus}
+A.~AhmadiTeshnizi, W.~Gao y M.~Udell.
+\newblock OptiMUS: Scalable optimization modeling with (MI)LP solvers and large language models.
+\newblock En \emph{Proceedings of the 41st International Conference on Machine Learning}, PMLR 235:577--596, 2024.
+\newblock \url{https://proceedings.mlr.press/v235/ahmaditeshnizi24a.html}
+
+\bibitem{btn}
+A.~Ben-Tal, L.~El Ghaoui y A.~Nemirovski.
+\newblock \emph{Robust Optimization}.
+\newblock Princeton University Press, 2009.
+
+\bibitem{bk}
+D.~Bertsimas y N.~Kallus.
+\newblock From predictive to prescriptive analytics.
+\newblock \emph{Management Science}, 66(3), 2020. Prepublicación de 2014.
+\newblock \url{https://arxiv.org/abs/1402.5481}
+
+\bibitem{bsim}
+D.~Bertsimas y M.~Sim.
+\newblock The price of robustness.
+\newblock \emph{Operations Research}, 52(1):35--53, 2004.
+
+\bibitem{bt}
+D.~Bertsimas y J.~N. Tsitsiklis.
+\newblock \emph{Introduction to Linear Optimization}.
+\newblock Athena Scientific, 1997. Texto del curso 6.251J del MIT.
+
+\bibitem{bl}
+J.~R. Birge y F.~Louveaux.
+\newblock \emph{Introduction to Stochastic Programming}, 2.ª ed.
+\newblock Springer, 2011. Cap.~1, «Introduction and Examples».
+
+\bibitem{pymoo}
+J.~Blank y K.~Deb.
+\newblock pymoo: Multi-objective optimization in Python.
+\newblock \emph{IEEE Access}, 8, 2020.
+\newblock \url{https://arxiv.org/abs/2002.04504}
+
+\bibitem{bv}
+S.~Boyd y L.~Vandenberghe.
+\newblock \emph{Convex Optimization}.
+\newblock Cambridge University Press, 2004. Cap.~4, «Convex optimization problems», y cap.~5, «Duality». Texto del curso EE364a de Stanford.
+\newblock \url{https://web.stanford.edu/~boyd/cvxbook/}
+
+\bibitem{ee364stoch}
+S.~Boyd y equipo docente de EE364a.
+\newblock Stochastic programming. Transparencias complementarias del curso EE364a: Convex Optimization I.
+\newblock Stanford University.
+\newblock \url{https://web.stanford.edu/class/ee364a/lectures/stoch_prog.pdf}
+
+\bibitem{amp}
+S.~P. Bradley, A.~C. Hax y T.~L. Magnanti.
+\newblock \emph{Applied Mathematical Programming}.
+\newblock Addison-Wesley, 1977. Cap.~3, «Sensitivity Analysis», y cap.~9, «Integer Programming». Texto del curso 15.053 del MIT.
+\newblock \url{https://web.mit.edu/15.053/www/}
+
+\bibitem{nsga2}
+K.~Deb, A.~Pratap, S.~Agarwal y T.~Meyarivan.
+\newblock A fast and elitist multiobjective genetic algorithm: NSGA-II.
+\newblock \emph{IEEE Transactions on Evolutionary Computation}, 6(2):182--197, 2002.
+
+\bibitem{cvxpy}
+S.~Diamond y S.~Boyd.
+\newblock CVXPY: A Python-embedded modeling language for convex optimization.
+\newblock \emph{Journal of Machine Learning Research}, 17(83):1--5, 2016.
+\newblock \url{https://www.jmlr.org/papers/v17/15-408.html}
+
+\bibitem{cvxpydoc}
+Desarrolladores de CVXPY.
+\newblock CVXPY User Guide: «Disciplined Convex Programming» y «Advanced Features» (variables duales).
+\newblock \url{https://www.cvxpy.org/tutorial/index.html}
+
+\bibitem{spo}
+A.~N. Elmachtoub y P.~Grigas.
+\newblock Smart «predict, then optimize».
+\newblock \emph{Management Science}, 68(1):9--26, 2022.
+\newblock \url{https://arxiv.org/abs/1710.08005}
+
+\bibitem{deepmind}
+R.~Evans y J.~Gao.
+\newblock DeepMind AI reduces Google data centre cooling bill by 40\,\%.
+\newblock Blog de Google DeepMind, 20 de julio de 2016.
+\newblock \url{https://deepmind.google/discover/blog/deepmind-ai-reduces-google-data-centre-cooling-bill-by-40/}
+
+\bibitem{frazier}
+P.~I. Frazier.
+\newblock A tutorial on Bayesian optimization.
+\newblock Prepublicación, 2018.
+\newblock \url{https://arxiv.org/abs/1807.02811}
+
+\bibitem{garnett}
+R.~Garnett.
+\newblock \emph{Bayesian Optimization}.
+\newblock Cambridge University Press, 2023. Edición libre en línea.
+\newblock \url{https://bayesoptbook.com/}
+
+\bibitem{ortools-cpsat}
+Google OR-Tools.
+\newblock CP-SAT Solver.
+\newblock Documentación oficial.
+\newblock \url{https://developers.google.com/optimization/cp/cp_solver}
+
+\bibitem{ortools-js}
+Google OR-Tools.
+\newblock The Job Shop Problem.
+\newblock Documentación oficial.
+\newblock \url{https://developers.google.com/optimization/scheduling/job_shop}
+
+\bibitem{ortools-vrptw}
+Google OR-Tools.
+\newblock Vehicle Routing Problem with Time Windows.
+\newblock Documentación oficial.
+\newblock \url{https://developers.google.com/optimization/routing/vrptw}
+
+\bibitem{hansen}
+N.~Hansen.
+\newblock The CMA evolution strategy: A tutorial.
+\newblock Prepublicación, 2016 (revisada en 2023).
+\newblock \url{https://arxiv.org/abs/1604.00772}
+
+\bibitem{highs}
+HiGHS.
+\newblock High performance software for linear optimization.
+\newblock Documentación oficial; licencia MIT.
+\newblock \url{https://highs.dev/}
+
+\bibitem{orion}
+C.~Holland, J.~Levis, R.~Nuggehalli, B.~Santilli y J.~Winters.
+\newblock UPS optimizes delivery routes.
+\newblock \emph{Interfaces}, 47(1):8--23, 2017.
+
+\bibitem{hh}
+Q.~Huangfu y J.~A.~J. Hall.
+\newblock Parallelizing the dual revised simplex method.
+\newblock \emph{Mathematical Programming Computation}, 10(1):119--142, 2018.
+
+\bibitem{johnson}
+S.~M. Johnson.
+\newblock Optimal two- and three-stage production schedules with setup times included.
+\newblock \emph{Naval Research Logistics Quarterly}, 1(1):61--68, 1954.
+
+\bibitem{kirkpatrick}
+S.~Kirkpatrick, C.~D. Gelatt y M.~P. Vecchi.
+\newblock Optimization by simulated annealing.
+\newblock \emph{Science}, 220(4598):671--680, 1983.
+
+\bibitem{kw}
+M.~J. Kochenderfer y T.~A. Wheeler.
+\newblock \emph{Algorithms for Optimization}.
+\newblock MIT Press, 2019. Caps.~1 «Introduction», 7 «Direct Methods», 8 «Stochastic Methods», 9 «Population Methods», 12 «Multiobjective Optimization» y~17 «Optimization under Uncertainty».
+
+\bibitem{landdoig}
+A.~H. Land y A.~G. Doig.
+\newblock An automatic method of solving discrete programming problems.
+\newblock \emph{Econometrica}, 28(3):497--520, 1960.
+
+\bibitem{mit6251}
+MIT OpenCourseWare.
+\newblock 6.251J / 15.081J: Introduction to Mathematical Programming.
+\newblock Massachusetts Institute of Technology, otoño de 2009. Clase~1 «Formulations», clases~9--12 (dualidad y sensibilidad) y~24--25 (optimización discreta), con lecturas de~\cite{bt}.
+\newblock \url{https://ocw.mit.edu/courses/6-251j-introduction-to-mathematical-programming-fall-2009/}
+
+\bibitem{mit15053}
+J.~Orlin y E.~Nasrabadi.
+\newblock 15.053: Optimization Methods in Management Science.
+\newblock Massachusetts Institute of Technology, primavera de 2013. Clases~2 «Formulations of linear and non-linear programs», 6 «Sensitivity analysis and shadow prices», 10--11 (programación entera), 12 «Branch and bound», 13 «Cutting planes» y~17 «Traveling salesman problem».
+\newblock \url{https://ocw.mit.edu/courses/15-053-optimization-methods-in-management-science-spring-2013/}
+
+\bibitem{mit15053ps}
+J.~Orlin y E.~Nasrabadi.
+\newblock 15.053: Optimization Methods in Management Science. Hojas de problemas~4, 5 y~6.
+\newblock Massachusetts Institute of Technology, primavera de 2013.
+\newblock \url{https://ocw.mit.edu/courses/15-053-optimization-methods-in-management-science-spring-2013/pages/assignments/}
+
+\bibitem{nw}
+J.~Nocedal y S.~J. Wright.
+\newblock \emph{Numerical Optimization}, 2.ª ed.
+\newblock Springer, 2006. Cap.~12, teoría de la optimización con restricciones.
+
+\bibitem{alphaevolve}
+A.~Novikov, N.~V{\~u}, M.~Eisenberger, E.~Dupont \emph{et al.}
+\newblock AlphaEvolve: A coding agent for scientific and algorithmic discovery.
+\newblock Prepublicación, Google DeepMind, 2025.
+\newblock \url{https://arxiv.org/abs/2506.13131}
+
+\bibitem{pulp}
+S.~Mitchell, A.~Kean, A.~Mason, M.~O'Sullivan, A.~Phillips y F.~Peschiera.
+\newblock PuLP: documentación oficial (licencia MIT).
+\newblock \url{https://coin-or.github.io/pulp/}
+
+\bibitem{funsearch}
+B.~Romera-Paredes, M.~Barekatain, A.~Novikov \emph{et al.}
+\newblock Mathematical discoveries from program search with large language models.
+\newblock \emph{Nature}, 625:468--475, 2024.
+
+\bibitem{smith}
+J.~E. Smith y R.~L. Winkler.
+\newblock The optimizer's curse: Skepticism and postdecision surprise in decision analysis.
+\newblock \emph{Management Science}, 52(3):311--322, 2006.
+
+\bibitem{solomon}
+M.~M. Solomon.
+\newblock Algorithms for the vehicle routing and scheduling problems with time window constraints.
+\newblock \emph{Operations Research}, 35(2):254--265, 1987.
+
+\bibitem{sb}
+R.~S. Sutton y A.~G. Barto.
+\newblock \emph{Reinforcement Learning: An Introduction}, 2.ª ed.
+\newblock MIT Press, 2018.
+\newblock \url{http://incompleteideas.net/book/the-book-2nd.html}
+
+\bibitem{wood}
+A.~J. Wood, B.~F. Wollenberg y G.~B. Sheblé.
+\newblock \emph{Power Generation, Operation, and Control}, 3.ª ed.
+\newblock Wiley, 2014. Cap.~3, «Economic Dispatch of Thermal Units and Methods of Solution».
+
+\bibitem{opro}
+C.~Yang, X.~Wang, Y.~Lu, H.~Liu, Q.~V. Le, D.~Zhou y X.~Chen.
+\newblock Large language models as optimizers.
+\newblock Prepublicación, 2023.
+\newblock \url{https://arxiv.org/abs/2309.03409}
+
+\end{thebibliography}
+
+
+\end{document}

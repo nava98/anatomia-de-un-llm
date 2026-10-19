@@ -1,0 +1,250 @@
+% =====================================================================
+\chapter{Ajuste de hiperparámetros, validación y parada}
+\label{tema:6}
+% =====================================================================
+
+Elegir la tasa de aprendizaje, la regularización o la arquitectura de un modelo es un problema de caja negra con las mismas características que el ajuste de una inyectora: cada evaluación es un entrenamiento caro, el resultado es ruidoso (depende de la semilla y de la partición de los datos) y el presupuesto es limitado. Tiene además dos rasgos propios: espacios mixtos y condicionales, y evaluaciones parciales baratas (pocas épocas, un subconjunto de los datos). Este tema sigue el capítulo~1 del libro de AutoML de Hutter, Kotthoff y Vanschoren, escrito por Feurer y Hutter~\cite{feurer}, y los artículos originales de la búsqueda aleatoria~\cite{bergstra12}, TPE~\cite{tpe}, Hyperband~\cite{hyperband} y ASHA~\cite{asha}. Cierra el módulo con dos preguntas comunes a todos los casos: cómo validar el sustituto y cuándo dejar de experimentar.
+
+\section{El ajuste de hiperparámetros como optimización de caja negra}
+
+\begin{definicion}[Problema de ajuste de hiperparámetros]\label{def:hpo}
+Sea $\mathcal A_\lambda$ un algoritmo de aprendizaje con configuración $\lambda\in\Lambda$, entrenado con $D_{\mathrm{ent}}$. El problema es\[\min_{\lambda\in\Lambda}\ \mathcal L\bigl(\mathcal A_\lambda(D_{\mathrm{ent}}),D_{\mathrm{val}}\bigr),\]donde $\mathcal L$ es la pérdida de validación (o la media de una validación cruzada, módulo~8, §6.5). El espacio $\Lambda$ puede mezclar variables continuas, enteras y categóricas, y tener variables \emph{condicionales} (el momento solo existe si el optimizador es SGD)~\cite[§1.2]{feurer}.
+\end{definicion}
+
+Las variables que abarcan varios órdenes de magnitud (tasa de aprendizaje, regularización) se buscan en escala logarítmica. Las evaluaciones parciales (un entrenamiento de $r$ épocas en lugar de $R$) son fidelidades bajas, y su aprovechamiento es el origen de los métodos de la §\ref{sec:hyperband}~\cite[§1.4]{feurer}. Las leyes de escalado del módulo~16 son la versión extrema de esta idea para los LLM: se ajustan hiperparámetros y curvas en modelos pequeños y se extrapolan.
+
+\begin{ejemplo}[Dos casos públicos]\label{ej:alphago}
+Chen \emph{et al.}~\cite{alphago} describen el uso de optimización bayesiana para ajustar los hiperparámetros de AlphaGo durante su desarrollo. Antes de la partida contra Lee Sedol, el ajuste elevó la tasa de victorias en autojuego de la versión más reciente del 50\,\% al 66,5\,\%, y esa versión ajustada fue la que jugó la partida final. Golovin \emph{et al.}~\cite{vizier} describen Google Vizier, el servicio interno de optimización de caja negra que se convirtió en la herramienta principal de Google para el ajuste de parámetros, usada en muchos modelos y como base del ajuste de hiperparámetros de su servicio de aprendizaje automático en la nube.
+\end{ejemplo}
+
+\section{Búsqueda aleatoria frente a rejilla}
+
+\begin{proposicion}[Garantía de la búsqueda aleatoria]\label{prop:aleatoria}
+Sea $\Lambda_q\subset\Lambda$ la región de las configuraciones del mejor $q$ (en probabilidad bajo la distribución de muestreo). Con $n$ configuraciones independientes, $\Pr[\text{alguna cae en }\Lambda_q]=1-(1-q)^n$. En consecuencia, para garantizarlo con probabilidad $p$ basta
+\[
+n\ge\frac{\log(1-p)}{\log(1-q)} .
+\]
+\end{proposicion}
+
+\begin{proof}
+Cada configuración cae fuera de $\Lambda_q$ con probabilidad $1-q$; por independencia, todas caen fuera con probabilidad $(1-q)^n$. La condición $1-(1-q)^n\ge p$ equivale a $n\log(1-q)\le\log(1-p)$, y al dividir por $\log(1-q)<0$ se invierte la desigualdad.
+\end{proof}
+
+Con $q=0{,}05$ y $p=0{,}95$ salen $n\ge 58{,}4$: 59 ensayos, independientemente de la dimensión. La garantía es sobre cuantiles del espacio, no sobre la distancia al óptimo, pero explica por qué la búsqueda aleatoria es una línea base difícil de batir. Bergstra y Bengio~\cite{bergstra12} añaden el argumento de la \emph{dimensión efectiva baja}: en la mayoría de los problemas solo unos pocos hiperparámetros importan, y cuáles importan cambia de un conjunto de datos a otro. Una rejilla de $n=m^d$ puntos solo prueba $m=n^{1/d}$ valores de cada hiperparámetro; $n$ puntos aleatorios prueban $n$ valores distintos de cada uno (la misma propiedad de proyección del hipercubo latino, \cref{tema:2}).
+
+\section{El estimador de Parzen con estructura de árbol (TPE)}
+
+La optimización bayesiana con procesos gaussianos modela $p(y\mid\lambda)$. TPE modela al revés: la distribución de las configuraciones condicionada a que sean buenas o malas~\cite[§4]{tpe}.
+
+\begin{definicion}[TPE]\label{def:tpe}
+Sea $y^*$ el cuantil $\gamma$ de las pérdidas observadas, de modo que $\Pr[y<y^*]=\gamma$. Se definen dos densidades sobre $\Lambda$, estimadas con núcleos (estimadores de Parzen) a partir de las configuraciones observadas:
+\[
+p(\lambda\mid y)=\begin{cases}\ell(\lambda)&\text{si } y<y^*\ \text{(configuraciones buenas)},\\ g(\lambda)&\text{si } y\ge y^*\ \text{(el resto)}.\end{cases}
+\]
+En espacios condicionales, cada hiperparámetro tiene su propia densidad unidimensional y la estructura de árbol decide cuáles intervienen.
+\end{definicion}
+
+\begin{proposicion}[TPE maximiza la mejora esperada]\label{prop:tpe}
+Con la mejora respecto a $y^*$, $\EI_{y^*}(\lambda)=\int_{-\infty}^{y^*}(y^*-y)\,p(y\mid\lambda)\,dy$, el modelo de la \cref{def:tpe} da
+\[
+\EI_{y^*}(\lambda)\ \propto\ \Bigl(\gamma+\frac{g(\lambda)}{\ell(\lambda)}(1-\gamma)\Bigr)^{-1},
+\]
+con una constante de proporcionalidad que no depende de $\lambda$. Maximizar la EI equivale a maximizar el cociente $\ell(\lambda)/g(\lambda)$.
+\end{proposicion}
+
+\begin{proof}
+Por la regla de Bayes, $p(y\mid\lambda)=p(\lambda\mid y)p(y)/p(\lambda)$. Para $y<y^*$, $p(\lambda\mid y)=\ell(\lambda)$ no depende de $y$, luego
+\[
+\EI_{y^*}(\lambda)=\frac{\ell(\lambda)}{p(\lambda)}\int_{-\infty}^{y^*}(y^*-y)p(y)\,dy=\frac{\ell(\lambda)\,c}{p(\lambda)},\qquad c=\gamma y^*-\int_{-\infty}^{y^*}y\,p(y)\,dy,
+\]
+y $c$ no depende de $\lambda$. Por la probabilidad total, $p(\lambda)=\gamma\ell(\lambda)+(1-\gamma)g(\lambda)$. Dividiendo numerador y denominador por $\ell(\lambda)$ se obtiene $\EI_{y^*}(\lambda)=c\,\bigl(\gamma+(1-\gamma)g(\lambda)/\ell(\lambda)\bigr)^{-1}$, que es creciente en $\ell/g$.
+\end{proof}
+
+En la práctica TPE muestrea muchos candidatos de $\ell$ y se queda con el de mayor cociente $\ell/g$. Su coste es lineal en el número de observaciones, maneja con naturalidad variables categóricas y condicionales, y es el muestreador por defecto de Optuna~\cite{optuna}. Bergstra \emph{et al.}~\cite[§6]{tpe} usan $\gamma=0{,}15$ en sus experimentos.
+
+\section{Evaluaciones parciales: Successive Halving y Hyperband}
+\label{sec:hyperband}
+
+\begin{definicion}[Successive Halving]\label{def:sh}
+Dados $n$ configuraciones, un recurso mínimo $r$ (épocas, iteraciones, fracción de datos) y un factor $\eta>1$ (habitualmente 3): se entrenan todas con $r$, se conserva la mejor fracción $1/\eta$, se multiplica el recurso por $\eta$ y se repite hasta que queda una configuración o se alcanza el recurso máximo $R$.
+\end{definicion}
+
+El método supone que las configuraciones malas se reconocen pronto. Si se fija el presupuesto total, hay que elegir entre muchas configuraciones con poco recurso (riesgo de descartar las que empiezan despacio) o pocas con mucho (poca exploración). Hyperband no elige: ejecuta varias versiones~\cite[§3.2]{hyperband}.
+
+\begin{algoritmo}[Hyperband]\label{alg:hyperband}
+Datos: recurso máximo $R$ y $\eta$. Sean $s_{\max}=\lfloor\log_\eta R\rfloor$ y $B=(s_{\max}+1)R$. Para $s=s_{\max},s_{\max}-1,\dots,0$ (cada valor es un \emph{bracket}):
+\begin{enumerate}[label=\arabic*.]
+  \item $n=\bigl\lceil\frac{B}{R}\frac{\eta^{s}}{s+1}\bigr\rceil$ configuraciones aleatorias y recurso inicial $r=R\eta^{-s}$;
+  \item Successive Halving en $s+1$ rondas: en la ronda $i=0,\dots,s$, $n_i=\lfloor n\eta^{-i}\rfloor$ configuraciones con recurso $r_i=r\eta^{i}$; se conservan las $\lfloor n_i/\eta\rfloor$ mejores.
+\end{enumerate}
+Se devuelve la mejor configuración evaluada con el recurso completo.
+\end{algoritmo}
+
+\begin{proposicion}[Presupuesto de un bracket]\label{prop:bracket}
+En el bracket $s$, cada ronda consume como mucho $nr\le\frac{B}{s+1}+R\eta^{-s}$ unidades de recurso, y el bracket completo, como mucho $B+(s+1)R\eta^{-s}$. Todos los brackets cuestan, pues, aproximadamente $B$, y un ciclo de Hyperband, unas $(s_{\max}+1)B$.
+\end{proposicion}
+
+\begin{proof}
+En la ronda $i$, $n_ir_i\le n\eta^{-i}\cdot r\eta^{i}=nr$. Como $n<\frac{B}{R}\frac{\eta^{s}}{s+1}+1$ y $r=R\eta^{-s}$, se tiene $nr<\frac{B}{s+1}+R\eta^{-s}$. Sumando las $s+1$ rondas se obtiene la segunda cota.
+\end{proof}
+
+\begin{ejemplo}[Brackets con $R=81$ y $\eta=3$]\label{ej:brackets}
+Se tiene $s_{\max}=4$ y $B=405$. Aplicando el \cref{alg:hyperband} se obtienen, como pares $(n_i,r_i)$:
+\begin{center}\small
+\begin{tabular}{@{}cll r@{}}
+\toprule
+$s$ & rondas & & recurso \\
+\midrule
+4 & $(81,1)\ (27,3)\ (9,9)\ (3,27)\ (1,81)$ & & 405 \\
+3 & $(34,3)\ (11,9)\ (3,27)\ (1,81)$ & & 363 \\
+2 & $(15,9)\ (5,27)\ (1,81)$ & & 351 \\
+1 & $(8,27)\ (2,81)$ & & 378 \\
+0 & $(5,81)$ & & 405 \\
+\bottomrule
+\end{tabular}
+\end{center}
+El ciclo completo evalúa 143 configuraciones con 1902 unidades de recurso, el equivalente a 23,5 entrenamientos completos. El bracket $s=4$ es el más agresivo (81 configuraciones, casi todas con una sola iteración); el $s=0$ es una búsqueda aleatoria clásica con 5 configuraciones completas, que protege frente a los casos en que las evaluaciones cortas engañan.
+\end{ejemplo}
+
+Hyperband es síncrono: cada ronda espera a que terminen todas sus configuraciones. ASHA~\cite{asha} lo hace asíncrono: un trabajador libre promueve a la siguiente ronda cualquier configuración que esté entre la mejor fracción $1/\eta$ de las ya completadas en la suya, o empieza una nueva; así escala linealmente con cientos de trabajadores. Optuna implementa ambos como \emph{pruners}, y BOHB combina Hyperband con un modelo tipo TPE para elegir las configuraciones~\cite[§1.4.2]{feurer}.
+
+\section{Validación del sustituto}
+
+Antes de confiar en las recomendaciones de un sustituto conviene comprobar que predice bien y que sus intervalos están calibrados. Para un proceso gaussiano, la validación cruzada dejando uno fuera no exige reajustar el modelo.
+
+\begin{teorema}[Validación cruzada exacta de un proceso gaussiano]\label{teo:loo}
+Con hiperparámetros fijos, la distribución predictiva de la observación $y_i$ dados los demás datos es normal con
+\[
+\mu_{-i}=y_i-\frac{[\Ky^{-1}y]_i}{[\Ky^{-1}]_{ii}},\qquad \sigma_{-i}^2=\frac{1}{[\Ky^{-1}]_{ii}} .
+\]
+\end{teorema}
+
+\begin{proof}
+Se reordena para que $i$ sea el último índice y se escribe $\Ky=\bigl(\begin{smallmatrix}A&b\\b^\top&c\end{smallmatrix}\bigr)$, con $A$ la matriz de los demás puntos. Por el \cref{lem:condicion} aplicado a $y\sim\N(0,\Ky)$, $y_i\mid y_{-i}\sim\N\bigl(b^\top A^{-1}y_{-i},\ c-b^\top A^{-1}b\bigr)$. Por la fórmula de la inversa por bloques, el último elemento diagonal de $\Ky^{-1}$ es $1/(c-b^\top A^{-1}b)$ (el inverso del complemento de Schur), lo que da $\sigma_{-i}^2$; y la última fila de $\Ky^{-1}$ es $\sigma_{-i}^{-2}\,(-b^\top A^{-1},\ 1)$, luego $[\Ky^{-1}y]_i=\sigma_{-i}^{-2}(y_i-b^\top A^{-1}y_{-i})$. Despejando, $b^\top A^{-1}y_{-i}=y_i-\sigma_{-i}^2[\Ky^{-1}y]_i$, que es $\mu_{-i}$.
+\end{proof}
+
+Rasmussen y Williams~\cite[cap.~5]{rw} dan el mismo resultado y lo usan como alternativa a la verosimilitud marginal para elegir hiperparámetros. Con las predicciones LOO se calculan los \emph{residuos tipificados} $r_i=(y_i-\mu_{-i})/\sigma_{-i}$: si el modelo es correcto, se comportan aproximadamente como normales estándar, con media próxima a 0, desviación próxima a 1 y un $5\,\%$ fuera de $\pm2$. Una desviación mucho mayor que 1 revela un modelo demasiado confiado (intervalos estrechos); mucho menor, uno demasiado cauto.
+
+\begin{ejemplo}[Validación del sustituto del coste]\label{ej:loo}
+Para el proceso gaussiano del coste al final de una ejecución del \cref{ej:bo-inyectora} (30 lotes), los residuos tipificados LOO tienen media $0{,}01$ y desviación $1{,}05$, y un $7\,\%$ cae fuera de $\pm2$ (2 de 30). El modelo está razonablemente calibrado; las fórmulas cerradas coinciden con el reajuste explícito sin cada punto (Parte~6 de la práctica).
+\end{ejemplo}
+
+\section{Cuándo dejar de experimentar}
+
+No existe una regla universal; Garnett~\cite[§5.4 y §9.3]{garnett} trata la parada como una decisión más, que compara el valor esperado de seguir con su coste. Las reglas habituales son:
+\begin{enumerate}
+  \item \emph{Presupuesto agotado}: la más común y la única que garantiza el plazo.
+  \item \emph{Mejora esperada pequeña}: Jones, Schonlau y Welch~\cite[§4.2]{jones} detienen EGO cuando la máxima EI es menor que el $1\,\%$ del mejor valor actual. Con ruido es engañosa: en el caso de la inyectora se activa en el ensayo 13 de 30, cuando la recomendación aún puede mejorar mucho, porque la EI calculada con la varianza latente es pequeña en todas partes salvo en regiones que la adquisición todavía no ha encontrado.
+  \item \emph{Cota de regret}: si las bandas de confianza son válidas, la distancia al óptimo de la recomendación está acotada (\cref{prop:cota}). Makarova \emph{et al.}~\cite{makarova} proponen parar cuando esta cota es menor que el error estadístico con que se estima la propia pérdida de validación: seguir optimizando sería ajustar el ruido.
+  \item \emph{Criterio económico}: parar cuando la mejora esperada por unidad de producto multiplicada por el volumen de producción sea menor que el coste de un ensayo más.
+\end{enumerate}
+
+\begin{proposicion}[Cota del regret simple]\label{prop:cota}
+Si con probabilidad al menos $1-\delta$ se cumple $\LCB_n(x)\le f(x)\le\UCB_n(x)$ para todo $x\in\X$, entonces, con la misma probabilidad, para cualquier recomendación $\hat x$,
+\[
+f(\hat x)-\min_{x\in\X}f(x)\le\UCB_n(\hat x)-\min_{x\in\X}\LCB_n(x).
+\]
+\end{proposicion}
+
+\begin{proof}
+En el suceso en que las bandas son válidas, $f(\hat x)\le\UCB_n(\hat x)$ y, para el minimizador $x^\star$, $f(x^\star)\ge\LCB_n(x^\star)\ge\min_x\LCB_n(x)$. Restando se obtiene la cota.
+\end{proof}
+
+La cota es pequeña cuando el modelo está seguro del valor en la recomendación y ningún otro punto tiene una cota inferior mucho más baja: es decir, cuando ya no queda ninguna región sin explorar que pudiera esconder algo mejor.
+
+\section{Caso de estudio: ajuste de un \emph{gradient boosting}}
+
+\begin{ejemplo}[Búsqueda aleatoria, TPE y Hyperband]\label{ej:hpo}
+Se ajusta un modelo de \emph{gradient boosting} (\texttt{HistGradient\-Boosting\-Regressor} de scikit-learn) sobre el problema sintético de Friedman (diez variables, cinco relevantes, ruido gaussiano de desviación~1, de modo que el error mínimo alcanzable es $\mathrm{RMSE}=1$), con 600 ejemplos de entrenamiento, 400 de validación y 2000 de prueba (Parte~6 de la práctica). Cuatro hiperparámetros: tasa de aprendizaje en $[0{,}01;0{,}5]$ (logarítmica), número máximo de hojas en $\{4,\dots,64\}$, mínimo de muestras por hoja en $\{2,\dots,60\}$ y regularización $L^2$ en $[10^{-4};10]$ (logarítmica). El recurso es el número de iteraciones de \emph{boosting}, con $R=81$. Media de 3 semillas:
+\begin{center}\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Método & RMSE val. & RMSE prueba & Iteraciones \\
+\midrule
+Búsqueda aleatoria (27 configuraciones) & $1{,}451$ & $1{,}528$ & 2187 \\
+TPE, Optuna (27 configuraciones) & $1{,}427$ & $1{,}483$ & 2187 \\
+Hyperband (un ciclo, 143 configuraciones) & $1{,}456$ & $1{,}517$ & 1902 \\
+\bottomrule
+\end{tabular}
+\end{center}
+Tres conclusiones. (i) TPE obtiene el mejor resultado con el mismo presupuesto que la búsqueda aleatoria, gracias a que concentra las últimas 19 configuraciones en la región buena. (ii) Hyperband iguala a la búsqueda aleatoria con un $13\,\%$ menos de cómputo; su ventaja crece cuando el recurso máximo es mucho mayor que el necesario para distinguir configuraciones, como al entrenar redes durante muchas épocas. (iii) En los tres casos el error de prueba supera al de validación en 0,05–0,08: es la maldición del ganador (\cref{prop:ganador}) aplicada a la selección de hiperparámetros. El error de validación de la configuración elegida es una estimación optimista; para informar del rendimiento se necesita un conjunto de prueba que no haya intervenido en la selección (validación anidada). Con tres semillas, las diferencias entre métodos son del orden de su variabilidad: una comparación seria exige más repeticiones.
+\end{ejemplo}
+
+\begin{table}[ht]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{1.4cm}>{\raggedright\arraybackslash}p{3.5cm}@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia & Cuándo elegirla \\
+\midrule
+Optuna~\cite{optuna} & TPE, GP, CMA-ES, NSGA-II; \emph{pruners} \texttt{SuccessiveHalvingPruner}, \texttt{HyperbandPruner}, \texttt{MedianPruner} & MIT & Opción por defecto en Python, espacios definidos al ejecutar \\
+SMAC3~\cite{smac3} & BO con bosques aleatorios, Hyperband, configuración sobre varias instancias & BSD & Espacios condicionales, configuración de algoritmos \\
+Ax y BoTorch~\cite{ax,botorch} & BO con GP, multiobjetivo y parada temprana & MIT & Pocos ensayos muy caros, varios objetivos \\
+scikit-learn & \texttt{RandomizedSearchCV} y búsqueda por reducción sucesiva & BSD & Modelos de scikit-learn con validación cruzada \\
+Google Vizier~\cite{vizier} & Servicio de optimización de caja negra con parada temprana y transferencia & Servicio & Referencia de diseño de un servicio a escala \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para el ajuste de hiperparámetros.}
+\label{tab:tec6}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores6}
+\begin{enumerate}
+  \item \emph{Fuga de datos}: ajustar hiperparámetros con el conjunto de prueba, o preprocesar (normalizar, seleccionar variables) con todos los datos antes de dividirlos.
+  \item \emph{Informar del error de validación del ganador}: es optimista; se usa un conjunto de prueba aparte o validación anidada.
+  \item \emph{Una sola semilla}: con entrenamientos ruidosos, la diferencia entre dos configuraciones puede ser solo la semilla.
+  \item \emph{Rangos lineales} para tasas de aprendizaje o regularizaciones.
+  \item \emph{Poda demasiado agresiva}: Successive Halving descarta configuraciones que empiezan despacio (tasas de aprendizaje pequeñas); por eso Hyperband conserva brackets conservadores.
+  \item \emph{Ignorar el coste}: comparar métodos por número de configuraciones y no por cómputo total.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Feurer y Hutter~\cite{feurer}, §1.2–1.4 (problema, métodos de caja negra y multifidelidad).
+\item Bergstra y Bengio~\cite{bergstra12}, búsqueda aleatoria y dimensión efectiva.
+\item Bergstra \emph{et al.}~\cite{tpe}, §4 «Tree-structured Parzen Estimator Approach».
+\item Li \emph{et al.}~\cite{hyperband}, §3.1–3.2 (Successive Halving y Hyperband) y Li \emph{et al.}~\cite{asha} (ASHA).
+\item Garnett~\cite{garnett}, §5.4 y §9.3 (parada como decisión); Makarova \emph{et al.}~\cite{makarova}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-rejilla}
+Con 9 ensayos para dos hiperparámetros de los que solo uno influye, compare cuántos valores distintos del hiperparámetro relevante prueban una rejilla $3\times3$ y una búsqueda aleatoria. ¿Y con 64 ensayos en 3 hiperparámetros?
+\fuente{adaptado de Bergstra y Bengio~\cite{bergstra12} (argumento de la dimensión efectiva).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-aleatoria}
+Con la \cref{prop:aleatoria}: (a) ¿cuántos ensayos garantizan con probabilidad $0{,}95$ caer en el mejor $2\,\%$? (b) ¿Y con probabilidad $0{,}99$ en el mejor $5\,\%$? (c) Con 27 ensayos, ¿qué probabilidad hay de caer en el mejor $5\,\%$?
+\fuente{adaptado de Feurer y Hutter~\cite{feurer}, §1.3.1 «Model-Free Blackbox Optimization Methods».}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-hyperband}
+Aplique el \cref{alg:hyperband} con $R=27$ y $\eta=3$: calcule $s_{\max}$, $B$, los brackets con sus pares $(n_i,r_i)$ y el recurso total. ¿A cuántos entrenamientos completos equivale?
+\fuente{adaptado de Li \emph{et al.}~\cite{hyperband}, §3.2, algoritmo~1.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-tpe}
+Con $\gamma=0{,}15$, tres candidatos tienen densidades $(\ell,g)$: $\lambda_1=(2{,}0;\ 0{,}5)$, $\lambda_2=(1{,}0;\ 1{,}0)$ y $\lambda_3=(0{,}4;\ 0{,}05)$. Calcule la cantidad proporcional a la EI de la \cref{prop:tpe} y ordénelos. Comente por qué el candidato con mayor $\ell$ no es el elegido.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-tpeprueba}
+(a) Complete los detalles de la demostración de la \cref{prop:tpe}, justificando que $c>0$. (b) Demuestre que la proporcionalidad se conserva si $y^*$ es el cuantil $\gamma$ de una distribución continua cualquiera de $y$. (c) ¿Qué ocurre en el límite $\gamma\to 0$?
+\fuente{adaptado de Bergstra \emph{et al.}~\cite{tpe}, §4.1.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-loo}
+Con los datos del \cref{ej:gp2} y ruido $\sigma_n=0{,}1$, calcule $\Ky^{-1}$ y, con el \cref{teo:loo}, la media y la varianza LOO de $y_1$ y de $y_2$. Compruebe el resultado de $y_1$ condicionando directamente con el \cref{lem:condicion}.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-parada}
+En una iteración de la inyectora, la máxima EI restringida es $0{,}004$~€, el mejor coste predicho es $0{,}785$~€, $\UCB(\hat x)=0{,}795$~€ y $\min_x\LCB(x)=0{,}770$~€. (a) ¿Para la regla de Jones \emph{et al.}? (b) ¿Qué cota da la \cref{prop:cota}? (c) Con una producción de $10^6$ piezas al año y 300~€ por ensayo, ¿compensa seguir según el criterio económico? (d) ¿Qué conclusión sacaría si la desviación del coste medido en un lote es $0{,}0126$~€?
+\end{ejercicio}
+
+\begin{ejercicio}{1}{eje:6-fuga}
+Un equipo prueba 200 configuraciones y publica el error de validación de la mejor como rendimiento esperado del modelo. Explique, con la \cref{prop:ganador}, por qué es optimista y describa un procedimiento de validación anidada que lo evite.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-llm}
+Diseño razonado. Hay que ajustar un modelo de lenguaje de 1000 millones de parámetros con LoRA para una tarea de clasificación de incidencias de planta. Hiperparámetros: tasa de aprendizaje, rango de LoRA ($\{4,8,16,32,64\}$), número de épocas (1–5), proporción de calentamiento y \emph{dropout}. Presupuesto: 200 horas de GPU; un entrenamiento completo dura 4 horas. Diseñe la estrategia: espacio de búsqueda y escalas, método (justificando entre búsqueda aleatoria, TPE, Hyperband/ASHA y BO), recurso para las fidelidades bajas, número de semillas, validación y criterio de parada.
+\end{ejercicio}

@@ -1,0 +1,186 @@
+% =====================================================================
+\chapter{Cuando la IA entra en la formulación: predecir y optimizar}
+\label{tema:6}
+% =====================================================================
+
+En los temas anteriores los datos eran conocidos. En la práctica la demanda, los tiempos de viaje o los rendimientos se \emph{predicen}, y la decisión hereda el error de la predicción. Este tema estudia cómo combinar ambos pasos. Sigue el capítulo~1 («Introduction and Examples») de Birge y Louveaux~\cite{bl} y las transparencias de programación estocástica del curso EE364a de Stanford~\cite{ee364stoch}; el capítulo~17 («Optimization under Uncertainty») de Kochenderfer y Wheeler~\cite{kw}; los artículos de Elmachtoub y Grigas~\cite{spo} y de Bertsimas y Kallus~\cite{bk} sobre la integración de predicción y decisión; el de Bertsimas y Sim~\cite{bsim} y el libro de Ben-Tal, El Ghaoui y Nemirovski~\cite{btn} para la optimización robusta, y el de Smith y Winkler~\cite{smith} para la maldición del optimizador.
+
+\section{Predecir y después optimizar}
+
+\begin{definicion}[Predecir y después optimizar]\label{def:pto}
+Sea un problema $\min_{x\in\mathcal{X}}\E[c(x,\xi)\mid w]$, donde $\xi$ es un parámetro incierto (la demanda) y $w$ el contexto observado (temperatura, festivos). El enfoque \emph{predecir y después optimizar} entrena un modelo $\hat\xi=m_\phi(w)$ y resuelve $\hat x(w)\in\argmin_{x\in\mathcal{X}}c(x,\hat\xi)$, sustituyendo el parámetro por su predicción puntual.
+\end{definicion}
+
+\begin{proposicion}[Cuándo basta la media]\label{prop:lineal}
+Si el coste es lineal en el parámetro, $c(x,\xi)=\xi\T x$, y $\mathcal{X}$ no depende de $\xi$, la decisión que minimiza el coste esperado condicionado es la que resulta de sustituir $\xi$ por su media condicionada $\E[\xi\mid w]$.
+\end{proposicion}
+
+\begin{proof}
+Por la linealidad de la esperanza, $\E[\xi\T x\mid w]=\E[\xi\mid w]\T x$ para todo $x\in\mathcal{X}$. Los dos problemas tienen el mismo objetivo y, por tanto, los mismos minimizadores.
+\end{proof}
+
+La proposición explica el éxito del enfoque cuando la incertidumbre está en los costes de un PL (rutas con tiempos inciertos y objetivo lineal) y su fracaso cuando el coste es no lineal en $\xi$: con inventario, el coste de quedarse corto y el de sobrar son distintos, y la media deja de ser suficiente. Incluso en el caso lineal, dos modelos con el mismo error cuadrático pueden inducir decisiones de calidad muy distinta: lo que importa no es el error en la predicción, sino el error en la decisión, que es lo que mide la pérdida SPO (\emph{smart predict-then-optimize}) de Elmachtoub y Grigas~\cite{spo} (\cref{eje:6-spo}). Bertsimas y Kallus~\cite{bk} proponen, en lugar de predecir un valor, aprender pesos sobre escenarios históricos parecidos al contexto y optimizar contra esa distribución empírica.
+
+\section{El vendedor de periódicos}
+
+\begin{definicion}[Problema del vendedor de periódicos]\label{def:newsvendor}
+Se decide una cantidad $q\ge 0$ antes de conocer la demanda $D$, con función de distribución $F$. Cada unidad que falta cuesta $c_u>0$ (margen perdido) y cada unidad que sobra, $c_o>0$ (coste menos valor de saldo). El coste esperado es
+\[
+G(q)=\E\bigl[c_u(D-q)^{+}+c_o(q-D)^{+}\bigr].
+\]
+\end{definicion}
+
+\begin{teorema}[Fractil crítico]\label{teo:fractil}
+Si $F$ es continua, $q^{*}=F^{-1}\!\bigl(c_u/(c_u+c_o)\bigr)$ minimiza $G$. Si $D$ es discreta, es óptimo el menor $q$ con $F(q)\ge c_u/(c_u+c_o)$.
+\end{teorema}
+
+\begin{proof}
+$G$ es convexa, porque $(D-q)^{+}$ y $(q-D)^{+}$ lo son en $q$ y la esperanza conserva la convexidad. Su derivada (lateral, en el caso discreto) es
+\[
+G'(q)=-c_u\,\Prob(D>q)+c_o\,\Prob(D\le q)=-c_u+(c_u+c_o)F(q),
+\]
+porque aumentar $q$ en $\mathrm{d}q$ ahorra $c_u\,\mathrm{d}q$ cuando falta producto y cuesta $c_o\,\mathrm{d}q$ cuando sobra. $G'(q)$ es no decreciente y cambia de signo donde $F(q)=c_u/(c_u+c_o)$. En el caso continuo, $G'(q^{*})=0$ y por convexidad $q^{*}$ es mínimo global. En el discreto, $G$ es lineal a trozos y su pendiente pasa a ser no negativa en el menor $q$ con $F(q)\ge c_u/(c_u+c_o)$.
+\end{proof}
+
+Si la demanda es normal, $q^{*}=\mu+\sigma\,\Phi^{-1}(c_u/(c_u+c_o))$: se produce por encima de la media cuando el margen perdido supera al coste del sobrante. Predecir la media, por precisa que sea, no basta; hace falta un \emph{cuantil}, y por tanto una estimación de la incertidumbre calibrada fuera de muestra.
+
+\section{Programación estocástica y robusta}
+
+\begin{definicion}[Programa estocástico en dos etapas]\label{def:dos-etapas}
+En un \emph{programa en dos etapas} se fija una decisión $x$ antes de observar $\xi$ y, una vez observado, una decisión de recurso $y$:
+\[
+\mathrm{RP}=\min_{x\in\mathcal{X}}\ c\T x+\E_\xi\bigl[Q(x,\xi)\bigr],\qquad Q(x,\xi)=\min_{y\in\mathcal{Y}(x,\xi)}q(\xi)\T y .
+\]
+La \emph{aproximación por media muestral} (SAA) sustituye la esperanza por la media sobre $S$ escenarios $\xi^{1},\dots,\xi^{S}$ y, si todo es lineal, da un único PL con una copia de $y$ por escenario~\cite{ee364stoch}.
+\end{definicion}
+
+\begin{definicion}[Valor de la solución estocástica y de la información perfecta]\label{def:vss}
+Para un problema de minimización, sea $\bar x$ la solución del \emph{problema del valor esperado} (sustituir $\xi$ por $\E\xi$), $\mathrm{EEV}=c\T\bar x+\E[Q(\bar x,\xi)]$ su coste esperado real, y $\mathrm{WS}=\E_\xi[\min_x(c\T x+Q(x,\xi))]$ el coste esperado si se conociera $\xi$ antes de decidir (\emph{wait-and-see}). Se definen el \emph{valor de la solución estocástica} $\mathrm{VSS}=\mathrm{EEV}-\mathrm{RP}$ y el \emph{valor esperado de la información perfecta} $\mathrm{EVPI}=\mathrm{RP}-\mathrm{WS}$~\cite{bl}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:vss}
+$\mathrm{WS}\le\mathrm{RP}\le\mathrm{EEV}$; en consecuencia, $\mathrm{VSS}\ge 0$ y $\mathrm{EVPI}\ge 0$.
+\end{proposicion}
+
+\begin{proof}
+$\mathrm{RP}\le\mathrm{EEV}$ porque $\bar x$ es factible y RP es el mínimo del coste esperado. Para la otra desigualdad, sea $x^{*}$ óptima de RP; para cada $\xi$, $\min_x(c\T x+Q(x,\xi))\le c\T x^{*}+Q(x^{*},\xi)$, y tomando esperanzas, $\mathrm{WS}\le\mathrm{RP}$.
+\end{proof}
+
+La \emph{optimización robusta} renuncia a la distribución y exige factibilidad o buen coste para todo $\xi$ de un \emph{conjunto de incertidumbre} $\Xi$: $\min_x\max_{\xi\in\Xi}c(x,\xi)$. Para restricciones lineales con coeficientes en una caja, el problema robusto sigue siendo lineal.
+
+\begin{proposicion}[Contrapartida robusta de una caja]\label{prop:robusta}
+Sea $x\ge 0$ y $a_j\in[\bar a_j-\delta_j,\ \bar a_j+\delta_j]$ con $\delta_j\ge 0$. La restricción $a\T x\le b$ se cumple para todos los $a$ de la caja si y solo si $(\bar a+\delta)\T x\le b$. Para $x$ de signo libre, la condición es $\bar a\T x+\delta\T\abs{x}\le b$, que se linealiza con la \cref{prop:abs}.
+\end{proposicion}
+
+\begin{proof}
+El máximo de $a\T x=\sum_ja_jx_j$ sobre la caja se alcanza eligiendo cada $a_j$ por separado: $\bar a_j+\delta_j$ si $x_j\ge 0$ y $\bar a_j-\delta_j$ si $x_j<0$, lo que da $\bar a\T x+\sum_j\delta_j\abs{x_j}$. La restricción se cumple para toda la caja si y solo si se cumple en ese máximo.
+\end{proof}
+
+La caja completa es muy conservadora: supone que todos los coeficientes toman su peor valor a la vez. Bertsimas y Sim~\cite{bsim} limitan a $\Gamma$ el número de coeficientes que se desvían y controlan así el \emph{precio de la robustez}: el coste que se paga por protegerse.
+
+\begin{observacion}[La maldición del optimizador]\label{obs:maldicion}
+Si se eligen la mejor de varias alternativas por su valor estimado, el valor estimado de la elegida sobrestima su valor real, aunque cada estimación sea insesgada: $\E[\max_i\hat J_i]\ge\max_i\E[\hat J_i]$~\cite{smith} (\cref{eje:6-maldicion}). Por eso el beneficio que promete un optimizador sobre datos predichos debe validarse con datos nuevos, nunca con los usados para elegir.
+\end{observacion}
+
+\section{Caso de estudio: plan de cerveza fresca con demanda predicha}
+
+\begin{ejemplo}[Cerveza sin pasteurizar con demanda predicha]\label{ej:fresca}
+La cervecera de los temas anteriores vende dos cervezas sin pasteurizar, IPA y Lager, que caducan en una semana. Cada lunes decide cuántos hectolitros envasar, $q=(q_1,q_2)$, con una capacidad conjunta de $K=260$~hL. Lo que no se vende se liquida a precio de saldo. Por hectolitro: precio $p=(300,220)$~€, coste $c=(70,60)$~€ y saldo $s=(20,10)$~€; por tanto $c_u=p-c=(230,160)$ y $c_o=c-s=(50,50)$, con fractiles críticos $0{,}821$ y $0{,}762$.
+
+\emph{Datos} (sintéticos, 208 semanas; cuaderno, parte~6). La demanda semanal depende de la temperatura media, de si hay festivo y de una tendencia de crecimiento, con ruido multiplicativo log-normal de desviación $0{,}22$ en escala logarítmica y correlación $0{,}5$ entre las dos cervezas. Su media pasa de $(72{,}5;\ 100{,}1)$~hL en los dos primeros años a $(91{,}1;\ 115{,}0)$~hL en el último.
+
+\emph{Protocolo sin fugas.} Las semanas 0--103 se usan para entrenar una regresión lineal del logaritmo de la demanda sobre temperatura, festivo y semana (módulo~8); las semanas 104--155, para medir los residuos fuera de muestra (desviación $0{,}21$ en ambas cervezas), y las 156--207, como periodo de prueba en el que se simula la operación. El error porcentual absoluto medio de la predicción de la media en prueba es del 18 y el 21\,\%.
+
+\emph{Decisiones comparadas.} (A) Envasar la media predicha. (B) Envasar el cuantil del fractil crítico, predicción por el cuantil empírico de los residuos (\cref{teo:fractil}). (C) SAA: un PL por semana con los 52 vectores de residuos de calibración como escenarios conjuntos, que respeta la capacidad y la correlación. (D) Robusto: envasar el peor caso de una caja del 90\,\% (cuantil del 5\,\% de los residuos). En las cuatro, si se supera la capacidad se reduce en proporción, salvo en C, que la incluye en el modelo.
+
+\emph{Resultados en las 52 semanas de prueba:}
+\begin{center}\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Decisión & \makecell{Beneficio medio\\(€/semana)} & \makecell{Peor\\semana (€)} & \makecell{Semanas sin rotura\\(IPA, Lager)} \\
+\midrule
+A: media predicha & 34\,145 & 16\,390 & 56\,\%, 50\,\% \\
+B: cuantil del fractil & 34\,595 & 15\,482 & 75\,\%, 62\,\% \\
+C: SAA con capacidad & 34\,615 & 15\,465 & 77\,\%, 60\,\% \\
+D: robusto (caja del 90\,\%) & 26\,562 & 16\,440 & 6\,\%, 8\,\% \\
+información perfecta & 36\,502 & 19\,105 & 81\,\%, 81\,\% \\
+\bottomrule
+\end{tabular}
+\end{center}
+Usar la media en lugar del cuantil cuesta 450~€/semana, unos 23\,400~€/año: con márgenes altos, quedarse corto sale caro. SAA añade una mejora pequeña porque la capacidad solo limita en las semanas de más calor. La decisión robusta tiene la mejor peor semana, pero su beneficio medio es 8053~€/semana menor que el de SAA: ese es su precio de la robustez, que solo se justifica si una mala semana tuviera consecuencias graves (por ejemplo, de tesorería). La información perfecta acota lo que puede ganar cualquier mejora del modelo de predicción: 1887~€/semana sobre SAA. Incluso con ella hay semanas con rotura, porque la capacidad no alcanza en los picos de demanda.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~6: predecir y optimizar bajo incertidumbre.}\label{tab:tec6}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+scikit-learn & regresión, cuantiles (\texttt{GradientBoostingRegressor} con pérdida cuantílica), validación temporal & abierta (BSD-3) & modelos de predicción tabulares \\
+SciPy / HiGHS & PL de SAA con escenarios & abierta (BSD-3; MIT) & programas estocásticos lineales de tamaño medio \\
+CVXPY~\cite{cvxpy} & modelos robustos y con restricciones probabilísticas convexas & abierta (Apache~2.0) & contrapartidas robustas cónicas, CVaR \\
+Pyomo & modelos estocásticos por escenarios y descomposición & abierta (BSD-3) & problemas grandes en dos o más etapas \\
+PyTorch & capas de optimización diferenciables para aprender con la pérdida de decisión & abierta (BSD) & enfoques SPO o de aprendizaje orientado a la decisión \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes al combinar predicción y decisión]\label{obs:errores6}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Fugas de datos}: calibrar los cuantiles con residuos de entrenamiento (demasiado optimistas en modelos flexibles), usar variables que no se conocen al decidir (la temperatura real de la semana en vez de la previsión) o validar con particiones aleatorias en series temporales.
+  \item \emph{Optimizar contra la media}: correcto solo si el coste es lineal en el parámetro (\cref{prop:lineal}).
+  \item \emph{Evaluar la predicción y no la decisión}: un modelo con menos error cuadrático puede dar peores decisiones; se compara el beneficio simulado fuera de muestra.
+  \item \emph{Maldición del optimizador}: el beneficio previsto por el modelo para la decisión elegida está sesgado al alza (\cref{obs:maldicion}).
+  \item \emph{Deriva}: la tendencia del caso hace que un modelo entrenado sin la variable de semana quede desfasado; hay que monitorizar el error y reentrenar (\cref{fig:anatomia}).
+  \item \emph{Robustez sin calibrar}: una caja demasiado grande regala beneficio; su tamaño debe justificarse con el riesgo que se quiere cubrir.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item Birge y Louveaux~\cite{bl}, cap.~1 «Introduction and Examples» (vendedor de periódicos y ejemplos en dos etapas).
+\item Transparencias de EE364a «Stochastic programming»~\cite{ee364stoch}: SAA, validación fuera de muestra y planificación de la producción con demanda incierta.
+\item Kochenderfer y Wheeler~\cite{kw}, cap.~17 «Optimization under Uncertainty».
+\item A.~N. Elmachtoub y P.~Grigas~\cite{spo}; D.~Bertsimas y N.~Kallus~\cite{bk}; D.~Bertsimas y M.~Sim~\cite{bsim}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-fugas}
+Señale la fuga de datos o el error de evaluación en cada caso: (a) los cuantiles de la demanda se estiman con los residuos del mismo conjunto con el que se entrenó un bosque aleatorio; (b) el modelo usa la temperatura media observada de la semana que se planifica; (c) se elige entre cinco planes el de mayor beneficio simulado y se informa de ese beneficio a la dirección; (d) la validación cruzada mezcla al azar semanas de 2023 y 2025.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-newsvendor}
+La demanda semanal de IPA fresca es normal con media 80~hL y desviación 16~hL; $c_u=230$ y $c_o=50$~€/hL. Calcule la cantidad óptima y compárela con la media. ¿Qué cantidad sería óptima si el saldo bajase a 0~€/hL?
+\fuente{adaptado de Birge y Louveaux~\cite{bl}, cap.~1, problema del vendedor de periódicos.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-spo}
+Hay que elegir una de dos rutas con costes reales $c=(1{,}0;\ 1{,}2)$~h. El modelo A predice $(1{,}25;\ 1{,}2)$ y el modelo B, $(0{,}75;\ 1{,}2)$. Calcule el error cuadrático de cada predicción, la ruta que elige cada modelo y su pérdida de decisión (coste real de la ruta elegida menos el óptimo). ¿Qué enseña el resultado?
+\fuente{adaptado de A.~N. Elmachtoub y P.~Grigas~\cite{spo}, motivación de la pérdida SPO.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-vss}
+Se envasa $q$ antes de conocer la demanda, que vale 60, 100 o 140~hL con probabilidades $0{,}3$, $0{,}4$ y $0{,}3$; precio 300, coste 70 y saldo 20~€/hL. Se maximiza el beneficio esperado. Calcule (a) la solución del valor esperado y su beneficio esperado real (EEV); (b) la solución estocástica (RP) con el \cref{teo:fractil}; (c) WS, VSS y EVPI, adaptando los signos a la maximización.
+\fuente{adaptado de Birge y Louveaux~\cite{bl}, cap.~1, valor de la solución estocástica y de la información perfecta.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-robusta}
+Un lote de 100~kg de pienso se mezcla con $x_1$~kg de maíz y $x_2$~kg de soja ($x_1+x_2=100$, $x\ge 0$) y debe contener al menos 18~kg de proteína: $a_1x_1+a_2x_2\ge 1800$, con $a_j$ el contenido de proteína en porcentaje. El contenido de proteína del maíz es $a_1\in[7;\ 9]$ y el de la soja, $a_2\in[42;\ 46]$ (\%). (a) Escriba la contrapartida robusta. (b) Calcule la mínima cantidad de soja con la caja completa y con los valores nominales. (c) ¿Cuál es el precio de la robustez si la soja cuesta 0,40~€/kg y el maíz 0,22~€/kg?
+\fuente{adaptado de D.~Bertsimas y M.~Sim~\cite{bsim}, contrapartida robusta de restricciones lineales.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-saa}
+Se dispone de cinco escenarios equiprobables de demanda: 72, 95, 88, 110 y 64~hL, con $c_u=230$ y $c_o=50$. Resuelva el problema SAA del vendedor de periódicos y compare la decisión con la que daría una normal ajustada a esos cinco valores. ¿Qué riesgo tiene usar tan pocos escenarios?
+\fuente{adaptado de las transparencias «Stochastic programming» de EE364a~\cite{ee364stoch}, método de Monte Carlo y validación fuera de muestra.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-fractil}
+Demuestre el \cref{teo:fractil} para una demanda discreta con valores $d_1<\dots<d_K$, comprobando que $G$ es lineal a trozos con vértices en los $d_k$ y calculando las pendientes laterales.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-maldicion}
+Sean $\hat J_1,\dots,\hat J_k$ estimaciones insesgadas de los valores $J_1,\dots,J_k$ de $k$ alternativas. (a) Demuestre que $\E[\max_i\hat J_i]\ge\max_iJ_i$. (b) Si $J_1=\dots=J_k=J$ y los errores son independientes $\mathcal N(0,\sigma^{2})$, calcule el sesgo de la alternativa elegida para $k=2$. (c) Proponga un procedimiento de validación que elimine el sesgo.
+\fuente{adaptado de J.~E. Smith y R.~L. Winkler~\cite{smith}.}
+\end{ejercicio}

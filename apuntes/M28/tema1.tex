@@ -1,0 +1,255 @@
+% =====================================================================
+\chapter{Búsqueda evolutiva de programas guiada por LLM}
+\label{tema:1}
+% =====================================================================
+
+En muchos problemas lo que se busca no es un número ni un vector, sino un \emph{procedimiento}: una regla de prioridad para un planificador, una heurística de empaquetado, un núcleo de cálculo más rápido. Este tema estudia cómo un modelo de lenguaje, encerrado en un bucle evolutivo con un evaluador automático, puede buscar en el espacio de programas. Sigue el artículo de FunSearch de Romera-Paredes \emph{et al.}~\cite{funsearch} y su implementación de referencia~\cite{funsearch-code}, el informe de AlphaEvolve de Novikov \emph{et al.}~\cite{alphaevolve} y la nota técnica de Google DeepMind~\cite{ae-blog}; para la representación de programas como expresiones se apoya en el capítulo «Expression Optimization» de Kochenderfer y Wheeler~\cite{kw}, y para el empaquetado, en la §3.3 de Williamson y Shmoys~\cite{ws}. La lectura crítica de Herrmann y Pallez~\cite{hp} sirve de contrapeso.
+
+\section{Optimizar en el espacio de programas}
+
+\begin{definicion}[Búsqueda de programas]\label{def:busqueda-programas}
+Sea $\Prog$ el conjunto de programas que respetan una firma dada (por ejemplo, funciones que reciben un objeto y la lista de contenedores abiertos y devuelven una puntuación por contenedor). Sea $\mathcal{D}$ una distribución de instancias del problema y $u(\pi,x)\in\R\cup\{-\infty\}$ la utilidad de ejecutar $\pi$ sobre la instancia $x$, con $u=-\infty$ si el programa falla, excede el tiempo o produce una salida inválida. La \emph{búsqueda de programas} es
+\[
+\max_{\pi\in\Prog}\ h(\pi),\qquad h(\pi)=\E_{x\sim\mathcal{D}}\bigl[u(\pi,x)\bigr].
+\]
+Como $\mathcal{D}$ no se conoce, se usa un \emph{evaluador} $\hat h(\pi)=\frac1m\sum_{i=1}^{m}u(\pi,x_i)$ sobre instancias de entrenamiento $x_1,\dots,x_m$, y la calidad final se mide con instancias de prueba independientes.
+\end{definicion}
+
+El problema es de caja negra en el sentido de la definición~5.1 del módulo~24: no hay gradiente, el espacio es discreto y enorme, y cada evaluación cuesta una ejecución. La programación genética clásica busca en ese espacio con mutaciones y cruces aleatorios de árboles sintácticos~\cite{kw}; su dificultad es que casi todas las mutaciones aleatorias producen programas inútiles. La idea de FunSearch es sustituir la mutación aleatoria por un modelo de lenguaje entrenado con código, que propone modificaciones \emph{plausibles}.
+
+\begin{observacion}[Por qué buscar programas y no soluciones]\label{obs:por-que-programas}
+(i) Un programa \emph{generaliza}: una heurística de empaquetado sirve para instancias nuevas, mientras que un empaquetado concreto solo sirve para la suya. (ii) Un programa corto puede \emph{describir} un objeto enorme: en el problema del \emph{cap set}, FunSearch buscó programas que construyen el conjunto, no el conjunto~\cite{funsearch}. (iii) Un programa se puede \emph{leer}: el experto puede entender, simplificar y auditar la regla encontrada. (iv) Un programa se puede \emph{verificar}: el evaluador lo ejecuta y comprueba la validez de la salida.
+\end{observacion}
+
+\begin{definicion}[Esqueleto y función que evoluciona]\label{def:esqueleto}
+Un \emph{esqueleto} es un programa fijo que resuelve el problema llamando a una función con firma conocida, la única que se modifica durante la búsqueda. En el empaquetado en línea, el esqueleto recorre los objetos en orden de llegada, calcula los contenedores en los que cabe cada uno y coloca el objeto en el de mayor \texttt{prioridad(objeto, contenedores)}; solo \texttt{prioridad} evoluciona.
+\end{definicion}
+
+El esqueleto encierra el conocimiento del problema y garantiza la factibilidad (un objeto nunca se coloca donde no cabe), de modo que cualquier función que devuelva números produce una solución válida. Es el mismo principio de diseño que el filtro de seguridad del módulo~26 (tema~6, §6.5): la parte aprendida propone dentro de un marco que impide lo inaceptable.
+
+\section{FunSearch}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[font=\small,>={Stealth[length=2mm]},node distance=6mm and 9mm,
+  caja/.style={draw,thick,rounded corners=2pt,align=center,inner sep=3pt,minimum height=10mm,text width=2.6cm,font=\footnotesize}]
+  \node[caja] (db) {base de programas\\(islas, \emph{clusters})};
+  \node[caja,right=of db] (pr) {constructor del \emph{prompt}\\($k=2$ programas, de peor a mejor)};
+  \node[caja,right=of pr] (llm) {LLM de código\\(propone \texttt{prioridad\_v2})};
+  \node[caja,below=of llm] (ev) {evaluador en entorno aislado\\(ejecuta, valida, puntúa)};
+  \node[caja,below=of db] (desc) {descartar\\(error, tiempo, inválido)};
+  \draw[->,thick] (db)--(pr); \draw[->,thick] (pr)--(llm); \draw[->,thick] (llm)--(ev);
+  \draw[->,thick] (ev.west) -- node[above,font=\scriptsize] {puntuación válida} ++(-2.0,0) |- (db.east);
+  \draw[->,thick,dashed] (ev.south) -- ++(0,-0.45) -| (desc.south);
+\end{tikzpicture}
+\caption{Bucle de FunSearch. El LLM nunca ve el evaluador: solo ve programas anteriores ordenados por su puntuación.}
+\label{fig:funsearch}
+\end{figure}
+
+El bucle de la \cref{fig:funsearch} se ejecuta de forma asíncrona y distribuida. Según el artículo y la implementación publicada~\cite{funsearch,funsearch-code}:
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Constructor del prompt.} Se elige una isla al azar y, dentro de ella, $k=2$ programas; se ordenan de peor a mejor puntuación, se renombran como \texttt{prioridad\_v0} y \texttt{prioridad\_v1}, y el prompt termina con la cabecera de \texttt{prioridad\_v2}, «versión mejorada de la v1». A esta técnica los autores la llaman \emph{best-shot prompting}.
+  \item \emph{Muestreo.} Un LLM preentrenado con código (en el trabajo original, un modelo de la familia PaLM~2; en la actualización de 2024, Gemini~1.5 Flash~\cite{fs-blog}) completa el cuerpo de la nueva función. La configuración por defecto de la implementación usa 15 muestreadores que piden 4 continuaciones por prompt.
+  \item \emph{Evaluación.} El programa se ejecuta en un entorno aislado sobre las instancias de entrenamiento; si falla, tarda demasiado o produce algo inválido, se descarta. La configuración por defecto usa 140 evaluadores en paralelo.
+  \item \emph{Base de programas.} Los programas válidos se guardan en $10$ islas que evolucionan por separado. Dentro de cada isla se agrupan en \emph{clusters} por su \emph{firma} (el vector de puntuaciones en cada instancia de entrenamiento). Periódicamente se reinicia la mitad de las islas con peor mejor puntuación, sembrando cada una con el mejor programa de una isla superviviente elegida al azar.
+\end{enumerate}
+
+\begin{definicion}[Muestreo de clusters con temperatura]\label{def:softmax-clusters}
+Sean $s_1,\dots,s_c$ las puntuaciones de los clusters de una isla y $T>0$ una temperatura. Se elige el cluster $i$ con probabilidad
+\[
+p_i(T)=\frac{\exp(s_i/T)}{\sum_{l=1}^{c}\exp(s_l/T)}.
+\]
+En la implementación de referencia, $T$ decrece linealmente con el número $n$ de programas registrados en la isla, $T=T_0\bigl(1-(n\bmod P)/P\bigr)$, con $T_0=0{,}1$ y periodo $P=30\,000$; dentro del cluster elegido se prefieren los programas más cortos, con una softmax sobre la longitud normalizada cambiada de signo~\cite{funsearch-code}.
+\end{definicion}
+
+\begin{proposicion}[Límites de la temperatura]\label{prop:temperatura}
+Sea $M=\max_i s_i$ y $A=\{i: s_i=M\}$. Cuando $T\to 0^{+}$, $p_i(T)\to 1/\abs{A}$ si $i\in A$ y $p_i(T)\to 0$ en otro caso. Cuando $T\to\infty$, $p_i(T)\to 1/c$ para todo $i$.
+\end{proposicion}
+
+\begin{proof}
+Dividiendo numerador y denominador por $\exp(M/T)$, $p_i(T)=\exp\bigl((s_i-M)/T\bigr)\big/\sum_l\exp\bigl((s_l-M)/T\bigr)$. Si $T\to 0^{+}$, cada término con $s_l<M$ tiende a $0$ y cada término con $s_l=M$ vale $1$, luego el denominador tiende a $\abs{A}$ y el numerador a $\Ind[i\in A]$. Si $T\to\infty$, todos los exponentes tienden a $0$, cada término tiende a $1$ y $p_i\to 1/c$.
+\end{proof}
+
+La temperatura regula, pues, el equilibrio entre \emph{explotar} los mejores programas y \emph{explorar} otros que pueden ser punto de partida de mejoras mayores; es la misma distribución de Boltzmann del recocido simulado (módulo~24, tema~5, §5.2). Las islas y los reinicios cumplen una función parecida a otra escala: mantienen poblaciones que no se contaminan entre sí y, de vez en cuando, abandonan las que se han estancado.
+
+\begin{proposicion}[Elitismo y espera de una mejora]\label{prop:espera}
+Sea $b_t$ la mejor puntuación de la base de programas tras $t$ evaluaciones, en un algoritmo que nunca elimina el mejor programa. Entonces:
+\begin{enumerate}
+  \item $b_{t+1}\ge b_t$ para todo $t$.
+  \item Si, mientras no haya mejora, cada propuesta supera a $b_t$ con probabilidad al menos $q>0$, de forma independiente, el número $N$ de evaluaciones hasta la primera mejora cumple $\E[N]\le 1/q$ y $\Prob(N>B)\le(1-q)^{B}\le e^{-qB}$.
+  \item Si $I$ islas independientes tienen cada una probabilidad $p$ de alcanzar una puntuación objetivo con su presupuesto, la probabilidad de que la alcance alguna es $1-(1-p)^{I}$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proof}
+(i) El mejor programa permanece en la base y $b_{t+1}=\max(b_t,\hat h(\pi_{t+1}))$. (ii) El suceso $\{N>B\}$ exige $B$ fracasos seguidos, cada uno con probabilidad a lo sumo $1-q$, luego $\Prob(N>B)\le(1-q)^B$; como $1-q\le e^{-q}$, se tiene $(1-q)^B\le e^{-qB}$. Además $\E[N]=\sum_{B\ge 0}\Prob(N>B)\le\sum_{B\ge0}(1-q)^B=1/q$. (Los reinicios de islas no eliminan el mejor programa global, que sigue en alguna isla.) (iii) Ninguna lo alcanza con probabilidad $(1-p)^I$ por independencia.
+\end{proof}
+
+La proposición explica el papel del LLM con una sola cifra: el presupuesto necesario es del orden de $1/q$. Una mutación aleatoria de un árbol sintáctico tiene una $q$ minúscula; un modelo que ha visto millones de programas concentra la probabilidad en ediciones que tienen sentido (cambiar un umbral, añadir un caso, simplificar una expresión), y eso multiplica $q$.
+
+\section{AlphaEvolve}
+
+AlphaEvolve~\cite{alphaevolve} generaliza FunSearch de función a sistema. El usuario marca con comentarios (\texttt{EVOLVE-BLOCK-START} y \texttt{EVOLVE-BLOCK-END}) los bloques de un fichero que pueden cambiar; el resto actúa como esqueleto. Los LLM devuelven \emph{diferencias} en formato de búsqueda y sustitución en lugar de reescribir el fichero, lo que permite evolucionar programas de cientos de líneas en cualquier lenguaje. Un conjunto de modelos combina uno rápido (Gemini~2.0 Flash, muchas propuestas) y uno más capaz (Gemini~2.0 Pro, menos propuestas y de más calidad). La evaluación es una \emph{cascada}: el programa pasa por pruebas de dificultad creciente y solo avanza si supera las anteriores, de modo que los candidatos malos se descartan con poco coste. La base de programas combina MAP-Elites (una población que guarda el mejor programa en cada celda de un espacio de características, para mantener diversidad) con el modelo de islas. El \cref{tab:fs-ae} resume las diferencias que los propios autores señalan.
+
+\begin{table}[h]
+\centering\small
+\caption{FunSearch frente a AlphaEvolve, según la tabla~1 de~\cite{alphaevolve}.}\label{tab:fs-ae}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+ & FunSearch & AlphaEvolve \\
+\midrule
+qué evoluciona & una función & un fichero entero, con varios bloques \\
+tamaño & 10--20 líneas & hasta cientos de líneas \\
+lenguaje & Python & cualquiera \\
+evaluación & $\le 20$~min en una CPU & horas, en paralelo, con aceleradores \\
+muestras del LLM & millones & bastan miles \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{ejemplo}[Resultados publicados de AlphaEvolve]\label{ej:ae-resultados}
+Según el informe y la nota técnica de Google DeepMind~\cite{alphaevolve,ae-blog}: (i) una heurística de planificación para Borg, el gestor de los centros de datos de Google, recupera de media un 0{,}7\,\% de los recursos de cómputo de toda la flota; (ii) una mejor división de una multiplicación de matrices acelera un 23\,\% ese núcleo y reduce un 1\,\% el tiempo de entrenamiento de Gemini; (iii) un núcleo de FlashAttention se acelera hasta un 32{,}5\,\%; (iv) en más de 50 problemas matemáticos abiertos, igualó el mejor resultado conocido en torno al 75\,\% de los casos y lo mejoró en torno al 20\,\%, entre ellos una configuración de 593 esferas en dimensión~11 para el problema del número de besos; (v) encontró un procedimiento para multiplicar matrices complejas $4\times4$ con 48 multiplicaciones escalares. En todos los casos la garantía procede del evaluador: una prueba de corrección, una medida de tiempo o la verificación de una construcción matemática.
+\end{ejemplo}
+
+\section{Por qué funciona y cuándo no}
+
+Tres ingredientes explican el éxito. \emph{Asimetría entre generar y verificar}: comprobar que un empaquetado es válido y contar contenedores es inmediato, aunque encontrar una buena heurística sea difícil; es la misma asimetría que explota el aprendizaje por refuerzo con recompensas verificables (módulo~21, tema~6, §6.2) y el esquema de generar y verificar del módulo~27 (tema~6, §6.3). \emph{Una distribución de propuestas informada}: el LLM eleva la probabilidad $q$ de la \cref{prop:espera}. \emph{Memoria y diversidad}: la base de programas acumula lo aprendido y las islas evitan la convergencia prematura.
+
+Los límites son igual de claros. (i) \emph{El evaluador es la especificación}: lo que no mida no se optimiza, y lo que mida mal se explota, como en la sobreoptimización de la recompensa (módulo~21, tema~6, §6.4). (ii) \emph{Generalización}: la heurística se ajusta a la distribución de entrenamiento; Herrmann y Pallez~\cite{hp} concluyen que las heurísticas de empaquetado de FunSearch no son robustas a cambios en la distribución de los datos y que en gran parte redescubren patrones conocidos. (iii) \emph{Coste}: millones de muestras en FunSearch y horas de evaluación en AlphaEvolve. (iv) \emph{Seguridad}: el código generado es código no confiable y debe ejecutarse aislado, sin red ni acceso a datos sensibles.
+
+\section{Empaquetado en línea}
+
+\begin{definicion}[Empaquetado unidimensional en línea]\label{def:bp}
+Se reciben, uno a uno, objetos de tamaños $s_1,s_2,\dots,s_N\in(0,C]$ que deben colocarse en contenedores de capacidad $C$ sin superarla. Cada objeto se coloca al llegar, sin conocer los siguientes, y no se puede mover después. El objetivo es minimizar el número de contenedores usados. Sea $\mathrm{OPT}$ el mínimo que se lograría conociendo todos los objetos de antemano.
+\end{definicion}
+
+\begin{definicion}[Reglas de prioridad clásicas]\label{def:ff-bf}
+Sea $r$ la capacidad restante de un contenedor abierto en el que cabe el objeto $s$ y $g=r-s$ el hueco que dejaría. \emph{First fit} (FF) coloca el objeto en el primer contenedor abierto en que cabe; \emph{best fit} (BF), en el que deja menor hueco $g$; en ambos casos se abre uno nuevo solo si no cabe en ninguno. En términos del esqueleto, FF usa la prioridad $-(\text{índice del contenedor})$ y BF la prioridad $-g$. Un algoritmo es de tipo \emph{any fit} si nunca abre un contenedor nuevo cuando el objeto cabe en uno abierto.
+\end{definicion}
+
+\begin{lema}[Cota $L_1$]\label{lem:l1}
+$\mathrm{OPT}\ge L_1=\bigl\lceil\sum_{j}s_j/C\bigr\rceil$.
+\end{lema}
+
+\begin{proof}
+Con $m$ contenedores se puede guardar un volumen total de a lo sumo $mC$, luego $\mathrm{OPT}\cdot C\ge\sum_j s_j$; como $\mathrm{OPT}$ es entero, $\mathrm{OPT}\ge\lceil\sum_j s_j/C\rceil$.
+\end{proof}
+
+\begin{teorema}[Garantía de los algoritmos \emph{any fit}]\label{teo:anyfit}
+Todo algoritmo \emph{any fit}, en particular FF y BF, usa a lo sumo $\lceil 2\sum_j s_j/C\rceil\le 2\,\mathrm{OPT}$ contenedores.
+\end{teorema}
+
+\begin{proof}
+Sea $m$ el número de contenedores usados y $S=\sum_j s_j$. Se afirma que, al final, a lo sumo un contenedor tiene carga $\le C/2$. Supóngase que dos contenedores $i$ y $l$, con $i$ abierto antes que $l$, tienen ambos carga final $\le C/2$. Cuando llegó el primer objeto de $l$, de tamaño $s\le C/2$ (porque la carga final de $l$ no supera $C/2$), el contenedor $i$ ya estaba abierto y su carga era $\le C/2$ (las cargas solo crecen). Entonces el objeto cabía en $i$, y un algoritmo \emph{any fit} no habría abierto $l$: contradicción. Por tanto, al menos $m-1$ contenedores tienen carga $>C/2$ y $S>(m-1)C/2$, es decir, $m<2S/C+1$. Como $m$ es entero, $m\le\lceil 2S/C\rceil$. Finalmente $\lceil 2S/C\rceil\le 2\lceil S/C\rceil=2L_1\le 2\,\mathrm{OPT}$ por el \cref{lem:l1}.
+\end{proof}
+
+La constante~2 no es la mejor posible para FF, pero el resultado ilustra el tipo de garantía que una heurística generada \emph{no} trae consigo: lo que se sabe de ella es lo que mide el evaluador. Para el problema sin restricciones de llegada, Williamson y Shmoys demuestran que, salvo que $\mathrm{P}=\mathrm{NP}$, ningún algoritmo de tiempo polinómico garantiza un factor menor que $3/2$~\cite[§3.3]{ws}.
+
+\begin{ejemplo}[FF frente a BF a mano]\label{ej:ff-bf}
+Con $C=10$ llegan los objetos $5,8,6,2,4,4,7$ ($S=36$, $L_1=4$). \emph{FF}: $5\to$ contenedor~1; $8\to$ 2; $6\to$ 3; $2\to$ 1 (carga 7); el primer $4$ no cabe en 1 (resto~3) ni en 2 (resto~2), va al 3 (carga 10); el segundo $4$ no cabe en ninguno y abre el 4; el $7$ abre el 5. Total: 5 contenedores. \emph{BF}: el $2$ cabe en 1, 2 y 3 con huecos $3$, $0$ y $2$, y va al 2 (carga 10); el primer $4$ cabe en 1 (hueco~1) y en 3 (hueco~0), va al 3; el segundo $4$ va al 1 (carga~9); el $7$ abre el 4. Total: 4 contenedores, que es óptimo por el \cref{lem:l1}. BF ganó porque cerró contenedores exactos y no dejó restos de 2 o 3 unidades inservibles.
+\end{ejemplo}
+
+\section{Caso de estudio: una heurística de empaquetado generada}
+
+\begin{ejemplo}[Búsqueda evolutiva de una regla de prioridad]\label{ej:caso-bp}
+\emph{Problema.} Un almacén automático agrupa paquetes en bandejas de capacidad $C=100$ (unidades de volumen) a medida que llegan de la línea; las bandejas no se reabren. Como en los conjuntos de datos Weibull de FunSearch~\cite{funsearch-code,hp}, los tamaños siguen una Weibull de forma $3$ y escala $45$, truncados a enteros entre 1 y 100 (media $\approx 39{,}7$).
+
+\emph{Formulación.} Programas $\pi(s,r)$ que asignan una prioridad a cada bandeja abierta con $r\ge s$ y a una bandeja vacía ($r=C$); el esqueleto coloca el objeto en la de mayor prioridad. Utilidad: $u(\pi,x)=-(\text{bandejas usadas})$. Entrenamiento: 3 instancias de 1000 objetos. Prueba: 5 instancias nuevas de 5000 objetos. Métrica de prueba: exceso relativo sobre la cota $L_1$, $(\bar m-\bar L_1)/\bar L_1$.
+
+\emph{Método.} Sin acceso a un LLM, el cuaderno sustituye el modelo por un \emph{generador de mutaciones de programas} que imita las ediciones de un programador: retocar una constante, añadir una regla del tipo «si el hueco $g$ es menor que $c$, sumar $w$», saturar el hueco ($g\to\min(g,c)$), reescribir un subárbol o combinar las dos funciones del prompt. El resto replica FunSearch a pequeña escala: semilla BF, $k=2$ programas por propuesta ordenados de peor a mejor, 4 islas, muestreo de clusters con temperatura, preferencia por programas cortos, reinicio de la mitad peor cada 75 evaluaciones y un presupuesto de 300 evaluaciones (unos 30~s en una CPU).
+
+\emph{Resultado.} El mejor programa encontrado es
+\[
+\pi^{*}(s,r)=-\min(g,9)-5{,}82\cdot\Ind[g\le 20],\qquad g=r-s .
+\]
+Su lectura es clara: los huecos casi nulos ($g\le 3$) puntúan más que $-9$ y se prefieren; los huecos intermedios, $9<g\le 20$, puntúan $-14{,}82$, lo peor posible; con huecos mayores que 20 todas las bandejas empatan en $-9$ y gana la primera, como en FF. La regla \emph{evita dejar restos de 10 a 20 unidades}, demasiado pequeños para casi cualquier paquete (más del 98\,\% de los tamaños supera 10). El \cref{tab:bp} compara con las reglas clásicas y con la heurística publicada por FunSearch para estos datos~\cite{funsearch-code}, evaluadas sobre las mismas instancias de prueba.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Empaquetado en línea de 5 instancias de prueba de 5000 objetos ($\bar L_1=1985{,}6$). Datos del cuaderno.}\label{tab:bp}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Regla & Bandejas (media) & Exceso sobre $L_1$ \\
+\midrule
+\emph{first fit} & 2073{,}4 & 4{,}42\,\% \\
+\emph{best fit} & 2064{,}8 & 3{,}99\,\% \\
+regla evolucionada $\pi^{*}$ & 2011{,}2 & 1{,}29\,\% \\
+heurística publicada por FunSearch & 2000{,}0 & 0{,}73\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Como referencia externa, en el conjunto Weibull de 5000 objetos que acompaña al artículo, BF usa de media 2067{,}0 bandejas y la heurística de FunSearch 2001{,}4, con $\bar L_1=1987{,}8$: excesos del $3{,}98\,\%$ y del $0{,}68\,\%$~\cite{funsearch-code}. La \emph{prueba de robustez} del cuaderno repite la comparación con otra distribución, Weibull de escala 60 (objetos más grandes): BF deja un exceso del $5{,}19\,\%$, la regla $\pi^{*}$ un $5{,}21\,\%$ y la heurística publicada un $6{,}40\,\%$, peor que FF ($6{,}05\,\%$). Con seis semillas distintas del generador, el exceso en prueba de la regla encontrada varía entre el $1{,}29\,\%$ y el $2{,}33\,\%$, y cuatro de las seis reglas tienen la misma estructura: un término de \emph{best fit} saturado más una penalización de los huecos intermedios. Las dos heurísticas generadas se han especializado en la distribución con la que se evaluaron, tal como advierten Herrmann y Pallez~\cite{hp}.
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~1.}\label{tab:tec1}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.5cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.1cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+FunSearch (repositorio)~\cite{funsearch-code} & algoritmo evolutivo, manipulación de código y una versión de un solo hilo, sin LLM ni entorno aislado & abierta (Apache~2.0) & entender el método y adaptarlo a un LLM y una infraestructura propios \\
+OpenEvolve~\cite{openevolve} & implementación abierta inspirada en AlphaEvolve: islas, MAP-Elites, evaluación en cascada, conjuntos de LLM & abierta (Apache~2.0) & evolucionar ficheros completos con cualquier API compatible \\
+AlphaEvolve~\cite{alphaevolve} & agente de Google DeepMind & servicio, no publicado como código & referencia de diseño; resultados publicados \\
+gplearn, DEAP & programación genética clásica sin LLM & abiertas (BSD-3; LGPL) & línea base barata para expresiones pequeñas \\
+Contenedores aislados & ejecutar código no confiable sin red y con límites de tiempo y memoria & abierta o del proveedor & siempre que se ejecute código generado \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores1}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Evaluar con las mismas instancias con que se selecciona}: el mejor programa sobre 3 instancias está sesgado al alza (\cref{tema:2}, \cref{prop:maldicion}); hay que reservar instancias de prueba y otras distribuciones plausibles.
+  \item \emph{Un evaluador que se puede engañar}: si el programa puede leer los datos de prueba, modificar el contador o detectar que está siendo evaluado, acabará haciéndolo.
+  \item \emph{Ejecutar el código generado sin aislamiento}: el código de un LLM es código no confiable.
+  \item \emph{Comparar con presupuestos distintos}: una heurística evolucionada durante horas debe compararse con líneas base que hayan recibido un esfuerzo comparable (al menos FF, BF y una búsqueda aleatoria de constantes).
+  \item \emph{Ignorar el coste}: miles de llamadas al LLM y de evaluaciones tienen un precio; conviene estimar $q$ con un piloto y presupuestar con la \cref{prop:espera}.
+  \item \emph{No simplificar}: el programa ganador suele contener términos inertes; conviene podarlo y volver a evaluarlo antes de desplegarlo.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item B.~Romera-Paredes \emph{et al.}~\cite{funsearch} y su repositorio~\cite{funsearch-code}, cuaderno \texttt{bin\_packing}.
+\item A.~Novikov \emph{et al.}~\cite{alphaevolve}, §§2--3, y la nota técnica~\cite{ae-blog}.
+\item J.~Herrmann y G.~Pallez~\cite{hp}, para una lectura crítica.
+\item D.~P. Williamson y D.~B. Shmoys~\cite{ws}, §3.3 «The bin-packing problem».
+\item M.~J. Kochenderfer y T.~A. Wheeler~\cite{kw}, cap.~20 «Expression Optimization».
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-componentes}
+Una empresa quiere descubrir una regla de prioridad para ordenar los trabajos en la cola de una máquina (cada trabajo tiene tiempo de proceso, fecha de entrega y peso). Identifique, según la \cref{def:busqueda-programas} y la \cref{def:esqueleto}, el esqueleto, la firma de la función que evoluciona, la utilidad $u$, el conjunto de entrenamiento y el de prueba, y dos programas semilla razonables.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-softmax}
+Una isla contiene tres clusters con puntuaciones $-416{,}7$, $-409{,}3$ y $-405{,}3$ (menos el número medio de bandejas). (a) Calcule las probabilidades de la \cref{def:softmax-clusters} con $T=0{,}1$ aplicada a las puntuaciones brutas. (b) El cuaderno normaliza antes, $z_i=(s_i-\max_l s_l)/(\max_l s_l-\min_l s_l)$, y usa $\exp(z_i/T)$ con $T=0{,}3$; calcule las probabilidades. (c) ¿Qué consecuencia práctica tiene la escala de las puntuaciones?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-ffbf}
+Con $C=10$ llegan los objetos $3,7,4,7,8,3,5$. Aplique FF y BF, calcule $L_1$ y diga si alguno de los dos es óptimo.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-nextfit}
+\emph{Next fit} (NF) mantiene abierto solo el último contenedor: si el objeto cabe, lo coloca allí; si no, cierra ese contenedor para siempre y abre otro. (a) Demuestre que NF usa a lo sumo $2\,\mathrm{OPT}$ contenedores observando que dos contenedores consecutivos suman más de $C$. (b) Con $C=1$ y $N=2k$ objetos que alternan $1/2$ y $\varepsilon$ ($0<\varepsilon<1/(2k)$), calcule cuántos contenedores usa NF y cuántos bastan, y concluya que el factor~2 no puede mejorarse para NF.
+\fuente{adaptado de D.~P. Williamson y D.~B. Shmoys~\cite{ws}, §3.3 «The bin-packing problem» (análisis de algoritmos voraces de empaquetado).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-presupuesto}
+En una prueba piloto, de 1000 propuestas del LLM, 2 mejoraron al mejor programa del momento. (a) Estime $q$. (b) ¿Cuántas evaluaciones hacen falta para tener al menos un 95\,\% de probabilidad de una mejora, según la \cref{prop:espera}? (c) Si cada evaluación cuesta 0{,}004~€ de LLM y 20~s de CPU a 0{,}05~€/h, ¿cuánto cuesta ese presupuesto? (d) Con 10 islas independientes de 300 evaluaciones cada una, ¿cuál es la probabilidad de que alguna obtenga al menos una mejora?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-gramatica}
+Considere la gramática $E\to E+E\mid E\times E\mid x\mid 1$. Sea $N_d$ el número de árboles de expresión de profundidad a lo sumo $d$ (las hojas tienen profundidad~0). (a) Justifique la recurrencia $N_0=2$, $N_d=2+2N_{d-1}^{2}$. (b) Calcule $N_1$, $N_2$ y $N_3$. (c) Relacione el resultado con la \cref{prop:espera}: ¿qué valor de $q$ tendría una propuesta uniforme entre los árboles de profundidad $\le 3$ si solo uno fuera mejor que la semilla?
+\fuente{adaptado de M.~J. Kochenderfer y T.~A. Wheeler~\cite{kw}, cap.~20 «Expression Optimization» (gramáticas y crecimiento del espacio de expresiones).}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-interpretar}
+Para la regla $\pi^{*}(s,r)=-\min(g,9)-5{,}82\,\Ind[g\le 20]$ del \cref{ej:caso-bp}: (a) escriba la prioridad como función a trozos de $g$ y ordene los intervalos de $g$ de preferido a menos preferido; (b) demuestre que, si ninguna bandeja deja $g\le 20$, la regla coincide con FF, y que, si alguna deja $g\le 3$, elige la de menor hueco; (c) determine si $\pi^{*}$, con el esqueleto del caso (que incluye siempre una bandeja vacía entre los candidatos), es una regla \emph{any fit} y si le es aplicable el \cref{teo:anyfit}.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-diseno}
+Diseñe un sistema tipo FunSearch para descubrir la heurística que asigna máquinas virtuales a servidores en un centro de datos (dos recursos: CPU y memoria). Especifique el esqueleto y la firma, el evaluador (métricas, instancias, cómo evitar que se engañe), la separación entre entrenamiento, validación y prueba (incluidas distribuciones distintas), las salvaguardas para ejecutar el código generado, el presupuesto según la \cref{prop:espera} y el criterio para desplegar la regla en producción.
+\end{ejercicio}

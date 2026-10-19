@@ -1,0 +1,157 @@
+% =====================================================================
+\chapter{AutoML y búsqueda de arquitecturas}
+\label{tema:3}
+% =====================================================================
+
+Elegir un modelo, sus hiperparámetros y su preprocesado es también un problema de optimización sobre programas: cada configuración es una canalización ejecutable cuyo valor se mide con validación. Este tema formaliza ese problema siguiendo el libro editado por Hutter, Kotthoff y Vanschoren~\cite{automl} (cap.~1 «Hyperparameter Optimization» y cap.~3 «Neural Architecture Search», de Elsken, Metzen y Hutter~\cite{elsken}) y los artículos originales: Auto-WEKA~\cite{autoweka}, búsqueda aleatoria~\cite{bergstra}, búsqueda de arquitecturas con refuerzo~\cite{zoph}, con evolución~\cite{real}, con pesos compartidos~\cite{enas} y diferenciable~\cite{darts}, y la línea base de Li y Talwalkar~\cite{lt}. La multifidelidad sigue a Jamieson y Talwalkar~\cite{sh}, a Li \emph{et al.}~\cite{hyperband} y a la §19.4 de Zhang \emph{et al.}~\cite{d2l}. Complementa el tema~6 del módulo~25, que estudió el ajuste de hiperparámetros con optimización bayesiana y Hyperband; aquí el énfasis está en el espacio de búsqueda y en el coste.
+
+\section{AutoML como optimización sobre programas}
+
+\begin{definicion}[Selección conjunta de algoritmo e hiperparámetros]\label{def:cash}
+Se consideran $R$ algoritmos de aprendizaje, $A^{(1)},\dots,A^{(R)}$, cada uno con un espacio de hiperparámetros $\Lambda^{(j)}$, y sea $D$ un conjunto de datos dividido en $k$ pares $(D^{(i)}_{\mathrm{tr}},D^{(i)}_{\mathrm{va}})$, cada uno formado por una parte de entrenamiento y otra de validación. El problema CASH (\emph{combined algorithm selection and hyperparameter optimization})~\cite{autoweka} es
+\[
+(j^{*},\lambda^{*})\in\argmin_{j\in\{1,\dots,R\},\ \lambda\in\Lambda^{(j)}}\ \frac1k\sum_{i=1}^{k}\mathcal{L}\bigl(A^{(j)}_{\lambda},D^{(i)}_{\mathrm{tr}},D^{(i)}_{\mathrm{va}}\bigr),
+\]
+donde $\mathcal{L}$ es la pérdida de validación del modelo entrenado con $D^{(i)}_{\mathrm{tr}}$.
+\end{definicion}
+
+El espacio de la \cref{def:cash} es \emph{condicional}: la profundidad de un árbol solo existe si se elige un árbol. Se representa como un único espacio jerárquico cuya raíz es el hiperparámetro «algoritmo», de modo que métodos como la optimización bayesiana con bosques aleatorios (SMAC) o con estimadores de densidad en árbol (TPE) lo tratan sin cambios. Si además se eligen el preprocesado, la selección de variables y la combinación de modelos, la configuración es un programa completo; TPOT, por ejemplo, busca esas canalizaciones con programación genética, como en el \cref{tema:1}~\cite{automl}.
+
+\begin{observacion}[Por qué la búsqueda aleatoria es una línea base seria]\label{obs:aleatoria}
+Si la pérdida depende sobre todo de unos pocos hiperparámetros, una rejilla desperdicia evaluaciones repitiendo los mismos valores de los importantes, mientras que $n$ puntos aleatorios prueban $n$ valores distintos de cada uno~\cite{bergstra}. Además, la probabilidad de que al menos uno de $n$ puntos aleatorios caiga en la fracción $q$ mejor del espacio es $1-(1-q)^{n}$, independiente de la dimensión: con $q=0{,}05$ y $n=60$ vale $0{,}954$ (módulo~25, tema~6).
+\end{observacion}
+
+\section{Búsqueda de arquitecturas neuronales}
+
+Elsken, Metzen y Hutter organizan la búsqueda de arquitecturas (NAS) en tres dimensiones~\cite{elsken}: el \emph{espacio de búsqueda} (qué arquitecturas pueden representarse), la \emph{estrategia de búsqueda} (cómo se explora) y la \emph{estimación del rendimiento} (cómo se evalúa una arquitectura sin entrenarla del todo).
+
+\begin{definicion}[Espacio de celdas]\label{def:celdas}
+Una \emph{celda} es un grafo dirigido acíclico con dos nodos de entrada (las salidas de las dos celdas anteriores) y $B$ nodos intermedios. El nodo intermedio $b$ elige dos entradas entre los $b+1$ nodos anteriores y aplica a cada una una operación de un conjunto $\mathcal{O}$ (convoluciones, agrupamientos, identidad\dots); su salida es la suma de ambas. La red se construye apilando copias de una celda normal y de una celda de reducción.
+\end{definicion}
+
+Si las dos elecciones de cada nodo son ordenadas y pueden repetirse, el número de celdas distintas es $\prod_{b=1}^{B}\bigl((b+1)\abs{\mathcal{O}}\bigr)^{2}$: con $B=5$ y $\abs{\mathcal{O}}=8$, unas $5{,}6\cdot10^{14}$. La celda reduce el espacio respecto a una red arbitraria, pero sigue siendo inabarcable por enumeración.
+
+\emph{Estrategias de búsqueda.} Zoph y Le entrenaron con refuerzo una red recurrente que genera descripciones de arquitecturas y obtuvieron un $3{,}65\,\%$ de error en CIFAR-10~\cite{zoph}. Real \emph{et al.} usaron evolución por torneo con \emph{envejecimiento} (se elimina el individuo más antiguo, no el peor), y en una comparación controlada con el mismo hardware la evolución llegó antes a buenos resultados que el refuerzo~\cite{real}. Liu, Simonyan y Yang hicieron el espacio continuo:
+
+\begin{definicion}[Relajación continua de DARTS]\label{def:darts}
+En DARTS~\cite{darts}, cada arista $(i,j)$ de la celda aplica una \emph{mezcla} de todas las operaciones,
+\[
+\bar o^{(i,j)}(x)=\sum_{o\in\mathcal{O}}\frac{\exp\bigl(\alpha^{(i,j)}_{o}\bigr)}{\sum_{o'\in\mathcal{O}}\exp\bigl(\alpha^{(i,j)}_{o'}\bigr)}\,o(x),
+\]
+y los parámetros de arquitectura $\alpha$ se optimizan por descenso de gradiente en un problema binivel: $\min_{\alpha}\mathcal{L}_{\mathrm{va}}\bigl(w^{*}(\alpha),\alpha\bigr)$ con $w^{*}(\alpha)=\argmin_{w}\mathcal{L}_{\mathrm{tr}}(w,\alpha)$. Al terminar, cada arista conserva la operación de mayor $\alpha$.
+\end{definicion}
+
+\emph{Estimación del rendimiento.} Entrenar cada candidata hasta el final es lo que hace prohibitiva la búsqueda. ENAS comparte los pesos entre todas las arquitecturas del espacio (cada candidata es un subgrafo de un modelo grande) y lo abarata en unas mil veces en horas de GPU respecto a la búsqueda original~\cite{enas}. Li y Talwalkar mostraron que la búsqueda aleatoria con parada temprana iguala a ENAS en PTB y CIFAR-10, y con pesos compartidos lo supera, y señalaron problemas de reproducibilidad en la literatura~\cite{lt}. La lección práctica es la del \cref{tema:1}: compárese siempre con una búsqueda aleatoria del mismo presupuesto.
+
+\section{Multifidelidad y coste}
+
+\begin{definicion}[Fidelidad]\label{def:fidelidad}
+Una \emph{fidelidad} es un recurso $r\in[r_{\min},r_{\max}]$ que controla el coste y la precisión de la evaluación de una configuración $\lambda$: épocas de entrenamiento, fracción de los datos, resolución de las imágenes o número de árboles. Se escribe $f(\lambda,r)$ para la pérdida de validación con presupuesto $r$; la de interés es $f(\lambda,r_{\max})$.
+\end{definicion}
+
+\begin{definicion}[Halving sucesivo]\label{def:sh}
+Dados $N$ configuraciones, un factor $\eta\ge2$ y un presupuesto mínimo $r_{\min}$, el \emph{halving sucesivo}~\cite{sh} evalúa todas con $r_0=r_{\min}$, conserva la fracción $1/\eta$ mejor, multiplica el presupuesto por $\eta$ y repite: en el escalón $i$ quedan $n_i=N/\eta^{i}$ configuraciones con presupuesto $r_i=r_{\min}\eta^{i}$, hasta $r_K=r_{\max}$.
+\end{definicion}
+
+\begin{proposicion}[Coste del halving sucesivo]\label{prop:coste-sh}
+Si $N$ es múltiplo de $\eta^{K}$ y el coste de una evaluación es proporcional a su presupuesto, cada escalón cuesta $N r_{\min}$ y el total es $(K+1)Nr_{\min}$, frente a $Nr_{\max}=N r_{\min}\eta^{K}$ de evaluar todas con el presupuesto completo. El cociente es $(K+1)/\eta^{K}$.
+\end{proposicion}
+
+\begin{proof}
+El escalón $i$ evalúa $n_i=N/\eta^{i}$ configuraciones con presupuesto $r_{\min}\eta^{i}$; su coste es $n_ir_i=Nr_{\min}$, independiente de $i$. Sumando los $K+1$ escalones $i=0,\dots,K$ se obtiene $(K+1)Nr_{\min}$; el cociente con $Nr_{\min}\eta^{K}$ es $(K+1)/\eta^{K}$.
+\end{proof}
+
+\begin{proposicion}[Cuándo acierta el halving sucesivo]\label{prop:acierto-sh}
+Sea $\lambda^{\dagger}$ la mejor configuración a fidelidad completa. Si en cada escalón $i<K$ la ordenación por $f(\cdot,r_i)$ coloca a $\lambda^{\dagger}$ entre las $n_{i+1}$ primeras de las que quedan, el halving sucesivo devuelve $\lambda^{\dagger}$. Si las curvas de aprendizaje se cruzan (una configuración peor al principio es mejor al final), puede descartarla.
+\end{proposicion}
+
+\begin{proof}
+Por inducción sobre los escalones, $\lambda^{\dagger}$ sobrevive a todos; en el último se evalúa a fidelidad completa, donde es la mejor por definición, y se devuelve. Para la segunda parte basta un ejemplo: dos configuraciones con $f(\lambda_1,r_0)<f(\lambda_2,r_0)$ y $f(\lambda_1,r_{\max})>f(\lambda_2,r_{\max})$, $N=2$, $\eta=2$: se conserva $\lambda_1$, que no es la mejor.
+\end{proof}
+
+La hipótesis de la \cref{prop:acierto-sh} se puede comprobar en un piloto con la correlación de rangos de Spearman entre las pérdidas a baja y a alta fidelidad. Hyperband~\cite{hyperband} protege frente a una mala elección de $r_{\min}$ ejecutando varias rondas de halving sucesivo con distinta agresividad (módulo~25, tema~6). En la práctica, el coste no es exactamente proporcional al presupuesto: cargar los datos, compilar el modelo o arrancar una máquina son costes fijos que reducen el ahorro de la \cref{prop:coste-sh}.
+
+\section{Caso de estudio: AutoML del clasificador de averías}
+
+\begin{ejemplo}[Selección del modelo de riesgo de avería]\label{ej:caso-automl}
+\emph{Problema.} El \cref{tema:4} necesitará un clasificador que prediga, para cada máquina de una línea de envasado y cada día, si fallará en los 7 días siguientes, a partir de la vibración (mm/s), la temperatura del rodamiento (ºC), los días desde la última intervención, la carga de la línea, la pendiente de la vibración y el tipo de máquina. Se dispone de dos años de registros diarios de tres líneas con seis máquinas cada una.
+
+\emph{Datos y división.} Se separa \emph{por tiempo}: los primeros 18 meses para entrenar (9594 filas) y los 6 siguientes para validar (3294 filas); una cuarta línea, no usada en ninguna decisión, sirve de prueba (4338 filas). La tasa de positivos es del 12{,}5\,\%. Métrica: pérdida logarítmica (penaliza las probabilidades mal calibradas, que el \cref{tema:4} usará para decidir).
+
+\emph{Espacio.} Tres familias: regresión logística ($C\in[10^{-3},10^{2}]$, escala logarítmica), \emph{gradient boosting} (tasa de aprendizaje $[0{,}01;\,0{,}32]$, profundidad 2--6, 50--400 iteraciones) y bosque aleatorio (30--150 árboles, profundidad 3--11, mínimo de 1--29 ejemplos por hoja). Se muestrean 27 configuraciones.
+
+\emph{Métodos.} (a) Búsqueda aleatoria: las 27 con todos los datos de entrenamiento. (b) Halving sucesivo con $\eta=3$ y fidelidad igual a la fracción (la más reciente) de los datos de entrenamiento: 27 configuraciones con $1/9$, 9 con $1/3$ y 3 con todo.
+
+\emph{Resultado.} Por la \cref{prop:coste-sh}, el coste del halving es $27\cdot\tfrac19+9\cdot\tfrac13+3\cdot1=9$ entrenamientos completos equivalentes, frente a 27; el tiempo de reloj medido baja solo de 13{,}3 a 9{,}1~s por los costes fijos. La correlación de Spearman entre las pérdidas con $1/9$ de los datos y con todos es $0{,}80$. La búsqueda aleatoria elige un bosque (114 árboles, profundidad 6, 26 ejemplos por hoja) con pérdida de validación $0{,}2378$; el halving elige otro bosque (93 árboles, profundidad 6, 9 por hoja), que es el cuarto de los 27 en validación, con $0{,}2384$. En la línea de prueba ambos obtienen $0{,}2735$ de pérdida logarítmica (frente a $0{,}3358$ de predecir siempre la tasa base) y un área bajo la curva ROC de $0{,}815$ y $0{,}817$. La diferencia de validación entre los dos era ruido; el halving obtuvo lo mismo con un tercio del cómputo.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~3.}\label{tab:tec3}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.5cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.1cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+Optuna~\cite{optuna} & optimización de hiperparámetros con espacios definidos en el propio código (TPE y otros) y poda con halving sucesivo o Hyperband & abierta (MIT) & ajuste de cualquier modelo en Python con poco código \\
+Ray Tune~\cite{ray} & ajuste distribuido en un clúster con planificadores de multifidelidad & abierta (Apache~2.0) & muchas pruebas en paralelo sobre varias máquinas \\
+SMAC3 & configuración algorítmica con bosques aleatorios como sustituto & abierta (BSD-3) & espacios condicionales, configurar resolvedores \\
+auto-sklearn, AutoGluon & AutoML completo para datos tabulares (selección, ajuste, conjuntos) & abiertas (BSD-3; Apache~2.0) & primera línea base fuerte en datos tabulares \\
+NNI & búsqueda de arquitecturas y de hiperparámetros & abierta (MIT) & NAS con estrategias variadas sobre PyTorch \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores3}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Validación aleatoria con datos temporales}: mezclar días de entrenamiento y validación filtra el futuro y premia a los modelos que memorizan; la división debe respetar el tiempo, y la prueba, a ser posible, otra unidad (otra línea, otra planta).
+  \item \emph{Reutilizar la validación como prueba}: el modelo ganador sobre 27 tiene sesgo optimista (\cref{prop:maldicion}).
+  \item \emph{Fidelidades engañosas}: con pocas épocas o pocos datos ganan los modelos que aprenden rápido, no los mejores (\cref{prop:acierto-sh}); conviene medir la correlación de rangos.
+  \item \emph{Espacios de búsqueda sesgados}: rangos mal elegidos (tasa de aprendizaje en escala lineal, profundidades imposibles) hacen inútil cualquier estrategia.
+  \item \emph{No contar el coste total}: horas de GPU, energía, tiempo de ingeniería y mantenimiento del modelo elegido; un modelo un 0{,}1\,\% mejor pero diez veces más caro de servir puede no compensar.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item F.~Hutter, L.~Kotthoff y J.~Vanschoren (eds.)~\cite{automl}, caps.~1 y~3.
+\item C.~Thornton \emph{et al.}~\cite{autoweka}, para la formulación CASH.
+\item L.~Li y A.~Talwalkar~\cite{lt}, sobre líneas base y reproducibilidad.
+\item A.~Zhang \emph{et al.}~\cite{d2l}, §§19.1 y~19.4.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-dimensiones}
+Para cada uno de estos sistemas, identifique el espacio de búsqueda, la estrategia y la estimación del rendimiento: (a) ENAS; (b) DARTS; (c) la búsqueda de Real \emph{et al.}; (d) el halving sucesivo del \cref{ej:caso-automl}.
+\fuente{adaptado de T.~Elsken, J.~H. Metzen y F.~Hutter~\cite{elsken}, cap.~3 de~\cite{automl} (las tres dimensiones de NAS).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-rejilla}
+Un modelo tiene 6 hiperparámetros, pero la pérdida depende casi solo de 2. Se dispone de 64 evaluaciones. (a) Con una rejilla de 2 valores por hiperparámetro, ¿cuántos valores distintos de cada hiperparámetro importante se prueban y cuántas combinaciones distintas de los dos importantes? (b) ¿Y con 64 puntos aleatorios? (c) ¿Cuántos puntos aleatorios hacen falta para que, con probabilidad $0{,}95$, al menos uno caiga en el mejor 5\,\% del espacio?
+\fuente{adaptado de A.~Zhang \emph{et al.}~\cite{d2l}, §19.1, ejercicio~3 (búsqueda aleatoria frente a rejilla cuando pocos hiperparámetros importan).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-cash}
+Formule como CASH (\cref{def:cash}) la elección entre $k$ vecinos más próximos ($k\in\{1,\dots,50\}$, distancia euclídea o Manhattan), máquina de vectores soporte (núcleo lineal o gaussiano; $C$; $\gamma$ solo si el núcleo es gaussiano) y bosque aleatorio (número de árboles y profundidad). Dibuje el árbol del espacio condicional y diga qué hiperparámetros están activos en cada rama.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-sh}
+Con $r_{\min}=2$ épocas, $\eta=2$ y $r_{\max}=10$, los escalones de presupuesto son $2,4,8,10$ (el último se recorta a $r_{\max}$). Se empieza con $N=16$ configuraciones. (a) ¿Cuántas configuraciones se evalúan en cada escalón? (b) ¿Cuántas épocas cuesta en total? (c) Compárelo con entrenar las 16 durante 10 épocas. (d) ¿Por qué el ahorro es menor que el de la \cref{prop:coste-sh}?
+\fuente{adaptado de A.~Zhang \emph{et al.}~\cite{d2l}, §19.4 «Multi-Fidelity Hyperparameter Optimization» (ejemplo con $r_{\min}=2$, $\eta=2$, $r_{\max}=10$).}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-celdas}
+Con la \cref{def:celdas}: (a) cuente las celdas posibles con $B=4$ nodos intermedios y $\abs{\mathcal{O}}=5$ operaciones; (b) si una red usa una celda normal y otra de reducción elegidas por separado, ¿cuántas redes hay?; (c) si evaluar una arquitectura cuesta 1 hora de GPU, ¿cuánto costaría la enumeración?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-darts}
+En una arista de DARTS hay cuatro operaciones escalares: identidad $o_1(x)=x$, cuadrado $o_2(x)=x^{2}$, cero $o_3(x)=0$ y doble $o_4(x)=2x$, con parámetros $\alpha=(1{,}0;\ 0{,}2;\ -0{,}5;\ 0{,}8)$. (a) Calcule los pesos de la mezcla y $\bar o(1{,}5)$. (b) ¿Qué operación se conserva al discretizar? (c) Calcule $\partial\bar o(x)/\partial\alpha_1$ en $x=1{,}5$.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-coste}
+Entrenar el clasificador completo cuesta 12~min en un nodo de 0{,}60~€/h. Suponiendo además un coste fijo de 1~min por entrenamiento (carga de datos y arranque), compare el tiempo y el coste en euros de: (a) una rejilla de 4 valores en 3 hiperparámetros; (b) 27 configuraciones aleatorias; (c) halving sucesivo con $N=27$, $\eta=3$ y fracciones $1/9$, $1/3$ y $1$ de los datos. (d) ¿Qué cociente de coste entre (c) y (b) se obtiene, y por qué no es $1/3$?
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-cruce}
+Las curvas de aprendizaje de dos configuraciones son $f_1(r)=0{,}30+0{,}20e^{-r/2}$ y $f_2(r)=0{,}25+0{,}40e^{-r/8}$ ($r$ en épocas). (a) Calcule el $r$ a partir del cual la segunda es mejor. (b) Demuestre que el halving sucesivo con $N=2$, $\eta=2$, $r_{\min}=16$ y $r_{\max}=32$ elige la peor. (c) Proponga una modificación del procedimiento, y justifique su coste, que la habría elegido bien.
+\end{ejercicio}

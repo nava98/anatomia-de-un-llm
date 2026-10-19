@@ -1,0 +1,248 @@
+% =====================================================================
+\chapter{Procesos dinámicos y control PID}
+\label{tema:1}
+% =====================================================================
+
+Antes de optimizar un proceso hay que describirlo como sistema dinámico y entender qué hace con él un controlador realimentado. Este tema presenta los modelos en espacio de estados, su discretización exacta y su estabilidad, siguiendo los capítulos~3 y~6 de Åström y Murray~\cite{am}, y el controlador PID con sus reglas de ajuste, según el capítulo~11 del mismo libro, el texto de Seborg \emph{et al.}~\cite{seborg}, la lección~5 del curso 10.450 del MIT~\cite{mit10450} y el método SIMC de Skogestad~\cite{skogestad}. El caso de estudio es la zona de un edificio calentada por una bomba de calor, que reaparece en todo el módulo.
+
+\section{Modelos en espacio de estados}
+
+\begin{definicion}[Sistema en espacio de estados]\label{def:ee}
+Un \emph{sistema dinámico en espacio de estados} en tiempo continuo es un par de ecuaciones
+\[
+\dot x(t)=f\bigl(x(t),u(t),w(t)\bigr),\qquad y(t)=h\bigl(x(t)\bigr),
+\]
+donde $x(t)\in\R^{n}$ es el \emph{estado} (la información mínima que, junto con las entradas futuras, determina la evolución futura), $u(t)\in\R^{m}$ la \emph{entrada manipulada}, $w(t)$ la \emph{perturbación} (entrada que no se elige) e $y(t)$ la \emph{salida medida}. El sistema es \emph{lineal e invariante en el tiempo} (LTI) si $f(x,u,w)=Ax+Bu+Ew$ y $h(x)=Cx$ con matrices constantes.
+\end{definicion}
+
+Los modelos de procesos salen de balances de materia y energía, y casi nunca son lineales. Su comportamiento cerca de un punto de operación se aproxima por uno lineal.
+
+\begin{proposicion}[Linealización]\label{prop:lineal}
+Sea $(\bar x,\bar u,\bar w)$ un \emph{punto de equilibrio}, $f(\bar x,\bar u,\bar w)=0$, con $f$ diferenciable con continuidad. Las desviaciones $\delta x=x-\bar x$, $\delta u=u-\bar u$, $\delta w=w-\bar w$ cumplen
+\[
+\dot{\delta x}=A\,\delta x+B\,\delta u+E\,\delta w+o\bigl(\norm{(\delta x,\delta u,\delta w)}\bigr),
+\]
+con $A=\partial f/\partial x$, $B=\partial f/\partial u$ y $E=\partial f/\partial w$ evaluados en el equilibrio.
+\end{proposicion}
+
+\begin{proof}
+Es el desarrollo de Taylor de primer orden de $f$ en el equilibrio (módulo~0.5, tema~6, y módulo~4, tema~2): $f(x,u,w)=f(\bar x,\bar u,\bar w)+A\delta x+B\delta u+E\delta w+o(\cdot)$, y el primer término es nulo. Como $\bar x$ es constante, $\dot{\delta x}=\dot x$.
+\end{proof}
+
+\begin{ejemplo}[Modelo RC de una zona]\label{ej:rc}
+Una zona de un edificio se modela con una sola capacidad térmica $C$ (kWh/K), que agrupa el aire y la masa que se calienta con él, unida al exterior por una resistencia térmica $R$ (K/kW). Una bomba de calor consume una potencia eléctrica $P$ (kW) y entrega $\COP\cdot P$ de calor, y el sol y los ocupantes aportan unas ganancias $G$ (kW). El balance de energía es
+\begin{equation}\label{eq:rc}
+C\,\dot T=\frac{\Text-T}{R}+\COP\cdot P+G .
+\end{equation}
+Con $T$ como estado, $P$ como entrada y $(\Text,G)$ como perturbaciones, es un sistema LTI escalar con $A=-1/(RC)$, $B=\COP/C$ y $E=(1/(RC),\ 1/C)$. La cantidad $\tau=RC$ es su \emph{constante de tiempo}. Con los datos del caso de estudio, $R=5$ K/kW y $C=3$ kWh/K, resulta $\tau=15$ h. En régimen permanente ($\dot T=0$) con $\Text=5$ °C, $G=0$ y $\COP=2{,}8$, mantener $T=21$ °C exige $P=(21-5)/(R\cdot\COP)=16/14=1{,}143$ kW. La \emph{ganancia estática} de $P$ a $T$ es $R\cdot\COP=14$ K/kW.
+\end{ejemplo}
+
+\section{Discretización}
+
+Un controlador digital mide cada $\Dt$ y mantiene su salida constante entre dos muestras: es el \emph{retenedor de orden cero} (ZOH). Con esa hipótesis el modelo discreto es exacto.
+
+\begin{proposicion}[Discretización exacta con ZOH]\label{prop:zoh}
+Sea $\dot x=Ax+Bu$ con $u(t)=u_k$ constante en $[k\Dt,(k+1)\Dt)$. Entonces $x_{k+1}=A_dx_k+B_du_k$, con
+\[
+A_d=e^{A\Dt},\qquad B_d=\Bigl(\int_0^{\Dt}e^{A\sigma}\,d\sigma\Bigr)B,
+\]
+y, si $A$ es invertible, $B_d=A^{-1}\bigl(e^{A\Dt}-I\bigr)B$.
+\end{proposicion}
+
+\begin{proof}
+La solución de $\dot x=Ax+Bu$ desde $x(t_0)$ es
+\[
+x(t)=e^{A(t-t_0)}x(t_0)+\int_{t_0}^{t}e^{A(t-s)}Bu(s)\,ds,
+\]
+como se comprueba derivando: $\frac{d}{dt}e^{A(t-t_0)}=Ae^{A(t-t_0)}$ y la derivada de la integral es $Bu(t)+A\int_{t_0}^{t}e^{A(t-s)}Bu(s)\,ds$. Con $t_0=k\Dt$, $t=(k+1)\Dt$ y $u(s)=u_k$, el cambio $\sigma=(k+1)\Dt-s$ da $\int_0^{\Dt}e^{A\sigma}d\sigma\,Bu_k$. Si $A$ es invertible, $\int_0^{\Dt}e^{A\sigma}d\sigma=A^{-1}(e^{A\Dt}-I)$, porque la derivada de $A^{-1}e^{A\sigma}$ es $e^{A\sigma}$.
+\end{proof}
+
+La alternativa más sencilla, el método de \emph{Euler explícito}, sustituye la derivada por un cociente incremental: $x_{k+1}=(I+A\Dt)x_k+B\Dt\,u_k$. Es solo una aproximación de primer orden, y puede volver inestable un sistema estable (\cref{cor:euler}).
+
+\begin{ejemplo}[Discretización de la zona]\label{ej:zoh}
+Para el modelo~\eqref{eq:rc} con $\Dt=0{,}25$ h, la \cref{prop:zoh} da $a=e^{-\Dt/\tau}=e^{-1/60}=0{,}983471$ y, para la entrada de calor $Q$, $b=A^{-1}(a-1)\cdot(1/C)=R(1-a)=5\cdot 0{,}016529=0{,}08264$ K/kWh. El modelo discreto de la zona es
+\begin{equation}\label{eq:rc-d}
+T_{k+1}=a\,T_k+(1-a)\bigl(\Text{}_{,k}+R\,(\COP_k P_k+G_k)\bigr).
+\end{equation}
+Euler daría $a_E=1-\Dt/\tau=0{,}983333$: la diferencia es pequeña porque $\Dt\ll\tau$.
+\end{ejemplo}
+
+\section{Estabilidad}
+
+\begin{definicion}[Estabilidad asintótica]\label{def:estab}
+El sistema discreto $x_{k+1}=A_dx_k$ es \emph{asintóticamente estable} si $x_k\to 0$ para todo estado inicial $x_0$. Se llama \emph{radio espectral} de $A_d$ a $\rho(A_d)=\max_i\abs{\lambda_i}$, con $\lambda_i$ sus autovalores (complejos en general).
+\end{definicion}
+
+\begin{teorema}[Criterio de estabilidad en tiempo discreto]\label{teo:estab}
+Sea $A_d$ diagonalizable. El sistema $x_{k+1}=A_dx_k$ es asintóticamente estable si y solo si $\rho(A_d)<1$.
+\end{teorema}
+
+\begin{proof}
+Sea $A_d=V\Lambda V^{-1}$ con $\Lambda=\diag(\lambda_1,\dots,\lambda_n)$ (módulo~3, §3.2). Entonces $x_k=A_d^{k}x_0=V\Lambda^{k}V^{-1}x_0$. Si $\rho(A_d)<1$, cada $\lambda_i^{k}\to0$, luego $\Lambda^{k}\to0$ y $x_k\to0$ para todo $x_0$. Recíprocamente, si $\abs{\lambda_j}\ge1$ para algún $j$, se toma $x_0=v_j$, su autovector: $x_k=\lambda_j^{k}v_j$ y $\norm{x_k}=\abs{\lambda_j}^{k}\norm{v_j}\ge\norm{v_j}>0$ no tiende a cero.
+\end{proof}
+
+El resultado es cierto también sin diagonalizabilidad (con la forma de Jordan), y su análogo continuo exige $\operatorname{Re}\lambda_i(A)<0$~\cite[cap.~6]{am}.
+
+\begin{corolario}[ZOH conserva la estabilidad; Euler no siempre]\label{cor:euler}
+Sea $A$ diagonalizable con autovalores reales negativos $\lambda_i$. (i) $A_d=e^{A\Dt}$ tiene autovalores $e^{\lambda_i\Dt}\in(0,1)$: el modelo ZOH es estable para todo $\Dt>0$. (ii) $I+A\Dt$ tiene autovalores $1+\lambda_i\Dt$, y el modelo de Euler es estable si y solo si $\Dt<2/\max_i\abs{\lambda_i}$.
+\end{corolario}
+
+\begin{proof}
+Si $A=V\Lambda V^{-1}$, entonces $e^{A\Dt}=Ve^{\Lambda\Dt}V^{-1}$ e $I+A\Dt=V(I+\Lambda\Dt)V^{-1}$, de modo que los autovalores son $e^{\lambda_i\Dt}$ y $1+\lambda_i\Dt$. Para (i), $\lambda_i\Dt<0$ implica $0<e^{\lambda_i\Dt}<1$. Para (ii), $\abs{1+\lambda_i\Dt}<1$ equivale a $-2<\lambda_i\Dt<0$, es decir, $\Dt<2/\abs{\lambda_i}$ para todo $i$; se aplica el \cref{teo:estab}.
+\end{proof}
+
+\begin{ejemplo}[Un modelo rígido]\label{ej:rigido}
+Un modelo de la zona con dos nodos, aire ($C_a=0{,}5$ kWh/K) y masa ($C_m=5$ kWh/K), unidos por $R_{am}=0{,}5$ K/kW, con el aire unido al exterior por $R_{ao}=5$ K/kW, tiene
+\[
+A=\begin{pmatrix}-4{,}4&4\\0{,}4&-0{,}4\end{pmatrix}\ \mathrm{h}^{-1},\qquad \lambda_1=-4{,}766,\quad \lambda_2=-0{,}0336,
+\]
+es decir, constantes de tiempo de $0{,}21$ h y $29{,}8$ h (\cref{eje:1-rigidez}). El sistema es estable, pero Euler explícito solo lo es con $\Dt<2/4{,}766=0{,}420$ h: con $\Dt=0{,}5$ h el autovalor discreto $1-4{,}766\cdot0{,}5=-1{,}383$ produce oscilaciones crecientes que no existen en la planta. Con ZOH los autovalores son $e^{-2{,}383}=0{,}092$ y $e^{-0{,}0168}=0{,}983$. Un sistema con constantes de tiempo muy distintas se llama \emph{rígido}; es la situación habitual en procesos y la razón para usar discretizaciones exactas o integradores implícitos.
+\end{ejemplo}
+
+\section{El controlador PID}
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[>=Stealth,node distance=1.5cm,every node/.style={font=\small},
+  bloque/.style={draw,rectangle,minimum height=0.9cm,minimum width=1.9cm,align=center},
+  suma/.style={draw,circle,inner sep=1.5pt}]
+\node (r) {$r$};
+\node[suma,right=0.9cm of r] (s) {$\Sigma$};
+\node[bloque,right=1.0cm of s] (c) {controlador\\PID};
+\node[bloque,right=1.4cm of c] (p) {proceso};
+\node[right=1.1cm of p] (y) {$y$};
+\node[above=0.7cm of p] (w) {$w$};
+\node[bloque,below=0.6cm of p] (m) {sensor};
+\draw[->] (r) -- (s);
+\draw[->] (s) -- node[above]{$e$} (c);
+\draw[->] (c) -- node[above]{$u$} (p);
+\draw[->] (w) -- (p);
+\draw[->] (p) -- (y);
+\draw[->] ($(p.east)+(0.5,0)$) |- (m);
+\draw[->] (m) -| node[pos=0.9,left]{$-$} (s);
+\end{tikzpicture}
+\caption{Lazo de control realimentado: el controlador actúa sobre el error entre la consigna y la medida.}
+\label{fig:lazo}
+\end{figure}
+
+\begin{definicion}[Controlador PID]\label{def:pid}
+Dado el error $e=r-y$ entre la consigna $r$ y la medida $y$ (\cref{fig:lazo}), el controlador PID calcula
+\[
+u(t)=K_c\Bigl(e(t)+\frac{1}{\tau_I}\int_0^{t}e(s)\,ds+\tau_D\,\frac{de}{dt}\Bigr),
+\]
+con ganancia $K_c$, tiempo integral $\tau_I$ y tiempo derivativo $\tau_D$. En forma discreta con periodo $\Dt$ (forma \emph{posicional}),
+\[
+u_k=K_ce_k+I_k+K_c\tau_D\frac{e_k-e_{k-1}}{\Dt},\qquad I_{k+1}=I_k+\frac{K_c\Dt}{\tau_I}\,e_k .
+\]
+\end{definicion}
+
+Los tres términos tienen papeles distintos: el proporcional reacciona al error actual, el integral acumula el error pasado y el derivativo anticipa su tendencia. En procesos térmicos lentos y con medidas ruidosas el término derivativo se suele anular (controlador PI) o filtrar~\cite[cap.~11]{am}.
+
+\begin{proposicion}[Error permanente con control proporcional]\label{prop:offset}
+Sea una planta de primer orden estable de ganancia estática $k$ y un controlador proporcional $u=\bar u+K_ce$ con $kK_c>-1$. Ante un escalón de consigna de amplitud $\Delta r$, el error permanente es $e_\infty=\Delta r/(1+kK_c)$.
+\end{proposicion}
+
+\begin{proof}
+En variables de desviación, en régimen permanente $y_\infty=k\,u_\infty=kK_ce_\infty$, y $e_\infty=\Delta r-y_\infty=\Delta r-kK_ce_\infty$. Despejando, $e_\infty(1+kK_c)=\Delta r$. La condición $kK_c>-1$ garantiza que el lazo cerrado de primer orden es estable y que el régimen permanente existe.
+\end{proof}
+
+\begin{proposicion}[La acción integral elimina el error permanente]\label{prop:integral}
+Sea un lazo con un controlador que contiene la acción integral $I_{k+1}=I_k+(K_c\Dt/\tau_I)e_k$, con $K_c\ne0$. Si, con consigna y perturbaciones constantes, el lazo converge a un equilibrio en el que la salida del controlador no está saturada, entonces el error en ese equilibrio es nulo.
+\end{proposicion}
+
+\begin{proof}
+En un equilibrio todas las variables son constantes; en particular $I_{k+1}=I_k$, luego $(K_c\Dt/\tau_I)\,e_\infty=0$ y, como $K_c\Dt/\tau_I\ne0$, $e_\infty=0$. La hipótesis de no saturación es necesaria: si la salida está en su límite, el integrador puede seguir cambiando sin que cambie la entrada aplicada y no hay equilibrio del controlador (\cref{eje:1-integral}).
+\end{proof}
+
+La proposición no dice nada sobre si el lazo converge: eso depende del ajuste. Por ejemplo, con la zona del \cref{ej:rc} ($k=14$ K/kW) y $K_c=1{,}43$ kW/K, un control solo proporcional dejaría el $1/(1+20)=4{,}8$~\% del escalón de consigna sin corregir; el PI lo elimina.
+
+\begin{definicion}[Saturación y antisaturación]\label{def:windup}
+Todo actuador tiene límites: $u\in[u_{\min},u_{\max}]$. Si el error persiste mientras la salida está saturada, el término integral crece sin efecto sobre la planta (\emph{windup}) y, cuando el error cambia de signo, el controlador tarda en salir de la saturación, lo que produce sobreoscilaciones. Un mecanismo de \emph{antisaturación} lo evita; el más sencillo es la \emph{integración condicional}: solo se actualiza $I_k$ si la salida no está saturada o si el error tiende a desaturarla~\cite[cap.~11]{am}.
+\end{definicion}
+
+\section{Ajuste del PID}
+
+\begin{definicion}[Modelo de primer orden con retardo]\label{def:fopdt}
+Muchos procesos se aproximan por una respuesta de primer orden con retardo (FOPDT), $y(s)/u(s)=k\,e^{-\theta s}/(\tau s+1)$: ganancia $k$, constante de tiempo $\tau$ y retardo $\theta$, que pueden leerse de un ensayo en escalón. En un lazo digital, el muestreo y el retenedor añaden un retardo efectivo del orden de $\Dt/2$ a $\Dt$.
+\end{definicion}
+
+Las reglas de Ziegler y Nichols~\cite{zn}, de 1942, fueron las primeras reglas sistemáticas; producen lazos agresivos y poco amortiguados. Las reglas SIMC de Skogestad~\cite{skogestad} parten del FOPDT y de un único parámetro de diseño, la constante de tiempo deseada en lazo cerrado $\tau_c$:
+\begin{equation}\label{eq:simc}
+K_c=\frac{\tau}{k\,(\tau_c+\theta)},\qquad \tau_I=\min\bigl\{\tau,\ 4(\tau_c+\theta)\bigr\}.
+\end{equation}
+La elección $\tau_c=\theta$ da un ajuste «firme» con buen compromiso entre rapidez y robustez; valores mayores de $\tau_c$ dan lazos más lentos y robustos. El mínimo en $\tau_I$ evita que, en procesos muy lentos como los térmicos, el integrador tarde demasiado en rechazar perturbaciones.
+
+\begin{ejemplo}[Caso de estudio: control PI de la temperatura de una zona]\label{ej:caso-pi}
+\emph{Planta.} La zona del \cref{ej:rc}, con $\COP=2{,}5+0{,}06\,\Text$ (el rendimiento de una bomba de calor aire-agua cae con el frío), $P\in[0,3]$ kW, $\Dt=0{,}25$ h y ruido de medida de $0{,}1$ K. El clima es invernal sintético, con media de $3{,}35$ °C en la semana de prueba. La \emph{banda de confort} es $[20,23]$ °C en horario de ocupación (laborables de 8 a 18~h) y $[17,25]$ °C fuera de él. La tarifa tiene tres periodos: valle a $0{,}10$ €/kWh (de 0 a 8~h y fines de semana), llano a $0{,}15$ y punta a $0{,}22$ (de 10 a 14~h y de 18 a 22~h).
+
+\emph{Ajuste.} Con $\COP(5\,^\circ\mathrm C)=2{,}8$, el FOPDT es $k=14$ K/kW, $\tau=15$ h y $\theta=\Dt=0{,}25$ h. Con $\tau_c=0{,}5$ h, \eqref{eq:simc} da $K_c=15/(14\cdot 0{,}75)=1{,}429$ kW/K y $\tau_I=\min\{15,\,3\}=3$ h. La consigna es $21$ °C de 6 a 18~h en laborables (dos horas de precalentamiento) y $18$ °C el resto; el PI usa integración condicional.
+
+\emph{Resultado} (cuaderno, Parte~2). En la semana de prueba, el PI consume $175{,}4$ kWh, cuesta $21{,}06$ € y no sale de la banda de confort. Es una referencia sólida y sin modelo, pero ciega al precio: calienta igual a las 11~h, en punta, que a las 7~h, en valle. Los temas~3 y~4 parten de esta referencia.
+\end{ejemplo}
+
+\begin{table}[htbp]
+\centering\footnotesize
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.0cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+python-control~\cite{pycontrol} & funciones de transferencia, espacio de estados, discretización, respuesta en frecuencia, LQR & libre (BSD-3) & análisis y diseño lineal en Python; docencia \\
+\texttt{scipy.signal} & sistemas LTI, \texttt{cont2discrete}, simulación & libre (BSD-3) & cuando basta con lo esencial y no se quiere otra dependencia \\
+Modelica / OpenModelica~\cite{modelica} & modelado físico acausal por componentes (térmico, eléctrico, fluidos) & lenguaje abierto; entorno libre & modelos de planta complejos y reutilizables \\
+FMI / FMPy~\cite{fmi} & intercambio de modelos (FMU) entre herramientas y cosimulación & estándar abierto; FMPy libre & conectar un modelo de Modelica o de un fabricante con Python \\
+MATLAB/Simulink & diseño de control, autoajuste PID, generación de código & comercial & entornos industriales que ya lo usan \\
+DCS y PLC (IEC 61131-3) & ejecución en planta de los PID con bloques normalizados & comercial & siempre: es donde vive el control básico \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para el modelado y el control clásico.}
+\label{tab:tec1}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores1}
+(i) \emph{Ignorar la saturación}: un PI sin antisaturación sobreoscila tras cada arranque. (ii) \emph{Derivar la medida ruidosa}: la acción derivativa sin filtro amplifica el ruido; además, derivar el error en lugar de la medida produce un pico en cada cambio de consigna. (iii) \emph{Discretizar con un paso demasiado grande} con Euler explícito en un modelo rígido (\cref{ej:rigido}). (iv) \emph{Signo de la acción}: en refrigeración, o con válvulas que cierran al aumentar la señal, la ganancia del proceso es negativa y el controlador debe ser de acción inversa. (v) \emph{Ajustar sobre un modelo linealizado lejos del punto de operación}: la ganancia de la zona cambia con el COP, es decir, con la temperatura exterior. (vi) \emph{Evaluar el ajuste con el mismo ensayo} con el que se identificó el FOPDT.
+\end{observacion}
+
+\begin{lecturas}
+\item K.~J. Åström y R.~M. Murray~\cite{am}, caps.~3 «System Modeling», 6 «Linear Systems» y~11 «PID Control».
+\item MIT 10.450~\cite{mit10450}, lección~5 «The Heated Tank».
+\item S.~Skogestad~\cite{skogestad}, «Simple analytic rules for model reduction and PID controller tuning».
+\item D.~E. Seborg \emph{et al.}~\cite{seborg}, capítulos sobre control realimentado y ajuste de controladores.
+\end{lecturas}
+
+\section*{Ejercicios del tema 1}
+\addcontentsline{toc}{section}{Ejercicios del tema 1}
+
+\begin{ejercicio}{1}{eje:1-variables}
+En un reactor por lotes refrigerado por camisa (\cref{tema:5}) se miden la temperatura del reactor y la de la camisa; se manipula la apertura de la válvula del agua de refrigeración; la temperatura del agua de red varía a lo largo del día, y la concentración de reactivo no se mide. Clasifique cada magnitud como estado, entrada manipulada, perturbación o salida medida. ¿Qué estado no es medible y qué consecuencia tiene para el control?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-zoh}
+Discretice la zona del \cref{ej:rc} ($R=5$ K/kW, $C=3$ kWh/K) con $\Dt=1$ h: calcule $a$ y el coeficiente $b$ de la entrada de calor $Q$ con ZOH, y los coeficientes correspondientes con Euler explícito. ¿Cuál es el error relativo de Euler en cada coeficiente?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-rigidez}
+Para el modelo de dos nodos del \cref{ej:rigido}: (a) escriba los balances de energía de los dos nodos sin entradas y obtenga la matriz $A$; (b) calcule sus autovalores; (c) calcule los autovalores del modelo de Euler con $\Dt=0{,}25$ h y $\Dt=0{,}5$ h, y diga en qué caso es estable; (d) calcule el paso máximo de Euler.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-tanque}
+Un tanque agitado de $V=2$ m³ recibe un caudal total de agua $F=0{,}5$ m³/h (un 60~\% por la corriente~1) y se calienta con vapor a $T_c$ a través de un intercambiador con $UA=1{,}5$ kW/K. Con $\rho c_p=4{,}18$ MJ/(m³·K), el modelo linealizado es $\tau\dot T'=-T'+K_1T_1'+K_2T_2'+K_3T_c'$, con $\tau_R=V/F$, $\beta=UA/(\rho c_pF)$, $\tau=\tau_R/(1+\beta)$, $K_1=(F_1/F)/(1+\beta)$ y $K_3=\beta/(1+\beta)$. (a) Calcule $\tau_R$, $\beta$, $\tau$, $K_1$ y $K_3$. (b) Con un controlador proporcional sobre $T_c$ de ganancia $K_c=2$ K/K, ¿qué fracción de un escalón de consigna queda como error permanente?
+\fuente{adaptado de MIT 10.450, primavera de 2006, lección~5 «The Heated Tank», §5.1 y §5.10~\cite{mit10450}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-offset}
+La zona del \cref{ej:rc} se controla en torno a $21$ °C con $k=14$ K/kW. (a) Con un controlador P de $K_c=0{,}5$ kW/K, ¿qué error permanente deja un cambio de consigna de $+2$ K? (b) ¿Qué $K_c$ haría falta para dejar menos de $0{,}1$ K? (c) Explique por qué esa ganancia no es una buena solución y qué aporta la acción integral.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:1-simc}
+Un ensayo en escalón de un intercambiador da un FOPDT con $k=2$ K por cada \% de apertura de válvula, $\tau=10$ min y $\theta=2$ min. (a) Calcule el PI con las reglas SIMC y $\tau_c=\theta$. (b) Repita con $\tau_c=3\theta$. (c) Escriba el PI discreto en forma posicional con $\Dt=0{,}5$ min para el caso~(a) y calcule $u_0$ e $I_1$ si el error inicial es $e_0=1$ K y $I_0=0$.
+\fuente{adaptado de S.~Skogestad, «Simple analytic rules for model reduction and PID controller tuning», \emph{Journal of Process Control}, 2003, reglas SIMC para procesos de primer orden con retardo~\cite{skogestad}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-integral}
+Considere la planta escalar $x_{k+1}=ax_k+bu_k+w$, con $\abs a<1$, $b>0$, perturbación constante $w$ y salida $y_k=x_k$, controlada por un PI discreto sin saturación. (a) Escriba el sistema en lazo cerrado con estado $(x_k,I_k)$. (b) Demuestre que, si el lazo cerrado es estable, el equilibrio tiene $y=r$ para cualquier $w$. (c) Muestre con un ejemplo que, si $u$ está saturada en $u_{\max}$ y $w$ es tan grande que $ax+bu_{\max}+w=x$ tiene solución $x<r$, el integrador crece indefinidamente sin integración condicional.
+\fuente{adaptado de K.~J. Åström y R.~M. Murray, \emph{Feedback Systems}, 2.ª ed., cap.~11 «PID Control», apartados sobre la acción integral y la saturación del integrador~\cite{am}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:1-estab}
+(a) Demuestre que, para $\dot x=-x/\tau$ con $\tau>0$, el modelo de Euler explícito es asintóticamente estable si y solo si $\Dt<2\tau$, y que para $\Dt\in(\tau,2\tau)$ su respuesta cambia de signo en cada paso, cosa que nunca hace la solución exacta. (b) Demuestre que el método de Euler implícito, $x_{k+1}=x_k+\Dt\,Ax_{k+1}$, es estable para todo $\Dt>0$ cuando $A$ es diagonalizable con autovalores reales negativos. (c) ¿Qué método elegiría para simular el modelo rígido del \cref{ej:rigido} dentro del bucle de un MPC, y por qué?
+\end{ejercicio}

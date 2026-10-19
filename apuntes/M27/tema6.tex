@@ -1,0 +1,184 @@
+% =====================================================================
+\chapter{IA generativa para 3D y validación de la geometría}
+\label{tema:6}
+% =====================================================================
+
+Los modelos generativos producen ya objetos 3D a partir de un texto o de una imagen. Para un optimizador geométrico son a la vez una herramienta (generan candidatos o puntos de partida) y un riesgo (sus salidas pueden parecer correctas en una imagen y ser inservibles para fabricar o para un motor). Este tema describe tres familias de generadores con sus artículos originales: la destilación de un modelo de difusión 2D en DreamFusion~\cite{dreamfusion}, los generadores directos de funciones implícitas como Shap-E~\cite{shape} y los generadores autorregresivos de mallas como MeshGPT~\cite{meshgpt}. Después formaliza la validación de la geometría para fabricación y para motores, y la integra en un bucle de generación y verificación. Se apoya en la tarea~4 del curso 16-825 de Carnegie Mellon~\cite{cmu16825} y en el filtro de fabricación aditiva de Langelaar~\cite{langelaar}.
+
+\section{Tres maneras de generar geometría}
+
+\begin{definicion}[Muestreo por destilación de puntuación]\label{def:sds}
+Sea $x=g(\theta)$ una imagen renderizada desde una vista aleatoria de una representación 3D con parámetros $\theta$ (en DreamFusion, un campo de radiancia), y sea $\hat\epsilon_\phi(z_t;y,t)$ la predicción del ruido de un modelo de difusión de imágenes preentrenado y congelado, condicionado por el texto $y$, sobre la versión ruidosa $z_t$ de $x$ en el instante $t$. El \emph{muestreo por destilación de puntuación} (SDS) actualiza $\theta$ con el gradiente~\cite[§2.1]{dreamfusion}
+\[
+\nabla_\theta\mathcal{L}_{\text{SDS}}=\E_{t,\epsilon}\Bigl[w(t)\bigl(\hat\epsilon_\phi(z_t;y,t)-\epsilon\bigr)\frac{\partial x}{\partial\theta}\Bigr],
+\]
+donde $\epsilon$ es el ruido añadido y $w(t)$ una ponderación.
+\end{definicion}
+
+La idea es que el modelo de difusión «sabe» cómo debería parecer una imagen del objeto descrito, y la diferencia entre el ruido que predice y el que realmente se añadió señala en qué dirección corregir la imagen; la regla de la cadena a través del renderizador derivable (\cref{tema:4}) lleva esa corrección a los parámetros 3D. DreamFusion usa el modelo base de $64\times 64$ de Imagen sin modificarlo y un campo de tipo mip-NeRF~360, y encuentra que hace falta una guía sin clasificador muy intensa~\cite{dreamfusion}. En la práctica se mezclan la predicción condicionada y la no condicionada, $\hat\epsilon=\hat\epsilon_u+s(\hat\epsilon_c-\hat\epsilon_u)$, con $s$ grande~\cite{cmu16825}. El método no necesita datos 3D, pero cada objeto es una optimización completa.
+
+Los \emph{generadores directos} aprenden de pares de objetos 3D y textos. Shap-E entrena primero un codificador que transforma cada objeto en los parámetros de una función implícita, que puede renderizarse como malla texturizada o como campo de radiancia, y después un modelo de difusión condicionado sobre esos parámetros; genera objetos en segundos~\cite{shape}. Los \emph{generadores autorregresivos de mallas} tratan la malla como un texto: MeshGPT aprende un vocabulario de \emph{embeddings} geométricos de caras con un codificador de grafos y cuantización vectorial residual, y un transformer de solo decodificador predice el siguiente índice del vocabulario, como un LLM predice el siguiente token (módulos~12 y~15)~\cite{meshgpt}. El resultado son mallas compactas, parecidas a las que haría un artista, a diferencia de las mallas densas que se obtienen extrayendo la isosuperficie de un campo; a cambio, el tamaño está limitado por el contexto (los autores entrenan con mallas de menos de 800 caras).
+
+Ninguna de las tres familias garantiza que el resultado sea una malla cerrada, orientada, sin autointersecciones, con la escala correcta y fabricable. Esas propiedades hay que comprobarlas.
+
+\section{Validación de la geometría}
+
+\begin{definicion}[Comprobaciones topológicas]\label{def:validacion}
+Sea $(V,F)$ una malla triangular. Se cuentan las \emph{aristas dirigidas} $(a,b)$ de todas las caras (cada cara $(a,b,c)$ aporta $(a,b)$, $(b,c)$ y $(c,a)$) y las aristas no dirigidas $\{a,b\}$. La malla
+\begin{enumerate}
+  \item tiene \emph{borde} si alguna arista no dirigida pertenece a una sola cara;
+  \item es \emph{no variedad} si alguna arista pertenece a tres o más caras;
+  \item está \emph{mal orientada} si alguna arista dirigida aparece más de una vez.
+\end{enumerate}
+Una malla cerrada, variedad y orientada de forma coherente es \emph{estanca}.
+\end{definicion}
+
+\begin{proposicion}[Una cara invertida]\label{prop:cara-girada}
+Sea una malla estanca e invértase la orientación de una única cara $f$ cuyas tres aristas son compartidas con caras distintas de $f$. Entonces la malla sigue cerrada y sin aristas no variedad, exactamente tres aristas dirigidas aparecen dos veces, y el volumen de la \cref{prop:volumen} disminuye en $\tfrac13\det(v_a,v_b,v_c)$, el doble de la contribución original de $f$.
+\end{proposicion}
+
+\begin{proof}
+Las aristas no dirigidas no cambian, luego el recuento por arista sigue siendo dos: la malla sigue cerrada y es variedad. Antes, cada arista $\{a,b\}$ de $f$ se recorría como $(a,b)$ en $f$ y como $(b,a)$ en su vecina; tras invertir $f$, ambas la recorren como $(b,a)$, que aparece dos veces; esto ocurre para las tres aristas de $f$ y para ninguna otra. Finalmente, invertir la cara intercambia dos columnas del determinante, que cambia de signo: la suma pierde $\det/6$ y gana $-\det/6$, una variación de $-\det/3$.
+\end{proof}
+
+Por eso una cara invertida es un defecto silencioso: no abre agujeros y una comprobación de estanqueidad basada solo en recuentos de aristas no dirigidas no la detecta, pero estropea el volumen, la iluminación (la normal apunta hacia dentro) y la clasificación interior/exterior que usan los programas de laminado.
+
+Para \emph{fabricación aditiva} se añaden comprobaciones geométricas:
+\begin{itemize}[leftmargin=1.4em]
+  \item \emph{Voladizos}: con dirección de fabricación $b$ unitaria, una cara de normal $n$ que mira hacia abajo necesita soporte si forma con la horizontal un ángulo menor que un umbral, habitualmente $45^\circ$; equivale a $n\cdot b<-\cos 45^\circ\approx-0{,}707$. Las caras apoyadas en la bandeja se excluyen. El filtro de Langelaar incorpora una restricción de este tipo dentro de la optimización de topología~\cite{langelaar}.
+  \item \emph{Espesor mínimo}: con la SDF de la pieza (\cref{tema:1}), el espesor local es aproximadamente el doble de la distancia al borde en el eje medial; en la práctica se lanzan rayos desde la superficie hacia dentro y se mide la distancia a la cara opuesta.
+  \item \emph{Volumen de impresión, unidades y escala}: la caja envolvente debe caber en la máquina y estar en milímetros.
+  \item \emph{Cavidades cerradas}: en procesos de lecho de polvo o resina atrapan material sin consolidar.
+\end{itemize}
+Para un \emph{motor de videojuegos}: número de triángulos y de materiales dentro del presupuesto (\cref{tema:5}), coordenadas UV presentes y sin solapes, normales y tangentes coherentes, escala y punto de pivote convenidos, niveles de detalle generados y nombres según la convención del proyecto.
+
+\section{Generar y verificar}
+
+El esquema robusto es un bucle: el generador propone, el validador comprueba, un reparador corrige lo automático (soldar vértices duplicados, reorientar caras, cerrar agujeros pequeños) y el resultado se vuelve a validar. Si cada candidato pasa la validación con probabilidad $p$, generar varios y quedarse con el primero válido es eficaz (\cref{fig:bucle}).
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[every node/.style={font=\small},
+  caja/.style={draw, rounded corners=2pt, minimum height=0.85cm, align=center, inner sep=4pt},
+  flecha/.style={-{Stealth[length=2.2mm]}, thick}]
+\node[caja] (gen) at (0,0) {generador\\ (texto o imagen)};
+\node[caja] (val) at (4.0,0) {validador de\\ selección};
+\node[caja] (ind) at (8.0,0) {comprobaciones\\ independientes};
+\node[caja] (ok) at (11.6,0) {pieza o\\ recurso};
+\node[caja] (rep) at (4.0,-2.2) {reparador\\ automático};
+\draw[flecha] (gen) -- (val);
+\draw[flecha] (val) -- node[above] {pasa} (ind);
+\draw[flecha] (ind) -- node[above] {pasa} (ok);
+\draw[flecha] ([xshift=-0.35cm]val.south) -- node[left] {falla} ([xshift=-0.35cm]rep.north);
+\draw[flecha] ([xshift=0.35cm]rep.north) -- node[right] {revalidar} ([xshift=0.35cm]val.south);
+\draw[flecha, dashed] (ind.south) |- node[pos=0.75, above, align=center] {fallo: ampliar\\ la selección} (rep.east);
+\draw[flecha, dotted] (rep.west) -| node[pos=0.25, above, align=center] {irreparable:\\ otro candidato} (gen.south);
+\end{tikzpicture}
+\caption{Bucle de generación y verificación. Las comprobaciones independientes no se usan para seleccionar ni para ajustar el generador.}
+\label{fig:bucle}
+\end{figure}
+
+\begin{proposicion}[Lo mejor de $N$]\label{prop:mejorN}
+Si $N$ candidatos superan la validación de forma independiente con probabilidad $p\in(0,1)$, la probabilidad de obtener al menos uno válido es $1-(1-p)^N$, y para alcanzar una probabilidad $1-\delta$ basta con
+\[
+N\ge\frac{\ln\delta}{\ln(1-p)} .
+\]
+\end{proposicion}
+
+\begin{proof}
+Por independencia (0.8, §4.4), la probabilidad de que fallen todos es $(1-p)^N$. La condición $(1-p)^N\le\delta$ equivale, tomando logaritmos y dividiendo por $\ln(1-p)<0$, que invierte la desigualdad, a $N\ge\ln\delta/\ln(1-p)$.
+\end{proof}
+
+El validador se convierte así en una función de recompensa verificable, análoga a las recompensas verificables con que se ajustan los LLM (módulo~21, §6.2). Y hereda su riesgo: si el generador se ajusta para pasar el validador, aprenderá a satisfacer las comprobaciones sin satisfacer la intención (por ejemplo, mallas estancas que se autointersecan si no se comprueban las autointersecciones). Es la ley de Goodhart que el módulo~21 (§6.4) estudia como sobreoptimización de la recompensa. La defensa es la misma: comprobaciones independientes que no se usan para ajustar el generador y revisión humana por muestreo.
+
+\section{Caso de estudio: validación de mallas generadas}
+
+\begin{ejemplo}[Un cubo con defectos y un voladizo]\label{ej:validacion}
+\emph{Contexto.} Un generador produce una pieza que debería ser un cubo de 40 mm de lado centrado en el origen, con 8 vértices y 12 triángulos. Se validan tres salidas: la correcta, una a la que le falta un triángulo y una con un triángulo invertido.
+
+\emph{Comprobaciones} (\cref{def:validacion} y \cref{prop:volumen}):
+
+\begin{center}\small
+\begin{tabular}{@{}lrrrrrr@{}}
+\toprule
+Salida & $\abs{E}$ & borde & no variedad & dirigidas repetidas & $\chi$ & volumen (mm³) \\
+\midrule
+correcta & 18 & 0 & 0 & 0 & 2 & 64\,000 \\
+falta un triángulo & 18 & 3 & 0 & 0 & 1 & 58\,667 \\
+un triángulo invertido & 18 & 0 & 0 & 3 & 2 & 53\,333 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\emph{Lectura.} La malla incompleta tiene 3 aristas de borde y $\chi=1$; su «volumen» ($64\,000-5333$) no significa nada porque la superficie no encierra una región. La malla con un triángulo invertido pasa las pruebas de borde y de variedad, pero tiene 3 aristas dirigidas repetidas y su volumen es $\tfrac56$ del real: cada uno de los 12 triángulos aporta $a^3/12=5333$ mm³ y, por la \cref{prop:cara-girada}, invertir uno resta el doble. Una validación que solo contara aristas no dirigidas la daría por buena.
+
+\emph{Voladizos.} Para imprimir el cubo en $+z$ inclinado $30^\circ$ alrededor del eje $x$, las normales de las caras que miran hacia abajo tienen componente vertical $-\cos 30^\circ=-0{,}866$ (la antigua base, que ya no apoya en la bandeja) y $-\sin 30^\circ=-0{,}5$. Solo la primera cumple $n_z<-0{,}707$: necesita soporte $1600$ mm² de $9600$, un $16{,}7$~\%. La segunda forma $60^\circ$ con la horizontal y se autosoporta. Apoyar el cubo sobre una cara elimina los soportes.
+
+\emph{Política de generación.} Si el generador produce piezas válidas con probabilidad $p=0{,}3$ e independencia entre muestras, la \cref{prop:mejorN} con $\delta=0{,}05$ da $N\ge\ln 0{,}05/\ln 0{,}7=8{,}4$: generando 9 candidatos se obtiene al menos uno válido con probabilidad $0{,}960$ (con 8 sería $0{,}942$).
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+trimesh & estanqueidad, orientación, volumen, reparaciones simples & MIT & validador ligero en Python \\
+PyMeshLab & filtros de reparación (no variedad, agujeros) & GPL-3.0 & reparación por lotes \\
+Open3D & métricas geométricas y distancias entre mallas y nubes & MIT & comparar con una referencia \\
+Blender (\texttt{bpy}) & comprobaciones y correcciones dentro del pipeline del artista & GPL-3.0 & validar recursos antes de exportarlos al motor \\
+Shap-E & generación de funciones implícitas a partir de texto o imagen & MIT (pesos publicados) & prototipos y generación local reproducible \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías del tema~6.}
+\label{tab:tec6}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en la práctica]\label{obs:errores6}
+(i) \emph{Validar por la imagen}: un render convincente no garantiza una malla estanca, orientada y sin autointersecciones. (ii) \emph{Escala y unidades}: los generadores suelen producir objetos normalizados; sin una escala explícita, una pieza de 40 mm puede llegar a la impresora como de 40 m o de 0,04 mm. (iii) \emph{Validar con los mismos casos con que se ajustó el generador}: los textos o imágenes de prueba deben ser distintos de los usados para ajustar o elegir el generador. (iv) \emph{Goodhart}: un generador seleccionado o ajustado contra el validador aprende sus huecos; se reservan comprobaciones independientes. (v) \emph{Propiedad intelectual y licencias}: los pesos y los datos de entrenamiento de los generadores tienen licencias propias que limitan el uso comercial de los resultados en algunos casos. (vi) \emph{Reparaciones que cambian la pieza}: cerrar agujeros o soldar vértices puede alterar dimensiones funcionales; tras reparar se vuelve a medir.
+\end{observacion}
+
+\begin{lecturas}
+\item B.~Poole \emph{et al.}~\cite{dreamfusion}: §2--3 (muestreo por destilación de puntuación y el modelo de NeRF).
+\item H.~Jun y A.~Nichol~\cite{shape}: generación de funciones implícitas condicionadas.
+\item Y.~Siddiqui \emph{et al.}~\cite{meshgpt}: generación de mallas con transformers de solo decodificador.
+\item CMU 16-825~\cite{cmu16825}, tarea~4, §2 «Diffusion-guided Optimization».
+\item M.~Langelaar~\cite{langelaar}: restricción de voladizo en la optimización de topología.
+\end{lecturas}
+
+\section*{Ejercicios del tema 6}
+\addcontentsline{toc}{section}{Ejercicios del tema 6}
+
+\begin{ejercicio}{1}{eje:6-checks}
+Enumere cuatro comprobaciones para una pieza que se va a imprimir y cuatro para un recurso que se va a cargar en un motor. ¿Cuáles son comunes?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-sds}
+En un ejemplo de juguete con dos píxeles, el ruido añadido es $\epsilon=(0{,}3;\ -0{,}2)$, la predicción condicionada es $\hat\epsilon_c=(0{,}5;\ 0{,}1)$ y la no condicionada $\hat\epsilon_u=(0{,}2;\ -0{,}1)$. Con guía $s=7{,}5$, $w(t)=1$ y $x=\theta$ (se optimiza directamente la imagen), calcule $\hat\epsilon$, el gradiente SDS y el nuevo $\theta$ tras un paso de descenso con tasa $0{,}01$ desde $\theta=(0{,}5;\ 0{,}5)$.
+\fuente{adaptado de CMU 16-825, «Learning for 3D Vision» (S.~Tulsiani), tarea~4, §2.1 «SDS Loss + Image Optimization»~\cite{cmu16825}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-aristas}
+Una malla tiene las caras $(0,1,2)$, $(0,2,3)$, $(0,3,1)$, $(1,3,2)$ y $(1,2,4)$. Clasifique sus aristas (de borde, interiores, no variedad), calcule $\chi$ y diga qué defectos tiene.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-voladizo}
+Una pieza se imprime en $+z$. Sus caras tienen áreas y componentes $n_z$: 400 mm² con $n_z=-1$ (apoyada en la bandeja), 300 mm² con $n_z=-0{,}8$, 200 mm² con $n_z=-0{,}6$, 500 mm² con $n_z=0$ y 600 mm² con $n_z=0{,}5$. Con umbral de $45^\circ$, ¿qué fracción del área total necesita soporte?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-mejorN}
+Un generador produce piezas válidas con probabilidad $0{,}2$. Cada generación tarda 30 s y cada validación 2 s. ¿Cuántos candidatos hay que generar para tener al menos uno válido con probabilidad $0{,}9$, y cuánto tarda el lote? ¿Cuál es el número esperado de candidatos hasta el primer válido si se generan de uno en uno?
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:6-mc}
+El SDF de un campo neuronal se evalúa en una rejilla de $128^3$ nodos sobre $[-1{,}5;\ 1{,}5]^3$ para extraer la malla. (a) Calcule el paso de la rejilla y el número de evaluaciones, y cuántos lotes de 65\,536 puntos hacen falta. (b) Si una unidad equivale a 50 mm, ¿se resolverá una pared de 0,8 mm?
+\fuente{adaptado de Stanford CS348n (L.~Guibas, primavera de 2023), tarea~2, problema~1(c) «Marching cubes»~\cite{cs348nhw2}.}
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-genero}
+(a) Para una malla triangular cerrada y conexa de género $g$, demuestre que $\abs{V}-\tfrac12\abs{F}=2-2g$. (b) Un toro se discretiza con una rejilla de $16\times 8$ vértices con identificación periódica en ambas direcciones, dividiendo cada cuadrilátero en dos triángulos. Calcule $\abs{V}$, $\abs{E}$, $\abs{F}$, $\chi$ y $g$. (c) Proponga cómo usar $g$ para validar la salida de un generador que debería producir una arandela.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:6-goodhart}
+Diseñe razonadamente un bucle de generación y validación para producir soportes imprimibles a partir de descripciones de texto: indique qué comprobaciones usa para seleccionar candidatos, cuáles reserva como comprobaciones independientes, qué reparaciones automáticas admite y cómo detectaría que el generador ha empezado a «engañar» al validador.
+\end{ejercicio}

@@ -1,0 +1,140 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase VI — Módulo 26
+%  Control óptimo, gemelos digitales y aprendizaje por refuerzo para procesos
+%  Compilar: latexmk -r ../latexmkrc M26-control-rl.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 26}
+
+% Notación propia del módulo
+\newcommand{\Sset}{\mathcal{S}}
+\newcommand{\Aset}{\mathcal{A}}
+\newcommand{\Xset}{\mathbb{X}}
+\newcommand{\Uset}{\mathbb{U}}
+\newcommand{\Dt}{\Delta t}
+\newcommand{\Text}{T_{\mathrm{ext}}}
+\newcommand{\COP}{\mathrm{COP}}
+\newcommand{\KL}{D_{\mathrm{KL}}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\RMSE}{\operatorname{RMSE}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\sat}{\operatorname{sat}}
+\newcommand{\proy}{\operatorname{proy}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\T}{^{\top}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-\do\/}\makeatother
+
+\hypersetup{pdftitle={Módulo 26. Control óptimo, gemelos digitales y aprendizaje por refuerzo para procesos},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase VI \textperiodcentered\ Diseño y construcción de optimizadores con IA}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 26\par}\vspace{0.3cm}
+{\LARGE Control óptimo, gemelos digitales y aprendizaje por refuerzo para procesos\par}
+\vspace{0.2cm}
+{\large PID, identificación de sistemas, control predictivo, SAC y TD3, y puesta en producción en planta\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Un proceso industrial es un sistema dinámico: la temperatura de un edificio, la de un reactor o la energía almacenada en una batería evolucionan en el tiempo según leyes físicas, responden con retraso a las acciones y están sujetas a perturbaciones y a límites de seguridad. Optimizar un proceso así no consiste en resolver un problema estático una vez, sino en decidir continuamente qué hacer a partir de lo que se mide. Este módulo construye, de abajo arriba, los tres grandes enfoques para hacerlo: el control realimentado clásico (PID), el control predictivo basado en modelo (MPC), que resuelve en cada instante un problema de optimización sobre un horizonte, y el aprendizaje por refuerzo (RL), que aprende una política por interacción con un simulador. Entre los tres se sitúa una pieza común: el modelo del proceso, identificado a partir de datos de planta con las redes neuronales de la Fase~II, que hace de \emph{gemelo digital}. El módulo termina con lo que separa un prototipo de un sistema en planta: la supervisión humana, las alarmas, la validación, la ciberseguridad de la tecnología de operación y las normas.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item formular un proceso como sistema en espacio de estados, discretizarlo de forma exacta con retenedor de orden cero, analizar su estabilidad mediante autovalores y diseñar y ajustar un controlador PID discreto con antisaturación;
+  \item identificar un modelo de un proceso a partir de datos (ARX, NARX, redes neuronales), validarlo en simulación libre y no solo a un paso, reconocer los problemas de identificación en lazo cerrado y construir con él un gemelo digital;
+  \item formular un problema de control predictivo con restricciones como programa lineal o cuadrático, demostrar sus propiedades básicas (convexidad, penalización exacta, estabilidad con ingredientes terminales) y usar un modelo aprendido dentro del MPC;
+  \item pasar del PPO del módulo~21 a los métodos fuera de política para acciones continuas (DDPG, TD3, SAC), diseñar recompensas sin alterar la política óptima, empaquetar un proceso como entorno Gymnasium y aplicar técnicas de RL seguro y aleatorización del dominio;
+  \item comparar PID, MPC y RL con un protocolo justo en casos de climatización, reactores por lotes y baterías, y analizar con datos publicados el caso de la refrigeración de centros de datos de Google;
+  \item planificar la puesta en producción en planta: arquitectura por capas, modos de operación con supervisión humana, alarmas, validación estadística, filtros de seguridad, ciberseguridad OT y marco normativo.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Del módulo~0.5 («Cálculo de una variable») se usa el polinomio de Taylor (tema~6) para linealizar; del módulo~0.6, las series geométricas (tema~5) y la integral para resolver ecuaciones lineales; del módulo~0.7, los multiplicadores de Lagrange (§5.4); del módulo~0.9, los intervalos de confianza y el contraste $t$ (§4.4 y §5.3). Del módulo~3 se usan los autovalores y la diagonalización (§3.1 y §3.2); del módulo~4, el jacobiano y la regla de la cadena (tema~2) y la convexidad (tema~5); del módulo~5, la esperanza, la varianza y la estimación de Monte Carlo (§5.3); del módulo~7, la convexidad y el descenso de gradiente (temas~1 y~2) y Adam (§5.3); del módulo~8, las ecuaciones normales de mínimos cuadrados (§2.2), la división entrenamiento-validación-prueba (§1.4) y la regularización \emph{ridge} (§6.1); del módulo~9, el perceptrón multicapa (tema~1); del módulo~10, los adjuntos como multiplicadores de Lagrange (§5.4); del módulo~12, las redes recurrentes y la LSTM (§5.2 y §5.4), y del módulo~21, el proceso de decisión de Markov, la ecuación de Bellman y PPO (temas~1 a~3).
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}c>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{4.1cm}@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Procesos dinámicos y control PID & \cite{am}, \cite{seborg}, \cite{mit10450}, \cite{skogestad} \\
+2 & Identificación de sistemas y gemelos digitales & \cite{ljung}, \cite{mit6435}, \cite{narendra}, \cite{kritzinger} \\
+3 & Control predictivo basado en modelo & \cite{rmd}, \cite{ee363}, \cite{nw}, \cite{lazic} \\
+4 & Aprendizaje por refuerzo para control continuo & \cite{sb}, \cite{cs285}, \cite{td3}, \cite{sac}, \cite{ng} \\
+5 & Casos de estudio: edificio, reactor, batería y centro de datos & \cite{drgona}, \cite{mit10450}, \cite{evansgao}, \cite{gamblegao} \\
+6 & Puesta en producción en planta & \cite{am}, \cite{nist}, \cite{iec62443}, \cite{isa182}, \cite{cs329s} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Cada tema combina teoría formal concisa con al menos un caso de estudio desarrollado con datos numéricos, una tabla de tecnologías y una observación sobre los errores frecuentes en la práctica. Termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ formulación y cálculo a mano y $\star\star\star$ demostración o diseño razonado. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros universitarios; el enunciado se ha redactado de nuevo y, en algunos casos, se han cambiado los datos. Las soluciones completas están en el \cref{ap:soluciones}. El cuaderno \texttt{M26-practica.ipynb} implementa los casos de estudio: el modelo de la zona y su PI (temas~1), la identificación (tema~2), el MPC económico (tema~3), el entorno Gymnasium y el agente (tema~4), la comparación, la batería y el reactor (tema~5) y el filtro de seguridad (tema~6). Todos los resultados numéricos de los casos de climatización proceden de su ejecución.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. El tema~1 sigue los capítulos~3 («System Modeling»), 6 («Linear Systems») y~11 («PID Control») de Åström y Murray~\cite{am}, el libro de Seborg \emph{et al.}~\cite{seborg} y las lecciones~5 («The Heated Tank») y~6 («The Exothermic Reactor») del curso 10.450 del MIT~\cite{mit10450}; las reglas de ajuste proceden de Skogestad~\cite{skogestad} y de Ziegler y Nichols~\cite{zn}. El tema~2 sigue el libro de Ljung~\cite{ljung}, texto del curso 6.435 del MIT~\cite{mit6435}, cuya hoja de problemas~5 aporta dos ejercicios, y el artículo de Narendra y Parthasarathy~\cite{narendra}; la clasificación de los gemelos digitales es la de Kritzinger \emph{et al.}~\cite{kritzinger}. El tema~3 sigue los capítulos~1 y~2 de Rawlings, Mayne y Diehl~\cite{rmd}, las clases~16 a~18 de EE363 de Stanford~\cite{ee363}, el capítulo~17 de Nocedal y Wright~\cite{nw} para la penalización exacta y la revisión de Drgoňa \emph{et al.}~\cite{drgona} para edificios. El tema~4 sigue Sutton y Barto~\cite{sb}, las clases~7, 8 y~10 de CS285 de Berkeley~\cite{cs285} y su tarea~3~\cite{cs285hw3}, y los artículos originales de DDPG~\cite{ddpg}, TD3~\cite{td3}, SAC~\cite{sac,sac2}, la conformación de recompensas~\cite{ng}, los MDP con restricciones~\cite{altman,cpo} y la aleatorización del dominio~\cite{tobin,peng}. El caso de los centros de datos usa solo información publicada por Google y DeepMind~\cite{evansgao,gamblegao} y el artículo de Lazic \emph{et al.}~\cite{lazic}. El tema~6 se apoya en el capítulo~15 de Åström y Murray~\cite{am}, en la guía NIST SP~800-82~\cite{nist}, en las series IEC~62443~\cite{iec62443}, IEC~61511~\cite{iec61511} e ISA-18.2~\cite{isa182}, en el Reglamento europeo de inteligencia artificial~\cite{aiact}, en Sculley \emph{et al.}~\cite{sculley} y en el curso CS329S de Stanford~\cite{cs329s}. Las normas citadas son documentos de pago; se usan solo sus contenidos difundidos públicamente por los organismos que las publican.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$x\in\R^{n}$, $u\in\R^{m}$, $w$, $y$ & estado, entrada manipulada, perturbación y salida medida \\
+$\dot x=f(x,u,w)$; $x_{k+1}=f_d(x_k,u_k,w_k)$ & modelo en tiempo continuo y en tiempo discreto \\
+$A,B,E,C$; $A_d,B_d$ & matrices del modelo lineal continuo y del discretizado \\
+$\Dt$, $k$ & periodo de muestreo y índice de instante ($t=k\Dt$) \\
+$\rho(A)$ & radio espectral: mayor módulo de los autovalores de $A$ \\
+$r$, $e=r-y$ & consigna y error de control \\
+$K_c$, $\tau_I$, $\tau_D$ & ganancia, tiempo integral y tiempo derivativo del PID \\
+$\theta$ (tema~2) & vector de parámetros de un modelo identificado \\
+$N$, $\ell(x,u)$, $V_f$ & horizonte, coste de etapa y coste terminal del MPC \\
+$\Xset$, $\Uset$ & conjuntos de estados y entradas admisibles \\
+$\Sset$, $\Aset$, $\gamma$, $\pi$ & estados, acciones, descuento y política (como en el módulo~21) \\
+$Q^{\pi}$, $Q_\phi$, $\pi_\psi$ & función de valor de acción, crítico y actor con parámetros $\phi$ y $\psi$ \\
+$\alpha$ (tema~4) & temperatura de la entropía en SAC \\
+$T$, $\Text$, $P$, $G$ & temperaturas interior y exterior (°C), potencia eléctrica y ganancias (kW) \\
+$R$, $C$ (casos de estudio) & resistencia (K/kW) y capacidad (kWh/K) térmicas \\
+$\COP$ & coeficiente de rendimiento de la bomba de calor \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

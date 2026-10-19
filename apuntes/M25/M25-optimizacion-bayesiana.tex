@@ -1,0 +1,141 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase VI — Módulo 25
+%  Modelos sustitutos, diseño de experimentos y optimización bayesiana
+%  Compilar: latexmk -r ../latexmkrc M25-optimizacion-bayesiana.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 25}
+
+% Notación propia del módulo
+\newcommand{\X}{\mathcal{X}}
+\newcommand{\D}{\mathcal{D}}
+\newcommand{\GP}{\mathcal{GP}}
+\newcommand{\N}{\mathcal{N}}
+\newcommand{\EI}{\operatorname{EI}}
+\newcommand{\PI}{\operatorname{PI}}
+\newcommand{\LCB}{\operatorname{LCB}}
+\newcommand{\UCB}{\operatorname{UCB}}
+\newcommand{\HV}{\operatorname{HV}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Cov}{\operatorname{Cov}}
+\newcommand{\tr}{\operatorname{tr}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\fmejor}{f^{*}_{n}}
+\newcommand{\Ky}{K_{y}}
+\newcommand{\gwp}{\mathrm{GWP}}
+\declaretheorem[style=defin,name=Algoritmo,sibling=definicion]{algoritmo}
+\crefname{algoritmo}{algoritmo}{algoritmos}
+\crefname{figure}{figura}{figuras}
+\crefname{table}{tabla}{tablas}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-\do\/}\makeatother
+
+\hypersetup{pdftitle={Módulo 25. Modelos sustitutos, diseño de experimentos y optimización bayesiana},pdfauthor={Anatomía de un LLM}}
+
+\begin{document}
+\frontmatter
+% ------------------------------------------------------------------ Portada
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase VI \textperiodcentered\ Diseño y construcción de optimizadores con IA}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 25\par}\vspace{0.3cm}
+{\LARGE Modelos sustitutos, diseño de experimentos\\[2pt] y optimización bayesiana\par}
+\vspace{0.2cm}
+{\large Cómo optimizar procesos caros y ruidosos con pocos experimentos\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Apuntes del curso}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+% ------------------------------------------------------- Presentación
+\chapter*{Presentación del módulo}
+\addcontentsline{toc}{chapter}{Presentación del módulo}
+\markboth{Presentación del módulo}{}
+
+Muchos problemas de optimización de la industria no se parecen al entrenamiento de una red neuronal. No hay gradiente, cada evaluación cuesta horas de máquina, material o semanas de espera, y el resultado llega con ruido. Ajustar una inyectora de plástico, formular un hormigón o elegir los hiperparámetros de un modelo son problemas de este tipo: se dispone de un presupuesto de unas decenas de experimentos y hay que gastarlo bien. Este módulo estudia el conjunto de técnicas que la estadística y el aprendizaje automático han desarrollado para ello: el diseño de experimentos clásico, que decide qué ensayos hacer antes de ver ningún resultado; los modelos sustitutos, que aprenden una aproximación barata del proceso con su incertidumbre; y la optimización bayesiana, que usa esa incertidumbre para elegir, uno a uno o por lotes, los siguientes experimentos. El ajuste de hiperparámetros de los modelos de aprendizaje automático, incluidos los LLM, aparece como un caso particular, con métodos propios que aprovechan evaluaciones parciales más baratas.
+
+\section*{Objetivos}
+Al finalizar el módulo, el estudiante debe ser capaz de:
+\begin{enumerate}[label=\arabic*.]
+  \item formular un problema de optimización de caja negra con presupuesto, ruido y restricciones, y elegir una medida de rendimiento adecuada (regret simple o acumulado);
+  \item diseñar y analizar experimentos factoriales completos y fraccionados, ajustar superficies de respuesta y construir hipercubos latinos, justificando sus propiedades;
+  \item construir modelos sustitutos (polinomios, procesos gaussianos y \emph{ensembles} de redes), ajustar sus hiperparámetros por verosimilitud marginal y validarlos;
+  \item deducir la forma cerrada de la mejora esperada, comparar las funciones de adquisición habituales y extenderlas a restricciones, lotes, varios objetivos y varias fidelidades;
+  \item diseñar de principio a fin un optimizador para un proceso industrial real, desde las variables y el presupuesto hasta los ensayos de confirmación;
+  \item ajustar hiperparámetros con búsqueda aleatoria, TPE y Hyperband, y decidir cuándo dejar de experimentar.
+\end{enumerate}
+
+\section*{Requisitos previos}
+Se reutilizan los siguientes contenidos del curso. Del módulo~0.6, la integral gaussiana (§4.5) y la integración por partes (§3.2); del módulo~0.7, el criterio del hessiano y los multiplicadores de Lagrange (§5.2 y §5.4); del módulo~0.8, la distribución normal y la tipificación (§6.3); del módulo~0.9, la varianza muestral (§2.5), las distribuciones $\chi^2$ y $t$ (§3.4), los intervalos de confianza (§4.3), el contraste de hipótesis y el $p$-valor (§5.1–§5.3) y la recta de mínimos cuadrados (§6.1). Del módulo~3, el teorema espectral para matrices simétricas (§3.3); del módulo~4, el gradiente (§1.2) y la clasificación de puntos críticos (§4.3); del módulo~5, la distribución normal (§3.3), la máxima verosimilitud (§4.2), la inferencia bayesiana (§4.4) y el método de Monte Carlo (§5.3); del módulo~7, el descenso de gradiente y Adam (temas~2 y~5); del módulo~8, las ecuaciones normales (§2.2), la interpretación probabilística de la regresión (§2.5), la descomposición sesgo-varianza (§5.2), la regresión ridge y su interpretación bayesiana (§6.1 y §6.2) y la validación cruzada (§6.5); del módulo~9, el perceptrón multicapa (tema~1); y del módulo~10, la diferenciación automática en modo inverso (tema~3), que se usa en las redes informadas por la física.
+
+\section*{Organización}
+\begin{center}\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+Tema & Contenido & Fuentes principales \\
+\midrule
+1 & Optimizar procesos caros y ruidosos & \cite{garnett}, \cite{frazier}, \cite{kw}, \cite{mn} \\
+2 & Diseño de experimentos & \cite{montgomery}, \cite{psu503}, \cite{mckay}, \cite{boxwilson} \\
+3 & Modelos sustitutos & \cite{rw}, \cite{garnett}, \cite{lakshmi}, \cite{raissi} \\
+4 & Optimización bayesiana & \cite{jones}, \cite{frazier}, \cite{garnett}, \cite{srinivas} \\
+5 & Casos de estudio: moldeo por inyección y hormigón & \cite{fernandes}, \cite{ament}, \cite{shields} \\
+6 & Hiperparámetros, AutoML, validación y parada & \cite{feurer}, \cite{bergstra12}, \cite{tpe}, \cite{hyperband} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Cada tema combina teoría formal, al menos un caso de estudio desarrollado con datos numéricos, una tabla de tecnologías y una observación sobre los errores más frecuentes en la práctica. Termina con una lista de lecturas y con ejercicios graduados en tres niveles: $\star$ comprensión, $\star\star$ formulación y cálculo a mano, y $\star\star\star$ demostración o diseño razonado. Los ejercicios marcados con \emph{Fuente} están adaptados de cursos y libros de texto universitarios; el enunciado se ha redactado de nuevo y los datos se han cambiado para que puedan resolverse a mano. Las soluciones completas, paso a paso, están en el \cref{ap:soluciones}. El cuaderno \texttt{M25-practica.ipynb} implementa todos los casos de estudio; las cifras que en el texto se atribuyen a «la práctica» proceden de su ejecución con las semillas fijadas en él.
+
+\section*{Sobre las fuentes}
+El texto es de redacción propia. La formulación del problema y la optimización bayesiana siguen el libro de Garnett~\cite{garnett}, el tutorial de Frazier~\cite{frazier} y la revisión de Shahriari \emph{et al.}~\cite{shahriari}; la mejora esperada se toma del artículo original de Jones, Schonlau y Welch~\cite{jones}. Los procesos gaussianos siguen los capítulos~2, 4 y~5 de Rasmussen y Williams~\cite{rw} y la tarea~1 del curso 4F13 de Cambridge~\cite{cam4f13}. El diseño de experimentos sigue a Montgomery~\cite{montgomery} y el curso STAT~503 de Penn State~\cite{psu503}; el hipercubo latino, a McKay, Beckman y Conover~\cite{mckay}. Los planes de muestreo y los sustitutos siguen además los capítulos~13 a~16 de Kochenderfer y Wheeler~\cite{kw}, texto del curso AA222/CS361 de Stanford~\cite{aa222}, y el capítulo~10 de Martins y Ning~\cite{mn}. El ajuste de hiperparámetros sigue el capítulo~1 del libro de AutoML de Hutter, Kotthoff y Vanschoren~\cite{feurer} y los artículos originales de cada método. Las aplicaciones industriales citadas (centros de datos de Google, AlphaGo, hormigón de bajo carbono, química de síntesis) proceden exclusivamente de publicaciones y comunicados públicos; los datos de los casos de estudio de los temas~1 a~5 son sintéticos, generados por simuladores escritos para el curso con órdenes de magnitud plausibles, y se indica así cada vez.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$x\in\X\subset\R^{d}$ & vector de variables de decisión (parámetros del proceso) en el dominio $\X$ \\
+$f(x)$, $y=f(x)+\varepsilon$ & función objetivo (a minimizar) y observación con ruido $\varepsilon\sim\N(0,\sigma_n^2)$ \\
+$c_j(x)\le 0$ & restricciones \\
+$\D_n=\{(x_i,y_i)\}_{i=1}^{n}$ & datos tras $n$ evaluaciones; $N$ es el presupuesto total \\
+$u\in[-1,1]^{d}$ & variables codificadas de un diseño de experimentos \\
+$k(x,x')$, $K$, $\Ky=K+\sigma_n^2 I$ & núcleo (covarianza), matriz de Gram y matriz con ruido \\
+$\ell$, $\sigma_f^2$, $\theta$ & longitud de escala, varianza de la señal y vector de hiperparámetros \\
+$\mu_n(x)$, $\sigma_n(x)$ & media y desviación típica posteriores de $f(x)$ dados $\D_n$ \\
+$\fmejor$ & mejor valor (mínimo) de referencia tras $n$ evaluaciones \\
+$\varphi$, $\Phi$ & densidad y función de distribución de la normal estándar \\
+$\alpha_n(x)$ & función de adquisición; $\EI$, $\PI$, $\LCB$ sus casos principales \\
+$r_N=f(\hat x_N)-f(x^\star)$ & regret simple de la recomendación $\hat x_N$ \\
+$\lambda$, $\Lambda$ & configuración de hiperparámetros y espacio de configuraciones \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\tableofcontents
+
+\mainmatter
+\input{tema1}
+\input{tema2}
+\input{tema3}
+\input{tema4}
+\input{tema5}
+\input{tema6}
+
+\appendix
+\input{soluciones}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

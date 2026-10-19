@@ -1,0 +1,200 @@
+% =====================================================================
+\chapter{Problemas combinatorios y programación por restricciones}
+\label{tema:3}
+% =====================================================================
+
+Rutas, secuencias y calendarios tienen un número de soluciones que crece de forma factorial con el tamaño. Este tema estudia cómo formularlos y qué herramientas los resuelven en la práctica. Sigue la clase~17 («Traveling salesman problem») del curso 15.053 del MIT~\cite{mit15053} para la complejidad y las heurísticas, el capítulo~10 de Bertsimas y Tsitsiklis~\cite{bt} para las formulaciones enteras, el artículo de Solomon~\cite{solomon} para las rutas con ventanas horarias, el de Johnson~\cite{johnson} para el taller con dos máquinas y la documentación de OR-Tools~\cite{ortools-vrptw,ortools-js,ortools-cpsat} para la programación por restricciones.
+
+\section{Explosión combinatoria}
+
+\begin{proposicion}[Número de circuitos]\label{prop:circuitos}
+Con $n\ge 3$ ciudades y distancias simétricas hay $(n-1)!/2$ circuitos hamiltonianos distintos.
+\end{proposicion}
+
+\begin{proof}
+Fijando la ciudad de salida (un circuito no depende de dónde empiece), las $n-1$ restantes pueden ordenarse de $(n-1)!$ maneras. Cada circuito y su recorrido en sentido contrario tienen la misma longitud y se cuentan dos veces; como $n\ge 3$, son ordenaciones distintas.
+\end{proof}
+
+Con $n=20$ hay $19!/2\approx 6{,}1\cdot 10^{16}$ circuitos. El problema del viajante (TSP) es NP-difícil: no se conoce un algoritmo polinómico, y encontrarlo daría uno para todos los problemas NP-completos~\cite{mit15053}. En la práctica se combinan tres enfoques:
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{métodos exactos}: PLEM con ramificación, cortes y generación de columnas, o programación dinámica para instancias pequeñas; dan el óptimo y una cota;
+  \item \emph{heurísticas constructivas}: vecino más próximo, inserción, ahorros; dan una solución rápida;
+  \item \emph{búsqueda local y metaheurísticas}: intercambios 2-opt y 3-opt, recolocación de clientes, búsqueda local guiada, recocido (\cref{tema:5}).
+\end{enumerate}
+
+\begin{definicion}[Movimiento 2-opt]\label{def:2opt}
+Dado un circuito $(\dots,a,b,\dots,c,d,\dots)$, el movimiento 2-opt elimina las aristas $(a,b)$ y $(c,d)$ y añade $(a,c)$ y $(b,d)$, invirtiendo el tramo de $b$ a $c$. La longitud cambia en $\Delta=d(a,c)+d(b,d)-d(a,b)-d(c,d)$; el movimiento se aplica si $\Delta<0$. Un circuito es \emph{2-óptimo} si ningún movimiento 2-opt lo mejora.
+\end{definicion}
+
+En el plano euclídeo, un circuito con dos aristas que se cruzan nunca es 2-óptimo: deshacer el cruce lo acorta, por la desigualdad triangular aplicada a los dos triángulos que forman las diagonales (\cref{eje:3-2opt}).
+
+\section{Rutas de vehículos con ventanas horarias}
+
+\begin{definicion}[VRPTW]\label{def:vrptw}
+En el \emph{problema de rutas de vehículos con ventanas horarias} (VRPTW) se tiene un depósito $0$, clientes $1,\dots,n$ con demanda $q_i$, tiempo de servicio $s_i$ y ventana $[a_i,b_i]$, una flota de $K$ vehículos de capacidad $Q$ y tiempos de viaje $t_{ij}$. Se buscan rutas que empiecen y acaben en el depósito, visiten cada cliente exactamente una vez, no superen la capacidad y empiecen cada servicio dentro de su ventana (se puede esperar si se llega antes de $a_i$), minimizando el tiempo total de viaje.
+\end{definicion}
+
+Una formulación PLEM usa $x_{ij}\in\{0,1\}$ (un vehículo va de $i$ a $j$), el instante de inicio de servicio $T_i$ y la carga acumulada $u_i$:
+\begin{align*}
+\min\ &\sum_{i\ne j}t_{ij}x_{ij}\\
+\st\ &\sum_{j}x_{ij}=1,\quad \sum_{j}x_{ji}=1\quad(i=1,\dots,n),\qquad \sum_j x_{0j}\le K,\\
+&T_j\ge T_i+s_i+t_{ij}-M_{ij}(1-x_{ij})\quad(i\ne j,\ j\ge 1),\qquad a_i\le T_i\le b_i,\\
+&u_j\ge u_i+q_j-Q(1-x_{ij})\quad(i\ne j,\ j\ge 1),\qquad q_i\le u_i\le Q .
+\end{align*}
+Las restricciones de tiempo y de carga eliminan además los subcircuitos, porque a lo largo de un ciclo sin depósito $T$ debería crecer indefinidamente.
+
+\begin{proposicion}[Cota big-M de las ventanas]\label{prop:bigm-tw}
+La restricción temporal con $M_{ij}=\max(0,\ b_i+s_i+t_{ij}-a_j)$ es válida: si $x_{ij}=1$ impone la llegada correcta y si $x_{ij}=0$ no elimina ninguna combinación de instantes que respete las ventanas.
+\end{proposicion}
+
+\begin{proof}
+Si $x_{ij}=1$ la restricción es $T_j\ge T_i+s_i+t_{ij}$, la propagación del tiempo. Si $x_{ij}=0$ queda $T_j\ge T_i+s_i+t_{ij}-M_{ij}$. Como $T_i\le b_i$ y $T_j\ge a_j$, el lado derecho es a lo sumo $b_i+s_i+t_{ij}-M_{ij}\le a_j\le T_j$ cuando $M_{ij}\ge b_i+s_i+t_{ij}-a_j$; la restricción se cumple sola.
+\end{proof}
+
+Con más de unas decenas de clientes, la formulación anterior es lenta, y los resolvedores de rutas usan búsqueda local sobre las propias rutas. OR-Tools modela el tiempo como una \emph{dimensión}: una variable acumulada por nodo, con una holgura que representa la espera y un rango que impone la ventana~\cite{ortools-vrptw}.
+
+\begin{ejemplo}[Caso de estudio: reparto de barriles con ventanas horarias]\label{ej:vrptw}
+El almacén de la cervecera del \cref{ej:cervecera} abastece a ocho bares con dos furgonetas de 22 barriles. Las coordenadas (km) y los datos de cada bar son:
+\begin{center}\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lccccccccc@{}}
+\toprule
+Nodo & 0 & 1 & 2 & 3 & 4 & 5 & 6 & 7 & 8 \\
+\midrule
+$x$ (km) & 0 & 2 & 5 & 6 & 3 & $-2$ & $-5$ & $-6$ & $-3$ \\
+$y$ (km) & 0 & 6 & 4 & $-1$ & $-5$ & $-6$ & $-2$ & 3 & 5 \\
+barriles & --- & 4 & 6 & 5 & 3 & 7 & 4 & 5 & 6 \\
+apertura (min) & 0 & 60 & 0 & 120 & 30 & 150 & 0 & 60 & 150 \\
+cierre (min) & 300 & 120 & 90 & 180 & 120 & 240 & 90 & 150 & 210 \\
+\bottomrule
+\end{tabular}
+\end{center}
+Los tiempos se miden en minutos desde las 8:00; el almacén cierra a los 300~min. En ciudad se usa la distancia de Manhattan y una velocidad media de 30~km/h, es decir, $t_{ij}=2(\abs{x_i-x_j}+\abs{y_i-y_j})$~min; cada descarga dura $s=10$~min. La demanda total es de 40 barriles para una capacidad de 44.
+
+\emph{Elección del método.} Con ocho clientes el problema puede resolverse de forma exacta por programación dinámica sobre subconjuntos (etiquetas no dominadas de hora de llegada y tiempo de viaje para cada subconjunto y último cliente), lo que sirve para certificar la solución de OR-Tools; con cientos de clientes solo quedaría la búsqueda local.
+
+\emph{Resultado} (cuaderno, parte~3a). OR-Tools, con construcción por el arco más barato y búsqueda local guiada durante 2~s, encuentra un tiempo total de viaje de \textbf{152~min}, y la programación dinámica certifica que es óptimo:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Furgoneta & Ruta y llegadas (min) & Carga y viaje \\
+\midrule
+1 & $0\to 1\,(60)\to 2\,(80)\to 4\,(112)\to 3\,(136)\to 0\,(160)$ & 18 barriles, 76~min \\
+2 & $0\to 6\,(14)\to 7\,(60)\to 8\,(150)\to 5\,(184)\to 0\,(210)$ & 22 barriles, 76~min \\
+\bottomrule
+\end{tabular}
+\end{center}
+La primera furgoneta espera 44~min ante el bar~1 (llega a los 16, abre a los 60); la segunda espera 24~min en el bar~7 (llega a los 36, abre a los 60) y 70~min en el bar~8 (llega a los 80, abre a los 150): las ventanas, no la distancia, dominan la solución. Un KPI útil aquí es el tiempo de espera, que el objetivo no penaliza; si se quisiera reducir habría que añadirlo al objetivo o negociar las ventanas.
+\end{ejemplo}
+
+\section{Programación por restricciones y taller}
+
+\begin{definicion}[Problema de satisfacción de restricciones]\label{def:csp}
+Un \emph{problema de satisfacción de restricciones} consta de variables $v_1,\dots,v_k$ con dominios finitos $D_1,\dots,D_k$ y un conjunto de restricciones, cada una una relación sobre algunas variables. La \emph{programación por restricciones} (CP) lo resuelve alternando \emph{propagación} (eliminar de los dominios valores que no pueden formar parte de ninguna solución) y \emph{búsqueda} (fijar una variable y retroceder si se llega a un dominio vacío). Con un objetivo, se añade la restricción «objetivo mejor que el incumbente» cada vez que se encuentra una solución.
+\end{definicion}
+
+La CP brilla cuando las restricciones son lógicas o de secuenciación, difíciles de expresar linealmente. Sus restricciones globales encapsulan estructuras frecuentes con propagadores eficientes: \texttt{AllDifferent}, \texttt{NoOverlap} (intervalos que no se solapan en un recurso), \texttt{Cumulative} (recurso con capacidad). CP-SAT, de OR-Tools, combina propagación de restricciones con técnicas de resolvedores SAT y de programación entera, y exige coeficientes enteros~\cite{ortools-cpsat}.
+
+\begin{definicion}[Job-shop]\label{def:jobshop}
+En el problema de \emph{taller} (\emph{job-shop}) hay $J$ trabajos; el trabajo $j$ es una secuencia de operaciones $(m_{j1},p_{j1}),\dots,(m_{jk_j},p_{jk_j})$ que deben ejecutarse en ese orden, cada una en una máquina $m$ y con duración $p$. Cada máquina procesa una operación a la vez y sin interrupción. Se minimiza el \emph{makespan} $C_{\max}$, el instante en que termina el último trabajo.
+\end{definicion}
+
+En CP-SAT cada operación es un intervalo $[S_{jk},S_{jk}+p_{jk})$; se impone $S_{j,k+1}\ge S_{jk}+p_{jk}$, una restricción \texttt{NoOverlap} por máquina y $C_{\max}\ge S_{jk_j}+p_{jk_j}$~\cite{ortools-js}. En PLEM, cada par de operaciones en la misma máquina necesita una binaria de orden y dos restricciones big-M, y la relajación lineal resultante es muy débil.
+
+\begin{proposicion}[Cotas inferiores del makespan]\label{prop:cota-ms}
+Para todo programa factible,
+\[
+C_{\max}\ \ge\ \max\Bigl(\max_{m}\sum_{(j,k):\,m_{jk}=m}p_{jk},\ \ \max_j\sum_{k}p_{jk}\Bigr).
+\]
+\end{proposicion}
+
+\begin{proof}
+Las operaciones de la máquina $m$ no se solapan y empiezan en instantes $\ge 0$, así que la última termina como pronto en la suma de sus duraciones. Las operaciones de un trabajo se ejecutan en serie, así que el trabajo termina como pronto en la suma de las suyas. $C_{\max}$ es mayor o igual que cualquier instante de fin.
+\end{proof}
+
+\begin{ejemplo}[Caso de estudio: taller mecánico]\label{ej:jobshop}
+Un taller recibe cuatro pedidos que pasan por torno (T), fresadora (F) y taladro (D) en el orden indicado, con duraciones en horas:
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Pedido & Operaciones (máquina, h) \\
+\midrule
+P1 & (T, 3), (F, 2), (D, 2) \\
+P2 & (F, 4), (T, 2), (D, 1) \\
+P3 & (D, 3), (T, 3), (F, 2) \\
+P4 & (T, 2), (D, 3), (F, 3) \\
+\bottomrule
+\end{tabular}
+\end{center}
+Las cargas son 10~h (torno), 11~h (fresadora) y 9~h (taladro), y los pedidos duran 7, 7, 8 y 8~h; por la \cref{prop:cota-ms}, $C_{\max}\ge 11$~h. \emph{Elección del método:} secuenciación con recursos disyuntivos, CP-SAT. Con cuatro pedidos se puede además enumerar el orden de los pedidos en cada máquina, $(4!)^{3}=13\,824$ combinaciones, y construir para cada una el programa que adelanta cada operación al máximo.
+
+\emph{Resultado} (cuaderno, parte~3b). CP-SAT demuestra que el óptimo es $\bm{C_{\max}=12}$~h, y la enumeración lo confirma. Un programa óptimo es: torno P4 [0,2], P1 [2,5], P2 [5,7], P3 [7,10]; fresadora P2 [0,4], P1 [5,7], P4 [7,10], P3 [10,12]; taladro P3 [0,3], P4 [3,6], P1 [7,9], P2 [9,10]. La cota de 11~h no se alcanza: la fresadora, que es el cuello de botella, no puede empezar el trabajo de P1 hasta que este sale del torno. La diferencia entre la cota y el óptimo es la información que un jefe de taller necesita para negociar plazos.
+\end{ejemplo}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~3: combinatoria, rutas y programación por restricciones.}\label{tab:tec3}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+OR-Tools CP-SAT~\cite{ortools-cpsat} & CP con intervalos, \texttt{NoOverlap}, \texttt{Cumulative}; también PLEM con coeficientes enteros & abierta (Apache~2.0) & programación de talleres, turnos y calendarios \\
+OR-Tools Routing~\cite{ortools-vrptw} & VRP con capacidades, ventanas, recogidas y entregas & abierta (Apache~2.0) & rutas reales de decenas a miles de paradas \\
+PLEM (HiGHS, SCIP, Gurobi) & formulaciones con binarias de orden o de arco & abierta o comercial & instancias pequeñas, o con fuerte estructura lineal \\
+Programación dinámica propia & exacto sobre subconjuntos & código propio & certificar instancias pequeñas \\
+Heurísticas propias (2-opt, inserción) & solución rápida y controlable & código propio & tiempo real o reglas de negocio muy específicas \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{observacion}[Errores frecuentes en problemas combinatorios]\label{obs:errores3}
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Tiempos de viaje irreales}: distancias en línea recta o velocidades medias sin franja horaria producen rutas que no se pueden cumplir; los tiempos deben proceder de la red viaria y, a ser posible, del histórico.
+  \item \emph{Reglas tácitas no modelizadas}: conductores que no aceptan rutas que cruzan la ciudad, máquinas que requieren un operario concreto. Las soluciones que ignoran esas reglas no se ejecutan; en ORION, que las rutas fueran aceptables para los conductores fue parte del diseño~\cite{orion}.
+  \item \emph{Comparar heurísticas sin cota}: sin una cota inferior no se sabe si una solución está a un 1\,\% o a un 30\,\% del óptimo.
+  \item \emph{Límites de tiempo sin semilla ni registro}: con búsqueda local y paralelismo, dos ejecuciones pueden dar soluciones distintas; para auditar hay que fijar semilla, número de hilos y límite.
+  \item \emph{Escalar CP-SAT con reales}: CP-SAT exige enteros; redondear tiempos de forma descuidada introduce infactibilidades o pérdida de precisión.
+\end{enumerate}
+\end{observacion}
+
+\begin{lecturas}
+\item MIT 15.053~\cite{mit15053}, clase~17 «Networks 3: Traveling salesman problem» (complejidad, vecino más próximo, 2-opt y 3-opt, recocido).
+\item Bertsimas y Tsitsiklis~\cite{bt}, cap.~10 (formulaciones de programación entera).
+\item M.~M. Solomon~\cite{solomon}, heurísticas e instancias de referencia para el VRPTW.
+\item Documentación de OR-Tools: «Vehicle Routing Problem with Time Windows»~\cite{ortools-vrptw} y «The Job Shop Problem»~\cite{ortools-js}.
+\end{lecturas}
+
+\section*{Ejercicios del tema 3}
+\addcontentsline{toc}{section}{Ejercicios del tema 3}
+
+\begin{ejercicio}{1}{eje:3-contar}
+Calcule el número de circuitos distintos de un TSP simétrico con 10 y con 20 ciudades. ¿Cuánto tardaría en evaluarlos todos un ordenador que evalúa $10^{9}$ circuitos por segundo? Compare con la tabla de la clase~17 de 15.053.
+\fuente{adaptado de MIT 15.053, primavera de 2013, clase~17, tabla de fuerza bruta frente a una cota polinómica~\cite{mit15053}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-ruta}
+Con los datos del \cref{ej:vrptw}, compruebe que la ruta $0\to 1\to 2\to 4\to 3\to 0$ es factible calculando la hora de llegada y la espera en cada bar, y su tiempo de viaje. Después compruebe que la ruta $0\to 3\to 1\to 0$ es infactible.
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-2opt}
+Cuatro puntos tienen coordenadas $A=(0,0)$, $B=(4,0)$, $C=(4,3)$ y $D=(0,3)$. (a) Calcule la longitud euclídea del circuito $A\to C\to B\to D\to A$ y la del que resulta de aplicar el movimiento 2-opt que elimina las aristas cruzadas. (b) Demuestre que en el plano, si dos aristas $(a,b)$ y $(c,d)$ de un circuito se cruzan, el movimiento 2-opt correspondiente reduce la longitud.
+\fuente{adaptado de MIT 15.053, primavera de 2013, clase~17, heurística 2-opt~\cite{mit15053}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-cuñas}
+Una emisora de radio programa anuncios de 12, 18, 22, 35, 40 y 59~s en bloques de 60~s. (a) Formule como PLEM el problema de usar el mínimo número de bloques. (b) Obtenga una cota inferior con la suma de duraciones y encuentre una solución que la alcance.
+\fuente{adaptado de MIT 15.053, primavera de 2013, hoja de problemas~5, problema~1~\cite{mit15053ps}.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-johnson}
+Cinco piezas pasan por una sierra y después por una pulidora, con tiempos (h) $J1=(3,6)$, $J2=(5,2)$, $J3=(1,2)$, $J4=(6,6)$, $J5=(7,5)$. La regla de Johnson coloca primero, en orden creciente del tiempo en la primera máquina, las piezas con $p_1\le p_2$, y después, en orden decreciente del tiempo en la segunda, las piezas con $p_1>p_2$. Aplíquela y calcule el makespan. ¿Qué cota inferior da la \cref{prop:cota-ms}?
+\fuente{adaptado de S.~M. Johnson~\cite{johnson}, regla para dos máquinas en serie.}
+\end{ejercicio}
+
+\begin{ejercicio}{2}{eje:3-bigm}
+Para el \cref{ej:vrptw}, calcule la cota $M_{ij}$ de la \cref{prop:bigm-tw} para los arcos $1\to 2$, $8\to 5$ y $3\to 1$. Demuestre que el arco $3\to 1$ no puede formar parte de ninguna ruta factible y describa un preproceso que elimine de antemano todos los arcos de ese tipo.
+\end{ejercicio}
+
+\begin{ejercicio}{3}{eje:3-cota}
+(a) Demuestre la \cref{prop:cota-ms}. (b) Construya una instancia de dos trabajos y dos máquinas en la que la cota se alcance y otra en la que no. (c) Razone por qué, en el \cref{ej:jobshop}, la fresadora no puede terminar antes de las 12~h: estudie qué operaciones deben preceder a la primera tarea de la fresadora que no sea la de P2.
+\end{ejercicio}
