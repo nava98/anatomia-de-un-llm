@@ -112,6 +112,9 @@ h3.sec .n{margin-right:.6em}
 .visor-barra{grid-column:1/-1;display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:6px 8px;background:var(--papel);border-bottom:.6px solid var(--tinta-2)}
 .visor-barra input{width:3.6em;text-align:right;padding:2px 4px;border:.6px solid var(--tinta-2);border-radius:2px;background:var(--papel)}
 .visor-barra .sep{flex:1}
+.visor.completa{position:fixed;inset:0;z-index:1000;height:100vh;height:100dvh;max-height:none;border:0}
+.visor:fullscreen{height:100vh;max-height:none;border:0}
+body.visor-abierto{overflow:hidden}
 .visor-ind{grid-column:1;grid-row:2;width:300px;overflow:auto;background:var(--papel);border-right:.6px solid var(--tinta-2);padding:10px 8px;font-size:.95rem}
 .visor-ind ul{list-style:none;margin:0;padding-left:14px}
 .visor-ind>ul{padding-left:0}
@@ -296,15 +299,19 @@ class Visor{
     const bMen=h('button',{class:'boton',type:'button','aria-label':'Reducir'},'−'), bMas=h('button',{class:'boton',type:'button','aria-label':'Ampliar'},'+');
     this.lbZoom=h('span',{class:'num',style:'min-width:3.5em;text-align:center'},'—');
     const bAj=h('button',{class:'boton',type:'button'},'Ajustar al ancho');
+    const bPC=h('button',{class:'boton',type:'button','aria-pressed':'false',title:'Pantalla completa (Esc para salir)'},'⛶ Pantalla completa');this.bPC=bPC;
     this.ind=h('nav',{class:'visor-ind',hidden:true,'aria-label':'Índice del PDF'});
     this.pags=h('div',{class:'visor-pags',tabindex:'0'},h('div',{class:'visor-estado'},'Cargando '+titulo+'…'));
-    const barra=h('div',{class:'visor-barra'},bInd,bAnt,this.inPag,this.lbTot,bSig,h('span',{class:'sep'}),bMen,this.lbZoom,bMas,bAj,botonDescarga(ruta,nombre,'Descargar PDF'));
+    const barra=h('div',{class:'visor-barra'},bInd,bAnt,this.inPag,this.lbTot,bSig,h('span',{class:'sep'}),bMen,this.lbZoom,bMas,bAj,bPC,botonDescarga(ruta,nombre,'Descargar PDF'));
     this.el.append(barra,this.ind,this.pags);
     bInd.onclick=()=>{this.ind.hidden=!this.ind.hidden;bInd.setAttribute('aria-pressed',String(!this.ind.hidden))};
     bAnt.onclick=()=>this.irPagina(this.pagActual()-1);bSig.onclick=()=>this.irPagina(this.pagActual()+1);
     this.inPag.onchange=()=>this.irPagina(+this.inPag.value);
     bMen.onclick=()=>this.zoom(this.escala/1.15);bMas.onclick=()=>this.zoom(this.escala*1.15);
     bAj.onclick=()=>{this.ajuste=true;ls.set(BASE_LOCAL+'zoom',null);this.zoom(this.escalaAjuste(),true)};
+    bPC.onclick=()=>this.pantallaCompleta();
+    document.addEventListener('fullscreenchange',()=>{if(document.fullscreenElement!==this.el&&this.el.classList.contains('nativa')){this.el.classList.remove('nativa');this.marcarPC(false)}});
+    document.addEventListener('keydown',e=>{if(e.key==='Escape'&&this.el.classList.contains('completa'))this.salirPC()});
     this.pags.addEventListener('scroll',()=>{this.inPag.value=this.pagActual()},{passive:true});
     this.listo=this.iniciar();
   }
@@ -321,7 +328,18 @@ class Visor{
     this.cargarIndice();
     new ResizeObserver(()=>{if(this.ajuste){const e=this.escalaAjuste();if(Math.abs(e-this.escala)>.01)this.zoom(e,true)}}).observe(this.pags);
   }
-  escalaAjuste(){const w=Math.max(280,this.pags.clientWidth-34);return Math.min(1.5,w/this.base.width)}
+  escalaAjuste(){const w=Math.max(280,this.pags.clientWidth-34);return Math.min(this.enPC()?2.5:1.5,w/this.base.width)}
+  enPC(){return this.el.classList.contains('completa')||this.el.classList.contains('nativa')}
+  marcarPC(on){const pag=this.pagActual();this.bPC.setAttribute('aria-pressed',String(on));this.bPC.textContent=on?'✕ Salir de pantalla completa':'⛶ Pantalla completa';
+    requestAnimationFrame(()=>{if(this.doc&&this.ajuste)this.zoom(this.escalaAjuste(),true);this.irPagina(pag);this.pags.focus()})}
+  async pantallaCompleta(){
+    if(this.enPC())return this.salirPC();
+    try{if(!this.el.requestFullscreen||!document.fullscreenEnabled)throw 0;await this.el.requestFullscreen();this.el.classList.add('nativa')}
+    catch{this.el.classList.add('completa');document.body.classList.add('visor-abierto')}
+    this.marcarPC(true)}
+  salirPC(){
+    if(this.el.classList.contains('nativa')){this.el.classList.remove('nativa');if(document.fullscreenElement)document.exitFullscreen().catch(()=>{})}
+    this.el.classList.remove('completa');document.body.classList.remove('visor-abierto');this.marcarPC(false)}
   dimensionar(){
     const w=this.base.width*this.escala,hh=this.base.height*this.escala;
     for(const d of this.paginas){d.style.width=w+'px';d.style.height=hh+'px'}
@@ -333,6 +351,7 @@ class Visor{
     this.render.forEach(t=>{try{t.cancel()}catch{}});this.render.clear();
     for(const d of this.paginas){d.replaceChildren();delete d.dataset.hecho}
     this.dimensionar(); const d=this.paginas[pag-1]; if(d)this.pags.scrollTop=d.offsetTop-16+frac*d.offsetHeight;
+    if(this.obs)for(const q of this.paginas){this.obs.unobserve(q);this.obs.observe(q)}
   }
   fraccion(){const d=this.paginas[this.pagActual()-1];if(!d)return 0;return Math.max(0,(this.pags.scrollTop+16-d.offsetTop)/d.offsetHeight)}
   pagActual(){const st=this.pags.scrollTop+this.pags.clientHeight*.3;let n=1;for(const d of this.paginas){if(d.offsetTop<=st)n=+d.dataset.n;else break}return n}
