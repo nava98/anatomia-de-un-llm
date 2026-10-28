@@ -1,0 +1,102 @@
+% =====================================================================
+\chapter{Aproximación de bajo rango y análisis de componentes principales}
+\label{tema:5}
+% =====================================================================
+
+La SVD escribe una matriz como suma de piezas de rango~1 ordenadas por su valor singular. Este tema demuestra que quedarse con las $k$ primeras piezas da la mejor aproximación posible de rango $k$ (teorema de Eckart--Young~\cite{eckart-young}) y extrae tres consecuencias: la compresión de matrices, el ajuste fino de bajo rango LoRA~\cite{hu-lora} y el análisis de componentes principales (PCA). Se sigue la clase~7 de 18.065~\cite{mit18065}, los §7.2 y~§7.3 de~\cite{strang-ila}, el §4.6 y el cap.~10 de~\cite{mml} y el tutorial de Shlens~\cite{shlens}.
+
+\section{El teorema de Eckart--Young}
+
+Sea $A=\sum_{i=1}^{r}\sigma_iu_iv_i\T$ la SVD de $A\in\R^{m\times n}$ y, para $k<r$, sea
+\[
+A_k=\sum_{i=1}^{k}\sigma_i\,u_iv_i\T,
+\]
+que tiene rango $k$ y cuya SVD es la de $A$ truncada. Como $A-A_k=\sum_{i>k}\sigma_iu_iv_i\T$ es a su vez una SVD, la \cref{prop:normas-svd} da
+\[
+\norm{A-A_k}_2=\sigma_{k+1},\qquad \norm{A-A_k}_F=\Bigl(\sum_{i=k+1}^{r}\sigma_i^{2}\Bigr)^{1/2}.
+\]
+
+\begin{lema}\label{lem:interseccion}
+Si $W_1$ y $W_2$ son subespacios de $\R^{n}$ con $\dim W_1+\dim W_2>n$, entonces $W_1\cap W_2$ contiene un vector no nulo.
+\end{lema}
+
+\begin{teorema}[Eckart--Young]\label{teo:eckart-young}
+Sea $A\in\R^{m\times n}$ con valores singulares $\sigma_1\ge\sigma_2\ge\cdots$ y sea $k<\rango(A)$. Para toda $B\in\R^{m\times n}$ con $\rango(B)\le k$,
+\[
+\norm{A-B}_2\ge\sigma_{k+1}=\norm{A-A_k}_2
+\qquad\text{y}\qquad
+\norm{A-B}_F\ge\Bigl(\sum_{i>k}\sigma_i^{2}\Bigr)^{1/2}=\norm{A-A_k}_F.
+\]
+Es decir, $A_k$ es la mejor aproximación de rango a lo sumo $k$ de $A$ en ambas normas.
+\end{teorema}
+
+La parte espectral es el teorema~4.25 de~\cite{mml}; la de Frobenius es el enunciado original de Eckart y Young~\cite{eckart-young}. La desigualdad $\sigma_{k+j}(A)\le\sigma_j(A-B)$ usada en la segunda parte es un caso de la desigualdad de Weyl para valores singulares.
+
+\addtocounter{definicion}{1}%
+
+\section{Compresión de matrices}
+
+Almacenar $A_k$ requiere $k$ columnas de $U$, $k$ filas de $V\T$ y $k$ valores singulares: $k(m+n+1)$ números frente a los $mn$ de $A$. La compresión compensa cuando $k(m+n+1)<mn$, y es eficaz cuando los valores singulares decrecen deprisa, pues entonces el error $(\sum_{i>k}\sigma_i^{2})^{1/2}$ es pequeño con $k$ pequeño.
+
+\begin{table}[h]
+\centering\small
+\caption{Coste de almacenamiento de la aproximación de rango $k$.}\label{tab:compresion}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Matriz & $mn$ & $k$ & $k(m+n+1)$ & Fracción \\
+\midrule
+Imagen de $512\times 512$ & $262\,144$ & 20 & $20\,500$ & $7{,}8\,\%$ \\
+Imagen de $1000\times 800$ & $800\,000$ & 50 & $90\,050$ & $11{,}3\,\%$ \\
+Pesos de $4096\times 4096$ & $16\,777\,216$ & 8 & $65\,544$ & $0{,}39\,\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Una imagen en escala de grises es una matriz de intensidades. Las regiones uniformes, los bordes horizontales y verticales y los degradados suaves tienen rango bajo; los bordes diagonales y el ruido requieren muchos términos~\cite[§7.2]{strang-ila}. La práctica del módulo aplica la SVD a una imagen sintética y muestra cómo decae el error con $k$.
+
+\section{Ajuste fino de bajo rango}
+
+\addtocounter{figure}{1}%
+
+LoRA~\cite{hu-lora} parte de la hipótesis de que la modificación que el ajuste fino introduce en los pesos de un modelo preentrenado tiene un \emph{rango intrínseco} bajo. En lugar de actualizar $W_0$, aprende $\Delta W=BA$ (\cref{fig:lora}), con $r(d_{\text{in}}+d_{\text{out}})$ parámetros (\cref{obs:lora-rango}). Al terminar, $BA$ puede sumarse a $W_0$, de modo que la inferencia no tiene coste adicional. El \cref{teo:eckart-young} cuantifica lo que se pierde: si la actualización ideal es $\Delta W^{\star}$, ninguna corrección de rango $r$ puede acercarse a ella más que $(\sum_{i>r}\sigma_i^{2}(\Delta W^{\star}))^{1/2}$ (\cref{eje:5-lora}). La apuesta de LoRA, respaldada empíricamente en~\cite{hu-lora}, es que el espectro de $\Delta W^{\star}$ decae deprisa.
+
+\section{Análisis de componentes principales}
+
+\begin{definicion}[Datos centrados y covarianza]
+Sean $n$ puntos $x_1,\dots,x_n\in\R^{d}$ con media $\mu=\frac1n\sum_ix_i$. La matriz de datos centrados $X\in\R^{n\times d}$ tiene por filas $(x_i-\mu)\T$. La \emph{matriz de covarianza} es
+\[
+C=\frac{1}{n}X\T X\in\R^{d\times d}.
+\]
+\end{definicion}
+
+$C$ es simétrica y semidefinida positiva (\cref{prop:AtA}). Algunos textos dividen por $n-1$ en lugar de $n$; el factor no cambia los autovectores. Para un vector unitario $w$, las proyecciones de los puntos sobre $w$ son las componentes de $Xw$, que tienen media cero, y su varianza es
+\[
+\frac1n\norm{Xw}^{2}=\frac1n w\T X\T Xw=w\T Cw.
+\]
+
+\begin{teorema}[Dirección de máxima varianza]\label{teo:pca}
+Sean $\lambda_1\ge\dots\ge\lambda_d\ge 0$ los autovalores de $C$ y $q_1,\dots,q_d$ autovectores ortonormales. La dirección unitaria $w$ que maximiza la varianza de las proyecciones es $w=q_1$, y la varianza máxima es $\lambda_1$. Más en general, entre todos los subespacios de dimensión $k$, el que maximiza la varianza total de las proyecciones es $\gen\{q_1,\dots,q_k\}$, con varianza $\lambda_1+\dots+\lambda_k$.
+\end{teorema}
+
+Los vectores $q_i$ son las \emph{componentes principales}, y la \emph{varianza explicada} por la componente $i$ es $\lambda_i/\sum_j\lambda_j$.
+
+\begin{teorema}[PCA mediante la SVD]\label{teo:svd-pca}
+Sea $X=U\Sigma V\T$ la SVD de la matriz de datos centrados. Entonces las componentes principales son las columnas de $V$, los autovalores de la covarianza son $\lambda_i=\sigma_i^{2}/n$ y las coordenadas de los datos en las $k$ primeras componentes son
+\[
+Z_k=XV_k=U_k\Sigma_k\in\R^{n\times k},
+\]
+cuya columna $i$ tiene varianza $\lambda_i$.
+\end{teorema}
+
+La reconstrucción de los datos a partir de $k$ componentes es $Z_kV_k\T=U_k\Sigma_kV_k\T=X_k$, el truncamiento de la SVD de $X$. Por el \cref{teo:eckart-young}, PCA es la mejor aproximación de rango $k$ de los datos centrados, con error cuadrático total $\sum_{i>k}\sigma_i^{2}$: maximizar la varianza proyectada y minimizar el error de reconstrucción son el mismo problema~\cite[§10.3]{mml}.
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Cálculo numérico]
+En la práctica se calcula la SVD de $X$ y no la descomposición espectral de $X\T X$: formar $X\T X$ eleva al cuadrado el número de condición $\sigma_1/\sigma_r$ y pierde precisión en las componentes de varianza pequeña~\cite[§10.4]{mml}.
+\end{observacion}
+
+\begin{observacion}[Visualización de embeddings]
+Los embeddings de GPT-2 small tienen $\dmodel=768$ componentes~\cite{gpt2}. Proyectarlos sobre las dos primeras componentes principales da la imagen plana que conserva más varianza, y palabras de un mismo campo semántico suelen aparecer agrupadas. Conviene leer siempre la varianza explicada: una proyección ortogonal nunca alarga distancias, de modo que dos puntos alejados en el plano también lo están en $\R^{768}$, pero dos puntos cercanos en el plano pueden estar lejos en el espacio original (\cref{eje:5-varexp}). Los métodos de interpretabilidad del módulo~23 usan PCA para encontrar direcciones dominantes en las activaciones de un modelo.
+\end{observacion}
+

@@ -1,0 +1,104 @@
+% =====================================================================
+\chapter{Funciones de activación}
+\label{tema:2}
+% =====================================================================
+
+La activación determina qué funciones puede representar una red y cómo fluye el gradiente a través de ella. Este tema estudia las activaciones clásicas (sigmoide y tangente hiperbólica), la ReLU, que se impuso en la década de 2010, y las activaciones suaves y con puerta que usan los modelos de lenguaje actuales. Se sigue la §6.3 de~\cite{gbc}, la §5.1.2 de~\cite{d2l} y las notas «Neural Networks Part~1» de~\cite{cs231n}; las definiciones de GELU y SwiGLU proceden de los artículos originales de Hendrycks y Gimpel~\cite{hendrycks} y de Shazeer~\cite{shazeer}.
+
+\section{Sigmoide y tangente hiperbólica}
+
+\begin{definicion}
+La \emph{sigmoide logística} y la \emph{tangente hiperbólica} son
+\[
+\sigma(t)=\frac{1}{1+e^{-t}},\qquad \tanh(t)=\frac{e^{t}-e^{-t}}{e^{t}+e^{-t}}.
+\]
+\end{definicion}
+
+\begin{proposicion}\label{prop:sigmoide}
+Para todo $t\in\R$:
+\begin{enumerate}
+  \item $\sigma'(t)=\sigma(t)\bigl(1-\sigma(t)\bigr)$ y $0<\sigma'(t)\le 1/4$, con igualdad solo en $t=0$;
+  \item $\tanh(t)=2\sigma(2t)-1$;
+  \item $\tanh'(t)=1-\tanh^{2}(t)\in(0,1]$.
+\end{enumerate}
+\end{proposicion}
+
+Por (ii), una red con activaciones tanh y otra con sigmoides representan la misma familia de funciones: el factor~2 y el desplazamiento $-1$ se absorben en los pesos y sesgos de las capas adyacentes (\cref{eje:2-tanh}). La diferencia práctica es que tanh está centrada en~0.
+
+\begin{observacion}[Saturación y desvanecimiento del gradiente]\label{obs:desvanecimiento}
+Cuando $\abs{t}$ es grande, $\sigma'(t)$ y $\tanh'(t)$ son casi nulas: la unidad está \emph{saturada}. En la retropropagación (\cref{tema:5}) el gradiente que atraviesa una capa se multiplica por $\phi'(z)$; con sigmoides, tras $k$ capas el factor es a lo sumo $4^{-k}$, que para $k=10$ vale menos de $10^{-6}$. Este \emph{desvanecimiento del gradiente} dificultó durante años el entrenamiento de redes profundas~\cite[§6.3.2]{gbc}.
+\end{observacion}
+
+\section{La unidad lineal rectificada}
+
+\begin{definicion}[ReLU]
+La \emph{unidad lineal rectificada} es $\ReLU(t)=\max(0,t)$. Su derivada es $\ReLU'(t)=\ind[t>0]$ para $t\neq 0$; en $t=0$ se toma por convenio el valor~0.
+\end{definicion}
+
+La ReLU tiene tres ventajas~\cite[§6.3.1]{gbc}: su cálculo es una comparación; en la región activa su derivada vale exactamente~1, de modo que el gradiente no se encoge al atravesar muchas capas; y es \emph{positivamente homogénea}, $\ReLU(ct)=c\ReLU(t)$ para $c\ge 0$, lo que simplifica el análisis de la varianza (\cref{tema:4}). Su inconveniente es que una unidad cuya preactivación es negativa para todos los datos tiene gradiente nulo y deja de aprender: se dice que está \emph{muerta}~\cite{cs231n}. Las variantes \emph{leaky} ReLU, $\max(\alpha t,t)$ con $0<\alpha<1$ fijo, y PReLU, con $\alpha$ aprendido~\cite{he}, evitan ese problema.
+
+\section{Activaciones suaves: GELU y SiLU}
+
+\begin{definicion}[GELU y SiLU]\label{def:gelu}
+Sea $\Phi$ la función de distribución de la normal estándar. Se definen
+\[
+\GELU(t)=t\,\Phi(t),\qquad \SiLU(t)=t\,\sigma(t).
+\]
+Más en general, $\mathrm{Swish}_\beta(t)=t\,\sigma(\beta t)$ con $\beta>0$, de modo que $\SiLU=\mathrm{Swish}_1$.
+\end{definicion}
+
+Hendrycks y Gimpel~\cite{hendrycks} motivan GELU como el valor esperado de una puerta aleatoria: si $m\sim\mathrm{Bernoulli}(\Phi(t))$, entonces $\E[m\,t]=t\,\Phi(t)$. La entrada se deja pasar con una probabilidad que crece con su valor, en lugar de cortarse según su signo como en la ReLU. En la práctica se usa la aproximación
+\[
+\GELU(t)\approx\tfrac12\,t\Bigl(1+\tanh\Bigl[\sqrt{2/\pi}\,\bigl(t+0{,}044715\,t^{3}\bigr)\Bigr]\Bigr),
+\]
+cuyo error absoluto es menor que $5\cdot 10^{-4}$ en todo $\R$. GELU es la activación de BERT y de GPT-2.
+
+\addtocounter{figure}{1}%
+
+\begin{table}[h]
+\centering\small
+\caption{Valores de ReLU, GELU y SiLU.}\label{tab:activaciones}
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+$t$ & $-2$ & $-1$ & $-0{,}5$ & $0$ & $0{,}5$ & $1$ & $2$ \\
+\midrule
+$\ReLU(t)$ & $0$ & $0$ & $0$ & $0$ & $0{,}5$ & $1$ & $2$ \\
+$\GELU(t)$ & $-0{,}0455$ & $-0{,}1587$ & $-0{,}1543$ & $0$ & $0{,}3457$ & $0{,}8413$ & $1{,}9545$ \\
+$\SiLU(t)$ & $-0{,}2384$ & $-0{,}2689$ & $-0{,}1888$ & $0$ & $0{,}3112$ & $0{,}7311$ & $1{,}7616$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proposicion}\label{prop:silu}
+\begin{enumerate}
+  \item $\SiLU'(t)=\sigma(t)\bigl(1+t\,(1-\sigma(t))\bigr)$; en particular $\SiLU'(0)=1/2$.
+  \item $\GELU'(t)=\Phi(t)+t\,\varphi(t)$, donde $\varphi$ es la densidad normal estándar; en particular $\GELU'(0)=1/2$.
+  \item Ni GELU ni SiLU son monótonas: ambas tienen un único mínimo global negativo, que vale aproximadamente $-0{,}170$ en $t\approx-0{,}752$ para GELU y $-0{,}278$ en $t\approx-1{,}278$ para SiLU.
+\end{enumerate}
+\end{proposicion}
+
+Cuando $\beta\to\infty$, $\sigma(\beta t)\to\ind[t>0]$ para $t\neq 0$ y $\mathrm{Swish}_\beta$ tiende a la ReLU; el \cref{eje:2-swish-relu} prueba que la convergencia es uniforme.
+
+\section{Unidades con puerta: GLU y SwiGLU}
+
+En una unidad con puerta, una proyección de la entrada decide, componente a componente, cuánto se deja pasar de otra proyección.
+
+\begin{definicion}[Capas prealimentadas con puerta; Shazeer]\label{def:swiglu}
+Sean $d,H\ge 1$, $W_g,W_u\in\R^{d\times H}$ y $W_d\in\R^{H\times d}$. Para $x\in\R^{1\times d}$ se definen, sin sesgos,
+\[
+\FFN_{\mathrm{GLU}}(x)=\bigl(\sigma(xW_g)\odot xW_u\bigr)W_d,\qquad
+\FFN_{\mathrm{SwiGLU}}(x)=\bigl(\SiLU(xW_g)\odot xW_u\bigr)W_d.
+\]
+La rama $xW_g$ es la \emph{puerta}, la rama $xW_u$ es el \emph{contenido} y $W_d$ proyecta de vuelta a dimensión $d$. El MLP clásico de un Transformer es $\FFN(x)=\phi(xW_1)W_2$, con $W_1\in\R^{d\times 4d}$ y $W_2\in\R^{4d\times d}$.
+\end{definicion}
+
+La unidad GLU fue propuesta por Dauphin \emph{et al.} para modelos de lenguaje convolucionales; Shazeer~\cite[§2]{shazeer} estudió variantes que sustituyen la sigmoide por otras funciones y observó que SwiGLU y GEGLU mejoran la calidad del Transformer frente a ReLU y GELU con el mismo número de parámetros.
+
+\addtocounter{definicion}{1}%
+
+\begin{proposicion}[Anchura de SwiGLU con igual número de parámetros]\label{prop:anchura}
+Una capa $\FFN_{\mathrm{SwiGLU}}$ de anchura $H$ tiene $3dH$ pesos y un MLP clásico $d\to 4d\to d$ tiene $8d^{2}$. Ambos coinciden si y solo si $H=\tfrac{2}{3}\cdot 4d=8d/3$.
+\end{proposicion}
+
+Shazeer reduce la anchura en un factor $2/3$ por este motivo~\cite[§2]{shazeer}, y LLaMA adopta la misma regla: usa SwiGLU con dimensión oculta $\tfrac23\,4d$ en lugar de $4d$~\cite[§2.2]{touvron}. Para LLaMA-7B, con $d=4096$, se obtiene $8\cdot 4096/3\approx 10\,923$; el código publicado redondea al múltiplo de~256 siguiente, $H=11\,008$, con $3\cdot 4096\cdot 11\,008=135\,266\,304$ pesos por capa frente a $2\cdot 4096\cdot 16\,384=134\,217\,728$ del MLP clásico. Qué activación usan internamente Claude, Gemini o Grok no es información pública.
+

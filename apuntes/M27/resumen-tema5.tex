@@ -1,0 +1,119 @@
+% =====================================================================
+\chapter{Optimización de pipelines de software 3D y videojuegos}
+\label{tema:5}
+% =====================================================================
+
+En producción, la geometría no se optimiza solo para que una pieza sea rígida o una reconstrucción fiel, sino para que una escena quepa en un presupuesto: milisegundos por fotograma, megabytes de memoria de vídeo, tamaño de descarga. Este tema formula como problemas de optimización las decisiones habituales de un pipeline 3D: cuántos triángulos conservar al simplificar una malla, qué nivel de detalle dibujar, cómo comprimir texturas y cómo empaquetar sus mapas UV. Sigue el artículo de Garland y Heckbert sobre el error cuádrico~\cite{garland}, las clases de simplificación de UCSD~\cite{ucsd190} y Princeton~\cite{cos526}, la presentación de Nanite de Epic Games~\cite{nanite}, la documentación de compresión por bloques de Microsoft~\cite{msbc}, el artículo de mapas conformes por mínimos cuadrados~\cite{lscm} y la API de Python de Blender~\cite{blenderapi}.
+
+\section{El presupuesto de rendimiento como restricción}
+
+\begin{definicion}[Presupuesto por fotograma]\label{def:presupuesto}
+A una frecuencia objetivo de $\nu$ fotogramas por segundo corresponde un presupuesto de $1000/\nu$ ms por fotograma: 33,3 ms a 30 Hz, 16,7 ms a 60 Hz, 11,1 ms a 90 Hz (habitual en realidad virtual). Si la CPU prepara el fotograma $k+1$ mientras la GPU dibuja el $k$, el tiempo por fotograma es aproximadamente $\max(t_{\text{CPU}},t_{\text{GPU}})$, y cada uno debe caber en el presupuesto.
+\end{definicion}
+
+El presupuesto se reparte entre sistemas (geometría, iluminación, posprocesado, física, lógica) y cada partida actúa como una restricción $\sum_jt_j(\theta)\le B$ de un problema de optimización cuya función objetivo es la calidad visual. Dos detalles importan en la práctica. Primero, la restricción debe imponerse sobre un percentil alto (por ejemplo, el 99) del tiempo por fotograma y no sobre la media, porque los tirones que percibe el jugador son los fotogramas lentos. Segundo, los costes deben medirse en el hardware de destino: el modelo \emph{roofline} (módulo~17, §2.2) explica por qué una misma reducción de triángulos ahorra mucho cuando la GPU está limitada por el procesamiento de vértices y casi nada cuando lo está por el sombreado de píxeles.
+
+\section{Simplificación de mallas por error cuádrico}
+
+La simplificación reduce el número de triángulos colapsando aristas: los dos extremos se sustituyen por un único vértice y desaparecen las caras degeneradas. La cuestión es qué arista colapsar y dónde colocar el nuevo vértice. Garland y Heckbert~\cite{garland} lo resuelven con una medida de error que se acumula sumando matrices.
+
+\begin{definicion}[Cuádrica de error]\label{def:cuadrica}
+Sea un plano $n^\T x+d=0$ con $\norm{n}=1$ y sea $p=(n,d)\in\R^4$. Su \emph{cuádrica fundamental} es $K_p=pp^\T$. La cuádrica de un vértice es $Q_v=\sum_pK_p$, sumando sobre los planos de las caras que lo contienen, y el error de colocar el vértice en $v$ es $\Delta(v)=\bar v^\T Q\bar v$, con $\bar v=(v,1)$. Al colapsar $(v_1,v_2)$ se toma $Q=Q_1+Q_2$.
+\end{definicion}
+
+\begin{proposicion}[Propiedades del error cuádrico]\label{prop:qem}
+(a) $\Delta(v)=\sum_p(n_p^\T v+d_p)^2$ es la suma de los cuadrados de las distancias de $v$ a los planos. (b) $Q$ es simétrica y semidefinida positiva, y $\Delta$ es una función convexa de $v$. (c) Si $Q=\begin{psmallmatrix}A&b\\b^\T&c\end{psmallmatrix}$ con $A\in\R^{3\times3}$ invertible, el minimizador es $v^\star=-A^{-1}b$, solución del sistema lineal que se obtiene al sustituir la última fila de $Q$ por $(0,0,0,1)$; $A$ es invertible si y solo si las normales de los planos generan $\R^3$.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+El algoritmo calcula las cuádricas iniciales, el coste $\Delta(v^\star)$ de cada arista candidata y las guarda en un montículo; en cada paso colapsa la de menor coste y actualiza las vecinas~\cite[§4.1]{garland}. Cada vértice guarda solo 10 números (la matriz simétrica), y el artículo informa de que una malla de 69\,451 caras se simplifica en unos 15 s en el hardware de 1997. La simplificación por colapso de aristas es la que ofrecen el modificador \emph{Decimate} de Blender en modo \texttt{COLLAPSE}~\cite{blenderapi} y la biblioteca meshoptimizer~\cite{meshopt}, y Nanite usa expresamente el error cuádrico~\cite{nanite}. En el cuaderno, una esfera de 20 mm de radio con 528 caras se reduce a 200 caras con una desviación máxima de los vértices de 0,30 mm, conservando $\chi=2$.
+
+\section{Niveles de detalle y error en pantalla}
+
+Un objeto lejano ocupa pocos píxeles, y dibujarlo con todos sus triángulos desperdicia tiempo. Los \emph{niveles de detalle} (LOD) son versiones simplificadas que se eligen según la distancia.
+
+\begin{proposicion}[Error proyectado]\label{prop:error-px}
+Con una cámara perspectiva de campo de visión vertical $\phi_v$ y una imagen de $H$ píxeles de alto, un error geométrico $\varepsilon$ a distancia $d$ ocupa aproximadamente
+\[
+\varepsilon_{\text{px}}=\frac{\varepsilon\,H}{2\,d\,\tan(\phi_v/2)}
+\]
+píxeles. En consecuencia, el nivel con error $\varepsilon$ puede usarse sin superar un umbral de $\tau$ píxeles a partir de la distancia $d^\star=\varepsilon H/\bigl(2\tau\tan(\phi_v/2)\bigr)$.
+\end{proposicion}
+
+Nanite, el sistema de geometría virtualizada de Unreal Engine~5, lleva la idea al extremo~\cite{nanite}: divide cada malla en grupos de 128 triángulos, los simplifica jerárquicamente con el error cuádrico en un grafo acíclico dirigido de niveles, proyecta el error de simplificación a píxeles y, en cada fotograma, elige un corte del grafo en que el error queda por debajo de aproximadamente un píxel; los triángulos diminutos se rasterizan por software. Los autores informan de unos 25 millones de triángulos rasterizados por fotograma en su demostración.
+
+\section{Selección de niveles de detalle con presupuesto}
+
+\begin{definicion}[Mochila de elección múltiple]\label{def:mckp}
+Hay $G$ grupos de objetos; el grupo $g$ admite los niveles $\ell=0,\dots,L_g$, con coste $t_{g\ell}$ (ms) y pérdida de calidad $q_{g\ell}$. Se elige un nivel por grupo, $e=(\ell_1,\dots,\ell_G)$, resolviendo
+\[
+\min_e\ Q(e)=\sum_gq_{g\ell_g}\quad\text{sujeto a}\quad T(e)=\sum_gt_{g\ell_g}\le B .
+\]
+\end{definicion}
+
+Es un problema NP-difícil en general, pero pequeño en la práctica. La \emph{relajación lagrangiana} elimina la restricción: para cada $\lambda\ge 0$ se resuelve $\min_e\bigl[Q(e)+\lambda(T(e)-B)\bigr]$, que se separa por grupos (cada grupo elige el nivel que minimiza $q_{g\ell}+\lambda t_{g\ell}$). El multiplicador $\lambda$ es el «precio» de un milisegundo en unidades de calidad.
+
+\begin{proposicion}[Dualidad débil]\label{prop:dual}
+Sea $D(\lambda)=\min_e\bigl[Q(e)+\lambda(T(e)-B)\bigr]$ y $Q^\star$ el óptimo del problema con restricción. Para todo $\lambda\ge 0$, $D(\lambda)\le Q^\star$. Si la elección $e_\lambda$ que alcanza $D(\lambda)$ es factible y $\lambda\bigl(T(e_\lambda)-B\bigr)=0$, entonces $e_\lambda$ es óptima.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\section{Compresión de texturas}
+
+Las GPU leen texturas comprimidas por bloques sin descomprimirlas en memoria. Los formatos BC de Direct3D~\cite{msbc} codifican bloques de $4\times 4$ téxeles: BC1 usa 8 bytes por bloque (4 bits por téxel) para color RGB con alfa de un bit; BC4, 8 bytes para un canal; BC5, 16 bytes para dos canales; BC6H, 16 bytes para color HDR, y BC7, 16 bytes (8 bits por téxel) para RGB o RGBA de alta calidad, con ocho modos por bloque entre los que el codificador elige. Una cadena completa de mipmaps añade un tercio de memoria, porque $1+\tfrac14+\tfrac1{16}+\dots=\tfrac43$.
+
+Codificar un bloque BC1 es un problema de optimización: se eligen dos colores extremos $e_0,e_1$ y, para cada téxel, un índice de dos bits que selecciona uno de los colores de la paleta $\{e_0,\ e_1,\ \tfrac23e_0+\tfrac13e_1,\ \tfrac13e_0+\tfrac23e_1\}$, minimizando el error cuadrático. Fijados los índices, el problema en $(e_0,e_1)$ es de mínimos cuadrados lineales (módulo~8, §2.2), porque cada téxel se aproxima por $(1-w_i)e_0+w_ie_1$ con $w_i\in\{0,\tfrac13,\tfrac23,1\}$ conocido; fijados los extremos, cada índice se elige por cercanía. Alternar ambos pasos no aumenta nunca el error y termina en un número finito de pasos, como el algoritmo de las $k$-medias. La dirección inicial de $e_0e_1$ suele tomarse como la primera componente principal de los colores del bloque (módulo~3, §5.4).
+
+\section{Empaquetado UV}
+
+Para texturizar una malla se corta en \emph{cartas} que se aplanan en el plano (parametrización) y se colocan dentro de un cuadrado de textura (empaquetado). El aplanado se plantea como minimización de una distorsión; el método LSCM de Lévy \emph{et al.}~\cite{lscm} minimiza por mínimos cuadrados la desviación de la conformidad (preservación de ángulos), lo que lleva a un sistema lineal disperso. El empaquetado es una variante del problema de la mochila bidimensional: colocar rectángulos (o polígonos) sin solaparse maximizando el área útil o la densidad de téxeles uniforme, y es NP-difícil incluso para rectángulos. En la práctica se usan heurísticas voraces: por \emph{estantes} (ordenar por altura y llenar filas), \emph{skyline} o rectángulos máximos libres, con un margen (\emph{padding}) entre cartas para que los mipmaps no mezclen colores de cartas vecinas. Herramientas como xatlas automatizan la segmentación, la parametrización y el empaquetado.
+
+\section{Contenido procedural y automatización con Blender}
+
+Un pipeline reproducible genera los niveles de detalle, las texturas y las comprobaciones con scripts, no a mano. Blender expone su modelo de datos en Python (\texttt{bpy}); el siguiente script crea tres niveles de detalle de cada malla de una escena con el modificador \emph{Decimate} en modo de colapso de aristas~\cite{blenderapi}:
+
+\begin{center}
+\begin{minipage}{0.92\textwidth}
+\small
+\begin{verbatim}
+import bpy
+ratios = {"LOD1": 0.5, "LOD2": 0.25, "LOD3": 0.1}
+mallas = [o for o in bpy.data.objects if o.type == 'MESH']
+for obj in mallas:
+    for nombre, r in ratios.items():
+        copia = obj.copy()
+        copia.data = obj.data.copy()
+        copia.name = obj.name + "_" + nombre
+        bpy.context.collection.objects.link(copia)
+        mod = copia.modifiers.new(name="Decimate", type='DECIMATE')
+        mod.decimate_type = 'COLLAPSE'
+        mod.ratio = r     # fracción de triángulos que se conserva
+\end{verbatim}
+\end{minipage}
+\end{center}
+
+El mismo patrón sirve para el contenido procedural: un generador de rocas, edificios o vegetación es una función $G(\theta,\text{semilla})$ cuyos parámetros pueden ajustarse con optimización de caja negra contra métricas (número de triángulos, área de textura, tiempo de dibujado medido) o contra la valoración de un artista. Fijar las semillas y versionar los scripts hace que cada recurso sea reproducible, y permite integrar las comprobaciones del \cref{tema:6} en la integración continua.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+meshoptimizer & simplificación, orden de caché de vértices, sobredibujado, cuantización & MIT & optimizar mallas para la GPU en C/C++ \\
+Blender (\texttt{bpy}) & modelado, \emph{Decimate}, scripts de pipeline & GPL-3.0 & automatizar LOD, exportaciones y comprobaciones \\
+PyMeshLab & filtros de simplificación y reparación & GPL-3.0 & procesado por lotes fuera del motor \\
+xatlas & segmentación, parametrización y empaquetado UV & MIT & atlas de texturas o de iluminación automáticos \\
+DirectXTex & compresión BC1--BC7 y mipmaps & MIT & preparar texturas para Direct3D \\
+Basis Universal & texturas supercomprimidas transcodificables & Apache-2.0 & distribuir una textura para varias plataformas \\
+Unreal Engine (Nanite) & geometría virtualizada con LOD automático & comercial (licencia de Epic) & escenas con mallas de muy alta resolución \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías del tema~5. Licencias según los repositorios o la documentación pública.}
+\label{tab:tec5}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

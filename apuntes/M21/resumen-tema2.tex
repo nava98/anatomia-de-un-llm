@@ -1,0 +1,118 @@
+% =====================================================================
+\chapter{Gradiente de política}
+\label{tema:2}
+% =====================================================================
+
+Este tema deduce el gradiente del rendimiento esperado respecto a los parámetros de la política y lo convierte en un algoritmo estimable por muestreo, REINFORCE~\cite{williams}. Después estudia la varianza del estimador y las dos técnicas que la reducen: la línea base y la ventaja estimada por un crítico, incluida la estimación generalizada de la ventaja (GAE)~\cite{gae}. Se siguen las §13.1--13.5 de Sutton y Barto~\cite{sb} y las clases~5 y~6 de CS285~\cite{cs285}.
+
+\section{Políticas parametrizadas y función de puntuación}
+
+\begin{definicion}[Rendimiento y función de puntuación]\label{def:score}
+Sea $\pi_\theta$ una política parametrizada en un MDP episódico. El \emph{rendimiento} es $J(\theta)=\E_{\tau\sim p_\theta}[R(\tau)]$, con $R(\tau)=\sum_{t=0}^{T-1}\gamma^{t}r_{t+1}$ y $p_\theta=p_{\pi_\theta}$ dada por \eqref{eq:ptau}. Si $\pi_\theta(a\mid s)>0$, el vector $\nabla_\theta\log\pi_\theta(a\mid s)$ se llama \emph{función de puntuación} (\emph{score}) o vector de elegibilidad.
+\end{definicion}
+
+La parametrización más común en espacios de acciones discretos es la softmax de unas preferencias o logits~\cite[§13.1]{sb}. En un LLM los logits son la salida del Transformer y dependen de $\theta$ de forma no lineal; el caso tabular, en el que los propios logits son los parámetros, permite calcular todo a mano.
+
+\begin{proposicion}[Puntuación de la softmax]\label{prop:score-softmax}
+Sea $\pi_\theta=\softmax(\theta)$, con $\theta\in\R^{K}$ y $\pi_\theta(a)=e^{\theta_a}/\sum_b e^{\theta_b}$. Entonces
+\[
+\nabla_\theta\log\pi_\theta(a)=e_a-\pi_\theta .
+\]
+Si los logits son $z=f_\theta(s)$, por la regla de la cadena $\nabla_\theta\log\pi_\theta(a\mid s)=J_f(s)^{\top}(e_a-\pi_\theta(\cdot\mid s))$, con $J_f$ la matriz jacobiana de $f_\theta$.
+\end{proposicion}
+
+El vector $e_a-\pi_\theta$ es exactamente el gradiente, cambiado de signo, de la entropía cruzada con etiqueta $a$ (módulo~8). Esta coincidencia explica la relación entre gradiente de política y ajuste supervisado que se establece más abajo.
+
+\section{El teorema del gradiente de política}
+
+\begin{lema}[Truco de la derivada logarítmica]\label{lem:logder}
+Si $p_\theta(z)>0$ es diferenciable en $\theta$, entonces $\nabla_\theta p_\theta(z)=p_\theta(z)\,\nabla_\theta\log p_\theta(z)$.
+\end{lema}
+
+\begin{teorema}[Gradiente de política, forma de trayectorias]\label{teo:pg}
+En un MDP episódico finito con política diferenciable y estrictamente positiva,
+\[
+\nabla_\theta J(\theta)=\E_{\tau\sim p_\theta}\Bigl[R(\tau)\sum_{t=0}^{T-1}\nabla_\theta\log\pi_\theta(a_t\mid s_t)\Bigr].
+\]
+\end{teorema}
+
+Lo notable del teorema es que la dinámica $p$ desaparece del gradiente: basta con poder \emph{muestrear} trayectorias y evaluar su recompensa, aunque ni el entorno ni la recompensa sean derivables. En la forma de Sutton y Barto~\cite[§13.2]{sb}, el teorema se enuncia con la distribución de estados de la política y $Q^{\pi}$; la versión anterior es la de la clase~5 de CS285~\cite{cs285}.
+
+\begin{corolario}[Gradiente de política en un LLM]\label{cor:pg-llm}
+En el MDP de tokens (\cref{def:mdp-tokens}),
+\[
+\nabla_\theta J(\theta)=\E_{x}\,\E_{y\sim\pi_\theta(\cdot\mid x)}\Bigl[r(x,y)\sum_{t=1}^{T}\nabla_\theta\log\pi_\theta(y_t\mid x,y_{<t})\Bigr].
+\]
+\end{corolario}
+
+El sumatorio $\sum_t\nabla_\theta\log\pi_\theta(y_t\mid x,y_{<t})$ es el gradiente de la log-verosimilitud de $y$, el mismo que maximiza el SFT del módulo~20. El gradiente de política es, por tanto, un SFT sobre las propias muestras del modelo, ponderado por su recompensa~\cite{cs336}.
+
+\section{REINFORCE}
+
+\begin{definicion}[Estimador REINFORCE]\label{def:reinforce}
+Dadas $N$ trayectorias independientes $\tau^{(1)},\dots,\tau^{(N)}\sim p_\theta$, el estimador REINFORCE del gradiente es
+\[
+\widehat{g}=\frac1N\sum_{i=1}^{N}R(\tau^{(i)})\sum_{t}\nabla_\theta\log\pi_\theta(a^{(i)}_t\mid s^{(i)}_t),
+\]
+y el algoritmo actualiza $\theta\leftarrow\theta+\eta\,\widehat{g}$ con una tasa de aprendizaje $\eta>0$.
+\end{definicion}
+
+Por el \cref{teo:pg}, $\E[\widehat g]=\nabla_\theta J$: el estimador es insesgado. Williams~\cite{williams} lo introdujo en 1992 como un caso de una familia de algoritmos que siguen el gradiente en esperanza.
+
+\addtocounter{definicion}{1}%
+
+\section{Causalidad y recompensa futura}
+
+\begin{proposicion}[Las recompensas pasadas no aportan]\label{prop:causalidad}
+Si $t'<t$, entonces $\E_{p_\theta}\bigl[r_{t'+1}\,\nabla_\theta\log\pi_\theta(a_t\mid s_t)\bigr]=0$. En consecuencia,
+\[
+\nabla_\theta J(\theta)=\E_{p_\theta}\Bigl[\sum_{t}\nabla_\theta\log\pi_\theta(a_t\mid s_t)\,\widehat{Q}_t\Bigr],\qquad \widehat Q_t=\sum_{t'\ge t}\gamma^{t'}r_{t'+1}.
+\]
+\end{proposicion}
+
+La cantidad $\widehat Q_t$ (la «recompensa futura», \emph{reward-to-go}) es una estimación de una muestra de $Q^{\pi}(s_t,a_t)$, salvo el factor $\gamma^{t}$~\cite{cs285hw2}. En el MDP de tokens, con una sola recompensa final, todas las $\widehat Q_t$ valen $r(x,y)$ y la proposición no aporta nada; su utilidad aparece con recompensas intermedias, como la penalización KL por token del \cref{tema:3}.
+
+\section{Línea base y varianza}
+
+\begin{lema}[La puntuación tiene media nula]\label{lem:score-media}
+Para todo estado $s$, $\E_{a\sim\pi_\theta(\cdot\mid s)}\bigl[\nabla_\theta\log\pi_\theta(a\mid s)\bigr]=0$.
+\end{lema}
+
+\begin{proposicion}[Línea base]\label{prop:baseline}
+Sea $b(s)$ cualquier función del estado que no dependa de la acción. Entonces
+\[
+\nabla_\theta J(\theta)=\E_{p_\theta}\Bigl[\sum_t\nabla_\theta\log\pi_\theta(a_t\mid s_t)\bigl(\widehat Q_t-b(s_t)\bigr)\Bigr].
+\]
+\end{proposicion}
+
+La línea base no cambia la esperanza, pero sí la varianza. En el \cref{ej:reinforce}, la varianza total (traza de la matriz de covarianzas) del estimador de una muestra $(r(a)-b)(e_a-\pi)$ vale $0{,}889$ con $b=0$ y $0{,}222$ con $b=J=1$. Si se suma~10 a todas las recompensas, con $b=0$ sube a $80{,}9$, mientras que con $b=J$ sigue siendo $0{,}222$: la línea base hace el método insensible al origen arbitrario de la escala de recompensas. La clase~5 de CS285 observa que la recompensa media no es la línea base óptima, aunque sí una muy buena~\cite{cs285}; la proposición siguiente da la óptima.
+
+\begin{proposicion}[Línea base de varianza mínima]\label{prop:baseline-optima}
+En un bandido con $g(a)=\nabla_\theta\log\pi_\theta(a)$, la varianza total del estimador $(r(a)-b)\,g(a)$ con $a\sim\pi_\theta$ es mínima para
+\[
+b^{*}=\frac{\E\bigl[r(a)\,\norm{g(a)}^{2}\bigr]}{\E\bigl[\norm{g(a)}^{2}\bigr]}.
+\]
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\section{Ventaja, crítico y estimación generalizada de la ventaja}
+
+La línea base natural en un MDP es $b(s_t)=V^{\pi}(s_t)$. Entonces $\widehat Q_t-V^{\pi}(s_t)$ es una estimación de la ventaja $A^{\pi}(s_t,a_t)$ de la \cref{def:valor}, y el gradiente queda $\E[\sum_t\nabla\log\pi_\theta(a_t\mid s_t)\,A^{\pi}(s_t,a_t)]$, salvo los factores de descuento. Como $V^{\pi}$ es desconocida, se aproxima con una red $V_\phi$, el \emph{crítico}, entrenada por regresión sobre los retornos observados. La política es el \emph{actor}: de ahí el nombre de métodos actor-crítico~\cite[§13.5]{sb}.
+
+\begin{definicion}[Error de diferencia temporal y GAE]\label{def:gae}
+Dado un crítico $V$, el \emph{error de diferencia temporal} es $\delta_t=r_{t+1}+\gamma V(s_{t+1})-V(s_t)$, con $V(s_T)=0$ en el estado terminal. Para $\lambda\in[0,1]$, la \emph{estimación generalizada de la ventaja} es~\cite{gae}
+\[
+\widehat A^{\mathrm{GAE}(\gamma,\lambda)}_t=\sum_{l=0}^{T-t-1}(\gamma\lambda)^{l}\,\delta_{t+l},
+\]
+que satisface la recursión $\widehat A_t=\delta_t+\gamma\lambda\,\widehat A_{t+1}$, con $\widehat A_T=0$.
+\end{definicion}
+
+\begin{proposicion}[Casos extremos de GAE]\label{prop:gae}
+Con $\lambda=0$, $\widehat A_t=\delta_t$. Con $\lambda=1$, $\widehat A_t=\sum_{l\ge0}\gamma^{l}r_{t+l+1}-V(s_t)$, el retorno observado menos la línea base. Si $V=V^{\pi}$, entonces $\E[\delta_t\mid s_t,a_t]=A^{\pi}(s_t,a_t)$.
+\end{proposicion}
+
+El parámetro $\lambda$ regula el compromiso entre sesgo y varianza: con $\lambda=0$ se usa solo un paso de recompensa real y se confía en el crítico (poca varianza, sesgo si $V$ es inexacto); con $\lambda=1$ se usa el retorno completo (sin sesgo, mucha varianza)~\cite{cs285}. PPO calcula sus ventajas con GAE.
+
+\addtocounter{definicion}{1}%
+

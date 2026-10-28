@@ -1,0 +1,91 @@
+% =====================================================================
+\chapter{Algoritmos conscientes de la E/S: FlashAttention}
+\label{tema:3}
+% =====================================================================
+
+El \cref{tema:2} mostró que una operación de baja intensidad aritmética está limitada por la memoria, por rápido que sea el cómputo. Este tema aplica esa idea a la atención, cuya implementación directa escribe y lee de la HBM una matriz de tamaño cuadrático en la longitud de la secuencia. Se presentan la fusión de \emph{kernels}, el análisis de entrada y salida (E/S) de la atención estándar, la softmax en línea y el algoritmo FlashAttention, que calcula la atención exacta sin materializar esa matriz. Se siguen el artículo de Dao \emph{et al.}~\cite[§2--3]{flash}, el de Milakov y Gimelshein~\cite{milakov}, la clase~6 de CS336~\cite{cs336} y el §4 de la tarea~2 de ese curso~\cite{cs336a2}. En este tema, $n$ es la longitud de la secuencia, $d$ la dimensión de cada cabeza y $M$ la capacidad de la SRAM, medida en elementos.
+
+\section{Fusión de kernels}
+
+\begin{definicion}[Operación elemento a elemento]
+Una operación $y=g(x)$ sobre un tensor de $L$ elementos es \emph{elemento a elemento} si cada $y_i$ depende solo de $x_i$. Ejemplos: las activaciones GELU y SiLU, la suma de un sesgo, la multiplicación por un escalar.
+\end{definicion}
+
+\begin{proposicion}[Efecto de la fusión]\label{prop:fusion}
+Sea una cadena de $r$ operaciones elemento a elemento $g_r\circ\dots\circ g_1$ sobre un tensor de $L$ elementos de $s$ bytes, cada una con $f$ FLOP por elemento. Ejecutada como $r$ \emph{kernels} separados transfiere $2rLs$ bytes; fusionada en un solo \emph{kernel} transfiere $2Ls$ bytes. La intensidad pasa de $f/(2s)$ a $rf/(2s)$.
+\end{proposicion}
+
+Los compiladores como \texttt{torch.compile} y los lenguajes como Triton automatizan esta fusión~\cite{cs336}. La atención no es una cadena elemento a elemento, porque la softmax normaliza por filas, pero la idea es la misma: no escribir resultados intermedios en la HBM.
+
+\section{La atención estándar y su tráfico de memoria}
+
+Sean $Q,K,V\in\R^{n\times d}$. La atención de una cabeza (módulo~13) calcula
+\[
+S=QK\T\in\R^{n\times n},\qquad P=\softmax(S)\ \text{(por filas)},\qquad O=PV\in\R^{n\times d},
+\]
+donde el factor $1/\sqrt{d}$ se supone incorporado en $Q$.
+
+\begin{proposicion}[Tráfico de la atención estándar]\label{prop:atencion-estandar}
+La implementación en tres \emph{kernels} (calcular y escribir $S$; leer $S$ y escribir $P$; leer $P$ y $V$ y escribir $O$) transfiere $4n^{2}+4nd$ elementos entre la HBM y el procesador, y necesita $n^{2}$ elementos de memoria adicional para $S$ o $P$.
+\end{proposicion}
+
+Cuando $n\gg d$, el término $4n^{2}$ domina. La softmax tiene intensidad baja (unos pocos FLOP por elemento), de modo que el segundo \emph{kernel} está limitado por la memoria. Con $n=4096$ en bf16, $S$ ocupa $4096^{2}\cdot 2$~bytes $=32$~MiB por cabeza; con 32 cabezas, 1~GiB por capa y por secuencia. Además, la retropropagación necesita $P$, que debe guardarse (\cref{eje:3-pytorch}).
+
+\section{La softmax en línea}
+
+La softmax de una fila $x\in\R^{n}$ se calcula de forma estable restando el máximo (módulo~1): $\softmax(x)_i=e^{x_i-m}/\ell$, con $m=\max_j x_j$ y $\ell=\sum_j e^{x_j-m}$. Las dos cantidades $m$ y $\ell$ pueden obtenerse por bloques~\cite{milakov}.
+
+\begin{definicion}[Estadísticos de un bloque]
+Sea $\mathcal{B}\subseteq\{1,\dots,n\}$ no vacío. Sus \emph{estadísticos} son
+\[
+m_{\mathcal{B}}=\max_{j\in\mathcal{B}}x_j,\qquad \ell_{\mathcal{B}}=\sum_{j\in\mathcal{B}}e^{x_j-m_{\mathcal{B}}}.
+\]
+\end{definicion}
+
+\begin{lema}[Combinación de estadísticos]\label{lem:combinacion}
+Sean $\mathcal{B}_1$ y $\mathcal{B}_2$ bloques disjuntos con estadísticos $(m_1,\ell_1)$ y $(m_2,\ell_2)$, y sea $m=\max(m_1,m_2)$. Entonces los estadísticos de $\mathcal{B}_1\cup\mathcal{B}_2$ son
+\[
+m_{\mathcal{B}_1\cup\mathcal{B}_2}=m,\qquad \ell_{\mathcal{B}_1\cup\mathcal{B}_2}=\ell_1e^{m_1-m}+\ell_2e^{m_2-m}.
+\]
+Además, ningún factor $e^{m_i-m}$ es mayor que~1.
+\end{lema}
+
+\begin{proposicion}[Combinación de salidas]\label{prop:combinacion-salida}
+Sean $v_1,\dots,v_n\in\R^{d}$ y, para cada bloque, $o_{\mathcal{B}}=\ell_{\mathcal{B}}^{-1}\sum_{j\in\mathcal{B}}e^{x_j-m_{\mathcal{B}}}v_j$ la salida de la atención restringida al bloque. Con la notación del \cref{lem:combinacion} y $\ell=\ell_1e^{m_1-m}+\ell_2e^{m_2-m}$,
+\[
+o_{\mathcal{B}_1\cup\mathcal{B}_2}=\frac{\ell_1e^{m_1-m}\,o_{\mathcal{B}_1}+\ell_2e^{m_2-m}\,o_{\mathcal{B}_2}}{\ell}.
+\]
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\section{El algoritmo FlashAttention}
+
+FlashAttention~\cite[algoritmo~1]{flash} divide $Q$ en $T_r$ bloques de $B_r$ filas y $K$, $V$ en $T_c$ bloques de $B_c$ filas, con
+\[
+B_c=\Bigl\lceil\frac{M}{4d}\Bigr\rceil,\qquad B_r=\min\Bigl(\Bigl\lceil\frac{M}{4d}\Bigr\rceil,\ d\Bigr),\qquad T_r=\frac{n}{B_r},\qquad T_c=\frac{n}{B_c},
+\]
+de forma que los bloques en uso caben en una SRAM de tamaño $O(M)$. Para cada fila de $Q$ mantiene en la HBM la salida parcial normalizada y los estadísticos $(m,\ell)$, y los actualiza con el \cref{lem:combinacion} y la \cref{prop:combinacion-salida} cada vez que procesa un nuevo bloque de claves (\cref{fig:flash-alg,fig:flash-bloques}).
+
+\addtocounter{figure}{1}%
+
+\addtocounter{figure}{1}%
+
+\begin{teorema}[Exactitud y memoria; Dao \emph{et al.}, teorema~1]\label{teo:flash-exacto}
+El algoritmo de la \cref{fig:flash-alg} devuelve exactamente $O=\softmax(QK\T)V$ (salvo redondeo), con $O(n^{2}d)$ FLOP y $O(n)$ memoria adicional en HBM aparte de la entrada y la salida.
+\end{teorema}
+
+\begin{proposicion}[Tráfico de FlashAttention]\label{prop:flash-trafico}
+El algoritmo de la \cref{fig:flash-alg} transfiere
+\[
+Q_{\mathrm{FA}}=(nd+2n)+2nd+T_c\,(3nd+4n)
+\]
+elementos entre la HBM y el procesador. Como $T_c\approx 4nd/M$, el término dominante es $12\,n^{2}d^{2}/M$.
+\end{proposicion}
+
+Dao \emph{et al.}~\cite[teorema~2]{flash} enuncian el resultado asintótico: la atención estándar requiere $\Theta(nd+n^{2})$ accesos a la HBM y FlashAttention $\Theta(n^{2}d^{2}M^{-1})$. Con valores típicos ($d$ entre 64 y 128, $M$ de unos $10^{5}$ elementos), $d^{2}/M$ es mucho menor que~1 y el ahorro es grande. También demuestran que ningún algoritmo exacto puede hacer $o(n^{2}d^{2}M^{-1})$ accesos para todo $M\in[d,nd]$~\cite[proposición~3]{flash}.
+
+\begin{observacion}[Pasada hacia atrás y recomputación]
+La retropropagación de la atención necesita $P$. FlashAttention no la guarda: almacena solo $(m,\ell)$ y, en la pasada hacia atrás, recalcula cada bloque $S_{ij}$ en la SRAM a partir de $Q_i$ y $K_j$. Realiza más FLOP que la implementación estándar, pero muchos menos accesos a la HBM, y resulta más rápida~\cite[§3.1]{flash}. Es el principio del roofline: en una operación limitada por la memoria, recalcular es más barato que leer.
+\end{observacion}
+

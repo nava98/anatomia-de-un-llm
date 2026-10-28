@@ -1,0 +1,70 @@
+% =====================================================================
+\chapter{La subcapa MLP: GELU y SwiGLU}
+\label{tema:3}
+% =====================================================================
+
+La segunda subcapa de cada bloque es un perceptrón de una capa oculta que se aplica por separado a cada token. Contiene unos dos tercios de los parámetros del modelo. Este tema define el MLP clásico del Transformer original y de GPT-2, las unidades lineales con puerta y la variante SwiGLU de LLaMA, demuestra las propiedades de la activación SiLU y justifica la elección $\dff\approx\frac83 d$. Se sigue~\cite[§3.3]{vaswani}, \cite[§11.7.2]{d2l}, \cite[§7.2.1]{jm3}, el artículo de Shazeer~\cite{shazeer} y la §3.4.2 de la práctica de CS336~\cite{cs336}.
+
+\section{El MLP posición a posición}
+
+\begin{definicion}[MLP posición a posición]\label{def:ffn}
+Sea $\phi:\R\to\R$ una función de activación aplicada componente a componente. El \emph{MLP posición a posición} con dimensión intermedia $\dff$ es
+\[
+\FFN(x)=\phi\bigl(xW_1+b_1\bigr)W_2+b_2,\qquad W_1\in\R^{d\times\dff},\;W_2\in\R^{\dff\times d},
+\]
+aplicado a cada fila $x\in\R^{d}$ de la matriz de entrada con los mismos parámetros.
+\end{definicion}
+
+El Transformer original usa $\phi=\ReLU$, $d=512$ y $\dff=2048=4d$~\cite[§3.3]{vaswani}; GPT-2 usa la misma proporción con la activación GELU. Que el MLP actúe fila a fila tiene una consecuencia estructural.
+
+\begin{lema}[Las operaciones fila a fila conmutan con las permutaciones]\label{lem:filas}
+Sea $f:\R^{d}\to\R^{m}$ y sea $\hat f:\R^{n\times d}\to\R^{n\times m}$ la aplicación que actúa como $f$ sobre cada fila. Para toda matriz de permutación $P\in\R^{n\times n}$, $\hat f(PX)=P\,\hat f(X)$.
+\end{lema}
+
+El \cref{lem:filas} se aplica al MLP, a las normalizaciones y a las proyecciones lineales. Por eso la atención es la única subcapa sensible al orden de los tokens, y por eso hace falta codificar la posición (\cref{tema:4}).
+
+\section{Activaciones suaves: GELU y SiLU}
+
+\begin{definicion}[GELU y SiLU]\label{def:gelu-silu}
+Sean $\Phi$ la función de distribución de la normal estándar y $\sigma(x)=1/(1+e^{-x})$ la sigmoide. Se definen
+\[
+\GELU(x)=x\,\Phi(x),\qquad \SiLU(x)=x\,\sigma(x).
+\]
+La función SiLU también se llama \emph{Swish} con parámetro~$1$~\cite{shazeer}.
+\end{definicion}
+
+Ambas multiplican $x$ por un número entre $0$ y $1$ que crece con $x$: son versiones suaves de $\ReLU(x)=x\cdot\mathbf{1}[x>0]$, en las que el interruptor $\mathbf{1}[x>0]$ se sustituye por una función de distribución~\cite{gelu}.
+
+\begin{proposicion}[Propiedades de SiLU]\label{prop:silu}
+La función SiLU cumple:
+\begin{enumerate}
+  \item $\SiLU(x)-\ReLU(x)\to 0$ cuando $x\to\pm\infty$;
+  \item $\SiLU'(x)=\sigma(x)\bigl(1+x(1-\sigma(x))\bigr)$; en particular, $\SiLU(0)=0$ y $\SiLU'(0)=1/2$;
+  \item tiene un único punto crítico $x^{*}<0$, que es un mínimo global, con $\SiLU(x^{*})=x^{*}+1$. Numéricamente, $x^{*}\approx-1{,}2785$ y $\SiLU(x^{*})\approx-0{,}2785$.
+\end{enumerate}
+\end{proposicion}
+
+A diferencia de ReLU, SiLU es derivable en todo punto, no es monótona y deja pasar valores negativos pequeños, lo que evita las neuronas cuyo gradiente es nulo en todo el semieje negativo.
+
+\section{Unidades lineales con puerta y SwiGLU}
+
+\begin{definicion}[SwiGLU]\label{def:swiglu}
+Sean $W_g,W_u\in\R^{d\times\dff}$ y $\Wdown\in\R^{\dff\times d}$. La subcapa \emph{SwiGLU} es
+\[
+\SwiGLU(x)=\bigl(\SiLU(xW_g)\odot xW_u\bigr)\,\Wdown,
+\]
+donde $\odot$ es el producto componente a componente. La rama $xW_g$ es la \emph{puerta} y $xW_u$ la \emph{rama lineal}.
+\end{definicion}
+
+Las unidades lineales con puerta (GLU) de Dauphin \emph{et al.}~\cite{dauphin} multiplican una proyección lineal por una puerta sigmoide; Shazeer~\cite[§2]{shazeer} probó varias funciones en la puerta y encontró que la variante con Swish mejoraba la perplejidad del Transformer. Las componentes de la capa intermedia ya no son $\phi(\text{lineal})$, sino productos de dos formas lineales del token: la puerta decide cuánto de la rama lineal se transmite.
+
+\begin{proposicion}[Presupuesto de parámetros]\label{prop:presupuesto}
+Sin sesgos, el MLP de la \cref{def:ffn} tiene $2d\,\dff$ parámetros, y SwiGLU tiene $3d\,\dff$. Con $\dff=4d$, el primero tiene $8d^{2}$ parámetros; SwiGLU tiene el mismo número si y solo si $\dff=\frac83 d$.
+\end{proposicion}
+
+El mismo argumento iguala el cómputo, porque el coste de cada producto es proporcional al número de pesos (\cref{tema:6}). Shazeer~\cite[§2]{shazeer} reduce $\dff$ en un factor $2/3$ por esta razón: en sus experimentos, el MLP de dos matrices usa $\dff=3072$ y las variantes con puerta $\dff=2048$.
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{definicion}{1}%
+

@@ -1,0 +1,82 @@
+% =====================================================================
+\chapter{Embeddings, analogías y atención}
+\label{tema:5}
+% =====================================================================
+
+Este tema aplica las herramientas anteriores a la entrada y la salida de un modelo de lenguaje. La capa de embeddings es una matriz; leer el vector de un token es multiplicar por un vector \emph{one-hot}; las relaciones semánticas aparecen, de forma aproximada, como direcciones del espacio; y la atención compara tokens mediante productos escalares. La presentación sigue el capítulo~5 de Jurafsky y Martin~\cite{jm3} y la clase~2 de CS224N~\cite{cs224n}, junto con los artículos de Mikolov y coautores~\cite{mikolov-a,mikolov-b} y de Vaswani y coautores~\cite{vaswani}.
+
+\section{La matriz de embeddings}
+
+En este tema se usa la notación del módulo~1: $\V$ es el vocabulario, $K=\abs{\V}$ su tamaño y los tokens se identifican con sus índices $0,1,\dots,K-1$. Las filas de las matrices indexadas por tokens se numeran también desde~0.
+
+\begin{definicion}[Matriz de embeddings]\label{def:embedding}
+Sea $d\ge 1$. Una \emph{matriz de embeddings} es una matriz $E\in\R^{K\times d}$. El \emph{embedding} del token $i$ es la fila $i$ de $E$, que se denota $E_{i,:}\in\R^{d}$ (escrita como columna cuando se opera con ella).
+\end{definicion}
+
+\begin{definicion}[Vector one-hot]
+El vector \emph{one-hot} del token $i$ es el vector $e_i\in\R^{K}$ que tiene un~1 en la posición $i$ y ceros en el resto.
+\end{definicion}
+
+\begin{proposicion}\label{prop:onehot}
+Para todo token $i$, $e_i^{\top}E=E_{i,:}^{\top}$; es decir, multiplicar el vector one-hot de un token por la matriz de embeddings selecciona su fila. Si $x_{1:n}$ es una secuencia de tokens y $O\in\R^{n\times K}$ es la matriz cuyas filas son $e_{x_1}^{\top},\dots,e_{x_n}^{\top}$, entonces $X=OE\in\R^{n\times d}$ es la matriz cuya fila $t$ es el embedding de $x_t$.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Indexar en lugar de multiplicar]
+El producto $e_i^{\top}E$ requiere $Kd$ multiplicaciones, casi todas por cero; leer directamente la fila $i$ solo copia $d$ números. Las bibliotecas de redes neuronales implementan la capa de embeddings como una indexación, aunque matemáticamente sea el producto de la \cref{prop:onehot}. En GPT-2, con $K=50\,257$~\cite[§2.3]{radford} y $d=768$, la matriz $E$ tiene $50\,257\cdot 768=38\,597\,376$ parámetros, unos $154$~MB en precisión de 32 bits.
+\end{observacion}
+
+\section{De dónde salen los embeddings}
+
+Los embeddings no se diseñan a mano como en el \cref{ej:juguete}: se inicializan al azar y se ajustan por descenso de gradiente (módulos~4 y~7) para que el modelo prediga bien el token siguiente. La justificación de que este procedimiento produzca vectores con significado es la \emph{hipótesis distribucional}: las palabras que aparecen en contextos parecidos tienden a tener significados parecidos~\cite{harris}. Firth la resumió en la frase «you shall know a word by the company it keeps»~\cite{firth}. Dos tokens que aparecen en contextos similares reciben gradientes similares y acaban con embeddings próximos en el sentido del coseno~\cite[cap.~5]{jm3}.
+
+Antes de los Transformers, los embeddings se entrenaban por separado con modelos como word2vec~\cite{mikolov-a}, que aprende un vector por palabra prediciendo las palabras vecinas en una ventana. En un LLM, en cambio, la matriz $E$ se aprende junto con el resto de los parámetros.
+
+\section{La capa de salida y el atado de pesos}
+
+Al final del modelo, el vector $h\in\R^{d}$ de la última posición se compara con un vector por cada token del vocabulario. Si $U\in\R^{K\times d}$ es la matriz de salida, los logits son
+\[
+z=Uh\in\R^{K},\qquad z_i=U_{i,:}\cdot h,
+\]
+y la softmax del módulo~1 (tema~4) los convierte en una distribución sobre el token siguiente. Cada logit es, por tanto, un producto escalar entre $h$ y un vector asociado al token.
+
+\begin{definicion}[Atado de pesos]
+Se dice que un modelo \emph{ata} los pesos de entrada y salida (\emph{weight tying}) si usa $U=E$: la misma matriz sirve para leer los embeddings de entrada y para calcular los logits.
+\end{definicion}
+
+Press y Wolf~\cite{press} mostraron que esta elección mejora los modelos de lenguaje recurrentes, y el Transformer original la adopta~\cite[§3.4]{vaswani}. Ahorra $Kd$ parámetros, que en GPT-2 son $38\,597\,376$, y da a ambos usos una interpretación común: el logit del token $i$ es alto cuando $h$ apunta en la dirección del embedding de $i$.
+
+\section{Analogías y aritmética de vectores}
+
+Sea $v_w$ el embedding de la palabra $w$. Si un rasgo como el género corresponde aproximadamente a una dirección del espacio, la diferencia $v_{\text{mujer}}-v_{\text{hombre}}$ debería parecerse a $v_{\text{reina}}-v_{\text{rey}}$. Mikolov, Yih y Zweig~\cite{mikolov-b} observaron este fenómeno en embeddings aprendidos y propusieron resolver analogías con el método siguiente.
+
+\begin{definicion}[Analogía por desplazamiento de vectores]\label{def:analogia}
+Dada la pregunta «$a$ es a $b$ como $?$ es a $c$», se calcula $q=v_a-v_b+v_c$ y se responde con
+\[
+\hat w=\operatorname*{arg\,max}_{w\in\V\setminus\{a,b,c\}}\cos(v_w,q).
+\]
+\end{definicion}
+
+\begin{proposicion}\label{prop:paralelogramo}
+Si $v_a-v_b=v_{w^{*}}-v_c$, entonces $q=v_{w^{*}}$ y $\cos(v_{w^{*}},q)=1$, de modo que $w^{*}$ es una respuesta de máxima similitud.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Limitaciones]
+Con embeddings reales, la igualdad de la \cref{prop:paralelogramo} solo se cumple de forma aproximada, y $q$ suele quedar más cerca de $v_a$ que de la respuesta esperada; la exclusión de $a$, $b$ y $c$ en la \cref{def:analogia} es esencial para que el método «funcione». Nissim, van Noord y van der Goot~\cite{nissim} analizan cómo esta exclusión distorsiona las conclusiones que se extraen de las analogías. En el cuaderno de prácticas del módulo, con 40 palabras en 16 dimensiones y ruido, la consulta rey $-$ hombre $+$ mujer da «reina» con coseno $0{,}924$, pero sin la exclusión «rey» queda segunda con $0{,}835$. Además, los embeddings heredan los sesgos de los textos de entrenamiento: Bolukbasi y coautores~\cite{bolukbasi} encontraron analogías que reproducen estereotipos de género. La idea de que los conceptos son direcciones reaparece en la interpretabilidad de los LLM (módulo~23).
+\end{observacion}
+
+\section{Adelanto: el producto escalar en la atención}
+
+La atención (módulo~13) es un mecanismo de búsqueda por similitud. Cada token emite una consulta $q\in\R^{d_k}$, la compara por producto escalar con las claves $k_1,\dots,k_n$ de los tokens anteriores y reparte su atención con una softmax:
+\[
+s_j=\frac{q\cdot k_j}{\sqrt{d_k}},\qquad \alpha=\softmax(s_1,\dots,s_n).
+\]
+Para todos los tokens a la vez, las puntuaciones forman la matriz $QK^{\top}/\sqrt{d_k}$ (\cref{def:gram}).
+
+\addtocounter{definicion}{1}%
+
+El factor $1/\sqrt{d_k}$ tiene una justificación estadística~\cite[§3.2.1]{vaswani}: si las componentes de $q$ y $k$ son variables independientes de media~0 y varianza~1, entonces $\Var(q\cdot k)=d_k$ (ejercicio~\ref{eje:5-atencion}). Sin el factor, para $d_k$ grande las puntuaciones tendrían valores muy dispares, la softmax quedaría casi concentrada en un solo token y los gradientes serían casi nulos. Dividir por $\sqrt{d_k}$ devuelve la varianza a~1.
+

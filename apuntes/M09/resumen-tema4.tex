@@ -1,0 +1,101 @@
+% =====================================================================
+\chapter{Inicialización y propagación de la varianza}
+\label{tema:4}
+% =====================================================================
+
+El descenso de gradiente necesita un punto de partida. Si los pesos iniciales son demasiado grandes, las activaciones crecen capa a capa o saturan; si son demasiado pequeños, la señal se apaga y los gradientes con ella. Este tema muestra primero por qué los pesos no pueden inicializarse todos iguales y deduce después, a partir de la varianza de una suma de variables independientes (módulo~5), las reglas de inicialización de LeCun, Xavier y He. Se sigue la §8.4 de~\cite{gbc}, la §5.4 de~\cite{d2l} y el apartado «Weight Initialization» de las notas «Neural Networks Part~2» de~\cite{cs231n}; los resultados proceden de Glorot y Bengio~\cite{glorot} y de He \emph{et al.}~\cite{he}.
+
+\section{La ruptura de la simetría}
+
+\begin{proposicion}[Simetría de las unidades ocultas]\label{prop:simetria}
+Sea un MLP con una capa oculta, $z=xW_1+b_1$, $h=\phi(z)$, $o=hW_2+b_2$, y sea $L$ cualquier pérdida que dependa de $o$. Si en la inicialización las columnas $i$ y $j$ de $W_1$ son iguales, $(b_1)_i=(b_1)_j$, y las filas $i$ y $j$ de $W_2$ son iguales, entonces tras cualquier número de pasos de descenso de gradiente (por lotes o estocástico) esas igualdades se mantienen.
+\end{proposicion}
+
+En particular, si todos los pesos se inicializan a~0 (o a una misma constante), todas las unidades ocultas calculan siempre lo mismo y la capa equivale a una sola unidad~\cite{cs231n}, \cite[§5.4.1.3]{d2l}. Por eso los pesos se inicializan con valores \emph{aleatorios}. Los sesgos, en cambio, pueden empezar en~0. En un modelo lineal, como la regresión logística, el problema no se plantea (\cref{eje:4-simetria}).
+
+\section{La varianza de una preactivación}
+
+\begin{lema}\label{lem:var-producto}
+Sean $w$ y $h$ variables aleatorias independientes con $\E[w]=0$. Entonces $\E[wh]=0$ y $\Var(wh)=\Var(w)\,\E[h^{2}]$.
+\end{lema}
+
+\begin{proposicion}[Propagación hacia delante]\label{prop:var-adelante}
+Sea $z=\sum_{i=1}^{\nin}w_ih_i$ la preactivación de una unidad. Supóngase que los $w_i$ son independientes entre sí y de los $h_i$, con media~0 y varianza $s^{2}$, y que los $h_i$ tienen el mismo segundo momento $\E[h^{2}]$. Entonces $\E[z]=0$ y
+\[
+\Var(z)=\nin\,s^{2}\,\E[h^{2}].
+\]
+\end{proposicion}
+
+El objetivo es elegir $s^{2}$ para que $\Var(z)$ sea la misma en todas las capas. Lo que relaciona $\E[h^{2}]$ con la varianza de la capa anterior es la activación.
+
+\section{Activaciones lineales o tanh: LeCun y Xavier}
+
+Si la activación es la identidad, o es tanh y opera cerca de~0, donde $\tanh t\approx t$, entonces $\E[h^{2}]\approx\Var(z_{\text{anterior}})$ y la \cref{prop:var-adelante} da $\Var(z)=\nin s^{2}\Var(z_{\text{anterior}})$. Conservar la varianza exige
+\[
+s^{2}=\frac{1}{\nin},
+\]
+que es la inicialización de \emph{LeCun}, la misma calibración $1/\sqrt{n}$ que recomiendan las notas de~\cite{cs231n}.
+
+\begin{proposicion}[Propagación hacia atrás]\label{prop:var-atras}
+En la retropropagación (\cref{tema:5}), el gradiente respecto a la activación $h_i$ de una capa es $g_i=\sum_{j=1}^{\nout}W_{ij}\delta_j$. Con las mismas hipótesis de independencia y media nula, $\Var(g_i)=\nout\,s^{2}\,\E[\delta^{2}]$.
+\end{proposicion}
+
+Para que la varianza de los gradientes tampoco cambie de capa en capa hace falta $\nout s^{2}=1$. Las dos condiciones solo son compatibles si $\nin=\nout$; Glorot y Bengio~\cite{glorot} proponen el compromiso de tomar $1/s^{2}$ igual a la media aritmética de $\nin$ y $\nout$.
+
+\begin{definicion}[Inicialización de Xavier o Glorot]\label{def:xavier}
+Los pesos de una capa $\nin\to\nout$ se toman independientes con media~0 y varianza
+\[
+s^{2}=\frac{2}{\nin+\nout},
+\]
+bien con distribución normal $\mathcal{N}(0,s^{2})$, bien uniforme en $[-a,a]$ con $a=\sqrt{6/(\nin+\nout)}$.
+\end{definicion}
+
+\begin{lema}\label{lem:uniforme}
+Si $w\sim U(-a,a)$, entonces $\Var(w)=a^{2}/3$.
+\end{lema}
+
+Con $a^{2}=6/(\nin+\nout)$, el \cref{lem:uniforme} da $a^{2}/3=2/(\nin+\nout)$, de modo que las dos versiones de la \cref{def:xavier} tienen la misma varianza.
+
+\addtocounter{definicion}{1}%
+
+\section{Activaciones ReLU: la inicialización de He}
+
+\begin{lema}\label{lem:relu2}
+Si $z$ es una variable aleatoria con densidad simétrica respecto a~0 y varianza $\sigma^{2}$, entonces $\E[\ReLU(z)^{2}]=\sigma^{2}/2$.
+\end{lema}
+
+\begin{teorema}[Inicialización de He]\label{teo:he}
+En un MLP con activaciones ReLU, supóngase que las preactivaciones de cada capa tienen densidad simétrica y que se cumplen las hipótesis de la \cref{prop:var-adelante}. Entonces $\Var(z^{(\ell+1)})=\tfrac12\,\nin s^{2}\,\Var(z^{(\ell)})$, y la varianza se conserva capa a capa si y solo si
+\[
+s^{2}=\frac{2}{\nin}.
+\]
+\end{teorema}
+
+He \emph{et al.}~\cite{he} obtienen esta regla y la generalizan a PReLU; las notas de~\cite{cs231n} la presentan como la recomendación práctica para redes ReLU. El factor~2 compensa exactamente que la ReLU anula la mitad del segundo momento. Con la inicialización de LeCun o de Xavier ($s^{2}=1/n$ cuando $\nin=\nout=n$), en cambio, la varianza se divide por~2 en cada capa ReLU y la desviación típica por $\sqrt2$.
+
+\addtocounter{definicion}{1}%
+
+\section{Un experimento}
+
+El \cref{tab:experimento} muestra la desviación típica de las activaciones de una red de diez capas de anchura~256, con entradas normales estándar, para cinco inicializaciones (media de 20 repeticiones con 1000 entradas cada una).
+
+\begin{table}[h]
+\centering\small
+\caption{Desviación típica de las activaciones en una red de diez capas de anchura~256.}\label{tab:experimento}
+\begin{tabular}{@{}llcccl@{}}
+\toprule
+Pesos & Activación & Capa 1 & Capa 4 & Capa 10 & Diagnóstico \\
+\midrule
+$\mathcal{N}(0,1)$ & tanh & $0{,}975$ & $0{,}974$ & $0{,}974$ & saturada: $86{,}5\,\%$ con $\abs{h}>0{,}99$ \\
+$\mathcal{N}(0;\,0{,}01^{2})$ & tanh & $0{,}156$ & $6{,}4\cdot 10^{-4}$ & $1{,}1\cdot 10^{-8}$ & señal apagada \\
+Xavier & tanh & $0{,}628$ & $0{,}357$ & $0{,}228$ & decae despacio \\
+Xavier & ReLU & $0{,}584$ & $0{,}205$ & $0{,}0254$ & se divide por $\sqrt2$ en cada capa \\
+He & ReLU & $0{,}826$ & $0{,}819$ & $0{,}812$ & estable \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Los números concuerdan con la teoría. Con He, la preactivación de la capa~1 es $\mathcal{N}(0,2)$ y la desviación típica de $\ReLU(z)$ es $\sqrt{1-1/\pi}=0{,}826$. Con Xavier y ReLU, el factor $2^{-1/2}$ por capa predice $0{,}584\cdot 2^{-9/2}=0{,}0258$ en la capa~10. Con $\mathcal{N}(0,1)$ y tanh la señal no desaparece, pero las unidades están saturadas: la derivada media $1-h^{2}$ vale $0{,}051$, y los gradientes se multiplican por números pequeños en cada capa (\cref{obs:desvanecimiento}).
+
+\addtocounter{definicion}{1}%
+

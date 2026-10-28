@@ -1,0 +1,82 @@
+% =====================================================================
+\chapter{Optimización continua y convexa}
+\label{tema:4}
+% =====================================================================
+
+Cuando las variables son continuas y el problema es convexo, todo mínimo local es global, existen certificados de optimalidad y los multiplicadores tienen interpretación económica. Este tema sigue los capítulos~4 («Convex optimization problems») y~5 («Duality»), en especial las secciones~5.5 («Optimality conditions») y~5.6 («Perturbation and sensitivity analysis»), de Boyd y Vandenberghe~\cite{bv}, texto del curso EE364a de Stanford; el capítulo~12 de Nocedal y Wright~\cite{nw} para las condiciones de Karush--Kuhn--Tucker en problemas no convexos; y el capítulo~3 («Economic Dispatch of Thermal Units and Methods of Solution») de Wood, Wollenberg y Sheblé~\cite{wood} para el caso de estudio. Las herramientas son CVXPY~\cite{cvxpy,cvxpydoc} y SciPy. El módulo~7 (tema~1) introdujo la convexidad en el contexto del entrenamiento; aquí se añaden las restricciones.
+
+\section{Problemas convexos}
+
+\begin{definicion}[Problema convexo]\label{def:convexo}
+El problema de la \cref{def:prob-opt} es \emph{convexo} si $X=\R^{n}$, $f$ y las $g_i$ son funciones convexas y las $h_j$ son afines, $h_j(x)=a_j\T x-b_j$. Su conjunto factible es entonces convexo, como intersección de subniveles de funciones convexas e hiperplanos.
+\end{definicion}
+
+\begin{teorema}[Local implica global]\label{teo:local-global}
+En un problema convexo, todo óptimo local es óptimo global.
+\end{teorema}
+
+Las clases convexas más usadas, de menor a mayor generalidad, son la programación lineal, la cuadrática (objetivo $\tfrac12x\T Px+q\T x$ con $P\succeq 0$ y restricciones lineales), la cónica de segundo orden y la semidefinida. CVXPY sigue las reglas de la \emph{programación convexa disciplinada} (DCP): construye las expresiones con funciones atómicas de curvatura conocida y reglas de composición que garantizan la convexidad, de modo que rechaza un modelo cuya convexidad no puede certificar, y lo traduce a la forma cónica que aceptan resolvedores como Clarabel, SCS u OSQP~\cite{cvxpy,cvxpydoc}.
+
+\section{Lagrangiana, dualidad y condiciones KKT}
+
+\begin{definicion}[Lagrangiana y función dual]\label{def:lagrangiana}
+Para el problema de la \cref{def:prob-opt} con $X=\R^{n}$, la \emph{lagrangiana} es
+\[
+\Lag(x,\lambda,\nu)=f(x)+\sum_{i=1}^{m}\lambda_ig_i(x)+\sum_{j=1}^{p}\nu_jh_j(x),\qquad\lambda\ge 0,
+\]
+y la \emph{función dual} es $q(\lambda,\nu)=\inf_x\Lag(x,\lambda,\nu)$.
+\end{definicion}
+
+\begin{proposicion}[Dualidad débil]\label{prop:dual-debil-conv}
+Si $\lambda\ge 0$, entonces $q(\lambda,\nu)\le f(x)$ para todo $x$ factible; por tanto $q(\lambda,\nu)\le p^{*}$, el valor óptimo.
+\end{proposicion}
+
+En un problema convexo que cumple la \emph{condición de Slater} (existe un punto estrictamente factible, $g_i(x)<0$ para las restricciones no afines), la dualidad es fuerte: $\max q=p^{*}$ (Boyd y Vandenberghe~\cite{bv}, cap.~5).
+
+\begin{teorema}[Condiciones de Karush--Kuhn--Tucker]\label{teo:kkt}
+Sean $f$, $g_i$ y $h_j$ diferenciables. Se dice que $(x^{*},\lambda^{*},\nu^{*})$ cumple las condiciones KKT si
+\begin{enumerate}
+  \item \emph{factibilidad primal}: $g_i(x^{*})\le 0$, $h_j(x^{*})=0$;
+  \item \emph{factibilidad dual}: $\lambda^{*}\ge 0$;
+  \item \emph{holgura complementaria}: $\lambda_i^{*}g_i(x^{*})=0$ para todo $i$;
+  \item \emph{estacionariedad}: $\nabla f(x^{*})+\sum_i\lambda_i^{*}\nabla g_i(x^{*})+\sum_j\nu_j^{*}\nabla h_j(x^{*})=0$.
+\end{enumerate}
+Si el problema es convexo y se cumplen las condiciones KKT, $x^{*}$ es óptimo global. Si el problema es convexo y cumple la condición de Slater, todo óptimo satisface las KKT para algún $(\lambda^{*},\nu^{*})$~\cite{bv}. En problemas no convexos, las KKT son necesarias en un mínimo local bajo una cualificación de restricciones, pero no suficientes~\cite{nw}.
+\end{teorema}
+
+\begin{proposicion}[Multiplicadores como sensibilidades]\label{prop:sensibilidad}
+Sea el problema convexo perturbado $\min f(x)$ s.a. $g_i(x)\le u_i$, $h_j(x)=w_j$, con valor óptimo $p^{*}(u,w)$, y sea $(\lambda^{*},\nu^{*})$ dual óptimo del problema sin perturbar con dualidad fuerte. Entonces
+\[
+p^{*}(u,w)\ \ge\ p^{*}(0,0)-\lambda^{*\mathsf{T}}u-\nu^{*\mathsf{T}}w ,
+\]
+y si $p^{*}$ es diferenciable en $(0,0)$, $\partial p^{*}/\partial u_i=-\lambda_i^{*}$ y $\partial p^{*}/\partial w_j=-\nu_j^{*}$.
+\end{proposicion}
+
+Es la generalización de los precios sombra de la \cref{prop:sombra}: relajar una restricción activa abarata el óptimo, en primera aproximación, en su multiplicador por unidad.
+
+\section{Caso de estudio: despacho económico}
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Cuando se pierde la convexidad]\label{obs:noconvexo}
+El caso anterior deja de ser convexo con detalles realistas: costes con efecto de apertura de válvulas (términos sinusoidales), mínimos técnicos con arranque y parada (variables binarias, el problema de asignación de unidades del cap.~4 de~\cite{wood}) o mezclas con calidades que se multiplican por caudales (términos bilineales). Entonces las KKT son solo necesarias, los métodos locales (SQP, punto interior) pueden quedarse en óptimos locales y conviene arrancar desde varios puntos, usar un resolvedor global o reformular. En el ajuste de redes neuronales del módulo~7 el problema tampoco es convexo, pero allí basta con un buen mínimo local.
+\end{observacion}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~4: optimización continua.}\label{tab:tec4}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+CVXPY~\cite{cvxpy} & modelización convexa con verificación DCP y duales & abierta (Apache~2.0) & cualquier problema convexo de tamaño medio \\
+Clarabel, SCS, OSQP & resolvedores cónicos (Clarabel, SCS) y cuadráticos (OSQP) & abiertos (Apache~2.0; SCS, MIT) & los usa CVXPY; OSQP, para control predictivo rápido \\
+SciPy \texttt{minimize} & SLSQP, \texttt{trust-constr}, L-BFGS-B & abierta (BSD-3) & no lineal local con pocas variables \\
+Ipopt & punto interior no lineal a gran escala & abierta (EPL-2.0) & no lineal grande con derivadas (vía Pyomo o CasADi) \\
+Gurobi & cuadrático y no convexo bilineal global & comercial & mezclas y redes con términos bilineales \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

@@ -1,0 +1,106 @@
+% =====================================================================
+\chapter{Optimización de instrucciones, de sistemas con LLM y de código}
+\label{tema:2}
+% =====================================================================
+
+Un sistema construido con modelos de lenguaje tiene muchos parámetros que no son números: las instrucciones de cada llamada, los ejemplos que se incluyen, el orden de los pasos, el número de muestras que se votan. Este tema los trata como variables de decisión de un problema de optimización de caja negra con un objetivo medido sobre datos. Sigue a Yang \emph{et al.} para OPRO~\cite{opro}, a Khattab \emph{et al.} para DSPy~\cite{dspy} y a Opsahl-Ong \emph{et al.} para MIPRO~\cite{mipro}; la autoconsistencia, a Wang \emph{et al.}~\cite{wang-sc} y al módulo~22 (tema~1, §1.4); el sesgo del ganador, a Smith y Winkler~\cite{smith}; la optimización de código y la medida de tiempos, a la clase~10 «Measurement and Timing» del curso 6.172 del MIT~\cite{mit6172}.
+
+\section{Instrucciones como variables de decisión}
+
+\begin{definicion}[Optimización de instrucciones]\label{def:prompt-opt}
+Sea $\mathcal{I}$ un conjunto de instrucciones (textos), $M$ un modelo de lenguaje fijo, $D_{\mathrm{val}}=\{(x_i,y_i)\}_{i=1}^{n}$ un conjunto de validación y $m(\hat y,y)\in[0,1]$ una métrica (por ejemplo, $\Ind[\hat y=y]$). El problema es
+\[
+\max_{p\in\mathcal{I}}\ J(p),\qquad J(p)=\E_{(x,y)}\bigl[m(M(p,x),y)\bigr],\qquad \hat J(p)=\frac1n\sum_{i=1}^{n}m\bigl(M(p,x_i),y_i\bigr).
+\]
+Es un problema de caja negra (módulo~24, definición~5.1), discreto, ruidoso (el estimador $\hat J$ tiene varianza $J(1-J)/n$ si $m$ es binaria) y caro (cada evaluación son $n$ llamadas al modelo).
+\end{definicion}
+
+\begin{definicion}[OPRO]\label{def:opro}
+\emph{Optimization by PROmpting}~\cite{opro} usa un segundo LLM como optimizador. En cada paso se le da un \emph{meta-prompt} con: una descripción de la tarea y unos pocos ejemplos, y la \emph{trayectoria}: las mejores instrucciones encontradas hasta el momento con su puntuación, ordenadas de menor a mayor. El LLM optimizador genera nuevas instrucciones; se evalúan con el LLM que resuelve la tarea, se añaden a la trayectoria y se repite. En los experimentos del artículo, la trayectoria conserva las 20 mejores, se generan 8 instrucciones por paso con temperatura~1 y la puntuación es la exactitud sobre un subconjunto fijo del conjunto de entrenamiento.
+\end{definicion}
+
+OPRO es una búsqueda evolutiva como la del \cref{tema:1}, con dos diferencias: el «programa» es un texto y la memoria es la propia trayectoria, que el LLM lee para inferir qué rasgos se asocian a puntuaciones altas. Los autores informan de que las mejores instrucciones encontradas superan a las diseñadas por personas hasta en 8 puntos en GSM8K y hasta en 50 en tareas de Big-Bench Hard~\cite{opro}; también advierten de que, en el problema del viajante, el LLM se mantiene cerca de las heurísticas clásicas con 50 ciudades, pero en instancias mayores la inserción más lejana supera a todos los modelos probados.
+
+\begin{definicion}[Programa de modelos de lenguaje y su compilación]\label{def:dspy}
+En DSPy~\cite{dspy}, un \emph{programa de LM} es un grafo de \emph{módulos}; cada módulo tiene una \emph{firma} declarativa (entradas y salidas con nombre, por ejemplo \texttt{pregunta, contexto -> respuesta}) y unos parámetros: su instrucción y sus demostraciones. Un \emph{optimizador} (antes llamado \emph{teleprompter}) recibe el programa, un conjunto de entrenamiento y una métrica, y elige los parámetros de todos los módulos para maximizar la métrica del programa completo. Por ejemplo, el arranque de demostraciones ejecuta el programa sobre los ejemplos de entrenamiento y conserva como demostraciones las trazas que superan la métrica.
+\end{definicion}
+
+Khattab \emph{et al.} informan de que los programas compilados superan a los mismos programas con pocos ejemplos estándar en más de un 25\,\% con GPT-3.5 y un 65\,\% con llama2-13b-chat~\cite{dspy}. MIPRO~\cite{mipro} optimiza conjuntamente instrucciones y demostraciones de cada módulo sin etiquetas intermedias: propone instrucciones teniendo en cuenta los datos y el programa, y usa evaluaciones en minilotes para ajustar un modelo sustituto del objetivo, como la optimización bayesiana del módulo~25 (tema~4); obtiene mejoras de hasta 13 puntos de exactitud con Llama-3-8B.
+
+\section{El sesgo del ganador}
+
+Todas estas técnicas eligen el máximo de muchas estimaciones ruidosas. El resultado es predecible.
+
+\begin{proposicion}[Maldición del optimizador]\label{prop:maldicion}
+Sean $K$ candidatos con valores verdaderos $J_1,\dots,J_K$ y estimaciones $\hat J_k=J_k+\varepsilon_k$ con $\E[\varepsilon_k]=0$, y sea $\hat k=\argmax_k\hat J_k$. Entonces:
+\begin{enumerate}
+  \item $\E[\hat J_{\hat k}]\ \ge\ \max_k J_k\ \ge\ \E[J_{\hat k}]$: la puntuación de validación del elegido sobrestima en media su valor verdadero.
+  \item Si cada $\varepsilon_k\sim\mathcal{N}(0,\sigma^{2})$ (no necesariamente independientes), $\E[\max_k\varepsilon_k]\le\sigma\sqrt{2\ln K}$. En particular, si todos los $J_k$ son iguales, el sesgo $\E[\hat J_{\hat k}-J_{\hat k}]$ está entre $0$ y $\sigma\sqrt{2\ln K}$.
+\end{enumerate}
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\begin{corolario}[Protocolo de evaluación]\label{cor:protocolo}
+Para estimar sin sesgo el valor de un sistema optimizado se necesita un conjunto de \emph{prueba} que no haya intervenido en ninguna elección (ni de instrucciones, ni de ejemplos, ni de hiperparámetros), igual que en la separación en entrenamiento, validación y prueba del módulo~8 (tema~1, §1.4). Su error típico, $\sqrt{J(1-J)/n_{\mathrm{test}}}$, fija la resolución con la que se pueden comparar sistemas.
+\end{corolario}
+
+\section{Caso de estudio: clasificación de partes de avería}
+
+\addtocounter{definicion}{1}%
+
+\section{La autoconsistencia como problema de optimización}
+
+La autoconsistencia (módulo~22, definición~1.14) devuelve la respuesta más votada entre $m$ muestras. Más muestras dan más exactitud y más coste; el número de muestras es una variable de decisión.
+
+\begin{proposicion}[Incremento de la exactitud del voto]\label{prop:incremento}
+Sea $P_m$ la probabilidad de que la mayoría de $m$ (impar) respuestas independientes sea correcta cuando cada una lo es con probabilidad $p>1/2$ (módulo~22, proposición~1.16). Entonces
+\[
+\Delta_m:=P_{m+2}-P_m=\binom{m}{\frac{m-1}{2}}\bigl(p(1-p)\bigr)^{\frac{m+1}{2}}(2p-1)>0,\qquad \frac{\Delta_{m+2}}{\Delta_m}=\frac{4(m+2)}{m+3}\,p(1-p)<1 .
+\]
+\end{proposicion}
+
+\begin{corolario}[Número óptimo de muestras]\label{cor:m-optimo}
+Si una respuesta correcta vale $V$ y cada muestra cuesta $c$, el beneficio neto $V P_m-cm$ (con $m$ impar) se maximiza en el primer $m$ tal que $V\Delta_m<2c$.
+\end{corolario}
+
+Con $p=0{,}65$, $V=0{,}50$~€ y $c=0{,}01$~€: $\Delta_1=0{,}0683$, $\Delta_3=0{,}0466$ y $\Delta_5=0{,}0353$; $V\Delta_3=0{,}0233\ge0{,}02$ pero $V\Delta_5=0{,}0177<0{,}02$, de modo que $m^{*}=5$, con exactitud $P_5=0{,}765$ y beneficio neto $0{,}332$~€ por parte. La hipótesis de independencia es optimista (módulo~22, ejemplo~1.17): conviene estimar $P_m$ con datos y aplicar el mismo criterio.
+
+\section{Optimización de código con agentes}
+
+Un agente de programación (módulo~22, tema~6) puede usarse como optimizador de un programa existente. El planteamiento correcto es el de un problema con restricciones:
+\[
+\min_{\pi}\ t(\pi)\quad\text{s.a.}\quad \pi \text{ supera todas las pruebas},\quad \text{memoria}(\pi)\le \bar M,\quad \text{coste del agente}\le B,
+\]
+donde $t$ es el tiempo de ejecución en una carga representativa. Las pruebas son una \emph{restricción dura}, no un término del objetivo: un programa más rápido que falla una prueba no es una solución. Es el mismo principio del evaluador del \cref{tema:1}.
+
+\begin{proposicion}[Ley de Amdahl]\label{prop:amdahl}
+Si una fracción $f$ del tiempo de ejecución se acelera en un factor $a>1$ y el resto no cambia, la aceleración global es
+\[
+A=\frac{1}{(1-f)+f/a}<\frac{1}{1-f}.
+\]
+\end{proposicion}
+
+La ley dice dónde empezar: por lo que el \emph{perfilador} muestra que ocupa más tiempo. Un agente que no perfila tiende a optimizar lo que parece lento en el código, no lo que lo es.
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~2.}\label{tab:tec2}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.5cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.1cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+DSPy~\cite{dspy} & programas de LM declarativos y optimizadores de instrucciones y demostraciones (incluido MIPRO) & abierta (MIT) & sistemas de varias llamadas con una métrica clara \\
+OPRO~\cite{opro} & método: un LLM como optimizador a partir de la trayectoria & artículo con código de los autores & instrucciones de una sola llamada; problemas pequeños \\
+promptfoo & conjuntos de pruebas y comparación de instrucciones y modelos & abierta (MIT) & evaluación de regresión de instrucciones \\
+pytest, pytest-benchmark & pruebas como restricción y medidas de tiempo repetidas & abiertas (MIT; BSD-2) & optimización de código en Python \\
+perf, py-spy, Scalene & perfilado de CPU y memoria & abiertas (GPL-2.0; MIT; Apache~2.0) & antes de pedir al agente que optimice nada \\
+asv & seguimiento del rendimiento a lo largo del historial del código & abierta (BSD-3) & evitar regresiones de rendimiento \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

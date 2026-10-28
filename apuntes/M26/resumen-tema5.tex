@@ -1,0 +1,126 @@
+% =====================================================================
+\chapter{Casos de estudio: edificio, reactor, batería y centro de datos}
+\label{tema:5}
+% =====================================================================
+
+Este tema reúne los métodos de los anteriores en cuatro problemas de distinta naturaleza: un edificio, donde el objetivo es económico y las restricciones son de confort; un reactor por lotes, donde lo que manda es la seguridad; una batería, donde el problema es casi puramente de optimización, y un centro de datos, el caso industrial publicado más conocido de aprendizaje automático aplicado a la operación de una instalación. Antes se fija cómo comparar controladores de forma honesta. Las fuentes son la revisión de Drgoňa \emph{et al.}~\cite{drgona} y el marco BOPTEST~\cite{boptest} para edificios, la lección~6 de MIT 10.450~\cite{mit10450} y el texto de Seborg \emph{et al.}~\cite{seborg} para el reactor, y las publicaciones de Google y DeepMind~\cite{evansgao,gamblegao} y de Lazic \emph{et al.}~\cite{lazic} para los centros de datos. Los resultados numéricos de los tres primeros casos proceden del cuaderno del módulo.
+
+\section{Cómo comparar controladores}
+
+\begin{definicion}[Indicadores de rendimiento]\label{def:kpi}
+Para un periodo de evaluación de $n$ pasos se definen la energía $E=\Dt\sum_kP_k$ (kWh), el coste $\Sigma=\Dt\sum_kc_kP_k$ (€), la violación del confort $D=\Dt\sum_k\bigl(\max\{\underline T_k-T_k,0\}+\max\{T_k-\overline T_k,0\}\bigr)$ (K·h) y, si se quiere un único número, el coste total $\Sigma+\rho D$ con el mismo $\rho$ que usan los controladores.
+\end{definicion}
+
+Un protocolo de comparación justo exige: (i) el mismo periodo de prueba, no usado para ajustar ningún controlador; (ii) la misma información, en particular las mismas previsiones: un MPC con la meteorología observada frente a un PID que no la conoce compara información, no métodos; (iii) un controlador de referencia bien ajustado, no un PID descuidado; (iv) los mismos ruidos, y (v) varios periodos o semillas, con una medida de la dispersión. BOPTEST~\cite{boptest} se creó precisamente para normalizar estas comparaciones en edificios: fija los modelos, los escenarios y los indicadores.
+
+\begin{proposicion}[Números aleatorios comunes]\label{prop:crn}
+Sean $X$ e $Y$ los costes de dos controladores en un mismo escenario aleatorio, con varianzas $\sigma_X^{2}$, $\sigma_Y^{2}$ y correlación $r$. Entonces $\Var(X-Y)=\sigma_X^{2}+\sigma_Y^{2}-2r\sigma_X\sigma_Y$. Si $\sigma_X=\sigma_Y=\sigma$, evaluar los dos controladores con los mismos escenarios ($r>0$) divide la varianza de la diferencia por $1-r$ respecto a usar escenarios independientes ($r=0$).
+\end{proposicion}
+
+El coste semanal de climatización depende sobre todo del tiempo meteorológico: dos controladores evaluados en la misma semana tienen costes muy correlacionados, y su diferencia se estima con mucha menos incertidumbre que cada coste por separado. El mismo principio guía el entrenamiento del agente del \cref{ej:caso-rl}, que evalúa todos los candidatos de una iteración en los mismos episodios.
+
+\section{Climatización de un edificio}
+
+El caso de la zona ha recorrido los temas~1 a~4. El \cref{tab:hvac} reúne los resultados en la semana de prueba (temperatura exterior media de $3{,}35$ °C) con la planta nominal y con una planta perturbada ($R$ un 20~\% mayor, $C$ un 20~\% menor y COP un 10~\% peor) que ninguno de los controladores conoce.
+
+\begin{table}[htbp]
+\centering\small
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+& \multicolumn{4}{c}{Planta nominal} & \multicolumn{2}{c}{Planta perturbada} \\
+\cmidrule(lr){2-5}\cmidrule(l){6-7}
+Controlador & $E$ (kWh) & $\Sigma$ (€) & $D$ (K·h) & Ahorro & $\Sigma$ (€) & $D$ (K·h) \\
+\midrule
+PI & $175{,}4$ & $21{,}06$ & $0{,}00$ & --- & $18{,}75$ & $0{,}00$ \\
+MPC, margen $0{,}3$ K & $171{,}1$ & $19{,}28$ & $0{,}00$ & $8{,}4$~\% & $17{,}28$ & $0{,}00$ \\
+MPC, sin margen & $166{,}9$ & $18{,}76$ & $3{,}54$ & --- & --- & --- \\
+RL (CEM) & $169{,}9$ & $20{,}63$ & $0{,}01$ & $2{,}1$~\% & $18{,}50$ & $0{,}00$ \\
+\bottomrule
+\end{tabular}
+\caption{Climatización de la zona: comparación en la semana de prueba (cuaderno, Partes~2, 4, 6 y~7): energía $E$, coste $\Sigma$ y violación del confort $D$ (\cref{def:kpi}). PI con ajuste SIMC y consigna programada; MPC económico; agente CEM con aleatorización del dominio. El ahorro es en coste respecto al PI.}
+\label{tab:hvac}
+\end{table}
+
+Los resultados ilustran rasgos generales que la literatura sobre edificios documenta con casos reales~\cite{drgona,wanghong}:
+\begin{enumerate}
+  \item \emph{El MPC gana porque planifica}: conoce el precio y las ganancias de las próximas 24~h y usa la masa térmica para desplazar el consumo de punta a valle. Su ventaja se mantiene con la planta perturbada (un $7{,}8$~\% menos de coste que el PI), porque realimenta el estado medido en cada paso.
+  \item \emph{El margen es parte del diseño}: sin él, el MPC «ahorra» un $2{,}7$~\% más a costa de violar el confort.
+  \item \emph{El agente aprende sin modelo explícito, pero con un simulador}: con una política lineal de 8 parámetros mejora al PI y es robusto a la perturbación de la planta gracias a la aleatorización, pero queda lejos del MPC, que dispone de previsiones y de un horizonte de planificación explícito. Una política más rica (una red con previsiones como entrada) y un algoritmo como SAC pueden acortar la distancia, con más datos de simulación y más riesgo de explotar defectos del gemelo.
+  \item \emph{El PI sigue siendo la referencia}: no necesita modelo, ni previsiones, ni entrenamiento, y en este caso solo pierde un $8$~\% de coste. En la práctica, el MPC o el agente se colocan \emph{encima} de los PI existentes, enviándoles consignas (\cref{tema:6}).
+\end{enumerate}
+
+\begin{table}[htbp]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+& PID & MPC & RL \\
+\midrule
+Necesita & ajuste local (FOPDT) & modelo identificado y previsiones & simulador fiable (gemelo) y entrenamiento \\
+Restricciones & solo límites del actuador & explícitas, en cada paso & penalizadas en la recompensa o con un filtro externo \\
+Coste en línea & despreciable & un problema de optimización por paso & una evaluación de la política \\
+Adaptación a cambios & reajuste manual & cambiar el modelo o el coste & reentrenar \\
+Interpretabilidad & alta & alta (el plan es visible) & baja \\
+Cuándo elegirlo & lazos básicos, sin objetivo económico & objetivos económicos con buen modelo y previsiones & dinámicas difíciles de modelar con un simulador rico o decisiones discretas complejas \\
+\bottomrule
+\end{tabularx}
+\caption{Comparación cualitativa de los tres enfoques.}
+\label{tab:enfoques}
+\end{table}
+
+\section{Control de temperatura de un reactor por lotes}
+
+En un reactor por lotes con una reacción exotérmica, la temperatura sigue una receta (calentar, mantener, enfriar) y el riesgo dominante es el \emph{embalamiento térmico}: si el calor generado por la reacción crece con la temperatura más deprisa de lo que la camisa puede retirarlo, la temperatura se dispara. El análisis de estabilidad de la lección~6 de MIT 10.450~\cite{mit10450}, que compara las curvas de calor generado y calor retirado, se resume en el criterio siguiente.
+
+\begin{definicion}[Modelo del reactor]\label{def:reactor}
+Para una reacción de primer orden $\mathrm A\to\mathrm B$ en un reactor de volumen $V$ refrigerado por una camisa a temperatura $T_j$:
+\[
+\begin{gathered}
+\dot C_A=-k(T)C_A,\qquad \rho c_pV\,\dot T=Q_g(T,C_A)-Q_r(T),\\
+Q_g=(-\Delta H)\,k(T)\,C_AV,\qquad Q_r=UA\,(T-T_j),
+\end{gathered}
+\]
+con $k(T)=k_{\mathrm{ref}}\exp\bigl(-\frac{E}{R}(\frac1T-\frac1{T_{\mathrm{ref}}})\bigr)$ (ley de Arrhenius).
+\end{definicion}
+
+\begin{proposicion}[Criterio de Semenov]\label{prop:semenov}
+Sea $C_A$ aproximadamente constante (fase inicial del lote, con conversión pequeña) y sea $\bar T$ un equilibrio de la ecuación de energía, $Q_g(\bar T)=UA(\bar T-T_j)$. El equilibrio es asintóticamente estable si $Q_g'(\bar T)<UA$ e inestable si $Q_g'(\bar T)>UA$. Además, $Q_g'(T)=Q_g(T)\,E/(RT^{2})$.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\section{Gestión de una batería con precios horarios}
+
+El \cref{ej:bateria-lp} y el \cref{ej:bateria-mdp} resuelven el mismo problema por dos vías. Con precios conocidos, el LP es exacto y rápido: $1{,}8842$ € en el día del cuaderno. La programación dinámica sobre una rejilla de 81 niveles obtiene $1{,}8837$ €, y su interés aparece cuando los precios son \emph{inciertos}: la PD estocástica maximiza el beneficio esperado con el precio como parte del estado, y el RL la aproxima cuando el estado crece (varias baterías, una planta fotovoltaica, la degradación como estado). Tres decisiones de modelado dominan el resultado: el rendimiento de ida y vuelta (un ciclo solo compensa si el cociente de precios supera $1/\eta^{2}$), el coste de degradación por kWh cíclico y la condición terminal (sin $e_{24}=e_0$, el optimizador vacía la batería al final del día porque el modelo no ve el día siguiente).
+
+\section{Refrigeración de centros de datos: el caso publicado de Google y DeepMind}
+
+Lo que sigue usa exclusivamente la información publicada; los detalles internos del sistema no se han hecho públicos.
+
+\emph{2016: recomendaciones.} Según la publicación de DeepMind de julio de 2016~\cite{evansgao}, un conjunto de redes neuronales profundas se entrenó con datos históricos de miles de sensores (temperaturas, potencias, velocidades de bombas, consignas) para predecir la eficacia en el uso de la energía (PUE, cociente entre la energía total del edificio y la consumida por los equipos informáticos) futura; otros dos conjuntos de redes predecían la temperatura y la presión de la hora siguiente para comprobar que las acciones recomendadas respetaban los límites de operación. En pruebas en un centro de datos en funcionamiento, alternando periodos con el sistema activado y desactivado, se publicó una reducción de hasta el 40~\% de la energía de refrigeración, equivalente a un 15~\% de reducción del exceso de PUE sobre la unidad.
+
+\emph{2018: control autónomo.} En agosto de 2018~\cite{gamblegao} se publicó que el sistema pasó a controlar directamente la refrigeración: cada cinco minutos, un sistema de IA en la nube toma una instantánea de miles de sensores, predice con redes neuronales el efecto de combinaciones de acciones sobre el consumo futuro y elige las que lo minimizan respetando restricciones de seguridad; el sistema de control local verifica las acciones antes de aplicarlas. Entre las salvaguardas publicadas figuran la estimación de la incertidumbre (solo se aplican acciones de alta confianza), la verificación en dos capas, la vuelta automática a un estado neutro si se violan restricciones, reglas heurísticas de respaldo y la posibilidad de que los operadores salgan del modo de IA en cualquier momento. Se publicó un ahorro medio de alrededor del 30~\% tras unos meses de operación.
+
+\emph{Un estudio académico relacionado.} Lazic \emph{et al.}~\cite{lazic} describieron en NeurIPS 2018 un MPC con un modelo ARX disperso de historia de 5 pasos, ajustado por mínimos cuadrados recursivos tras unas 3~h de exploración aleatoria acotada, que regulaba temperaturas y presiones de un sector de servidores cada 30~s; la exploración limitaba el rango y la variación máxima de cada actuador entre pasos. En condiciones comparables, el coste del controlador fue de $116{,}7$ frente a $142{,}2$ de los controladores locales, y estimaron un ahorro de alrededor del 9~\% en el coste de refrigeración de ese sector, con la advertencia de que harían falta experimentos más largos para confirmarlo.
+
+El caso reúne casi todo el módulo: un modelo aprendido (\cref{tema:2}), un optimizador sobre predicciones con restricciones (\cref{tema:3}), un periodo de recomendación con humanos en el lazo antes del control autónomo, salvaguardas en capas y la medición del ahorro con experimentos de activación alterna (\cref{tema:6}).
+
+\begin{table}[htbp]
+\centering\footnotesize
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.0cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+EnergyPlus~\cite{crawley} & simulación energética de edificios completa & libre & gemelo físico de un edificio \\
+Biblioteca Buildings de Modelica~\cite{modelica} & componentes de climatización y control & libre & modelos de instalaciones a medida \\
+BOPTEST~\cite{boptest} & bancos de prueba normalizados para controladores de edificios & libre & comparar controladores de forma reproducible \\
+Sinergym~\cite{sinergym} & EnergyPlus como entorno Gymnasium & libre (MIT) & entrenar agentes de climatización \\
+CasADi, do-mpc~\cite{casadi,dompc} & NMPC del reactor con restricciones de seguridad & libres (LGPL-3) & procesos químicos no lineales \\
+CVXPY, Pyomo & programación lineal de baterías y despacho & libres & arbitraje y planificación energética \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para los casos de estudio.}
+\label{tab:tec5}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

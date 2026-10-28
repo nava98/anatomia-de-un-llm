@@ -1,0 +1,105 @@
+% =====================================================================
+\chapter{Retroalimentación de IA, recompensas verificables y sobreoptimización}
+\label{tema:6}
+% =====================================================================
+
+Los temas anteriores suponen que las preferencias proceden de personas y que la recompensa es fiable. Este tema estudia tres desarrollos que cuestionan esas hipótesis: la sustitución de parte de la supervisión humana por retroalimentación generada por un modelo según una lista de principios, Constitutional AI~\cite{cai}; el uso de verificadores automáticos como recompensa, con el algoritmo GRPO~\cite{deepseekmath,r1} y su análisis en la clase~17 y la tarea~5 de CS336~\cite{cs336,cs336a5}, y la sobreoptimización de recompensas imperfectas, medida por Gao, Schulman y Hilton~\cite{gao}.
+
+\section{Constitutional AI y retroalimentación de IA}
+
+Constitutional AI (Bai \emph{et al.}, Anthropic, 2022)~\cite{cai} entrena un asistente inofensivo sin etiquetas humanas sobre inocuidad: la supervisión humana se concentra en redactar una lista de principios en lenguaje natural, la \emph{constitución}. El método tiene dos fases (\cref{fig:cai}).
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Fase supervisada (SL-CAI).} Un modelo útil responde a instrucciones problemáticas. Después se le pide criticar su propia respuesta según un principio elegido al azar y reescribirla; el proceso puede repetirse. El modelo se ajusta con SFT sobre las revisiones finales.
+  \item \emph{Fase de refuerzo (RL-CAI).} El modelo de la fase~1 genera pares de respuestas. Un modelo de retroalimentación decide cuál cumple mejor un principio, en algunos experimentos razonando paso a paso. Con esas preferencias generadas por IA se entrena un modelo de preferencias de Bradley--Terry (\cref{tema:4}) y se optimiza la política contra él con RL y penalización KL (\cref{tema:3}). Es lo que se denomina RLAIF, \emph{RL from AI feedback}.
+\end{enumerate}
+
+\addtocounter{figure}{1}%
+
+Las matemáticas son las de los temas~3 y~4; lo que cambia es quién genera las comparaciones. En el artículo, las preferencias de utilidad siguen procediendo de personas y las de inocuidad, del modelo~\cite{cai}. La ventaja es doble: el método escala con mucha menos anotación humana, y los valores que se optimizan quedan explícitos y pueden auditarse. Anthropic ha descrito públicamente Constitutional AI como parte del entrenamiento de Claude; la constitución concreta de cada versión y los detalles actuales de su entrenamiento solo se conocen en la medida en que se han publicado.
+
+\section{Recompensas verificables}
+
+En matemáticas o programación no hace falta aprender la recompensa: se puede comprobar la respuesta.
+
+\begin{definicion}[Recompensa verificable]\label{def:rlvr}
+Una \emph{recompensa verificable} es una función $r(x,y)\in\{0,1\}$ calculada por un programa: vale~1 si la respuesta final extraída de $y$ coincide con la solución de referencia o si el código de $y$ supera unas pruebas, y~0 en otro caso. El RL con recompensas de este tipo se denomina RLVR (\emph{reinforcement learning with verifiable rewards}), término introducido en Tülu~3~\cite{tulu3}.
+\end{definicion}
+
+Como solo se premia el resultado, el modelo es libre de escribir cualquier texto intermedio. DeepSeek-R1~\cite{r1} documenta que, al optimizar recompensas de exactitud y de formato con GRPO directamente sobre un modelo base, sin SFT previo (el modelo R1-Zero), las respuestas se alargan y aparecen cadenas de razonamiento extensas que aumentan la tasa de acierto. Sobre los modelos cerrados la información pública es escasa: OpenAI declaró que o1 (2024) se entrenó con RL a gran escala para razonar mediante cadenas de pensamiento sin publicar el algoritmo; Anthropic ofrece un modo de pensamiento extendido en Claude desde Claude~3.7 Sonnet (2025), y Google ofrece modos de razonamiento en Gemini. Los detalles de su entrenamiento no son públicos.
+
+\section{GRPO: optimización de política relativa al grupo}
+
+PPO necesita un crítico del tamaño del modelo para estimar $V(s_t)$. GRPO, introducido en DeepSeekMath~\cite[§4.1]{deepseekmath}, lo sustituye por una línea base empírica: para cada instrucción se generan varias respuestas y cada una se compara con las demás.
+
+\begin{definicion}[Ventaja relativa al grupo]\label{def:grpo-ventaja}
+Para una instrucción $x$ se muestrean $G$ respuestas $y^{(1)},\dots,y^{(G)}\sim\piold(\cdot\mid x)$ con recompensas $r_1,\dots,r_G$. La ventaja de la respuesta $i$, asignada a todos sus tokens, es
+\[
+\widehat A_i=\frac{r_i-\media(r_1,\dots,r_G)}{\desv(r_1,\dots,r_G)+\varepsilon_0},
+\]
+con $\varepsilon_0>0$ pequeño para evitar la división por cero.
+\end{definicion}
+
+\begin{definicion}[Objetivo de GRPO]\label{def:grpo}
+Con $\rho_{i,t}=\pi_\theta(y^{(i)}_t\mid x,y^{(i)}_{<t})/\piold(y^{(i)}_t\mid x,y^{(i)}_{<t})$, el objetivo que se maximiza es~\cite[ec.~(3)]{deepseekmath}
+\[
+\frac1G\sum_{i=1}^{G}\frac{1}{\abs{y^{(i)}}}\sum_{t=1}^{\abs{y^{(i)}}}\Bigl[\min\bigl(\rho_{i,t}\widehat A_i,\ \clip(\rho_{i,t},1-\varepsilon,1+\varepsilon)\widehat A_i\bigr)-\beta\,\widehat{\KL}_{i,t}\Bigr],
+\]
+donde $\widehat{\KL}_{i,t}=u-\log u-1$ con $u=\piref(y^{(i)}_t\mid\cdot)/\pi_\theta(y^{(i)}_t\mid\cdot)$.
+\end{definicion}
+
+A diferencia de RLHF con PPO, la penalización KL no se resta de la recompensa sino que se añade directamente a la pérdida, y se estima con el estimador $k_3$ del \cref{eje:3-estimadores}.
+
+\begin{proposicion}[Propiedades del estimador $k_3$]\label{prop:k3}
+Sean $p$ y $q$ distribuciones con $q(y)>0$ donde $p(y)>0$, y sea $k_3(y)=u-\log u-1$ con $u=q(y)/p(y)$. Entonces $k_3(y)\ge 0$ para todo $y$ y $\E_{y\sim p}[k_3(y)]=\KL(p\,\|\,q)$.
+\end{proposicion}
+
+\begin{proposicion}[Propiedades de las ventajas de grupo]\label{prop:grpo}
+Con la desviación poblacional y $\varepsilon_0=0$, si no todas las recompensas son iguales, las ventajas de un grupo tienen media~0 y varianza~1. Si todas las recompensas son iguales, todas las ventajas son nulas y el grupo no aporta gradiente al término recortado.
+\end{proposicion}
+
+La media del grupo desempeña el papel de la línea base del \cref{tema:2}. Con recompensas binarias y probabilidad de acierto $p$, un grupo de $G$ respuestas no aporta señal con probabilidad $p^{G}+(1-p)^{G}$: las instrucciones que el modelo casi siempre resuelve, o casi nunca, desperdician cómputo (\cref{eje:6-cero}).
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Sesgos de la normalización]\label{obs:drgrpo}
+Liu \emph{et al.}~\cite{drgrpo} señalan dos sesgos en el objetivo de la \cref{def:grpo}. Dividir por la desviación del grupo da más peso a las instrucciones con poca variación de recompensa, y dividir por la longitud $\abs{y^{(i)}}$ hace que, con ventaja negativa, cada token de una respuesta larga se penalice menos que uno de una corta, lo que favorece respuestas incorrectas largas. Su variante, Dr.~GRPO, elimina ambas normalizaciones (\cref{eje:6-drgrpo,eje:6-longitud}).
+\end{observacion}
+
+\section{Sobreoptimización de la recompensa}
+
+Cuando se optimiza un indicador imperfecto, la política acaba encontrando formas de aumentarlo sin mejorar lo que el indicador pretendía medir. Es la ley de Goodhart aplicada al refuerzo, conocida como \emph{reward hacking} (\cref{tab:hacking}).
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Indicador & Explotación típica \\
+\midrule
+modelo de recompensa de utilidad & respuestas más largas, más listas y más halagos \\
+pruebas unitarias & código que detecta la prueba y devuelve el valor esperado \\
+satisfacción del usuario & dar la razón al usuario (adulación, \emph{sycophancy}) \\
+formato correcto & etiquetas impecables con contenido vacío \\
+\bottomrule
+\end{tabular}
+\caption{Ejemplos de explotación de recompensas.}
+\label{tab:hacking}
+\end{table}
+
+Gao, Schulman y Hilton~\cite{gao} midieron el fenómeno de forma controlada: un modelo de recompensa grande hace de recompensa «verdadera» y etiqueta los datos con los que se entrena un modelo de recompensa \emph{proxy} más pequeño; después se optimiza la política contra el proxy y se mide la recompensa verdadera. Al aumentar la divergencia respecto a la política inicial, la recompensa proxy sigue creciendo, mientras que la verdadera crece, alcanza un máximo y decrece.
+
+\begin{definicion}[Mejor de $n$]\label{def:bon}
+La política \emph{mejor de $n$} (\emph{best-of-$n$}) genera $n$ respuestas independientes con la política inicial y devuelve la de mayor recompensa proxy.
+\end{definicion}
+
+Con $d=\sqrt{\KL(\pi\,\|\,\pi_{\mathrm{init}})}$, Gao \emph{et al.} ajustan las formas funcionales
+\[
+R_{\mathrm{bon}}(d)=d\,(\alpha_{\mathrm{bon}}-\beta_{\mathrm{bon}}\,d),\qquad R_{\mathrm{RL}}(d)=d\,(\alpha_{\mathrm{RL}}-\beta_{\mathrm{RL}}\log d)
+\]
+para la ganancia de recompensa verdadera con mejor de $n$ y con RL, con coeficientes que varían de forma suave con el tamaño del modelo de recompensa~\cite{gao}. Para mejor de $n$, la divergencia se calcula analíticamente: $\mathrm{KL}_{\mathrm{bon}}=\log n-(n-1)/n$ (\cref{eje:6-bon}).
+
+\begin{proposicion}[Divergencia óptima]\label{prop:gao}
+$R_{\mathrm{bon}}$ alcanza su máximo en $d^{*}=\alpha_{\mathrm{bon}}/(2\beta_{\mathrm{bon}})$, con valor $\alpha_{\mathrm{bon}}^{2}/(4\beta_{\mathrm{bon}})$. $R_{\mathrm{RL}}$ alcanza su máximo en $d^{*}=e^{\alpha_{\mathrm{RL}}/\beta_{\mathrm{RL}}-1}$, con valor $\beta_{\mathrm{RL}}d^{*}$.
+\end{proposicion}
+
+Existe, por tanto, una cantidad óptima de optimización, y más allá de ella la política empeora. Este es el argumento cuantitativo a favor de la penalización KL del \cref{tema:3}: limita cuánto puede explotar la política los errores de $r_\phi$. Otras defensas habituales son la parada temprana, el reentrenamiento del modelo de recompensa con muestras de la política actual, el uso de recompensas verificables cuando existen, la combinación de varios modelos de recompensa y la revisión manual de las muestras con recompensa anómalamente alta. DPO no es inmune: también puede sobreoptimizar su recompensa implícita.
+

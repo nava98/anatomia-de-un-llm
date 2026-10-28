@@ -1,0 +1,79 @@
+% =====================================================================
+\chapter{Métodos adaptativos: AdaGrad, RMSProp y Adam}
+\label{tema:5}
+% =====================================================================
+
+El momentum acelera el descenso en valles mal condicionados, pero usa la misma tasa de aprendizaje en todas las coordenadas. Los métodos adaptativos asignan a cada parámetro su propio paso, dividiendo su gradiente por una estimación de su escala típica. Este tema los presenta como preacondicionadores diagonales, estudia AdaGrad y RMSProp y analiza con detalle Adam, el optimizador sobre el que se construye la receta de preentrenamiento de los modelos de lenguaje. Se sigue~\cite[§12.7, §12.8 y §12.10]{d2l}, \cite[§8.5]{gbc} y los artículos originales~\cite{adagrad,rmsprop,adam}.
+
+En todo el tema, las operaciones entre vectores ($g^{2}$, $\sqrt{s}$, cocientes) se entienden elemento a elemento.
+
+\section{Preacondicionamiento diagonal}
+
+\begin{definicion}[Descenso preacondicionado]\label{def:precond}
+Sea $D\in\R^{n\times n}$ diagonal con entradas positivas. El \emph{descenso de gradiente preacondicionado} por $D$ es $\theta_{k+1}=\theta_k-\eta\,D^{-1}\nabla f(\theta_k)$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:precond}
+El descenso preacondicionado por $D$ sobre $f$ es el descenso de gradiente ordinario sobre $\tilde f(\varphi)=f(D^{-1/2}\varphi)$ en las variables $\varphi=D^{1/2}\theta$. Si $f(\theta)=\frac12\theta\T Q\theta$, el hessiano de $\tilde f$ es $D^{-1/2}QD^{-1/2}$.
+\end{proposicion}
+
+Si $Q=\diag(a_1,\dots,a_n)$ y se toma $D=Q$, el hessiano transformado es la identidad y $\kappa=1$: el método converge en un paso con $\eta=1$. Un buen preacondicionador diagonal iguala las curvaturas de las coordenadas. Pero solo puede corregir el mal condicionamiento alineado con los ejes; si los autovectores de $Q$ están girados respecto de ellos, una matriz diagonal no basta (\cref{eje:5-precond}). Los métodos de este tema estiman $D$ a partir de los propios gradientes, sin calcular el hessiano.
+
+\section{AdaGrad y RMSProp}
+
+\begin{definicion}[AdaGrad]\label{def:adagrad}
+Con $s_0=0$ y $\varepsilon>0$ pequeño, \emph{AdaGrad}~\cite{adagrad} acumula los cuadrados de los gradientes:
+\[
+s_t=s_{t-1}+g_t^{2},\qquad\theta_t=\theta_{t-1}-\eta\,\frac{g_t}{\sqrt{s_t}+\varepsilon}.
+\]
+\end{definicion}
+
+\begin{proposicion}\label{prop:adagrad}
+Si $\varepsilon=0$ y una coordenada recibe un gradiente constante $g\ne 0$, su paso en la iteración $t$ mide $\eta/\sqrt t$.
+\end{proposicion}
+
+El paso de AdaGrad no depende de la escala del gradiente y decrece como $1/\sqrt t$, un calendario incorporado que es adecuado en problemas convexos pero demasiado agresivo en el entrenamiento de redes profundas, donde la acumulación sin olvido acaba paralizando el método~\cite[§8.5.1]{gbc}.
+
+\begin{definicion}[RMSProp]\label{def:rmsprop}
+\emph{RMSProp}~\cite{rmsprop} sustituye la suma por una media móvil exponencial de coeficiente $\rho\in(0,1)$:
+\[
+s_t=\rho\,s_{t-1}+(1-\rho)\,g_t^{2},\qquad\theta_t=\theta_{t-1}-\eta\,\frac{g_t}{\sqrt{s_t}+\varepsilon}.
+\]
+\end{definicion}
+
+$\sqrt{s_t}$ estima la raíz de la media cuadrática reciente del gradiente de cada coordenada. Una coordenada con gradientes grandes recibe pasos pequeños, y viceversa. Por la \cref{prop:ema}, con gradiente constante $s_t=(1-\rho^{t})g^{2}$, de modo que el primer paso mide $\eta/\sqrt{1-\rho}$: unas $3{,}16$ veces $\eta$ con $\rho=0{,}9$. Este sesgo inicial, producido por el arranque en $s_0=0$, es lo que corrige Adam.
+
+\section{Adam}
+
+\begin{definicion}[Adam]\label{def:adam}
+Sean $\eta>0$, $\beta_1,\beta_2\in[0,1)$, $\varepsilon>0$ y $m_0=v_0=0$. Para $t=1,2,\dots$, con $g_t$ el gradiente (estocástico) en $\theta_{t-1}$, \emph{Adam}~\cite[algoritmo~1]{adam} realiza
+\begin{align*}
+m_t&=\beta_1m_{t-1}+(1-\beta_1)\,g_t, & \hat m_t&=\frac{m_t}{1-\beta_1^{t}},\\
+v_t&=\beta_2v_{t-1}+(1-\beta_2)\,g_t^{2}, & \hat v_t&=\frac{v_t}{1-\beta_2^{t}},\\
+\theta_t&=\theta_{t-1}-\eta\,\frac{\hat m_t}{\sqrt{\hat v_t}+\varepsilon}.
+\end{align*}
+Los valores recomendados en el artículo original son $\eta=10^{-3}$, $\beta_1=0{,}9$, $\beta_2=0{,}999$ y $\varepsilon=10^{-8}$.
+\end{definicion}
+
+Adam combina el momentum (primer momento $m_t$, una media móvil del gradiente) con la normalización de RMSProp (segundo momento $v_t$, una media móvil de su cuadrado). Las divisiones por $1-\beta_1^{t}$ y $1-\beta_2^{t}$ son la \emph{corrección de sesgo}~\cite[§3]{adam}.
+
+\begin{proposicion}[Corrección de sesgo]\label{prop:sesgo}
+Si $g_t=g$ para todo $t$, entonces $m_t=(1-\beta_1^{t})\,g$ y $\hat m_t=g$. Más en general, si los $g_t$ son aleatorios con $\E[g_t]=\bar g$ para todo $t$, entonces $\E[m_t]=(1-\beta_1^{t})\,\bar g$ y $\E[\hat m_t]=\bar g$. Los mismos resultados valen para $v_t$ y $\hat v_t$ con $g_t^{2}$ y $\beta_2$.
+\end{proposicion}
+
+Sin corrección, $m_t$ y $v_t$ estarían sesgados hacia~0 al principio. Con $\beta_1=0{,}9$, $1-\beta_1^{t}$ vale $0{,}1$ en $t=1$, $0{,}19$ en $t=2$ y $0{,}6513$ en $t=10$; con $\beta_2=0{,}999$, $1-\beta_2^{t}$ vale $0{,}001$ en $t=1$ y solo $0{,}6323$ en $t=1000$: el sesgo de $v_t$ persiste durante unos miles de pasos.
+
+\begin{proposicion}[Primer paso e invariancia de escala]\label{prop:escala}
+Sea $\varepsilon=0$. (i) En $t=1$, cada coordenada con $g_1\ne 0$ se desplaza exactamente $\eta\,\sign(g_1)$. (ii) Si todos los gradientes se multiplican por una constante $c>0$, los iterados de Adam no cambian.
+\end{proposicion}
+
+La invariancia de escala significa que $\eta$ fija directamente el tamaño del paso en el espacio de parámetros: Kingma y Ba observan que el desplazamiento de cada coordenada queda aproximadamente acotado por $\eta$~\cite[§2.1]{adam}. Esto hace a Adam mucho menos sensible que el SGD a la escala de la pérdida y a las diferencias de escala entre capas. Con $\varepsilon>0$ la invariancia es solo aproximada; $\varepsilon$ evita divisiones por cero cuando $\hat v_t\approx 0$.
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{figure}{1}%
+
+\begin{observacion}[Adam en los modelos de lenguaje]
+Los artículos de modelos de lenguaje abiertos documentan variantes de Adam con $\beta_2$ menor que el valor recomendado: LLaMA usa AdamW con $\beta_1=0{,}9$ y $\beta_2=0{,}95$~\cite[§2.3]{llama}. Con $\beta_2=0{,}95$, el segundo momento promedia efectivamente unos $1/(1-\beta_2)=20$ pasos en lugar de~1000, y se adapta antes a cambios bruscos en la escala del gradiente. El precio de Adam es la memoria: guarda $m$ y $v$, dos números adicionales por parámetro. En un modelo de $7\cdot 10^{9}$ parámetros son $1{,}4\cdot 10^{10}$ valores, 56~GB en precisión simple (módulo~17). Los optimizadores usados en Claude, Gemini y Grok no se han publicado.
+\end{observacion}
+

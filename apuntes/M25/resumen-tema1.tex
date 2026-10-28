@@ -1,0 +1,119 @@
+% =====================================================================
+\chapter{Optimizar procesos caros y ruidosos}
+\label{tema:1}
+% =====================================================================
+
+Este tema plantea el problema común a todo el módulo: minimizar una función que solo se conoce a través de experimentos caros y ruidosos, con un presupuesto fijo de evaluaciones y con restricciones que a veces tampoco se conocen de antemano. La formalización sigue el capítulo~1 de Garnett~\cite{garnett} y la sección~2 del tutorial de Frazier~\cite{frazier}; la discusión sobre cuándo compensa un modelo sustituto sigue la §10.1 de Martins y Ning~\cite{mn}, y los planes de muestreo en rejilla, la §13.1 de Kochenderfer y Wheeler~\cite{kw}.
+
+\section{El problema de la caja negra}
+
+En el entrenamiento de una red (módulo~7) la función objetivo es una fórmula explícita, su gradiente se obtiene por diferenciación automática (módulo~10) y evaluarla en un minilote cuesta milisegundos. En un proceso industrial nada de esto se cumple: para conocer la tasa de defectos de una inyectora con un ajuste dado hay que fabricar un lote de piezas e inspeccionarlo.
+
+\begin{definicion}[Problema de optimización de caja negra]\label{def:cajanegra}
+Sean $\X\subset\R^{d}$ un dominio compacto (habitualmente un hiperrectángulo $\prod_{j}[a_j,b_j]$), $f\colon\X\to\R$ una función desconocida y $N\in\mathbb{N}$ un \emph{presupuesto} de evaluaciones. Un \emph{oráculo} devuelve, para cada $x\in\X$ elegido, una observación
+\[
+y=f(x)+\varepsilon,\qquad \E[\varepsilon]=0,\quad \Var(\varepsilon)=\sigma_n^2(x),
+\]
+con ruidos independientes entre evaluaciones. Una \emph{política} elige secuencialmente $x_{n+1}$ a partir de los datos $\D_n=\{(x_i,y_i)\}_{i\le n}$ y, agotado el presupuesto, emite una \emph{recomendación} $\hat x_N\in\X$. El objetivo es que $f(\hat x_N)$ sea lo más próximo posible a $\min_{x\in\X}f(x)$.
+\end{definicion}
+
+Tres rasgos distinguen este problema de los de los módulos~7 y~8: no hay gradiente (ni siquiera ruidoso), el número de evaluaciones es pequeño (de diez a unos centenares) y el coste de decidir dónde evaluar es despreciable frente al de evaluar. Esta última asimetría justifica gastar mucho cómputo en cada decisión: ajustar un modelo estadístico de $f$ y optimizar sobre él~\cite[§1.1]{garnett}.
+
+\begin{definicion}[Regret]\label{def:regret}
+Sea $x^\star\in\arg\min_{\X}f$. El \emph{regret simple} de la recomendación es $r_N=f(\hat x_N)-f(x^\star)\ge 0$. El \emph{regret acumulado} de las evaluaciones es $R_N=\sum_{n=1}^{N}\bigl(f(x_n)-f(x^\star)\bigr)$.
+\end{definicion}
+
+La elección entre ambos depende del caso. En un estudio de laboratorio solo importa la receta final: se mide $r_N$. Si los experimentos se hacen en la línea de producción y las piezas ensayadas se venden o se desechan, cada experimento malo cuesta dinero y se mide $R_N$; Garnett~\cite[§6.1–6.2]{garnett} formaliza ambas utilidades.
+
+\begin{observacion}
+La recomendación $\hat x_N$ no tiene por qué ser uno de los puntos evaluados ni el de mejor observación. Con ruido, el mínimo observado es un mal estimador del mínimo verdadero (\cref{prop:ganador}); en la práctica se recomienda el punto que minimiza un modelo ajustado a todos los datos y se confirma con ensayos repetidos.
+\end{observacion}
+
+\section{Presupuesto y ruido}
+
+\begin{proposicion}[Maldición de la dimensión para rejillas]\label{prop:rejilla}
+Sea $\X=[0,1]^{d}$ y sea $h\in(0,\tfrac12]$. Si un conjunto de $N$ puntos garantiza que todo $x\in\X$ dista menos de $h$ en norma del máximo de algún punto del conjunto, entonces $N\ge(2h)^{-d}$. Una rejilla de $m$ niveles por variable tiene $m^{d}$ puntos.
+\end{proposicion}
+
+Con $h=0{,}1$ (un décimo del rango de cada variable) hacen falta al menos $5^{d}$ puntos: 125 con tres variables y casi diez millones con diez. Ningún proceso físico admite ese presupuesto; de ahí la necesidad de diseños que no crezcan exponencialmente (\cref{tema:2}) y de modelos que interpolen entre ensayos (\cref{tema:3}).
+
+El ruido tiene dos orígenes: la variabilidad del proceso (lote de materia prima, temperatura ambiente, desgaste) y el error de medida. Cuando la respuesta es una proporción estimada con $m$ piezas, el ruido es binomial.
+
+\begin{proposicion}\label{prop:binomial}
+Si en un lote de $m$ piezas cada una es defectuosa con probabilidad $d$, independientemente, la fracción observada $\hat d$ cumple $\E[\hat d]=d$ y $\Var(\hat d)=d(1-d)/m$.
+\end{proposicion}
+
+La consecuencia más traicionera del ruido es que el mejor resultado observado es sistemáticamente optimista.
+
+\begin{proposicion}[Maldición del ganador]\label{prop:ganador}
+Sean $y_i=f(x_i)+\varepsilon_i$, $i=1,\dots,n$, con $\varepsilon_i$ independientes de media nula. Entonces
+\[
+\E\Bigl[\min_{i}y_i\Bigr]\le\min_{i}f(x_i).
+\]
+Si además todos los $f(x_i)$ son iguales a $f_0$ y $\varepsilon_i\sim\N(0,\sigma^2)$, entonces $\E[\min_i y_i]=f_0-\sigma\,e_n$, con $e_n=\E[\max_i Z_i]$ para $Z_i\sim\N(0,1)$ independientes.
+\end{proposicion}
+
+Los valores de $e_n$ se obtienen por integración numérica: $e_2=1/\sqrt\pi\approx 0{,}5642$ (\cref{eje:1-max2}), $e_5\approx 1{,}163$, $e_{10}\approx 1{,}539$ y $e_{30}\approx 2{,}043$. Elegir el mejor de diez ensayos igual de buenos produce un resultado aparentemente mejor en más de 1,5 desviaciones típicas.
+
+\section{Restricciones}
+
+Las restricciones de un proceso son de naturaleza muy distinta, y conviene clasificarlas antes de elegir el método~\cite[§11.2]{garnett}, \cite[§1.4]{kw}:
+\begin{itemize}
+  \item \emph{conocidas y baratas}: los límites de la máquina, la suma de las fracciones de una mezcla igual a~1, una relación entre variables. Se imponen directamente al generar candidatos;
+  \item \emph{desconocidas y caras}: una especificación de calidad que solo se comprueba con el experimento (alabeo máximo, resistencia mínima). Se modelan igual que el objetivo y se trata su probabilidad de cumplirse (\cref{tema:4});
+  \item \emph{ocultas}: zonas donde el experimento falla y no produce dato (la pieza sale incompleta, la simulación no converge). Se modelan como una clasificación;
+  \item \emph{de seguridad}: no basta con acabar en un punto factible, sino que no se debe \emph{ensayar} un punto peligroso (presión excesiva, temperatura de degradación del polímero). Exigen métodos de exploración segura~\cite[§16.6]{kw}.
+\end{itemize}
+
+\begin{definicion}[Problema con restricciones de caja negra]\label{def:restricciones}
+Se busca $\min_{x\in\X}f(x)$ sujeto a $c_j(x)\le 0$, $j=1,\dots,J$, donde cada $c_j$ es una función desconocida que se observa con ruido en el mismo experimento que $f$ o en uno distinto. El regret simple se define respecto al mejor punto \emph{factible}, y una recomendación no factible se considera un fracaso, sea cual sea su valor de $f$.
+\end{definicion}
+
+\section{El bucle de optimización con un modelo sustituto}
+
+Todos los métodos del módulo comparten la estructura de la \cref{fig:bucle}. Un diseño inicial (\cref{tema:2}) proporciona los primeros datos; un modelo sustituto (\cref{tema:3}) resume lo aprendido con su incertidumbre; una función de adquisición (\cref{tema:4}) traduce el modelo en la decisión del siguiente experimento; y una regla de parada (\cref{tema:6}) decide cuándo dejar de experimentar.
+
+\addtocounter{figure}{1}%
+
+\begin{table}[ht]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.9cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{3.6cm}@{}}
+\toprule
+Familia & Cuándo es adecuada & Limitaciones \\
+\midrule
+Rejilla y un factor cada vez & Una o dos variables, evaluaciones baratas & Crece como $m^{d}$; no detecta interacciones \\
+Diseño de experimentos y superficie de respuesta & 2–8 variables, decenas de ensayos, se quiere entender el proceso & Modelo polinómico local \\
+Optimización bayesiana & 1–20 variables, 10–500 evaluaciones caras y ruidosas & Coste cúbico en $n$; peor en dimensión alta \\
+Evolutivos (CMA-ES, genéticos) & Miles de evaluaciones baratas, paisajes irregulares & Poco eficientes en número de evaluaciones \\
+Gradiente (adjunto, autodiferenciación) & Simuladores diferenciables, muchas variables & Requiere acceso al código del modelo \\
+\bottomrule
+\end{tabularx}
+\caption{Familias de métodos según el presupuesto y la dimensión. El límite de unas veinte variables para la optimización bayesiana procede de Frazier~\cite[§1]{frazier}.}
+\label{tab:familias}
+\end{table}
+
+La §10.1 de Martins y Ning~\cite{mn} resume el criterio económico: un sustituto compensa cuando el coste de construirlo y consultarlo es pequeño frente al de las evaluaciones que ahorra, cuando el ruido impide usar diferencias finitas y cuando se quiere reutilizar el modelo para otras preguntas (sensibilidad, robustez).
+
+\section{Caso de estudio: ajuste de una inyectora}
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[ht]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.1cm}>{\raggedright\arraybackslash}p{3.6cm}@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia & Cuándo elegirla \\
+\midrule
+Ax~\cite{ax} & Plataforma de experimentación adaptativa: bucle completo, restricciones, varios objetivos, lotes & MIT & Experimentos reales gestionados por un equipo \\
+BoTorch~\cite{botorch} & Optimización bayesiana sobre PyTorch con adquisiciones de Monte Carlo & MIT & Investigación o adquisiciones a medida \\
+Optuna~\cite{optuna} & Ajuste de hiperparámetros con TPE, GP y poda & MIT & Ajuste de modelos de aprendizaje automático \\
+SMAC3~\cite{smac3} & Optimización bayesiana con bosques aleatorios & BSD & Espacios mixtos y condicionales \\
+SciPy~\cite{scipyqmc} & \texttt{optimize} y \texttt{stats.qmc}: métodos clásicos y planes de muestreo & BSD & Líneas base y diseños \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para el bucle completo de optimización de caja negra.}
+\label{tab:tec1}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

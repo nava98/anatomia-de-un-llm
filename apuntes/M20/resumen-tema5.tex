@@ -1,0 +1,120 @@
+% =====================================================================
+\chapter{LoRA: adaptación de bajo rango}
+\label{tema:5}
+% =====================================================================
+
+LoRA (\emph{low-rank adaptation}) congela cada matriz preentrenada y aprende solo una corrección de rango bajo, escrita como producto de dos matrices delgadas. Es hoy el método PEFT más usado porque no añade latencia de inferencia y su análisis se reduce al álgebra lineal del módulo~3. Este tema sigue el artículo original de Hu \emph{et al.}~\cite[§4 y~§7]{hu-lora}, el teorema de Eckart y Young~\cite{eckart-young} en la forma del módulo~3 y de Deisenroth, Faisal y Ong~\cite[§4.6]{mml}, y la clase invitada sobre LoRA del curso CS224N~\cite{cs224n}.
+
+\section{Definición y número de parámetros}
+
+\begin{definicion}[LoRA]\label{def:lora}
+Sea $W\in\R^{d\times k}$ una matriz preentrenada de una capa lineal $h=Wx$, con $x\in\R^{k}$. Sean $r\ll\min(d,k)$ el \emph{rango}, $\alpha>0$ un hiperparámetro de escala y $s=\alpha/r$. LoRA sustituye la capa por
+\[
+h=Wx+s\,BAx,\qquad A\in\R^{r\times k},\ B\in\R^{d\times r},
+\]
+con $W$ congelada y $A$, $B$ entrenables. Se inicializa $A$ con entradas gaussianas y $B=0$~\cite[§4.1]{hu-lora}. La matriz efectiva es $W'=W+s\,BA$.
+\end{definicion}
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[Parámetros y coste]\label{prop:lora-param}
+LoRA entrena $r(d+k)$ parámetros por matriz, una fracción $r(d+k)/(dk)=r(1/d+1/k)$ de los $dk$ del ajuste completo. Calcular $s\,B(Ax)$ cuesta $2r(d+k)$ operaciones más un escalado, frente a las $2dk$ de $Wx$, y nunca requiere formar $BA$.
+\end{proposicion}
+
+\begin{table}[h]
+\centering\small
+\caption{Parámetros entrenables de LoRA en una matriz.}\label{tab:lora}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Matriz & $r$ & Completo $dk$ & LoRA $r(d+k)$ & Fracción \\
+\midrule
+$64\times 64$ & 4 & $4096$ & $512$ & $12{,}5\,\%$ \\
+$768\times 768$ & 4 & $589\,824$ & $6144$ & $1{,}04\,\%$ \\
+$4096\times 4096$ & 8 & $16\,777\,216$ & $65\,536$ & $0{,}39\,\%$ \\
+$4096\times 4096$ & 16 & $16\,777\,216$ & $131\,072$ & $0{,}78\,\%$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\addtocounter{definicion}{1}%
+
+En el mini-GPT de la práctica ($d=64$, red de alimentación de dimensión 256, 2 bloques), LoRA con $r=4$ en las cuatro matrices de atención ($64\times 64$) y las dos de la red de alimentación ($64\times 256$ y $256\times 64$) de cada bloque entrena $2\cdot(4\cdot 512+2\cdot 1280)=9216$ parámetros, el $8{,}57\,\%$ de los $107\,520$ del modelo. En GPT-3 de 175\,000 millones de parámetros, Hu \emph{et al.} redujeron los parámetros entrenables unas $10\,000$ veces y la memoria de GPU unas 3 veces respecto al ajuste completo con Adam; con $r=4$ en $W_Q$ y $W_V$, el punto de control pasó de unos 350~GB a unos 35~MB~\cite[§4.2]{hu-lora}.
+
+\begin{proposicion}[Fusión]\label{prop:fusion}
+Tras el entrenamiento, sustituir $W$ por $W'=W+s\,BA$ produce la misma función que la capa LoRA y el mismo coste de inferencia que la capa original.
+\end{proposicion}
+
+Así, LoRA no añade latencia de inferencia, a diferencia de los adaptadores del \cref{tema:4}. Sin fusionar, en cambio, un mismo modelo base puede servir muchos adaptadores pequeños e intercambiarlos en cada petición.
+
+\section{Rango de la corrección}
+
+\begin{proposicion}[Cota de rango]\label{prop:rango}
+Para todo $A\in\R^{r\times k}$ y $B\in\R^{d\times r}$, $\rango(BA)\le r$.
+\end{proposicion}
+
+\begin{proposicion}[Recíproco]\label{prop:factorizacion}
+Toda matriz $M\in\R^{d\times k}$ con $\rango M\le r$ puede escribirse como $M=BA$ con $B\in\R^{d\times r}$ y $A\in\R^{r\times k}$.
+\end{proposicion}
+
+\begin{corolario}\label{cor:representables}
+El conjunto de correcciones que LoRA de rango $r$ puede representar es exactamente $\{\Delta W\in\R^{d\times k}:\rango\Delta W\le r\}$. Si $r<\min(d,k)$, ninguna corrección de rango completo es representable.
+\end{corolario}
+
+\section{Gradientes e inicialización}
+
+\begin{proposicion}[Gradientes de LoRA]\label{prop:grad-lora}
+Sea $h=Wx+s\,BAx$ y sea $G=\partial\mathcal{L}/\partial h\in\R^{d}$ el gradiente que llega a la salida. Entonces
+\[
+\frac{\partial\mathcal{L}}{\partial B}=s\,G\,(Ax)\T\in\R^{d\times r},\qquad
+\frac{\partial\mathcal{L}}{\partial A}=s\,B\T G\,x\T\in\R^{r\times k}.
+\]
+Con un lote, se suman las contribuciones de cada ejemplo.
+\end{proposicion}
+
+\begin{corolario}[Inicialización]\label{cor:init}
+Con $B=0$ y $A$ aleatoria:
+\begin{enumerate}
+  \item $BA=0$ y el modelo ajustado empieza siendo exactamente el modelo base;
+  \item en el primer paso $\partial\mathcal{L}/\partial A=0$, pero $\partial\mathcal{L}/\partial B=s\,G(Ax)\T\ne 0$ si $G\ne 0$ y $Ax\ne 0$, de modo que $B$ deja de ser nula y, desde el segundo paso, también $A$ recibe gradiente.
+\end{enumerate}
+En cambio, $(A,B)=(0,0)$ es un punto fijo del descenso de gradiente (\cref{eje:5-init}).
+\end{corolario}
+
+La elección simétrica, $A=0$ con $B$ aleatoria, también empieza en el modelo base y también permite aprender; el convenio del artículo original es $B=0$.
+
+\section{La escala \texorpdfstring{$\alpha/r$}{alpha/r}}
+
+\begin{proposicion}[Adam es invariante a la escala del gradiente]\label{prop:adam-escala}
+Sea el optimizador Adam con $\varepsilon=0$ (módulo~7). Si se multiplican todos los gradientes por una constante $c>0$, la sucesión de actualizaciones de los parámetros no cambia.
+\end{proposicion}
+
+Por la \cref{prop:grad-lora}, el gradiente de $B$ es proporcional a $s$. Por la \cref{prop:adam-escala}, la actualización $\Delta B$ del primer paso no depende de $s$, y la variación de la función, $s\,\Delta B\,A\,x$, es proporcional a $s$. El factor $s=\alpha/r$ actúa, por tanto, como un multiplicador de la tasa de aprendizaje. Hu \emph{et al.} observan que ajustar $\alpha$ con Adam equivale aproximadamente a ajustar la tasa, fijan $\alpha$ al primer valor de $r$ que prueban y no lo modifican; dividir por $r$ reduce la necesidad de reajustar hiperparámetros al cambiar el rango~\cite[§4.1]{hu-lora}. En la práctica se fija $\alpha$ (por ejemplo, $\alpha=16$ o $\alpha=2r$) y se ajusta $r$.
+
+\section{Por qué funciona: relación con la SVD}
+
+LoRA apuesta a que la actualización $\Delta W$ que necesita el ajuste fino tiene un espectro que decae deprisa. El teorema de Eckart--Young (módulo~3, tema~5) cuantifica lo que se pierde al restringir el rango.
+
+\begin{teorema}[Eckart--Young, norma de Frobenius]\label{teo:ey}
+Sea $\Delta W=\sum_i\sigma_iu_iv_i\T$ la SVD, con $\sigma_1\ge\sigma_2\ge\cdots$. Para todo $r$, la matriz $\Delta W_r=\sum_{i\le r}\sigma_iu_iv_i\T$ minimiza $\norm{\Delta W-M}_F$ entre las matrices de rango a lo sumo~$r$, y
+\[
+\norm{\Delta W-\Delta W_r}_F=\Bigl(\sum_{i>r}\sigma_i^{2}\Bigr)^{1/2}.
+\]
+\end{teorema}
+
+La demostración está en el módulo~3 y en~\cite{eckart-young}.
+
+\begin{corolario}[Error mínimo de LoRA]\label{cor:error-lora}
+Sea $\Delta W^{\star}$ la actualización ideal de una matriz. Entonces
+\[
+\min_{A,B}\,\norm{s\,BA-\Delta W^{\star}}_F=\Bigl(\sum_{i>r}\sigma_i^{2}(\Delta W^{\star})\Bigr)^{1/2}.
+\]
+\end{corolario}
+
+\addtocounter{definicion}{1}%
+
+Hay dos diferencias con truncar una SVD. LoRA no calcula ninguna SVD: el descenso de gradiente encuentra $B$ y $A$ directamente. Y LoRA aproxima la \emph{actualización}, no $W$, que suele tener rango completo y no se puede comprimir así sin perder mucho.
+
+\begin{observacion}[Evidencia empírica]
+Hu \emph{et al.} adaptan principalmente $W_Q$ y $W_V$ y encuentran que, en algunas tareas, un rango tan pequeño como $r=1$ basta~\cite[§7.1 y~§7.2]{hu-lora}; las direcciones singulares principales aprendidas con $r=8$ y con $r=64$ se solapan mucho, y el resto parecen ruido. Dettmers \emph{et al.} observaron, en cambio, que para igualar el ajuste completo en modelos grandes hace falta aplicar LoRA a todas las capas lineales~\cite[§4]{dettmers}. En la práctica del módulo, la actualización del ajuste completo en $W_Q$ tiene rango 64 y sus 4 primeros valores singulares solo concentran el $41{,}5\,\%$ de la energía: un modelo tan pequeño, ajustado de forma tan agresiva, no cumple bien la hipótesis. Aun así, LoRA acierta más en la prueba ($0{,}450$ frente a $0{,}300$, con tasas de aprendizaje distintas); una explicación plausible es que restringir el rango regulariza.
+\end{observacion}
+

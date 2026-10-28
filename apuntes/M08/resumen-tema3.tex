@@ -1,0 +1,87 @@
+% =====================================================================
+\chapter{Regresión logística}
+\label{tema:3}
+% =====================================================================
+
+Para clasificar en dos clases no basta con una recta, cuyas predicciones recorren todo $\R$: hace falta transformar una puntuación lineal en una probabilidad. Este tema estudia la regresión logística, obtiene su pérdida como verosimilitud de Bernoulli, calcula su gradiente y su hessiano, demuestra su convexidad y presenta el método de Newton. Se sigue el capítulo~2 de los apuntes de CS229~\cite[§2.1 y §2.4]{cs229}, Bishop~\cite[§4.3.2--4.3.3]{bishop}, Hastie, Tibshirani y Friedman~\cite[§4.4.1]{esl} y las notas de MIT~6.390~\cite[§4.3--4.4]{mit6390}.
+
+\section{La función sigmoide}
+
+\begin{definicion}[Sigmoide y logit]\label{def:sigmoide}
+La \emph{función sigmoide} o \emph{logística} es $\sigma\colon\R\to(0,1)$, $\sigma(z)=\dfrac{1}{1+e^{-z}}$. Su inversa es la función \emph{logit}, $\sigma^{-1}(p)=\ln\dfrac{p}{1-p}$, el logaritmo de la razón de probabilidades (\emph{log-odds}).
+\end{definicion}
+
+\begin{proposicion}[Propiedades de la sigmoide]\label{prop:sigmoide}
+Para todo $z\in\R$:
+\begin{enumerate}
+  \item $\sigma(-z)=1-\sigma(z)$; en particular, $\sigma(0)=1/2$;
+  \item $\sigma'(z)=\sigma(z)\bigl(1-\sigma(z)\bigr)\in(0,1/4]$, con máximo en $z=0$;
+  \item $\sigma$ es estrictamente creciente, con $\lim_{z\to-\infty}\sigma(z)=0$ y $\lim_{z\to\infty}\sigma(z)=1$;
+  \item $\ln\sigma(z)=-\ln(1+e^{-z})$ y $\ln(1-\sigma(z))=-\ln(1+e^{z})$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{observacion}[Física]
+La ocupación media de un nivel de energía $E$ en la estadística de Fermi-Dirac es $1/\bigl(e^{(E-\mu)/(k_BT)}+1\bigr)=\sigma\bigl((\mu-E)/(k_BT)\bigr)$. La sigmoide es, por tanto, la distribución de Fermi-Dirac, del mismo modo que la softmax es la de Boltzmann (módulo~1).
+\end{observacion}
+
+\section{El modelo y la frontera de decisión}
+
+\begin{definicion}[Regresión logística]\label{def:logistica}
+Sea $\Y=\{0,1\}$. El modelo de \emph{regresión logística} con parámetros $\theta\in\R^{d+1}$ (incluido el término independiente) es
+\[
+P(y=1\mid x;\theta)=\sigma(\theta^{\top}x),\qquad P(y=0\mid x;\theta)=1-\sigma(\theta^{\top}x).
+\]
+El número $z=\theta^{\top}x$ es el \emph{logit} del ejemplo. El \emph{clasificador asociado} predice la clase~1 si $\sigma(z)\ge 1/2$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:frontera}
+En el modelo logístico, el logaritmo de la razón de probabilidades es lineal en $x$, $\ln\frac{P(y=1\mid x)}{P(y=0\mid x)}=\theta^{\top}x$, y la frontera de decisión $\{x:\sigma(\theta^{\top}x)=1/2\}$ es el hiperplano $\theta^{\top}x=0$.
+\end{proposicion}
+
+\section{Verosimilitud y entropía cruzada binaria}
+
+\begin{proposicion}[Pérdida de la regresión logística]\label{prop:bce}
+Sean $(x_i,y_i)$, $i=1,\dots,n$, ejemplos independientes con $y_i\mid x_i\sim\Ber(\sigma(\theta^{\top}x_i))$, y sea $p_i=\sigma(\theta^{\top}x_i)$. La log-verosimilitud negativa media es
+\[
+J(\theta)=\frac{1}{n}\sum_{i=1}^{n}\BCE(p_i,y_i),\qquad \BCE(p,y)=-\bigl[y\ln p+(1-y)\ln(1-p)\bigr],
+\]
+la \emph{entropía cruzada binaria}.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\section{Gradiente, hessiano y convexidad}
+
+\begin{teorema}[Gradiente y hessiano]\label{teo:grad-logistica}
+Sea $X$ la matriz de diseño, $p=(p_1,\dots,p_n)$ con $p_i=\sigma(\theta^{\top}x_i)$ y $S=\diag\bigl(p_i(1-p_i)\bigr)$. Entonces
+\[
+\frac{\partial\,\BCE(p_i,y_i)}{\partial z_i}=p_i-y_i,\qquad
+\nabla J(\theta)=\frac{1}{n}X^{\top}(p-y),\qquad
+\nabla^{2}J(\theta)=\frac{1}{n}X^{\top}SX.
+\]
+El hessiano es semidefinido positivo, luego $J$ es convexa. Si $\rg(X)=d+1$, es definido positivo y $J$ es estrictamente convexa.
+\end{teorema}
+
+El gradiente tiene la forma «error por entrada», igual que en la regla LMS del \cref{tema:2}: si el modelo ya acierta con seguridad ($p_i\approx y_i$), el ejemplo apenas contribuye. Esta coincidencia no es casual: ambos son modelos lineales generalizados con función de enlace canónica~\cite[cap.~3]{cs229}, \cite[§4.3.6]{bishop}.
+
+\begin{corolario}[Calibración en media]\label{cor:calibracion}
+Si $X$ contiene la columna de unos y $\hat\theta$ minimiza $J$, entonces $\sum_i p_i=\sum_i y_i$: la probabilidad media predicha coincide con la frecuencia observada de la clase~1.
+\end{corolario}
+
+A diferencia de las ecuaciones normales, la condición $X^{\top}(p-y)=0$ no es lineal en $\theta$, porque $p$ depende de $\theta$ a través de la sigmoide, y no tiene solución en forma cerrada. Puede incluso no tener solución.
+
+\begin{proposicion}[Datos separables]\label{prop:separable}
+Supóngase que existe $\theta_0$ con $\theta_0^{\top}x_i>0$ si $y_i=1$ y $\theta_0^{\top}x_i<0$ si $y_i=0$. Entonces $\inf_\theta J(\theta)=0$, pero el ínfimo no se alcanza: el estimador de máxima verosimilitud no existe.
+\end{proposicion}
+
+Con datos separables, el descenso de gradiente hace crecer $\norm{\theta}$ sin límite y las probabilidades predichas se acercan a 0 o~1: una forma de sobreajuste que Bishop señala en~\cite[§4.3.2]{bishop}. La regularización del \cref{tema:6} lo corrige.
+
+\section{El método de Newton}
+
+Como $J$ es convexa y dos veces diferenciable, puede minimizarse con el \emph{método de Newton}, que en cada paso minimiza la aproximación de Taylor de segundo orden (módulo~4):
+\[
+\theta_{t+1}=\theta_t-\bigl(\nabla^{2}J(\theta_t)\bigr)^{-1}\nabla J(\theta_t)=\theta_t-\bigl(X^{\top}SX\bigr)^{-1}X^{\top}(p-y).
+\]
+Cerca del óptimo, el método converge cuadráticamente: el número de cifras correctas aproximadamente se duplica en cada iteración~\cite[§2.4]{cs229}. Cada paso exige resolver un sistema de tamaño $d+1$, con un coste del orden de $d^{3}$, razón por la que no se usa en redes con millones de parámetros. Cada paso equivale a resolver un problema de mínimos cuadrados con pesos $S$, de ahí el nombre de \emph{mínimos cuadrados iterativamente reponderados} (IRLS)~\cite[§4.3.3]{bishop}.
+

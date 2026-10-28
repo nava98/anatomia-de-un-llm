@@ -1,0 +1,135 @@
+% =====================================================================
+\chapter{Modelos sustitutos}
+\label{tema:3}
+% =====================================================================
+
+Un modelo sustituto (\emph{surrogate}) es una aproximación barata de la función desconocida, ajustada a los experimentos ya hechos. Para optimizar no basta con que prediga bien: debe decir también \emph{cuánto} se fía de cada predicción, porque esa incertidumbre es la que permite decidir dónde merece la pena experimentar. Este tema estudia tres familias: la regresión polinómica y de bases (§14.2–14.5 de Kochenderfer y Wheeler~\cite{kw}), los procesos gaussianos (capítulos~2, 4 y~5 de Rasmussen y Williams~\cite{rw} y capítulos~2–4 de Garnett~\cite{garnett}) y las redes neuronales, con los \emph{ensembles} de Lakshminarayanan \emph{et al.}~\cite{lakshmi} y las redes informadas por la física de Raissi \emph{et al.}~\cite{raissi}.
+
+\section{Qué se pide a un sustituto}
+
+Un sustituto útil para optimizar debe (i) interpolar o suavizar los datos según haya o no ruido, (ii) dar una incertidumbre calibrada, mayor lejos de los datos, (iii) ajustarse en segundos con decenas o cientos de puntos y (iv) admitir conocimiento previo (suavidad, monotonía, física). Ningún modelo es el mejor en todo: la \cref{tab:tec3} y el caso del final del tema comparan las opciones.
+
+\section{Regresión polinómica y de bases}
+
+Sea $\phi\colon\X\to\R^{p}$ un vector de funciones base (monomios hasta grado~2, por ejemplo) y $\Phi\in\R^{n\times p}$ la matriz con filas $\phi(x_i)^\top$. El ajuste por mínimos cuadrados es $\hat\beta=(\Phi^\top\Phi)^{-1}\Phi^\top y$ (módulo~8, §2.2) y las predicciones en los datos son $\hat y=Hy$, con la \emph{matriz sombrero} $H=\Phi(\Phi^\top\Phi)^{-1}\Phi^\top$. Un polinomio completo de grado~2 en $d$ variables tiene $p=(d+1)(d+2)/2$ coeficientes: 10 con $d=3$ y 66 con $d=10$, lo que limita su uso a dimensión baja.
+
+\begin{proposicion}[Validación cruzada dejando uno fuera sin reajustar]\label{prop:loo-lineal}
+Sea $e_i=y_i-\hat y_i$ el residuo del ajuste con todos los datos y $h_{ii}$ el $i$-ésimo elemento diagonal de $H$, con $h_{ii}<1$. Entonces el residuo de predecir $y_i$ con el modelo ajustado sin el punto $i$ es
+\[
+e_{(i)}=\frac{e_i}{1-h_{ii}} .
+\]
+\end{proposicion}
+
+La raíz del error cuadrático medio de los $e_{(i)}$ (PRESS) es una estimación honesta del error de predicción con el coste de un solo ajuste~\cite[§14.5]{kw}; el \cref{tema:6} obtiene el resultado análogo para procesos gaussianos.
+
+\section{Procesos gaussianos}
+
+\begin{definicion}[Proceso gaussiano]\label{def:gp}
+Un \emph{proceso gaussiano} con función media $m\colon\X\to\R$ y núcleo (función de covarianza) $k\colon\X\times\X\to\R$, $f\sim\GP(m,k)$, es una colección de variables aleatorias $\{f(x)\}_{x\in\X}$ tal que para cualesquiera $x_1,\dots,x_n$ el vector $(f(x_1),\dots,f(x_n))$ es normal multivariante de media $(m(x_i))_i$ y covarianza $K_{il}=k(x_i,x_l)$~\cite[cap.~2]{rw}.
+\end{definicion}
+
+Para que la definición tenga sentido, toda matriz $K$ así construida debe ser simétrica semidefinida positiva: $k$ debe ser un \emph{núcleo semidefinido positivo}. Las sumas y los productos de núcleos lo son, así como los productos por constantes positivas~\cite[cap.~4]{rw}.
+
+\begin{definicion}[Núcleos habituales]\label{def:nucleos}
+Sea $r=\norm{x-x'}/\ell$ (o, con \emph{relevancia automática} ARD, $r^2=\sum_j(x_j-x'_j)^2/\ell_j^2$). Se definen
+\[
+k_{SE}(x,x')=\sigma_f^2\exp\bigl(-\tfrac12r^2\bigr),\qquad
+k_{5/2}(x,x')=\sigma_f^2\Bigl(1+\sqrt5\,r+\tfrac53r^2\Bigr)e^{-\sqrt5\,r}.
+\]
+El primero (exponencial cuadrático) produce funciones infinitamente derivables; el segundo (Matérn con $\nu=5/2$), funciones dos veces derivables~\cite[cap.~4]{rw}.
+\end{definicion}
+
+La longitud de escala $\ell$ mide la distancia a la que dos valores de $f$ dejan de estar correlacionados; con ARD, una $\ell_j$ grande indica que la variable $j$ apenas influye. Garnett~\cite[§3.3]{garnett} y Frazier~\cite[§3.1]{frazier} recomiendan Matérn 5/2 para optimización: el exponencial cuadrático supone una suavidad que los procesos físicos rara vez tienen.
+
+\begin{lema}[Condicionamiento de la normal]\label{lem:condicion}
+Sea $(a,b)$ un vector normal con $a\in\R^{p}$, $b\in\R^{q}$, medias $\mu_a,\mu_b$ y covarianzas $\Sigma_{aa},\Sigma_{ab},\Sigma_{bb}$, con $\Sigma_{bb}$ invertible. Entonces
+\[
+a\mid b\sim\N\bigl(\mu_a+\Sigma_{ab}\Sigma_{bb}^{-1}(b-\mu_b),\ \Sigma_{aa}-\Sigma_{ab}\Sigma_{bb}^{-1}\Sigma_{ba}\bigr).
+\]
+\end{lema}
+
+\begin{teorema}[Distribución posterior de un proceso gaussiano]\label{teo:posterior}
+Sea $f\sim\GP(0,k)$ y $y_i=f(x_i)+\varepsilon_i$ con $\varepsilon_i\sim\N(0,\sigma_n^2)$ independientes. Sean $\Ky=K+\sigma_n^2I$ y $k_*(x)=(k(x,x_1),\dots,k(x,x_n))^\top$. Dado $\D_n$, $f(x)$ es normal con
+\[
+\mu_n(x)=k_*(x)^\top\Ky^{-1}y,\qquad \sigma_n^2(x)=k(x,x)-k_*(x)^\top\Ky^{-1}k_*(x).
+\]
+\end{teorema}
+
+\begin{observacion}\label{obs:posterior}
+(i) La media es una combinación lineal de los datos: $\mu_n(x)=\sum_i\alpha_ik(x,x_i)$ con $\alpha=\Ky^{-1}y$. (ii) La varianza no depende de los valores $y$, solo de dónde se ha medido, y nunca supera la previa $k(x,x)$ (\cref{eje:3-monotona}). (iii) Para predecir una nueva \emph{observación} $y(x)$, y no $f(x)$, se suma $\sigma_n^2$; confundir ambas varianzas es un error frecuente al calcular funciones de adquisición (\cref{tema:4}). (iv) Con un núcleo lineal $k(x,x')=\sigma_f^2x^\top x'$, el proceso gaussiano es la regresión lineal bayesiana, cuya media posterior es la de la regresión ridge (módulo~8, §6.2).
+\end{observacion}
+
+\addtocounter{definicion}{1}%
+
+\section{Hiperparámetros por verosimilitud marginal}
+
+Los hiperparámetros $\theta=(\sigma_f,\ell_1,\dots,\ell_d,\sigma_n)$ no se conocen. El criterio habitual es maximizar la probabilidad de los datos observados con $f$ integrada~\cite[cap.~5]{rw}.
+
+\begin{proposicion}[Verosimilitud marginal]\label{prop:lml}
+Con $f\sim\GP(0,k_\theta)$ y ruido gaussiano, $y\sim\N(0,\Ky)$ y
+\begin{equation}\label{eq:lml}
+\log p(y\mid\theta)=-\tfrac12y^\top\Ky^{-1}y-\tfrac12\log\det\Ky-\tfrac n2\log 2\pi .
+\end{equation}
+Su gradiente es $\dfrac{\partial}{\partial\theta_j}\log p(y\mid\theta)=\dfrac12\tr\Bigl((\alpha\alpha^\top-\Ky^{-1})\dfrac{\partial\Ky}{\partial\theta_j}\Bigr)$, con $\alpha=\Ky^{-1}y$.
+\end{proposicion}
+
+Los tres términos de~\eqref{eq:lml} tienen lectura: el primero mide el ajuste a los datos, el segundo penaliza la complejidad (una $\ell$ pequeña hace $\Ky$ casi diagonal y aumenta $\log\det\Ky$) y el tercero es una constante. Esta compensación automática entre ajuste y complejidad es la navaja de Occam bayesiana~\cite[cap.~5]{rw}.
+
+\begin{observacion}[Cálculo estable y óptimos locales]\label{obs:cholesky}
+En la práctica nunca se invierte $\Ky$. Se calcula su factorización de Cholesky $\Ky=LL^\top$, se resuelven dos sistemas triangulares para $\alpha=L^{-\top}L^{-1}y$, se usa $\log\det\Ky=2\sum_i\log L_{ii}$ y $\sigma_n^2(x)=k(x,x)-\norm{L^{-1}k_*}^2$; el coste es $O(n^3)$ una vez y $O(n^2)$ por predicción~\cite[cap.~2]{rw}. Si dos puntos casi coinciden, $\Ky$ es casi singular y se añade un pequeño término diagonal (\emph{jitter}, del orden de $10^{-6}\sigma_f^2$; \cref{eje:3-jitter}). La función~\eqref{eq:lml} tiene a menudo varios máximos locales: uno con $\ell$ pequeña que explica las fluctuaciones como señal y otro con $\ell$ grande que las atribuye al ruido; por eso se reinicia el optimizador desde varios puntos. La tarea~1 del curso 4F13 de Cambridge~\cite{cam4f13} pide precisamente encontrarlos e interpretarlos.
+\end{observacion}
+
+\addtocounter{definicion}{1}%
+
+\section{Redes neuronales como sustitutos}
+
+Un proceso gaussiano exacto escala como $O(n^3)$ y sufre con más de unas decenas de variables. Cuando hay miles de datos (históricos de planta, simulaciones baratas) o entradas de alta dimensión, un perceptrón multicapa (módulo~9) es una alternativa natural, pero no da incertidumbre por sí solo.
+
+\begin{definicion}[\emph{Ensemble} profundo]\label{def:ensemble}
+Se entrenan $M$ redes con inicializaciones distintas (y, opcionalmente, remuestreos de los datos); la red $m$ predice una media $\mu_m(x)$ y, si se entrena con la verosimilitud gaussiana, una varianza $\sigma_m^2(x)$. La predicción del \emph{ensemble} es la mezcla uniforme $\frac1M\sum_m\N(\mu_m(x),\sigma_m^2(x))$~\cite{lakshmi}.
+\end{definicion}
+
+\begin{proposicion}[Media y varianza de la mezcla]\label{prop:mezcla}
+La mezcla tiene media $\mu(x)=\frac1M\sum_m\mu_m(x)$ y varianza
+\[
+\sigma^2(x)=\frac1M\sum_m\bigl(\sigma_m^2(x)+\mu_m^2(x)\bigr)-\mu^2(x)=\underbrace{\frac1M\sum_m\sigma_m^2(x)}_{\text{aleatoria}}+\underbrace{\frac1M\sum_m\bigl(\mu_m(x)-\mu(x)\bigr)^2}_{\text{epistémica}} .
+\]
+\end{proposicion}
+
+El sumando epistémico (desacuerdo entre redes) crece lejos de los datos, que es lo que necesita la optimización. Garnett~\cite[§8.11]{garnett} discute estos y otros modelos alternativos al proceso gaussiano.
+
+\addtocounter{definicion}{1}%
+
+\section{Redes informadas por la física}
+
+Cuando se conoce la ecuación que gobierna parte del proceso, puede incorporarse al entrenamiento. Una \emph{red informada por la física} (PINN)~\cite{raissi} minimiza
+\[
+\mathcal L(\theta,\kappa)=\frac1{n}\sum_{i=1}^{n}\bigl(T_\theta(t_i)-T_i\bigr)^2+\frac{\lambda}{m}\sum_{l=1}^{m}\mathcal R_{\theta,\kappa}(\tau_l)^2,
+\]
+donde el primer término ajusta las medidas y el segundo penaliza el residuo $\mathcal R$ de la ecuación diferencial en $m$ puntos de colocación $\tau_l$. Las derivadas de $T_\theta$ respecto a su entrada se obtienen por diferenciación automática (módulo~10, tema~3), y los parámetros físicos desconocidos $\kappa$ se aprenden a la vez que $\theta$ (problema inverso).
+
+\addtocounter{definicion}{1}%
+
+\section{Caso de estudio: tres sustitutos del coste}
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[ht]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{3.6cm}@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia & Cuándo elegirla \\
+\midrule
+scikit-learn, \texttt{Gaussian\-Process\-Regressor}~\cite{sklearngp} & PG exacto con núcleos combinables y máxima verosimilitud marginal con reinicios & BSD & Hasta unos miles de puntos, prototipos \\
+GPyTorch~\cite{gpytorch} & PG sobre PyTorch con álgebra lineal iterativa y GPU & MIT & Muchos datos, modelos a medida, BoTorch \\
+BoTorch~\cite{botorch} (modelos) & PG de una y varias salidas, multifidelidad, con heterocedasticidad & MIT & Sustituto dentro de un bucle de optimización \\
+PyTorch & Perceptrones, \emph{ensembles}, PINN & BSD & Muchos datos, entradas de alta dimensión, física conocida \\
+scikit-learn (lineales, polinomios) & Regresión de bases y validación cruzada & BSD & Pocos datos y respuesta suave \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para construir modelos sustitutos.}
+\label{tab:tec3}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

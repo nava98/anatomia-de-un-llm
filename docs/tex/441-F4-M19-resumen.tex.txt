@@ -1,0 +1,1073 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase IV — Módulo 19
+%  Inferencia y generación
+%  Compilar: latexmk -r ../latexmkrc M19-inferencia.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 19}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\argmax}{\operatorname*{arg\,max}}
+\newcommand{\TV}{\operatorname{TV}}
+\newcommand{\rnd}{\operatorname{round}}
+\newcommand{\clip}{\operatorname{clip}}
+\newcommand{\quant}{\operatorname{quant}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\Bmem}{B_{\mathrm{mem}}}
+\newcommand{\Ppico}{P_{\mathrm{pico}}}
+\newcommand{\Icrit}{I^{\ast}}
+\newcommand{\nkv}{n_{\mathrm{kv}}}
+\newcommand{\dhd}{d_{\mathrm{h}}}
+\newcommand{\TTFT}{\mathrm{TTFT}}
+\newcommand{\TPOT}{\mathrm{TPOT}}
+\usetikzlibrary{patterns}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 19. Inferencia y generación (resumen)},pdfauthor={Anatomía de un LLM}}
+
+\makeatletter
+\newlabel{fig:haz}{{1.1}{2}{Búsqueda en haz con $m=2$ en el ejemplo de la \cref {prop:voraz-no-optima}. Los nodos discontinuos se podan (no se dibujan las extensiones con $\mathrm {z}$). La búsqueda voraz se queda con $A\mathrm {x}$ ($0{,}20$); el haz encuentra $B\mathrm {x}$ ($0{,}36$)}{figure.1.1}{}}
+\newlabel{fig:haz@cref}{{[figure][1][1]1.1}{[1][2][]2}}
+\newlabel{ej:muestreo}{{1.12}{3}{}{ejemplo.12}{}}
+\newlabel{ej:muestreo@cref}{{[ejemplo][12][]1.12}{[1][3][]3}}
+\newlabel{ej:truncamiento}{{1.17}{4}{}{ejemplo.17}{}}
+\newlabel{ej:truncamiento@cref}{{[ejemplo][17][]1.17}{[1][4][]4}}
+\newlabel{fig:cadena-muestreo}{{1.2}{5}{Cadena habitual de muestreo. Con $\tau \to 0$ o con $k=1$ se recupera la búsqueda voraz}{figure.1.2}{}}
+\newlabel{fig:cadena-muestreo@cref}{{[figure][2][1]1.2}{[1][5][]5}}
+\newlabel{eje:1-topk-topp}{{1.1}{5}{}{ejercicio.1.1}{}}
+\newlabel{eje:1-topk-topp@cref}{{[ejercicio][1][1]1.1}{[1][5][]5}}
+\newlabel{eje:1-logits}{{1.2}{5}{}{ejercicio.1.2}{}}
+\newlabel{eje:1-logits@cref}{{[ejercicio][2][1]1.2}{[1][5][]5}}
+\newlabel{eje:1-slp}{{1.3}{5}{}{ejercicio.1.3}{}}
+\newlabel{eje:1-slp@cref}{{[ejercicio][3][1]1.3}{[1][5][]5}}
+\newlabel{eje:1-nucleo}{{1.4}{5}{}{ejercicio.1.4}{}}
+\newlabel{eje:1-nucleo@cref}{{[ejercicio][4][1]1.4}{[1][5][]5}}
+\newlabel{eje:1-haz}{{1.5}{5}{}{ejercicio.1.5}{}}
+\newlabel{eje:1-haz@cref}{{[ejercicio][5][1]1.5}{[1][5][]5}}
+\newlabel{eje:1-potencia}{{1.6}{6}{}{ejercicio.1.6}{}}
+\newlabel{eje:1-potencia@cref}{{[ejercicio][6][1]1.6}{[1][6][]6}}
+\newlabel{eje:1-entropia}{{1.7}{6}{}{ejercicio.1.7}{}}
+\newlabel{eje:1-entropia@cref}{{[ejercicio][7][1]1.7}{[1][6][]6}}
+\newlabel{ej:prefill}{{2.2}{7}{Coste del \emph {prefill}}{ejemplo.2}{}}
+\newlabel{ej:prefill@cref}{{[ejemplo][2][]2.2}{[1][7][]7}}
+\newlabel{fig:cache}{{2.1}{8}{Caché KV de una capa. El \emph {prefill} rellena las $n$ primeras columnas; cada paso de decodificación calcula solo la consulta, la clave y el valor de la posición nueva, añade una columna y atiende sobre todas}{figure.2.1}{}}
+\newlabel{fig:cache@cref}{{[figure][1][2]2.1}{[1][8][]8}}
+\newlabel{ej:llama}{{2.7}{9}{Arquitecturas públicas}{ejemplo.7}{}}
+\newlabel{ej:llama@cref}{{[ejemplo][7][]2.7}{[1][9][]9}}
+\newlabel{ej:cota}{{2.11}{10}{Cota de velocidad}{ejemplo.11}{}}
+\newlabel{ej:cota@cref}{{[ejemplo][11][]2.11}{[1][10][]10}}
+\newlabel{eje:2-fases}{{2.1}{11}{}{ejercicio.2.1}{}}
+\newlabel{eje:2-fases@cref}{{[ejercicio][1][2]2.1}{[1][11][]11}}
+\newlabel{eje:2-vf}{{2.2}{11}{}{ejercicio.2.2}{}}
+\newlabel{eje:2-vf@cref}{{[ejercicio][2][2]2.2}{[1][11][]11}}
+\newlabel{eje:2-kv}{{2.3}{11}{}{ejercicio.2.3}{}}
+\newlabel{eje:2-kv@cref}{{[ejercicio][3][2]2.3}{[1][11][]11}}
+\newlabel{eje:2-cota}{{2.4}{11}{}{ejercicio.2.4}{}}
+\newlabel{eje:2-cota@cref}{{[ejercicio][4][2]2.4}{[1][11][]11}}
+\newlabel{eje:2-llama13}{{2.5}{11}{}{ejercicio.2.5}{}}
+\newlabel{eje:2-llama13@cref}{{[ejercicio][5][2]2.5}{[1][11][]11}}
+\newlabel{eje:2-intensidad}{{2.6}{11}{}{ejercicio.2.6}{}}
+\newlabel{eje:2-intensidad@cref}{{[ejercicio][6][2]2.6}{[1][11][]11}}
+\newlabel{eje:2-sincache}{{2.7}{12}{}{ejercicio.2.7}{}}
+\newlabel{eje:2-sincache@cref}{{[ejercicio][7][2]2.7}{[1][11][]12}}
+\newlabel{fig:ronda}{{3.1}{14}{Una ronda con $\gamma =4$. El borrador propone cuatro tokens (arriba); el objetivo los evalúa en una pasada y acepta los dos primeros. En el primer rechazo emite un token de la distribución residual y la ronda termina}{figure.3.1}{}}
+\newlabel{fig:ronda@cref}{{[figure][1][3]3.1}{[1][13][]14}}
+\newlabel{ej:especulativa}{{3.6}{15}{}{ejemplo.6}{}}
+\newlabel{ej:especulativa@cref}{{[ejemplo][6][]3.6}{[1][14][]15}}
+\newlabel{ej:gamma}{{3.13}{16}{Elección de $\gamma $}{ejemplo.13}{}}
+\newlabel{ej:gamma@cref}{{[ejemplo][13][]3.13}{[1][16][]16}}
+\newlabel{eje:3-vf}{{3.1}{16}{}{ejercicio.3.1}{}}
+\newlabel{eje:3-vf@cref}{{[ejercicio][1][3]3.1}{[1][16][]16}}
+\newlabel{eje:3-dos}{{3.2}{16}{}{ejercicio.3.2}{}}
+\newlabel{eje:3-dos@cref}{{[ejercicio][2][3]3.2}{[1][16][]16}}
+\newlabel{eje:3-cs336}{{3.3}{17}{}{ejercicio.3.3}{}}
+\newlabel{eje:3-cs336@cref}{{[ejercicio][3][3]3.3}{[1][17][]17}}
+\newlabel{eje:3-gamma}{{3.4}{17}{}{ejercicio.3.4}{}}
+\newlabel{eje:3-gamma@cref}{{[ejercicio][4][3]3.4}{[1][17][]17}}
+\newlabel{eje:3-tv}{{3.5}{17}{}{ejercicio.3.5}{}}
+\newlabel{eje:3-tv@cref}{{[ejercicio][5][3]3.5}{[1][17][]17}}
+\newlabel{eje:3-optimo}{{3.6}{17}{}{ejercicio.3.6}{}}
+\newlabel{eje:3-optimo@cref}{{[ejercicio][6][3]3.6}{[1][17][]17}}
+\newlabel{fig:rejilla}{{4.1}{19}{Rejilla del cuantizador afín de 4 bits del \cref {eje:4-int4}: los 16 enteros $Q=0,\dots ,15$ cubren $[-1,2]$ con paso $\Delta =0{,}2$; el real $0$ corresponde al punto cero $Z=5$. El valor $x=0{,}62$ cae en $x/\Delta +Z=8{,}1$ y se lleva al entero $Q=8$, que se reconstruye como $\hat x=0{,}6$}{figure.4.1}{}}
+\newlabel{fig:rejilla@cref}{{[figure][1][4]4.1}{[1][18][]19}}
+\newlabel{ej:cuant}{{4.4}{19}{}{ejemplo.4}{}}
+\newlabel{ej:cuant@cref}{{[ejemplo][4][]4.4}{[1][19][]19}}
+\newlabel{eje:4-conceptos}{{4.1}{21}{}{ejercicio.4.1}{}}
+\newlabel{eje:4-conceptos@cref}{{[ejercicio][1][4]4.1}{[1][21][]21}}
+\newlabel{eje:4-int4}{{4.2}{21}{}{ejercicio.4.2}{}}
+\newlabel{eje:4-int4@cref}{{[ejercicio][2][4]4.2}{[1][21][]21}}
+\newlabel{eje:4-3bits}{{4.3}{21}{}{ejercicio.4.3}{}}
+\newlabel{eje:4-3bits@cref}{{[ejercicio][3][4]4.3}{[1][21][]21}}
+\newlabel{eje:4-atipico}{{4.4}{22}{}{ejercicio.4.4}{}}
+\newlabel{eje:4-atipico@cref}{{[ejercicio][4][4]4.4}{[1][22][]22}}
+\newlabel{eje:4-entero}{{4.5}{22}{}{ejercicio.4.5}{}}
+\newlabel{eje:4-entero@cref}{{[ejercicio][5][4]4.5}{[1][22][]22}}
+\newlabel{eje:4-ruido}{{4.6}{22}{}{ejercicio.4.6}{}}
+\newlabel{eje:4-ruido@cref}{{[ejercicio][6][4]4.6}{[1][22][]22}}
+\newlabel{eje:4-granularidad}{{4.7}{22}{}{ejercicio.4.7}{}}
+\newlabel{eje:4-granularidad@cref}{{[ejercicio][7][4]4.7}{[1][22][]22}}
+\newlabel{eje:5-conceptos}{{5.1}{27}{}{ejercicio.5.1}{}}
+\newlabel{eje:5-conceptos@cref}{{[ejercicio][1][5]5.1}{[1][27][]27}}
+\newlabel{eje:5-absmax}{{5.2}{27}{}{ejercicio.5.2}{}}
+\newlabel{eje:5-absmax@cref}{{[ejercicio][2][5]5.2}{[1][27][]27}}
+\newlabel{eje:5-smooth}{{5.3}{27}{}{ejercicio.5.3}{}}
+\newlabel{eje:5-smooth@cref}{{[ejercicio][3][5]5.3}{[1][27][]27}}
+\newlabel{eje:5-gptq}{{5.4}{28}{}{ejercicio.5.4}{}}
+\newlabel{eje:5-gptq@cref}{{[ejercicio][4][5]5.4}{[1][28][]28}}
+\newlabel{eje:5-qlora}{{5.5}{28}{}{ejercicio.5.5}{}}
+\newlabel{eje:5-qlora@cref}{{[ejercicio][5][5]5.5}{[1][28][]28}}
+\newlabel{eje:5-destila}{{5.6}{28}{}{ejercicio.5.6}{}}
+\newlabel{eje:5-destila@cref}{{[ejercicio][6][5]5.6}{[1][28][]28}}
+\newlabel{eje:5-altaT}{{5.7}{28}{}{ejercicio.5.7}{}}
+\newlabel{eje:5-altaT@cref}{{[ejercicio][7][5]5.7}{[1][28][]28}}
+\newlabel{ej:latencia}{{6.3}{29}{}{ejemplo.3}{}}
+\newlabel{ej:latencia@cref}{{[ejemplo][3][]6.3}{[1][29][]29}}
+\newlabel{fig:batching}{{6.1}{30}{Tres ranuras durante ocho pasos de decodificación. Con \emph {batching} estático (izquierda), las ranuras de $A$ y $C$ quedan vacías (rayado) hasta que termina $B$: se usan 16 de 24 ranuras. Con \emph {batching} continuo (derecha), $D$ y $E$ entran en cuanto se liberan las ranuras y se usan las 24}{figure.6.1}{}}
+\newlabel{fig:batching@cref}{{[figure][1][6]6.1}{[1][30][]30}}
+\newlabel{fig:paged}{{6.2}{31}{Una secuencia de 40 tokens con bloques de 16. La tabla de bloques ($0\mapsto 5$, $1\mapsto 1$, $2\mapsto 6$) la sitúa en tres bloques físicos no contiguos; solo se desperdician 8 posiciones del último bloque}{figure.6.2}{}}
+\newlabel{fig:paged@cref}{{[figure][2][6]6.2}{[1][31][]31}}
+\newlabel{ej:bloques}{{6.10}{31}{}{ejemplo.10}{}}
+\newlabel{ej:bloques@cref}{{[ejemplo][10][]6.10}{[1][31][]31}}
+\newlabel{eje:6-paginacion}{{6.1}{32}{}{ejercicio.6.1}{}}
+\newlabel{eje:6-paginacion@cref}{{[ejercicio][1][6]6.1}{[1][32][]32}}
+\newlabel{eje:6-bloques}{{6.2}{32}{}{ejercicio.6.2}{}}
+\newlabel{eje:6-bloques@cref}{{[ejercicio][2][6]6.2}{[1][32][]32}}
+\newlabel{eje:6-latencia}{{6.3}{32}{}{ejercicio.6.3}{}}
+\newlabel{eje:6-latencia@cref}{{[ejercicio][3][6]6.3}{[1][32][]32}}
+\newlabel{eje:6-gqa}{{6.4}{32}{}{ejercicio.6.4}{}}
+\newlabel{eje:6-gqa@cref}{{[ejercicio][4][6]6.4}{[1][32][]32}}
+\newlabel{eje:6-prefijo}{{6.5}{32}{}{ejercicio.6.5}{}}
+\newlabel{eje:6-prefijo@cref}{{[ejercicio][5][6]6.5}{[1][32][]32}}
+\newlabel{eje:6-frag}{{6.6}{32}{}{ejercicio.6.6}{}}
+\newlabel{eje:6-frag@cref}{{[ejercicio][6][6]6.6}{[1][32][]32}}
+\newlabel{ap:soluciones}{{A}{33}{Soluciones de los ejercicios}{appendix.A}{}}
+\newlabel{ap:soluciones@cref}{{[appendix][1][2147483647]A}{[1][33][]33}}
+\newlabel{sol:eje:1-topk-topp}{{A.1}{33}{Tema 1}{section*.3}{}}
+\newlabel{sol:eje:1-topk-topp@cref}{{[subappendix][1][2147483647,1]A.1}{[1][33][]33}}
+\newlabel{sol:eje:1-logits}{{A.1}{33}{Tema 1}{section*.4}{}}
+\newlabel{sol:eje:1-logits@cref}{{[subappendix][1][2147483647,1]A.1}{[1][33][]33}}
+\newlabel{sol:eje:1-slp}{{A.1}{34}{Tema 1}{section*.5}{}}
+\newlabel{sol:eje:1-slp@cref}{{[subappendix][1][2147483647,1]A.1}{[1][34][]34}}
+\newlabel{sol:eje:1-nucleo}{{A.1}{34}{Tema 1}{section*.6}{}}
+\newlabel{sol:eje:1-nucleo@cref}{{[subappendix][1][2147483647,1]A.1}{[1][34][]34}}
+\newlabel{sol:eje:1-haz}{{A.1}{35}{Tema 1}{section*.7}{}}
+\newlabel{sol:eje:1-haz@cref}{{[subappendix][1][2147483647,1]A.1}{[1][35][]35}}
+\newlabel{sol:eje:1-potencia}{{A.1}{35}{Tema 1}{section*.8}{}}
+\newlabel{sol:eje:1-potencia@cref}{{[subappendix][1][2147483647,1]A.1}{[1][35][]35}}
+\newlabel{sol:eje:1-entropia}{{A.1}{36}{Tema 1}{section*.9}{}}
+\newlabel{sol:eje:1-entropia@cref}{{[subappendix][1][2147483647,1]A.1}{[1][36][]36}}
+\newlabel{sol:eje:2-fases}{{A.2}{36}{Tema 2}{section*.10}{}}
+\newlabel{sol:eje:2-fases@cref}{{[subappendix][2][2147483647,1]A.2}{[1][36][]36}}
+\newlabel{sol:eje:2-vf}{{A.2}{37}{Tema 2}{section*.11}{}}
+\newlabel{sol:eje:2-vf@cref}{{[subappendix][2][2147483647,1]A.2}{[1][37][]37}}
+\newlabel{sol:eje:2-kv}{{A.2}{37}{Tema 2}{section*.12}{}}
+\newlabel{sol:eje:2-kv@cref}{{[subappendix][2][2147483647,1]A.2}{[1][37][]37}}
+\newlabel{sol:eje:2-cota}{{A.2}{37}{Tema 2}{section*.13}{}}
+\newlabel{sol:eje:2-cota@cref}{{[subappendix][2][2147483647,1]A.2}{[1][37][]37}}
+\newlabel{sol:eje:2-llama13}{{A.2}{38}{Tema 2}{section*.14}{}}
+\newlabel{sol:eje:2-llama13@cref}{{[subappendix][2][2147483647,1]A.2}{[1][37][]38}}
+\newlabel{sol:eje:2-intensidad}{{A.2}{38}{Tema 2}{section*.15}{}}
+\newlabel{sol:eje:2-intensidad@cref}{{[subappendix][2][2147483647,1]A.2}{[1][38][]38}}
+\newlabel{sol:eje:2-sincache}{{A.2}{39}{Tema 2}{section*.16}{}}
+\newlabel{sol:eje:2-sincache@cref}{{[subappendix][2][2147483647,1]A.2}{[1][38][]39}}
+\newlabel{sol:eje:3-vf}{{A.3}{39}{Tema 3}{section*.17}{}}
+\newlabel{sol:eje:3-vf@cref}{{[subappendix][3][2147483647,1]A.3}{[1][39][]39}}
+\newlabel{sol:eje:3-dos}{{A.3}{39}{Tema 3}{section*.18}{}}
+\newlabel{sol:eje:3-dos@cref}{{[subappendix][3][2147483647,1]A.3}{[1][39][]39}}
+\newlabel{sol:eje:3-cs336}{{A.3}{40}{Tema 3}{section*.19}{}}
+\newlabel{sol:eje:3-cs336@cref}{{[subappendix][3][2147483647,1]A.3}{[1][40][]40}}
+\newlabel{sol:eje:3-gamma}{{A.3}{40}{Tema 3}{section*.20}{}}
+\newlabel{sol:eje:3-gamma@cref}{{[subappendix][3][2147483647,1]A.3}{[1][40][]40}}
+\newlabel{sol:eje:3-tv}{{A.3}{40}{Tema 3}{section*.21}{}}
+\newlabel{sol:eje:3-tv@cref}{{[subappendix][3][2147483647,1]A.3}{[1][40][]40}}
+\newlabel{sol:eje:3-optimo}{{A.3}{41}{Tema 3}{section*.22}{}}
+\newlabel{sol:eje:3-optimo@cref}{{[subappendix][3][2147483647,1]A.3}{[1][41][]41}}
+\newlabel{sol:eje:4-conceptos}{{A.4}{41}{Tema 4}{section*.23}{}}
+\newlabel{sol:eje:4-conceptos@cref}{{[subappendix][4][2147483647,1]A.4}{[1][41][]41}}
+\newlabel{sol:eje:4-int4}{{A.4}{42}{Tema 4}{section*.24}{}}
+\newlabel{sol:eje:4-int4@cref}{{[subappendix][4][2147483647,1]A.4}{[1][42][]42}}
+\newlabel{sol:eje:4-3bits}{{A.4}{42}{Tema 4}{section*.25}{}}
+\newlabel{sol:eje:4-3bits@cref}{{[subappendix][4][2147483647,1]A.4}{[1][42][]42}}
+\newlabel{sol:eje:4-atipico}{{A.4}{43}{Tema 4}{section*.26}{}}
+\newlabel{sol:eje:4-atipico@cref}{{[subappendix][4][2147483647,1]A.4}{[1][43][]43}}
+\newlabel{sol:eje:4-entero}{{A.4}{43}{Tema 4}{section*.27}{}}
+\newlabel{sol:eje:4-entero@cref}{{[subappendix][4][2147483647,1]A.4}{[1][43][]43}}
+\newlabel{sol:eje:4-ruido}{{A.4}{44}{Tema 4}{section*.28}{}}
+\newlabel{sol:eje:4-ruido@cref}{{[subappendix][4][2147483647,1]A.4}{[1][44][]44}}
+\newlabel{sol:eje:4-granularidad}{{A.4}{44}{Tema 4}{section*.29}{}}
+\newlabel{sol:eje:4-granularidad@cref}{{[subappendix][4][2147483647,1]A.4}{[1][44][]44}}
+\newlabel{sol:eje:5-conceptos}{{A.5}{45}{Tema 5}{section*.30}{}}
+\newlabel{sol:eje:5-conceptos@cref}{{[subappendix][5][2147483647,1]A.5}{[1][44][]45}}
+\newlabel{sol:eje:5-absmax}{{A.5}{45}{Tema 5}{section*.31}{}}
+\newlabel{sol:eje:5-absmax@cref}{{[subappendix][5][2147483647,1]A.5}{[1][45][]45}}
+\newlabel{sol:eje:5-smooth}{{A.5}{45}{Tema 5}{section*.32}{}}
+\newlabel{sol:eje:5-smooth@cref}{{[subappendix][5][2147483647,1]A.5}{[1][45][]45}}
+\newlabel{sol:eje:5-gptq}{{A.5}{46}{Tema 5}{section*.33}{}}
+\newlabel{sol:eje:5-gptq@cref}{{[subappendix][5][2147483647,1]A.5}{[1][46][]46}}
+\newlabel{sol:eje:5-qlora}{{A.5}{47}{Tema 5}{section*.34}{}}
+\newlabel{sol:eje:5-qlora@cref}{{[subappendix][5][2147483647,1]A.5}{[1][47][]47}}
+\newlabel{sol:eje:5-destila}{{A.5}{47}{Tema 5}{section*.35}{}}
+\newlabel{sol:eje:5-destila@cref}{{[subappendix][5][2147483647,1]A.5}{[1][47][]47}}
+\newlabel{sol:eje:5-altaT}{{A.5}{48}{Tema 5}{section*.36}{}}
+\newlabel{sol:eje:5-altaT@cref}{{[subappendix][5][2147483647,1]A.5}{[1][47][]48}}
+\newlabel{sol:eje:6-paginacion}{{A.6}{48}{Tema 6}{section*.37}{}}
+\newlabel{sol:eje:6-paginacion@cref}{{[subappendix][6][2147483647,1]A.6}{[1][48][]48}}
+\newlabel{sol:eje:6-bloques}{{A.6}{49}{Tema 6}{section*.38}{}}
+\newlabel{sol:eje:6-bloques@cref}{{[subappendix][6][2147483647,1]A.6}{[1][49][]49}}
+\newlabel{sol:eje:6-latencia}{{A.6}{49}{Tema 6}{section*.39}{}}
+\newlabel{sol:eje:6-latencia@cref}{{[subappendix][6][2147483647,1]A.6}{[1][49][]49}}
+\newlabel{sol:eje:6-gqa}{{A.6}{49}{Tema 6}{section*.40}{}}
+\newlabel{sol:eje:6-gqa@cref}{{[subappendix][6][2147483647,1]A.6}{[1][49][]49}}
+\newlabel{sol:eje:6-prefijo}{{A.6}{50}{Tema 6}{section*.41}{}}
+\newlabel{sol:eje:6-prefijo@cref}{{[subappendix][6][2147483647,1]A.6}{[1][50][]50}}
+\newlabel{sol:eje:6-frag}{{A.6}{50}{Tema 6}{section*.42}{}}
+\newlabel{sol:eje:6-frag@cref}{{[subappendix][6][2147483647,1]A.6}{[1][50][]50}}
+\makeatother
+
+\begin{document}
+\frontmatter
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase IV \textperiodcentered\ Escala, sistemas y arquitecturas modernas}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 19\par}\vspace{0.3cm}
+{\LARGE Inferencia y generación\par}
+\vspace{0.2cm}
+{\large Decodificación, caché KV, decodificación especulativa, cuantización y servicio a escala\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Resumen del módulo}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+\chapter*{Sobre este resumen}
+\addcontentsline{toc}{chapter}{Sobre este resumen}
+\markboth{Sobre este resumen}{}
+
+Este documento reúne lo indispensable de los apuntes del Módulo 19: el texto expositivo, todas las definiciones y todos los resultados (teoremas, proposiciones, lemas y corolarios), las tablas y las observaciones de contenido. Se han suprimido las demostraciones, los ejemplos, las lecturas, las figuras, los ejercicios y sus soluciones. La numeración de temas, secciones, enunciados y ecuaciones es la misma que en los apuntes, de modo que cualquier referencia puede buscarse allí; las que remiten a elementos suprimidos (un ejemplo, una figura, una ecuación de una demostración) conservan su número en los apuntes.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\V$, $K=\abs{\V}$ & vocabulario y su tamaño \\
+$x_{<t}=(x_1,\dots,x_{t-1})$ & prefijo (contexto) en el paso $t$ \\
+$z\in\R^{K}$, $\tau>0$ & vector de logits y temperatura (la letra $T$ se reserva para longitudes) \\
+$p_\tau=\softmax(z/\tau)$ & distribución con temperatura \\
+$k$, $p$, $m$ & parámetros de \emph{top-k}, del muestreo de núcleo y anchura del haz \\
+$N$, $n$ & parámetros del modelo y longitud del prompt \\
+$L$, $\nkv$, $\dhd$ & capas, cabezas de clave y valor, y dimensión de cada cabeza \\
+$s$ & bytes por número (2 en fp16 y bf16, 1 en int8) \\
+$B$, $\Bmem$, $\Ppico$ & tamaño del lote, ancho de banda de memoria y rendimiento máximo \\
+$p$, $q$ & en el tema~3, distribución del modelo objetivo y del borrador \\
+$\gamma$, $\beta$, $\alpha$, $c$ & tokens propuestos, tasa de aceptación, su valor esperado y coste relativo del borrador \\
+$\TV(p,q)$ & distancia de variación total, $\frac12\sum_x\abs{p(x)-q(x)}$ \\
+$b$, $\Delta$, $Z$ & bits, paso (escala) y punto cero de un cuantizador \\
+$H=2XX\T$ & matriz hessiana del error cuadrático de una capa (tema~5) \\
+$\TTFT$, $\TPOT$ & tiempo hasta el primer token y tiempo por token de salida \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Decodificación: búsqueda y muestreo}
+\label{tema:1}
+% =====================================================================
+
+Un modelo de lenguaje autorregresivo proporciona, en cada paso, una distribución $P(\cdot\mid x_{<t})$ sobre el vocabulario; la \emph{decodificación} es la regla que convierte esa sucesión de distribuciones en un texto concreto. Este tema presenta las dos familias de reglas: las de \emph{maximización} (búsqueda voraz y búsqueda en haz), que intentan encontrar la secuencia más probable, y las de \emph{muestreo} (temperatura, \emph{top-k} y núcleo), que extraen una secuencia aleatoria de una versión modificada de la distribución. Se siguen el §7.6 y el §13.4 de Jurafsky y Martin~\cite{jm3}, el §10.8 de Zhang \emph{et al.}~\cite{d2l}, la sección~3 de Holtzman \emph{et al.}~\cite{holtzman}, el §5.4 de Fan \emph{et al.}~\cite{fan} y la sección~6 de la tarea~1 de CS336~\cite{cs336a1}.
+
+\section{El problema de la decodificación}
+
+Sea $P$ un modelo de lenguaje sobre $\V$ con símbolo de fin \fin\ (módulo~1). Por la regla de la cadena, la probabilidad de una continuación $y=(y_1,\dots,y_T)$ de un prompt $x$ es
+\[
+P(y\mid x)=\prod_{t=1}^{T}P(y_t\mid x,y_{<t}),\qquad
+\ln P(y\mid x)=\sum_{t=1}^{T}\ln P(y_t\mid x,y_{<t}).
+\]
+
+\begin{definicion}[Regla de decodificación]\label{def:decodificacion}
+Una \emph{regla de decodificación} es un procedimiento que, a partir del prompt $x$ y del acceso a las distribuciones condicionadas $P(\cdot\mid x,y_{<t})$, produce una continuación $y$, de forma determinista o aleatoria. La \emph{decodificación de máxima probabilidad} (MAP) busca
+\[
+y^{\ast}=\argmax_{y}\ P(y\mid x),
+\]
+donde el máximo se toma sobre las secuencias terminadas en \fin.
+\end{definicion}
+
+\begin{proposicion}\label{prop:exhaustiva}
+Con un vocabulario de $K$ tokens, el número de continuaciones de longitud exactamente $T$ es $K^{T}$. En consecuencia, la búsqueda exhaustiva del máximo entre las secuencias de longitud $T$ requiere evaluar $K^{T}$ secuencias.
+\end{proposicion}
+
+Con $K=5\cdot 10^{4}$ y $T=20$, $K^{T}\approx 9{,}5\cdot 10^{93}$: la decodificación MAP exacta es inabordable y se aproxima con búsquedas locales~\cite[§10.8.2]{d2l}.
+
+\section{Búsqueda voraz y búsqueda en haz}
+
+\begin{definicion}[Búsqueda voraz]
+La \emph{búsqueda voraz} (\emph{greedy}) elige en cada paso el token más probable, $y_t=\argmax_{v\in\V}P(v\mid x,y_{<t})$, hasta emitir \fin\ o alcanzar una longitud máxima~\cite[§7.6.1]{jm3}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:voraz-no-optima}
+La búsqueda voraz no encuentra, en general, la secuencia de máxima probabilidad.
+\end{proposicion}
+
+\begin{definicion}[Búsqueda en haz]\label{def:haz}
+Sea $m\ge 1$ la \emph{anchura del haz}. La \emph{búsqueda en haz} mantiene un conjunto $\mathcal{H}_t$ de, a lo sumo, $m$ prefijos de longitud $t$. En el paso $t+1$ forma todas las extensiones $(h,v)$ con $h\in\mathcal{H}_t$ y $v\in\V$, las puntúa con $\ln P(h,v\mid x)=\ln P(h\mid x)+\ln P(v\mid x,h)$ y conserva las $m$ de mayor puntuación. Las extensiones que terminan en \fin\ se retiran del haz como candidatas finales; al acabar se devuelve la candidata de mayor puntuación~\cite[§13.4]{jm3}, \cite[§10.8.3]{d2l}.
+\end{definicion}
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[Coste y casos extremos]\label{prop:coste-haz}
+Para una salida de longitud $T$ y vocabulario de tamaño $K$, la búsqueda en haz de anchura $m$ evalúa a lo sumo $mKT$ extensiones. Con $m=1$ coincide con la búsqueda voraz, y con $m\ge K^{T-1}$ no poda ningún prefijo y coincide con la búsqueda exhaustiva entre las secuencias de longitud~$T$.
+\end{proposicion}
+
+\begin{observacion}[Sesgo hacia las secuencias cortas]\label{obs:longitud}
+Cada término $\ln P(y_t\mid x,y_{<t})$ es menor o igual que cero, de modo que la puntuación $\ln P(y\mid x)$ no aumenta al alargar la secuencia. La búsqueda en haz tiende entonces a preferir candidatas cortas. La corrección habitual divide por una potencia de la longitud,
+\[
+\mathrm{punt}(y)=\frac{1}{L^{a}}\ln P(y\mid x),\qquad L=\abs{y},\ a\in[0,1],
+\]
+con $a=0{,}75$ en el ejemplo de~\cite[§10.8.3]{d2l}; con $a=1$ se obtiene la log-probabilidad media por token de~\cite[§13.4]{jm3}.
+\end{observacion}
+
+\begin{observacion}[Degeneración]
+La búsqueda en haz es la regla habitual en traducción automática, donde la salida está muy determinada por la entrada. En la generación abierta produce textos repetitivos: Holtzman \emph{et al.} muestran que el texto humano tiene una probabilidad por token claramente menor que la del texto obtenido por maximización y que las repeticiones se refuerzan a sí mismas, porque cada repetición aumenta la probabilidad de la siguiente~\cite[§4.3]{holtzman}. Por eso los asistentes conversacionales muestrean.
+\end{observacion}
+
+\section{Muestreo con temperatura}
+
+\begin{definicion}[Softmax con temperatura]\label{def:temperatura}
+Sea $z\in\R^{K}$ el vector de logits y sea $\tau>0$. La \emph{distribución con temperatura} $\tau$ es
+\[
+p_\tau(i)=\frac{e^{z_i/\tau}}{\sum_{j=1}^{K}e^{z_j/\tau}},\qquad i=1,\dots,K.
+\]
+El \emph{muestreo con temperatura} extrae cada token de $p_\tau$~\cite[§7.6.3]{jm3}, \cite[§3.3]{holtzman}. Con $\tau=1$ se recupera la distribución del modelo.
+\end{definicion}
+
+\begin{proposicion}[Temperatura como potencia]\label{prop:potencia}
+Sea $p=p_1$ la distribución del modelo. Entonces $p_\tau(i)\propto p(i)^{1/\tau}$. En particular, elevar las probabilidades a una potencia $a>0$ y renormalizar equivale a muestrear con temperatura $\tau=1/a$.
+\end{proposicion}
+
+\begin{proposicion}[Límites de la temperatura]\label{prop:limites-tau}
+Sea $M=\{i:z_i=\max_j z_j\}$ el conjunto de logits máximos. Entonces
+\[
+\lim_{\tau\to 0^{+}}p_\tau(i)=\begin{cases}1/\abs{M}, & i\in M,\\ 0,& i\notin M,\end{cases}
+\qquad
+\lim_{\tau\to\infty}p_\tau(i)=\frac{1}{K}.
+\]
+Si el máximo es único, el límite $\tau\to 0^{+}$ es la búsqueda voraz.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+La temperatura reescala todos los logits por igual y nunca anula un token: la cola de tokens improbables conserva masa positiva para cualquier $\tau>0$. Los métodos de truncamiento la eliminan.
+
+\section{Truncamiento: \emph{top-k} y muestreo de núcleo}
+
+\begin{definicion}[Distribución truncada]\label{def:truncada}
+Sea $p$ una distribución sobre $\V$ y sea $S\subseteq\V$ con $p(S)=\sum_{i\in S}p(i)>0$. La \emph{distribución truncada} a $S$ es $p_S(i)=p(i)/p(S)$ si $i\in S$ y $p_S(i)=0$ en otro caso.
+\end{definicion}
+
+\begin{definicion}[\emph{Top-k} y núcleo]\label{def:topk-topp}
+Sea $p_{(1)}\ge p_{(2)}\ge\dots\ge p_{(K)}$ la ordenación decreciente de las probabilidades.
+\begin{enumerate}[label=(\alph*)]
+  \item El muestreo \emph{top-k}~\cite[§5.4]{fan} trunca $p$ al conjunto $V^{(k)}$ de los $k$ tokens más probables.
+  \item El \emph{muestreo de núcleo} o \emph{top-p}~\cite[§3.1]{holtzman}, con umbral $p\in(0,1]$, trunca al menor conjunto $V^{(p)}$ tal que $\sum_{i\in V^{(p)}}p(i)\ge p$.
+\end{enumerate}
+\end{definicion}
+
+\begin{proposicion}[El núcleo está formado por los más probables]\label{prop:nucleo}
+Sea $k^{\ast}=\min\{k:\sum_{i=1}^{k}p_{(i)}\ge p\}$. Entonces el tamaño mínimo de un conjunto con masa al menos $p$ es $k^{\ast}$, y el conjunto de los $k^{\ast}$ tokens más probables lo alcanza. Es decir, el muestreo de núcleo coincide con \emph{top-k} con $k=k^{\ast}$, donde $k^{\ast}$ depende de la distribución de cada paso.
+\end{proposicion}
+
+\begin{proposicion}[Distorsión del truncamiento]\label{prop:tv-truncada}
+Para cualquier $S$ con $p(S)>0$, la distancia de variación total entre la distribución truncada y la original es la masa eliminada:
+\[
+\TV(p_S,p)=\tfrac12\sum_{i\in\V}\abs{p_S(i)-p(i)}=1-p(S).
+\]
+\end{proposicion}
+
+Así, el muestreo de núcleo con umbral $p$ garantiza $\TV(p_S,p)\le 1-p$ en cada paso, mientras que \emph{top-k} con $k$ fijo no controla la masa eliminada: si el modelo duda entre muchas opciones razonables, $k$ fijo descarta masa grande; si está seguro, conserva tokens de cola~\cite[§3.2]{holtzman}.
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Combinación y uso práctico]
+Las reglas se componen en el orden de la \cref{fig:cadena-muestreo}: los logits se dividen por $\tau$, se aplica la softmax, se trunca con \emph{top-k} y luego con el núcleo, se renormaliza y se muestrea~\cite[§7.6.4]{jm3}. Las API públicas de Anthropic, Google y xAI exponen la temperatura y el umbral del núcleo como parámetros de la petición; los valores que usan por defecto sus aplicaciones de chat no son públicos.
+\end{observacion}
+
+\addtocounter{figure}{1}%
+
+
+% =====================================================================
+\chapter{El coste de la inferencia: \emph{prefill}, decodificación y caché KV}
+\label{tema:2}
+% =====================================================================
+
+Generar una respuesta tiene dos fases con perfiles de coste opuestos: el \emph{prefill}, que procesa el prompt completo en paralelo, y la \emph{decodificación}, que produce los tokens uno a uno. Este tema demuestra que la caché de claves y valores (caché KV) evita recalcular el pasado sin alterar la salida, calcula su tamaño y aplica el modelo \emph{roofline} del módulo~17 para explicar por qué la decodificación está limitada por el ancho de banda de memoria y cómo el tamaño del lote intercambia latencia por rendimiento. Se siguen la clase~10 de CS336~\cite{cs336}, la sección~2 de Pope \emph{et al.}~\cite{pope}, la sección~3 de Kwon \emph{et al.}~\cite{kwon} y el artículo de Shazeer sobre la atención multiconsulta~\cite{shazeer}.
+
+\section{Las dos fases de la generación}
+
+\begin{definicion}[\emph{Prefill} y decodificación]\label{def:fases}
+Sea un prompt $x_{1:n}$. La fase de \emph{prefill} ejecuta una pasada del Transformer sobre las $n$ posiciones a la vez, como en el entrenamiento, y obtiene la distribución del primer token nuevo. La fase de \emph{decodificación} ejecuta, para cada token nuevo, una pasada sobre una sola posición, la del último token emitido.
+\end{definicion}
+
+Por el módulo~16, una pasada hacia delante cuesta unas $2N$ operaciones por token y posición, donde $N$ es el número de parámetros (sin contar la atención sobre el contexto, que se trata en el \cref{prop:intensidad-capas}).
+
+\addtocounter{definicion}{1}%
+
+\section{La caché KV}
+
+En un Transformer causal (módulos~13 y~14), sean $h^{(\ell)}_i$ el estado de la posición $i$ a la salida de la capa $\ell$, con $h^{(0)}_i$ la incrustación del token $x_i$ y su posición. Cada capa calcula, para cada posición, una consulta, una clave y un valor por cabeza, $q_i=h^{(\ell-1)}_iW_Q$, $k_i=h^{(\ell-1)}_iW_K$, $v_i=h^{(\ell-1)}_iW_V$, y la salida de la atención en $t$ es
+\[
+a_t=\softmax\Bigl(\frac{q_t\,[k_1;\dots;k_t]\T}{\sqrt{\dhd}}\Bigr)[v_1;\dots;v_t],
+\]
+seguida de las conexiones residuales, la normalización y el perceptrón multicapa, que actúan posición a posición.
+
+\begin{lema}[Causalidad de los estados]\label{lem:causal}
+Para toda capa $\ell$ y toda posición $i$, el estado $h^{(\ell)}_i$ depende solo de $x_{1:i}$.
+\end{lema}
+
+\begin{teorema}[Corrección de la caché KV]\label{teo:cache}
+Sea un procedimiento que, en cada paso de decodificación, calcula $q$, $k$ y $v$ únicamente para la posición nueva $t$ en cada capa, añade $(k_t,v_t)$ a una caché que contiene los pares $(k_j,v_j)$, $j<t$, calculados en pasos anteriores, y atiende sobre toda la caché. Entonces sus salidas coinciden exactamente (en aritmética exacta) con las de una pasada completa sobre $x_{1:t}$.
+\end{teorema}
+
+En coma flotante pueden aparecer diferencias de redondeo, porque el orden de las operaciones cambia; la distribución que define el modelo es la misma.
+
+\begin{proposicion}[Pasadas de posición con y sin caché]\label{prop:pasadas}
+Sea un prompt de $n$ tokens del que se generan $T$ tokens. Sin caché, el número total de posiciones procesadas por las capas no atencionales es $Tn+T(T-1)/2$; con caché es $n+T-1$.
+\end{proposicion}
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[Tamaño de la caché KV]\label{prop:tam-cache}
+Sea un modelo con $L$ capas, $\nkv$ cabezas de clave y valor de dimensión $\dhd$, y números de $s$ bytes. La caché ocupa
+\[
+c_{\mathrm{kv}}=2\,L\,\nkv\,\dhd\,s\quad\text{bytes por token,}
+\]
+y una secuencia de $S$ tokens ocupa $S\,c_{\mathrm{kv}}$ bytes.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Atención multiconsulta y agrupada]
+La caché es proporcional a $\nkv$. La atención multiconsulta (MQA)~\cite{shazeer} usa $\nkv=1$ y la agrupada (GQA, módulo~18) un valor intermedio; respecto a la atención multicabeza con $n_h$ cabezas, la caché se divide por $n_h/\nkv$. Pope \emph{et al.} muestran que la atención multiconsulta permite contextos hasta 32 veces más largos con la misma memoria en PaLM 540B~\cite{pope}.
+\end{observacion}
+
+\section{Intensidad aritmética de la inferencia}
+
+Se recuerda del módulo~17 que la intensidad aritmética de una operación es $I=F/Q$ (FLOP por byte transferido) y que, en un dispositivo con rendimiento $\Ppico$ y ancho de banda $\Bmem$, la operación está limitada por la memoria si $I<\Icrit=\Ppico/\Bmem$.
+
+\begin{proposicion}[Intensidad de las capas]\label{prop:intensidad-capas}
+Sea un lote de $B$ secuencias en bf16 ($s=2$) del que se procesan $T$ posiciones nuevas por secuencia, con $S$ posiciones ya presentes en la caché.
+\begin{enumerate}[label=(\alph*)]
+  \item En un perceptrón con tres matrices de $D\times F$ (como el SwiGLU), $F_{\mathrm{op}}=6BTDF$ y $Q=4BTD+4BTF+6DF$. Si $BT\ll D,F$, la intensidad es $I\approx BT$.
+  \item En la atención, con dimensión total $D$ de consultas, claves y valores, $F_{\mathrm{op}}=4BSTD$ y $Q=4BSD+4BTD$, de modo que $I=ST/(S+T)$, independiente de $B$. En el \emph{prefill} ($T=S$), $I=S/2$; en la decodificación ($T=1$), $I=S/(S+1)<1$.
+\end{enumerate}
+\end{proposicion}
+
+La diferencia entre ambas capas es estructural: en el perceptrón todas las secuencias del lote comparten los mismos pesos, que se leen una vez; en la atención cada secuencia tiene su propia caché, de modo que agrupar secuencias no reutiliza datos~\cite{cs336}.
+
+\begin{teorema}[Cota de memoria de la decodificación]\label{teo:cota-memoria}
+Sea un modelo de $N$ parámetros de $s$ bytes y sea un paso de decodificación con un lote de $B$ secuencias de $S$ tokens de contexto cada una. Si los pesos y la caché se leen al menos una vez por paso, el tiempo del paso cumple
+\[
+t_{\mathrm{paso}}\ \ge\ \frac{sN+B\,S\,c_{\mathrm{kv}}}{\Bmem}.
+\]
+En particular, con $B=1$ y caché despreciable, la velocidad de generación cumple $\text{tokens/s}\le\Bmem/(sN)$.
+\end{teorema}
+
+\addtocounter{definicion}{1}%
+
+\section{El lote: latencia frente a rendimiento}
+
+\begin{proposicion}[Compromiso del lote]\label{prop:lote}
+En las condiciones del \cref{teo:cota-memoria}, supóngase que el tiempo de un paso es exactamente $t(B)=t_0+Bt_1$, con $t_0=sN/\Bmem$ y $t_1=S\,c_{\mathrm{kv}}/\Bmem$. Entonces la velocidad por usuario $1/t(B)$ decrece con $B$, el rendimiento total $R(B)=B/t(B)$ crece con $B$ y
+\[
+\lim_{B\to\infty}R(B)=\frac{1}{t_1}=\frac{\Bmem}{S\,c_{\mathrm{kv}}}.
+\]
+\end{proposicion}
+
+El lote amortiza la lectura de los pesos, pero no la de la caché. La \cref{tab:lote} lo ilustra con Llama~2 7B en fp16 ($14$~GB de pesos), secuencias de $2000$ tokens ($1{,}05$~GB de caché cada una) y $\Bmem=2$~TB/s; el límite del rendimiento es $\Bmem/(S\,c_{\mathrm{kv}})\approx 1907$ tokens/s. Además, la memoria total limita $B$: con 64 secuencias la caché ya ocupa $67$~GB.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}rrrrr@{}}
+\toprule
+Lote $B$ & Caché total (GB) & Tiempo por paso (ms) & Tokens/s totales & Tokens/s por usuario \\
+\midrule
+1 & 1{,}05 & 7{,}52 & 133 & 133 \\
+8 & 8{,}39 & 11{,}19 & 715 & 89{,}3 \\
+32 & 33{,}55 & 23{,}78 & 1346 & 42{,}1 \\
+64 & 67{,}11 & 40{,}55 & 1578 & 24{,}7 \\
+\bottomrule
+\end{tabular}
+\caption{Cota de memoria del \cref{teo:cota-memoria} para Llama~2 7B en fp16 con contexto de $2000$ tokens y $\Bmem=2$~TB/s.}
+\label{tab:lote}
+\end{table}
+
+\begin{observacion}[Cuándo deja de mandar la memoria]
+Respecto a los pesos, la intensidad de un paso con lote $B$ es $\approx B$ FLOP/byte en bf16 (\cref{prop:intensidad-capas}), de modo que haría falta $B\approx\Icrit$ para quedar limitado por el cómputo; la caché, con intensidad menor que~1, lo impide antes. Pope \emph{et al.} cuantifican este compromiso en PaLM 540B: el \emph{prefill} de lotes grandes alcanza un $76\,\%$ de utilización de FLOP, mientras que la decodificación con lote pequeño logra una latencia de 29~ms por token con pesos en int8~\cite{pope}. Todo lo que reduzca bytes acelera la decodificación: menos cabezas de clave y valor, cuantización (\cref{tema:4,tema:5}) y más tokens por lectura de pesos (\cref{tema:3}).
+\end{observacion}
+
+
+% =====================================================================
+\chapter{Decodificación especulativa}
+\label{tema:3}
+% =====================================================================
+
+El \cref{tema:2} mostró que un paso de decodificación está limitado por la lectura de los pesos: procesar unas pocas posiciones más en la misma pasada apenas cuesta tiempo. La \emph{decodificación especulativa} aprovecha esta asimetría entre generar y verificar. Un modelo pequeño (el \emph{borrador}) propone varios tokens y el modelo grande (el \emph{objetivo}) los verifica todos en una sola pasada con una regla de aceptación y rechazo que preserva \emph{exactamente} su distribución. Se siguen el artículo de Leviathan, Kalman y Matias~\cite{leviathan} (secciones~2 y~3 y apéndice~A.1), el de Chen \emph{et al.}~\cite{chen}, que propuso el mismo algoritmo de forma independiente con el nombre de \emph{speculative sampling}, y la clase~10 de CS336~\cite{cs336}.
+
+\section{El algoritmo}
+
+En todo el tema, $p(\cdot\mid x_{<t})$ es la distribución del modelo objetivo y $q(\cdot\mid x_{<t})$ la del borrador, ambas ya modificadas por la regla de muestreo que se desee (temperatura, núcleo, etc.). Cuando el contexto está fijado se escribe simplemente $p(x)$ y $q(x)$.
+
+\begin{definicion}[Ronda de decodificación especulativa]\label{def:ronda}
+Sea $\gamma\ge 1$ un entero y sea $x_{<t}$ el prefijo actual. Una \emph{ronda} consiste en:
+\begin{enumerate}[label=\arabic*.]
+  \item El borrador genera $\tilde x_1,\dots,\tilde x_\gamma$ de forma autorregresiva, con $\tilde x_i\sim q(\cdot\mid x_{<t},\tilde x_{<i})$, y guarda esas probabilidades.
+  \item El modelo objetivo procesa en una sola pasada el prefijo y los $\gamma$ tokens propuestos, y obtiene $p(\cdot\mid x_{<t},\tilde x_{<i})$ para $i=1,\dots,\gamma+1$.
+  \item Para $i=1,\dots,\gamma$, en orden, se acepta $\tilde x_i$ con probabilidad $\min\bigl(1,\,p(\tilde x_i)/q(\tilde x_i)\bigr)$, con ambas distribuciones condicionadas al mismo prefijo.
+  \item En el primer rechazo, en la posición $i$, se emite un token de la \emph{distribución residual}
+  \[
+  r(x)=\frac{\max\bigl(0,\,p(x)-q(x)\bigr)}{\sum_{y}\max\bigl(0,\,p(y)-q(y)\bigr)}
+  \]
+  y la ronda termina.
+  \item Si se aceptan los $\gamma$ tokens, se emite además un token de $p(\cdot\mid x_{<t},\tilde x_{1:\gamma})$, que ya se calculó en el paso~2.
+\end{enumerate}
+\end{definicion}
+
+Cada ronda emite entre $1$ y $\gamma+1$ tokens con una sola pasada del modelo objetivo. Esa pasada procesa $\gamma+1$ posiciones, como un pequeño \emph{prefill}: está limitada por la lectura de los pesos y cuesta casi lo mismo que un paso de decodificación (\cref{teo:cota-memoria}).
+
+\addtocounter{figure}{1}%
+
+\section{Muestreo por rechazo modificado}
+
+Se analiza primero un solo token. Se propone $\tilde x\sim q$, que se acepta con probabilidad $\min(1,p(\tilde x)/q(\tilde x))$; si se rechaza, se emite $x'\sim r$.
+
+\begin{definicion}[Tasa de aceptación]\label{def:beta}
+La \emph{tasa de aceptación} es la probabilidad de aceptar la propuesta~\cite[definición~3.1]{leviathan}:
+\[
+\beta=\sum_{x}q(x)\min\Bigl(1,\frac{p(x)}{q(x)}\Bigr)=\sum_{x}\min\bigl(p(x),q(x)\bigr).
+\]
+\end{definicion}
+
+\begin{lema}[Normalización del residuo]\label{lem:residuo}
+$\sum_{x}\max\bigl(0,p(x)-q(x)\bigr)=1-\beta$. En consecuencia, $r$ está bien definida si $\beta<1$, y $\beta=1$ si y solo si $p=q$.
+\end{lema}
+
+\begin{teorema}[Preservación de la distribución]\label{teo:especulativa}
+El token emitido por el muestreo por rechazo modificado tiene distribución exactamente $p$.
+\end{teorema}
+
+\begin{proposicion}[Aceptación y variación total]\label{prop:beta-tv}
+$1-\beta=\TV(p,q)$, de modo que la tasa de rechazo es la distancia de variación total entre el objetivo y el borrador~\cite[lema~3.3 y teorema~3.5]{leviathan}.
+\end{proposicion}
+
+La demostración se pide en el \cref{eje:3-tv}. Un borrador es bueno exactamente en la medida en que su distribución está próxima, en variación total, a la del objetivo; por eso se suele obtener por destilación del objetivo~\cite{cs336} (\cref{tema:5}).
+
+\addtocounter{definicion}{1}%
+
+\section{Corrección para secuencias}
+
+\begin{teorema}[Preservación en secuencias]\label{teo:especulativa-secuencias}
+Sea un procedimiento que ejecuta rondas sucesivas (\cref{def:ronda}) a partir de un prompt, cada una sobre el prefijo que dejó la anterior. Para todo $T$, los $T$ primeros tokens emitidos tienen la misma distribución conjunta que $T$ pasos de muestreo autorregresivo de $p$.
+\end{teorema}
+
+\begin{corolario}[Versión voraz]\label{cor:voraz}
+Si $p$ y $q$ son distribuciones degeneradas en sus respectivos $\argmax$ (búsqueda voraz), la regla de aceptación acepta $\tilde x_i$ si y solo si coincide con el $\argmax$ del objetivo, y en caso contrario emite ese $\argmax$. La salida es idéntica a la búsqueda voraz con el objetivo.
+\end{corolario}
+
+\section{Rendimiento}
+
+\begin{definicion}[Aceptación media y coste relativo]
+Se supone que las tasas de aceptación de las sucesivas propuestas son variables independientes e idénticamente distribuidas, de media $\alpha=\E[\beta]$~\cite[§3.1]{leviathan}. Se llama \emph{coste relativo} $c$ al cociente entre el tiempo de una pasada del borrador y el de una pasada del objetivo~\cite[definición~3.7]{leviathan}.
+\end{definicion}
+
+\begin{teorema}[Tokens esperados por ronda]\label{teo:tokens-ronda}
+Con aceptaciones independientes de probabilidad $\alpha<1$, el número $N_{\mathrm{r}}$ de tokens emitidos en una ronda cumple
+\[
+\E[N_{\mathrm{r}}]=\sum_{j=0}^{\gamma}\alpha^{j}=\frac{1-\alpha^{\gamma+1}}{1-\alpha}.
+\]
+\end{teorema}
+
+\begin{teorema}[Factor de mejora]\label{teo:mejora}
+En las condiciones anteriores, si el tiempo de una ronda es el de $\gamma$ pasadas del borrador más una del objetivo, el cociente entre el tiempo esperado por token sin y con decodificación especulativa es
+\[
+f(\gamma)=\frac{1-\alpha^{\gamma+1}}{(1-\alpha)(\gamma c+1)}.
+\]
+\end{teorema}
+
+\begin{corolario}\label{cor:alpha-c}
+Si $\alpha>c$, existe $\gamma$ con $f(\gamma)>1$; en concreto, $f(1)=(1+\alpha)/(1+c)>1$~\cite[corolario~3.9]{leviathan}.
+\end{corolario}
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Resultados publicados]
+Leviathan \emph{et al.} obtienen aceleraciones de 2 a 3 veces en T5-XXL con salidas idénticas~\cite{leviathan}, y Chen \emph{et al.}, de 2 a 2{,}5 veces en Chinchilla 70B con un borrador de 4000 millones de parámetros~\cite{chen}. La clase~10 de CS336 describe extensiones en las que el borrador es una pequeña red añadida al propio objetivo~\cite{cs336}. Si Claude, Gemini o Grok emplean decodificación especulativa en su servicio no es información pública.
+\end{observacion}
+
+
+% =====================================================================
+\chapter{Fundamentos de la cuantización}
+\label{tema:4}
+% =====================================================================
+
+Como la decodificación está limitada por la memoria (\cref{tema:2}), guardar los pesos con menos bits acelera casi en proporción a la reducción de bytes. \emph{Cuantizar} es representar números reales con un conjunto finito de niveles, normalmente enteros de $b$ bits acompañados de una escala. Este tema define los cuantizadores uniformes afín y simétrico, acota su error, deduce la relación entre bits y relación señal-ruido, analiza la granularidad de las escalas y el efecto de los valores atípicos, y muestra cómo se realiza un producto de matrices en aritmética entera. Se siguen las clases~5 y~6 («Quantization») de MIT 6.5940~\cite{mit65940}, el estudio de Gray y Neuhoff~\cite{grayneuhoff}, la sección~2 de Jacob \emph{et al.}~\cite{jacob}, la sección~2 de Xiao \emph{et al.}~\cite{smoothquant} y el §2.1 de Dettmers \emph{et al.}~\cite{llmint8}.
+
+\section{Cuantizadores uniformes}
+
+En todo el tema, $\rnd(u)$ denota el redondeo al entero más próximo con los empates resueltos lejos de cero. Es una función impar, $\rnd(-u)=-\rnd(u)$, y cumple $\abs{\rnd(u)-u}\le\frac12$ y $\rnd(u+n)=\rnd(u)+n$ para todo entero $n$.
+
+\begin{definicion}[Cuantizador afín]\label{def:afin}
+Sean $b\ge 1$ bits, un \emph{paso} o \emph{escala} $\Delta>0$ y un \emph{punto cero} entero $Z\in\{0,\dots,2^{b}-1\}$. El \emph{cuantizador afín} asigna a $x\in\R$ el entero
+\[
+Q(x)=\clip\bigl(\rnd(x/\Delta)+Z,\ 0,\ 2^{b}-1\bigr),
+\]
+y la \emph{descuantización} es $\hat x=\Delta\,(Q(x)-Z)$. Para un grupo de valores con rango $[x_{\min},x_{\max}]$, con $x_{\min}\le 0\le x_{\max}$, la calibración por mínimo y máximo toma
+\[
+\Delta=\frac{x_{\max}-x_{\min}}{2^{b}-1},\qquad Z=\rnd\Bigl(-\frac{x_{\min}}{\Delta}\Bigr).
+\]
+\end{definicion}
+
+\begin{definicion}[Cuantizador simétrico]\label{def:simetrico}
+El \emph{cuantizador simétrico} de $b$ bits usa $Z=0$, los enteros $\{-(2^{b-1}-1),\dots,2^{b-1}-1\}$ y la escala $\Delta=\max_i\abs{x_i}/(2^{b-1}-1)$, llamada de \emph{máximo absoluto} (\emph{absmax}). En int8 los enteros van de $-127$ a $127$; LLM.int8() escribe la misma regla como multiplicación por $s_x=127/\norm{x}_\infty=1/\Delta$~\cite[§2.1]{llmint8}.
+\end{definicion}
+
+El cuantizador simétrico es más sencillo y es el habitual para los pesos, cuya distribución está centrada en cero; el afín aprovecha mejor los niveles cuando el rango es asimétrico, como en las activaciones posteriores a una ReLU~\cite{mit65940}.
+
+\addtocounter{figure}{1}%
+
+\section{Error de cuantización}
+
+\begin{teorema}[Cota del error]\label{teo:error-cuant}
+Sea un cuantizador afín calibrado por mínimo y máximo (\cref{def:afin}). Para todo $x\in[x_{\min},x_{\max}]$, el recorte no actúa y
+\[
+\abs{\hat x-x}\le\frac{\Delta}{2}.
+\]
+Además, $x=0$ se representa sin error. Para $x$ fuera del rango, el recorte puede actuar y el error no está acotado (\emph{saturación}).
+\end{teorema}
+
+La representación exacta del cero importa en la práctica: el relleno con ceros y las activaciones nulas no introducen error~\cite{jacob}.
+
+\addtocounter{definicion}{1}%
+
+\begin{proposicion}[Modelo de ruido uniforme]\label{prop:ruido}
+Si el error $e=\hat x-x$ se modela como una variable uniforme en $[-\Delta/2,\Delta/2]$, entonces $\E[e]=0$ y $\E[e^{2}]=\Delta^{2}/12$.
+\end{proposicion}
+
+El modelo es una aproximación clásica, buena cuando el paso es pequeño frente a la escala de variación de la densidad de $x$~\cite{grayneuhoff}; la demostración se pide en el \cref{eje:4-ruido}. Una simulación con $\Delta=0{,}01$ y $10^{6}$ muestras da $\E[e^{2}]\approx 8{,}345\cdot 10^{-6}$, frente a $\Delta^{2}/12=8{,}333\cdot 10^{-6}$.
+
+\begin{corolario}[Seis decibelios por bit]\label{cor:6db}
+Si el rango está fijo, cada bit adicional divide $\Delta$ entre~2 y el error cuadrático medio entre~4, de modo que la relación señal-ruido aumenta en $10\log_{10}4\approx 6{,}02$~dB por bit.
+\end{corolario}
+
+\section{Granularidad y valores atípicos}
+
+\begin{definicion}[Granularidad]\label{def:granularidad}
+Sea una matriz de pesos $W\in\R^{d_{\mathrm{in}}\times d_{\mathrm{out}}}$. La cuantización es \emph{por tensor} si usa una sola escala para toda la matriz; \emph{por canal} si usa una escala por cada canal de salida (columna de $W$), y \emph{por grupos} si divide cada canal en grupos de $g$ pesos consecutivos con una escala cada uno~\cite[§2]{smoothquant}. Para las activaciones se usa además la cuantización \emph{por token}, con una escala por fila.
+\end{definicion}
+
+\begin{proposicion}[Coste de las escalas]\label{prop:bits-grupo}
+Con pesos de $b$ bits y una escala de $b_\Delta$ bits por grupo de $g$ pesos, el almacenamiento medio es $b+b_\Delta/g$ bits por peso.
+\end{proposicion}
+
+Con int4, grupos de $g=128$ y escalas en fp16, el coste es $4+16/128=4{,}125$ bits por peso. La \cref{tab:formatos} traslada estas cifras a la cota de velocidad del \cref{teo:cota-memoria}.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Formato & Bytes por peso & Pesos de un modelo de $7\cdot 10^{9}$ & Cota de tokens/s a $2$~TB/s \\
+\midrule
+fp16 / bf16 & 2 & 14~GB & 143 \\
+int8 & 1 & 7~GB & 286 \\
+int4, grupos de 128 & $0{,}5156$ & $3{,}61$~GB & 554 \\
+\bottomrule
+\end{tabular}
+\caption{Efecto del formato de los pesos en la memoria y en la cota de velocidad con lote~1.}
+\label{tab:formatos}
+\end{table}
+
+\begin{proposicion}[Efecto de un valor atípico]\label{prop:atipico}
+En un grupo cuantizado de forma simétrica con $b$ bits, si un valor tiene módulo $M=\max_i\abs{x_i}$, todos los valores con $\abs{x_i}<\Delta/2=M/\bigl(2(2^{b-1}-1)\bigr)$ se cuantizan a cero, y la cota de error del grupo es proporcional a $M$.
+\end{proposicion}
+
+Por ejemplo, un grupo int8 con valores del orden de $0{,}1$ y un atípico $M=8$ tiene $\Delta=8/127=0{,}063$: los valores pequeños quedan representados con solo uno o dos niveles. Los remedios son grupos más pequeños, tratar los atípicos aparte y transformar la matriz antes de cuantizar; se estudian en el \cref{tema:5}.
+
+\section{Producto de matrices en aritmética entera}
+
+\begin{proposicion}[Producto cuantizado]\label{prop:producto-entero}
+Sean $X\in\R^{B\times n}$ y $W\in\R^{n\times d}$ cuantizadas con $X\approx\Delta_X(Q_X-Z_X)$ (afín, por tensor) y $W\approx\Delta_WQ_W$ (simétrica, por tensor). Entonces
+\[
+XW\approx\Delta_X\Delta_W\bigl(Q_XQ_W-Z_X\,\mathbf{1}\,\mathbf{1}\T Q_W\bigr),
+\]
+donde $\mathbf{1}\in\R^{B}$ y $\mathbf{1}\in\R^{n}$ son vectores de unos. El producto $Q_XQ_W$ se calcula con enteros y acumuladores de 32 bits, y el término $\mathbf{1}\T Q_W$ (sumas de las columnas de $Q_W$) puede precalcularse una vez~\cite[§2]{jacob}.
+\end{proposicion}
+
+\begin{proposicion}[Qué escalas se pueden factorizar]\label{prop:factorizar}
+Sean escalas $\Delta^{X}_{i}$ por fila de $X$ (por token) y $\Delta^{W}_{j}$ por columna de $W$ (por canal de salida), con cuantización simétrica. Entonces
+\[
+(XW)_{ij}\approx\Delta^{X}_{i}\,\Delta^{W}_{j}\sum_{k=1}^{n}(Q_X)_{ik}(Q_W)_{kj},
+\]
+es decir, la descuantización es un reescalado del producto entero por el producto exterior de las escalas. En cambio, una escala por columna de $X$ (por canal de entrada) depende del índice $k$ que se suma y no se puede sacar del sumatorio.
+\end{proposicion}
+
+Esta es la cuantización vectorial de LLM.int8()~\cite[§3.1]{llmint8}, y su limitación explica por qué los atípicos de las activaciones, que se concentran en unos pocos \emph{canales}, son difíciles de tratar con núcleos de cálculo enteros~\cite[§3]{smoothquant}.
+
+\begin{observacion}[Cuantización durante o después del entrenamiento]
+La cuantización \emph{posterior al entrenamiento} (PTQ) calibra escalas y puntos cero con unos pocos datos y no modifica el entrenamiento; la cuantización \emph{consciente del entrenamiento} (QAT) simula el redondeo en la pasada hacia delante para que los pesos se adapten, a cambio de un coste de entrenamiento mucho mayor~\cite{cs336,mit65940}. Los formatos de coma flotante de 8 bits (fp8) se trataron en el módulo~17. Qué formatos usan Anthropic, Google o xAI para servir sus modelos no es público.
+\end{observacion}
+
+
+% =====================================================================
+\chapter{Cuantización de LLM y destilación}
+\label{tema:5}
+% =====================================================================
+
+Los cuantizadores del \cref{tema:4} funcionan bien en redes pequeñas, pero en los LLM aparecen dos dificultades: activaciones con unos pocos canales de magnitud muy grande y la pérdida de precisión al bajar a 4 bits o menos. Este tema estudia los métodos que las resuelven: la descomposición en precisión mixta de LLM.int8(), la migración de la dificultad de SmoothQuant, la corrección de segundo orden de GPTQ, el escalado según las activaciones de AWQ y el formato NF4 de QLoRA. Termina con la destilación de conocimiento, que comprime el modelo cambiando su tamaño en lugar de su formato. Se siguen los artículos originales~\cite{llmint8,smoothquant,gptq,awq,qlora,hinton}, las clases~6 («Quantization, Part~II»), 9 («Knowledge Distillation») y~13 («Efficient LLM Deployment») de MIT 6.5940~\cite{mit65940} y la clase~10 de CS336~\cite{cs336}.
+
+\section{Rasgos atípicos y LLM.int8()}
+
+Dettmers \emph{et al.} observan que, a partir de unos $6{,}7\cdot 10^{9}$ parámetros, las activaciones de los Transformer presentan \emph{rasgos atípicos}: unas pocas dimensiones ocultas con valores de magnitud mayor o igual que~6, presentes de forma sistemática en casi todas las capas~\cite[§4]{llmint8}. Por la \cref{prop:atipico}, una escala por token se ve dominada por ellos y destruye la precisión del resto.
+
+\begin{definicion}[Descomposición en precisión mixta]\label{def:llmint8}
+Sean $X\in\R^{B\times n}$ y $W\in\R^{n\times d}$ y sea $\alpha_0>0$ un umbral. Sea $O\subseteq\{1,\dots,n\}$ el conjunto de dimensiones internas $h$ en las que alguna entrada de la columna $X^{h}$ supera $\alpha_0$ en valor absoluto. \emph{LLM.int8()} calcula
+\[
+XW\approx\sum_{h\in O}X^{h}W_{h}\;+\;S\cdot\sum_{h\notin O}Q(X^{h})\,Q(W_{h}),
+\]
+donde $X^{h}$ es la columna $h$ de $X$, $W_{h}$ la fila $h$ de $W$, el primer término se calcula en fp16 y el segundo en int8 con cuantización vectorial (escala por fila de $X$ y por columna de $W$, \cref{prop:factorizar}) y reescalado $S$~\cite[§3.2]{llmint8}.
+\end{definicion}
+
+Con $\alpha_0=6$, los atípicos ocupan del orden del $0{,}1\,\%$ de las dimensiones, de modo que el $99{,}9\,\%$ de los productos se hace en 8 bits; en modelos de hasta $13\cdot 10^{9}$ parámetros hay como mucho 7 dimensiones atípicas~\cite[§3.2]{llmint8}.
+
+\begin{proposicion}[Exactitud de la descomposición]\label{prop:descomp}
+La descomposición de la \cref{def:llmint8} es exacta salvo por el error de cuantización del segundo término: $XW=\sum_{h\in O}X^{h}W_{h}+\sum_{h\notin O}X^{h}W_{h}$.
+\end{proposicion}
+
+\section{SmoothQuant: migrar la dificultad a los pesos}
+
+Los pesos son fáciles de cuantizar y las activaciones no. SmoothQuant traslada parte de la magnitud de cada canal de entrada de las activaciones a la fila correspondiente de los pesos mediante una transformación exacta~\cite[§4]{smoothquant}.
+
+\begin{proposicion}[Equivalencia del suavizado]\label{prop:smooth}
+Para todo vector $s\in\R^{n}$ con componentes positivas, $XW=\bigl(X\diag(s)^{-1}\bigr)\bigl(\diag(s)W\bigr)$.
+\end{proposicion}
+
+\begin{definicion}[Factores de suavizado]\label{def:smooth}
+Sea $\alpha\in[0,1]$ la \emph{intensidad de migración}. SmoothQuant toma, para cada canal $j$,
+\[
+s_j=\frac{\max_i\abs{X_{ij}}^{\alpha}}{\max_k\abs{W_{jk}}^{1-\alpha}},
+\]
+con estadísticas de $X$ obtenidas en un conjunto de calibración~\cite[ec.~4]{smoothquant}.
+\end{definicion}
+
+\begin{proposicion}[Equilibrio con $\alpha=\tfrac12$]\label{prop:alfa-medio}
+Sean $\hat X=X\diag(s)^{-1}$ y $\hat W=\diag(s)W$, y sean $m^{X}_{j}=\max_i\abs{X_{ij}}$ y $m^{W}_{j}=\max_k\abs{W_{jk}}$. Con los factores de la \cref{def:smooth},
+\[
+\max_i\abs{\hat X_{ij}}=(m^{X}_{j})^{1-\alpha}(m^{W}_{j})^{1-\alpha},\qquad
+\max_k\abs{\hat W_{jk}}=(m^{X}_{j})^{\alpha}(m^{W}_{j})^{\alpha}.
+\]
+En particular, con $\alpha=\tfrac12$ ambos máximos valen $\sqrt{m^{X}_{j}m^{W}_{j}}$.
+\end{proposicion}
+
+El factor $\diag(s)^{-1}$ puede incorporarse de antemano a la capa anterior (por ejemplo, a los parámetros de la normalización), de modo que la transformación no cuesta nada en inferencia y permite cuantizar pesos y activaciones a int8. Los autores proponen $\alpha=0{,}5$ como punto de equilibrio para OPT y BLOOM y otros valores para otros modelos~\cite[§4]{smoothquant}.
+
+\section{GPTQ: cuantización con información de segundo orden}
+
+Redondear cada peso a su nivel más próximo (RTN, \emph{round-to-nearest}) ignora que los errores de pesos distintos pueden compensarse en la salida de la capa. GPTQ minimiza directamente el error de salida.
+
+\begin{definicion}[Problema de cuantización por capas]\label{def:capas}
+Sea una capa lineal con pesos $W\in\R^{d_{\mathrm{row}}\times d_{\mathrm{col}}}$ y sea $X\in\R^{d_{\mathrm{col}}\times m}$ una matriz con $m$ entradas de calibración. Se busca la matriz cuantizada $\hat W$ que minimiza $\norm{WX-\hat WX}_F^{2}$~\cite[§3, ec.~1]{gptq}.
+\end{definicion}
+
+El objetivo se separa por filas: para una fila $w$ y su cuantizada $\hat w=w+\delta$, el error es $\norm{\delta X}^{2}=\delta XX\T\delta\T=\tfrac12\,\delta H\delta\T$, con $H=2XX\T$. Al ser la capa lineal, esta forma cuadrática es exacta y no una aproximación de Taylor.
+
+\begin{teorema}[Actualización óptima tras cuantizar un peso]\label{teo:obs}
+Sea $H$ simétrica definida positiva y sea $E(\delta)=\tfrac12\delta H\delta\T$. Si se fija la componente $q$ de la perturbación al error de redondeo, $\delta_q=\quant(w_q)-w_q$, la perturbación de los demás pesos que minimiza $E$ es
+\[
+\delta=-\frac{w_q-\quant(w_q)}{[H^{-1}]_{qq}}\,(H^{-1})_{q,:},
+\qquad\text{con error mínimo}\qquad E=\frac{\bigl(w_q-\quant(w_q)\bigr)^{2}}{2\,[H^{-1}]_{qq}}.
+\]
+\end{teorema}
+
+Este resultado es la fórmula del \emph{Optimal Brain Surgeon} que usa el método OBQ~\cite[§3, ec.~2]{gptq}. GPTQ lo hace aplicable a modelos de cientos de miles de millones de parámetros con tres ideas~\cite[§4]{gptq}: cuantizar las columnas en un orden fijo, igual para todas las filas, en lugar de elegir en cada paso el peso de menor error; aplicar las actualizaciones por bloques de 128 columnas para reducir el tráfico de memoria, y obtener las filas necesarias de $H^{-1}$ con una factorización de Cholesky, más estable numéricamente, añadiendo a $H$ un pequeño múltiplo de la identidad. Así cuantiza modelos de unos $175\cdot 10^{9}$ parámetros a 3 o 4 bits en unas cuatro horas de una GPU, con pérdida de precisión pequeña~\cite{gptq}.
+
+\section{AWQ: proteger los canales importantes}
+
+Lin \emph{et al.} observan que conservar en fp16 alrededor del $1\,\%$ de los pesos reduce mucho el error de cuantización si esos pesos se eligen por la magnitud de las \emph{activaciones} que los multiplican, y no por la de los propios pesos~\cite[§3.1]{awq}. Como la precisión mixta es incómoda para el hardware, AWQ consigue el mismo efecto con un escalado.
+
+\begin{proposicion}[Efecto del escalado de un canal]\label{prop:awq}
+Sea un peso $w$ que multiplica a una entrada $x$, cuantizado con el cuantizador simétrico $Q(w)=\Delta\rnd(w/\Delta)$. Si se escala el peso por $s>1$ y la entrada por $1/s$, el error de la salida es
+\[
+Q(ws)\,\frac{x}{s}-wx=\frac{\Delta'}{s}\Bigl(\rnd\Bigl(\frac{ws}{\Delta'}\Bigr)-\frac{ws}{\Delta'}\Bigr)x,
+\]
+donde $\Delta'$ es el paso del grupo tras el escalado. Si $\Delta'\approx\Delta$ y el error de redondeo relativo al paso tiene la misma distribución en ambos casos, el error esperado de ese canal se divide aproximadamente por $s$~\cite[§3.2, ecs.~2 y~3]{awq}.
+\end{proposicion}
+
+La hipótesis $\Delta'\approx\Delta$ es razonable si se escala un solo canal y no es el de mayor módulo del grupo; si $s$ es demasiado grande, el paso del grupo aumenta y empeoran los demás canales. AWQ elige $s=s_X^{\alpha}$, con $s_X$ la magnitud media de cada canal de activación y $\alpha\in[0,1]$ obtenido por búsqueda en un conjunto de calibración~\cite[§3.2, ec.~5]{awq}. El método solo cuantiza pesos y no necesita retropropagación.
+
+\section{QLoRA: cuantizar a 4 bits para ajustar}
+
+QLoRA ajusta un modelo congelado en 4 bits con adaptadores de bajo rango (módulo~20) e introduce dos técnicas de cuantización~\cite[§3]{qlora}.
+
+\begin{definicion}[NormalFloat de 4 bits]\label{def:nf4}
+Sea $Q_{\mathcal{N}}$ la función cuantil de la normal estándar. El formato NF4 toma como niveles los valores
+\[
+q_i=\tfrac12\Bigl(Q_{\mathcal{N}}\Bigl(\frac{i}{2^{k}+1}\Bigr)+Q_{\mathcal{N}}\Bigl(\frac{i+1}{2^{k}+1}\Bigr)\Bigr),
+\]
+con $k=4$, ajustados para que el $0$ se represente exactamente y normalizados al intervalo $[-1,1]$; cada bloque de 64 pesos se divide por su máximo absoluto antes de cuantizarse~\cite[§3, ec.~4]{qlora}.
+\end{definicion}
+
+Los pesos entrenados tienen una distribución aproximadamente normal; al situar los niveles en cuantiles de la normal, cada nivel recibe una fracción parecida de los pesos, cosa que no ocurre con una rejilla uniforme.
+
+\begin{proposicion}[Doble cuantización]\label{prop:doble}
+Con bloques de 64 pesos y una constante fp32 por bloque, las constantes cuestan $32/64=0{,}5$ bits por peso. Si esas constantes se cuantizan a su vez en 8 bits, en bloques de 256 con una constante fp32 por bloque, el coste baja a $8/64+32/(64\cdot 256)\approx 0{,}127$ bits por peso, un ahorro de unos $0{,}373$ bits por peso~\cite[§3]{qlora}.
+\end{proposicion}
+
+Con estas técnicas y optimizadores paginados, QLoRA ajusta un modelo de $65\cdot 10^{9}$ parámetros en una sola GPU de 48~GB~\cite{qlora}.
+
+\section{Destilación de conocimiento}
+
+La destilación entrena un modelo pequeño (el \emph{estudiante}) para imitar las distribuciones de salida de uno grande (el \emph{profesor}), que contienen más información que las etiquetas: las probabilidades relativas de las respuestas incorrectas~\cite[§2]{hinton}.
+
+\begin{definicion}[Pérdida de destilación]\label{def:destilacion}
+Sean $v\in\R^{K}$ los logits del profesor y $z\in\R^{K}$ los del estudiante para una misma entrada, y sea $\tau>0$. Sean $p=\softmax(v/\tau)$ los \emph{objetivos blandos} y $q=\softmax(z/\tau)$. La pérdida de destilación es la entropía cruzada $C=-\sum_{i}p_i\ln q_i$, que en la práctica se combina con la entropía cruzada respecto a las etiquetas a temperatura~1~\cite[§2, ec.~1]{hinton}.
+\end{definicion}
+
+\begin{proposicion}[Gradiente de la pérdida de destilación]\label{prop:grad-destilacion}
+$\dfrac{\partial C}{\partial z_i}=\dfrac{1}{\tau}\bigl(q_i-p_i\bigr)$.
+\end{proposicion}
+
+Para temperaturas altas y logits de media nula, el gradiente se aproxima por $(z_i-v_i)/(K\tau^{2})$: destilar equivale entonces a igualar logits por mínimos cuadrados, y los gradientes de los objetivos blandos escalan como $1/\tau^{2}$, por lo que se multiplican por $\tau^{2}$ al combinarlos con los de las etiquetas~\cite[§2.1]{hinton}; la demostración se pide en el \cref{eje:5-altaT}.
+
+\begin{observacion}[Destilación e inferencia]
+La clase~10 de CS336 describe una receta para obtener modelos más baratos: definir una arquitectura menor (por ejemplo, podando capas, cabezas o dimensiones del original), inicializarla con los pesos del original y reparar la pérdida de calidad por destilación~\cite{cs336}. La destilación también se usa para obtener borradores próximos al objetivo en la decodificación especulativa (\cref{tema:3}). Si los modelos de las familias Claude, Gemini o Grok que se ofrecen en tamaños menores se obtienen por destilación es, en general, información no pública salvo que el fabricante lo haya declarado.
+\end{observacion}
+
+
+% =====================================================================
+\chapter{Servicio a escala: latencia, rendimiento y memoria}
+\label{tema:6}
+% =====================================================================
+
+Un servidor de inferencia recibe peticiones que llegan en momentos distintos, con prompts y respuestas de longitudes muy diferentes. Este tema define las métricas con las que se mide (tiempo hasta el primer token, tiempo por token y rendimiento), analiza por qué el \emph{batching} estático desperdicia el acelerador y cómo lo resuelve el \emph{batching} continuo, y estudia la gestión paginada de la caché KV, que elimina la fragmentación y permite compartir prefijos. Se siguen la clase~10 de CS336~\cite{cs336}, el artículo de Orca de Yu \emph{et al.}~\cite{orca}, las secciones~3 y~4 de Kwon \emph{et al.}~\cite{kwon} y la sección~2 de Pope \emph{et al.}~\cite{pope}.
+
+\section{Métricas de servicio}
+
+\begin{definicion}[Latencia y rendimiento]\label{def:metricas}
+Para una petición, el \emph{tiempo hasta el primer token} ($\TTFT$) es el intervalo entre su llegada y la emisión del primer token de la respuesta; incluye la espera en cola y el \emph{prefill}. El \emph{tiempo por token de salida} ($\TPOT$) es el intervalo medio entre tokens sucesivos, y su inverso es la velocidad que percibe el usuario. El \emph{rendimiento} (\emph{throughput}) del sistema es el número total de tokens generados por segundo para todas las peticiones.
+\end{definicion}
+
+\begin{proposicion}[Latencia de una respuesta]\label{prop:latencia}
+Una respuesta de $n_{\mathrm{out}}$ tokens se completa en $\TTFT+(n_{\mathrm{out}}-1)\,\TPOT$.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+Las dos métricas dependen de fases distintas: el $\TTFT$ del \emph{prefill}, limitado por el cómputo, y el $\TPOT$ de la decodificación, limitada por la memoria (\cref{tema:2}). Por eso conviene procesar el \emph{prefill} con lotes pequeños, para reducir el $\TTFT$, y la decodificación con lotes grandes, para aumentar el rendimiento~\cite{cs336}. Además, replicar el modelo en $M$ grupos de aceleradores multiplica el rendimiento por $M$ sin cambiar la latencia, mientras que repartir un modelo entre aceleradores (módulo~17) reduce la latencia a cambio de comunicación~\cite{cs336,pope}.
+
+\section{\emph{Batching} estático y continuo}
+
+\begin{definicion}[\emph{Batching} estático]\label{def:estatico}
+En el \emph{batching} estático, el servidor forma un lote de $B$ peticiones y lo ejecuta hasta que termina la más larga; solo entonces admite peticiones nuevas.
+\end{definicion}
+
+\begin{proposicion}[Utilización del lote estático]\label{prop:utilizacion}
+Si las respuestas del lote tienen longitudes $\ell_1,\dots,\ell_B$, la fracción de ranuras de cómputo útiles durante la decodificación es
+\[
+U=\frac{\sum_{i=1}^{B}\ell_i}{B\,\max_i\ell_i}.
+\]
+\end{proposicion}
+
+\begin{definicion}[\emph{Batching} continuo]\label{def:continuo}
+En el \emph{batching} continuo, o planificación por iteración, el servidor decide la composición del lote en cada paso de decodificación: cuando una secuencia termina, su ranura se asigna inmediatamente a una petición en espera~\cite{orca}. Como las secuencias tienen longitudes distintas, Orca aplica el \emph{batching selectivo}: las operaciones que actúan posición a posición (proyecciones y perceptrón) se ejecutan sobre la concatenación de todas las posiciones del lote, y la atención se calcula por separado para cada secuencia~\cite{orca,cs336}.
+\end{definicion}
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[Utilización del \emph{batching} continuo]\label{prop:continuo}
+Si en todo paso hay al menos tantas peticiones en espera como ranuras liberadas, el \emph{batching} continuo mantiene ocupadas todas las ranuras de decodificación.
+\end{proposicion}
+
+La proposición ignora el coste del \emph{prefill} de las peticiones que entran, que se intercala con la decodificación de las demás; su planificación es un problema propio de los sistemas de servicio.
+
+\section{Memoria de la caché KV y PagedAttention}
+
+Antes de vLLM, los servidores reservaban para cada petición un bloque contiguo de caché KV del tamaño máximo posible de la respuesta. Esa reserva produce \emph{fragmentación interna} (posiciones reservadas que nunca se usan) y \emph{fragmentación externa} (huecos entre reservas de tamaños distintos); en los sistemas que Kwon \emph{et al.} analizan, solo entre el $20{,}4\,\%$ y el $38{,}2\,\%$ de la memoria de la caché guarda estados de tokens~\cite[§1 y §3.1]{kwon}.
+
+\begin{definicion}[PagedAttention]\label{def:paged}
+\emph{PagedAttention} divide la caché KV de cada secuencia en \emph{bloques} de tamaño fijo de $b_{\mathrm{blk}}$ tokens, que no tienen por qué ser contiguos en memoria. Cada secuencia tiene una \emph{tabla de bloques} que traduce cada bloque lógico (posiciones $jb_{\mathrm{blk}},\dots,(j+1)b_{\mathrm{blk}}-1$) a un bloque físico. Los bloques se asignan cuando se llenan los anteriores, y el núcleo de atención lee la caché siguiendo la tabla~\cite[§4.1 y §4.2]{kwon}.
+\end{definicion}
+
+La analogía es la memoria virtual paginada de un sistema operativo: la secuencia ve un espacio lógico contiguo, formado por páginas físicas dispersas, y la tabla de bloques hace de tabla de páginas.
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[Desperdicio acotado]\label{prop:desperdicio}
+Con bloques de $b_{\mathrm{blk}}$ tokens, una secuencia de $\ell\ge 1$ tokens ocupa $\lceil\ell/b_{\mathrm{blk}}\rceil$ bloques y desperdicia $b_{\mathrm{blk}}\lceil\ell/b_{\mathrm{blk}}\rceil-\ell\le b_{\mathrm{blk}}-1$ posiciones. Como todos los bloques tienen el mismo tamaño, no hay fragmentación externa: cualquier bloque libre sirve a cualquier secuencia.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\begin{proposicion}[Compartición de prefijos]\label{prop:prefijo}
+Sean $n_s$ secuencias que comparten un prompt de $P$ tokens. Con compartición de bloques y \emph{copia en escritura}, el prompt ocupa $\lfloor P/b_{\mathrm{blk}}\rfloor$ bloques completos compartidos más, si $P$ no es múltiplo de $b_{\mathrm{blk}}$, una copia del bloque parcial por secuencia, en lugar de $n_s\lceil P/b_{\mathrm{blk}}\rceil$ bloques.
+\end{proposicion}
+
+Este mecanismo sirve para el muestreo de varias respuestas por prompt, para la búsqueda en haz y para los prompts de sistema comunes. Las API públicas de Anthropic y de Google ofrecen una caché de prefijos del prompt (\emph{prompt caching} y \emph{context caching}) como función documentada; su implementación interna no es pública.
+
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+
+\bibitem{chen}
+C.~Chen, S.~Borgeaud, G.~Irving, J.-B. Lespiau, L.~Sifre y J.~Jumper.
+\newblock Accelerating large language model decoding with speculative sampling.
+\newblock Prepublicación, DeepMind, 2023.
+\newblock \url{https://arxiv.org/abs/2302.01318}
+
+\bibitem{cs336a1}
+Equipo docente de CS336.
+\newblock CS336: Language Modeling from Scratch. Tarea~1, «Basics», versión 26.0.3.
+\newblock Stanford University, primavera de 2026. Sección~6, «Generating text».
+\newblock \url{https://github.com/stanford-cs336/assignment1-basics}
+
+\bibitem{llmint8}
+T.~Dettmers, M.~Lewis, Y.~Belkada y L.~Zettlemoyer.
+\newblock LLM.int8(): 8-bit matrix multiplication for Transformers at scale.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2022.
+\newblock \url{https://arxiv.org/abs/2208.07339}
+
+\bibitem{qlora}
+T.~Dettmers, A.~Pagnoni, A.~Holtzman y L.~Zettlemoyer.
+\newblock QLoRA: Efficient finetuning of quantized LLMs.
+\newblock En \emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2023.
+\newblock \url{https://arxiv.org/abs/2305.14314}
+
+\bibitem{fan}
+A.~Fan, M.~Lewis e Y.~Dauphin.
+\newblock Hierarchical neural story generation.
+\newblock En \emph{Proceedings of ACL}, 2018.
+\newblock \url{https://arxiv.org/abs/1805.04833}
+
+\bibitem{gptq}
+E.~Frantar, S.~Ashkboos, T.~Hoefler y D.~Alistarh.
+\newblock GPTQ: Accurate post-training quantization for generative pre-trained Transformers.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2023.
+\newblock \url{https://arxiv.org/abs/2210.17323}
+
+\bibitem{grayneuhoff}
+R.~M. Gray y D.~L. Neuhoff.
+\newblock Quantization.
+\newblock \emph{IEEE Transactions on Information Theory}, 44(6):2325--2383, 1998.
+
+\bibitem{mit65940}
+S.~Han.
+\newblock 6.5940: TinyML and Efficient Deep Learning Computing.
+\newblock Massachusetts Institute of Technology, otoño de 2024. Clases~5 y~6 («Quantization»), 9 («Knowledge Distillation») y~13 («Efficient LLM Deployment»).
+\newblock \url{https://hanlab.mit.edu/courses/2024-fall-65940}
+
+\bibitem{cs336}
+T.~Hashimoto y P.~Liang.
+\newblock CS336: Language Modeling from Scratch.
+\newblock Stanford University, primavera de 2026. Clase~10, «Inference».
+\newblock \url{https://github.com/stanford-cs336/lectures}
+
+\bibitem{hinton}
+G.~Hinton, O.~Vinyals y J.~Dean.
+\newblock Distilling the knowledge in a neural network.
+\newblock Prepublicación, 2015 (\emph{NIPS Deep Learning Workshop}, 2014).
+\newblock \url{https://arxiv.org/abs/1503.02531}
+
+\bibitem{holtzman}
+A.~Holtzman, J.~Buys, L.~Du, M.~Forbes e Y.~Choi.
+\newblock The curious case of neural text degeneration.
+\newblock En \emph{International Conference on Learning Representations (ICLR)}, 2020.
+\newblock \url{https://arxiv.org/abs/1904.09751}
+
+\bibitem{jacob}
+B.~Jacob, S.~Kligys, B.~Chen, M.~Zhu, M.~Tang, A.~Howard, H.~Adam y D.~Kalenichenko.
+\newblock Quantization and training of neural networks for efficient integer-arithmetic-only inference.
+\newblock En \emph{Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, 2018.
+\newblock \url{https://arxiv.org/abs/1712.05877}
+
+\bibitem{jm3}
+D.~Jurafsky y J.~H. Martin.
+\newblock \emph{Speech and Language Processing}, 3.ª ed., borrador del 19 de agosto de 2026.
+\newblock Cap.~7, «Transformers and Pretraining» (§7.6 «Decoding»), y cap.~13, «Machine Translation» (§13.4 «Decoding in MT: Beam Search»).
+\newblock \url{https://web.stanford.edu/~jurafsky/slp3/}
+
+\bibitem{kwon}
+W.~Kwon, Z.~Li, S.~Zhuang, Y.~Sheng, L.~Zheng, C.~H. Yu, J.~E. Gonzalez, H.~Zhang e I.~Stoica.
+\newblock Efficient memory management for large language model serving with PagedAttention.
+\newblock En \emph{Proceedings of the 29th ACM Symposium on Operating Systems Principles (SOSP)}, 2023.
+\newblock \url{https://arxiv.org/abs/2309.06180}
+
+\bibitem{leviathan}
+Y.~Leviathan, M.~Kalman e Y.~Matias.
+\newblock Fast inference from Transformers via speculative decoding.
+\newblock En \emph{Proceedings of the 40th International Conference on Machine Learning (ICML)}, PMLR~202, 2023.
+\newblock \url{https://arxiv.org/abs/2211.17192}
+
+\bibitem{awq}
+J.~Lin, J.~Tang, H.~Tang, S.~Yang, W.-M. Chen, W.-C. Wang, G.~Xiao, X.~Dang, C.~Gan y S.~Han.
+\newblock AWQ: Activation-aware weight quantization for on-device LLM compression and acceleration.
+\newblock En \emph{Proceedings of Machine Learning and Systems (MLSys)}, 2024.
+\newblock \url{https://arxiv.org/abs/2306.00978}
+
+\bibitem{pope}
+R.~Pope, S.~Douglas, A.~Chowdhery, J.~Devlin, J.~Bradbury, A.~Levskaya, J.~Heek, K.~Xiao, S.~Agrawal y J.~Dean.
+\newblock Efficiently scaling Transformer inference.
+\newblock En \emph{Proceedings of Machine Learning and Systems (MLSys)}, 2023.
+\newblock \url{https://arxiv.org/abs/2211.05102}
+
+\bibitem{shazeer}
+N.~Shazeer.
+\newblock Fast Transformer decoding: One write-head is all you need.
+\newblock Prepublicación, 2019.
+\newblock \url{https://arxiv.org/abs/1911.02150}
+
+\bibitem{uwcse493}
+University of Washington.
+\newblock CSE 493G1/599G1: Deep Learning for Computer Vision.
+\newblock Primavera de 2025. Sección (\emph{recitation})~4, «Quantization».
+\newblock \url{https://courses.cs.washington.edu/courses/cse493g1/25sp/schedule/recitations/rec4.pdf}
+
+\bibitem{smoothquant}
+G.~Xiao, J.~Lin, M.~Seznec, H.~Wu, J.~Demouth y S.~Han.
+\newblock SmoothQuant: Accurate and efficient post-training quantization for large language models.
+\newblock En \emph{Proceedings of the 40th International Conference on Machine Learning (ICML)}, PMLR~202, 2023.
+\newblock \url{https://arxiv.org/abs/2211.10438}
+
+\bibitem{orca}
+G.-I. Yu, J.~S. Jeong, G.-W. Kim, S.~Kim y B.-G. Chun.
+\newblock Orca: A distributed serving system for Transformer-based generative models.
+\newblock En \emph{16th USENIX Symposium on Operating Systems Design and Implementation (OSDI)}, 2022.
+\newblock \url{https://www.usenix.org/system/files/osdi22-yu.pdf}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023. §4.1 «Softmax Regression» y §10.8 «Beam Search».
+\newblock \url{https://d2l.ai/}
+
+\end{thebibliography}
+
+
+\end{document}

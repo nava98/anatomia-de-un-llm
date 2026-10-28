@@ -1,0 +1,89 @@
+% =====================================================================
+\chapter{Implementación: un autograd escalar y PyTorch}
+\label{tema:6}
+% =====================================================================
+
+Todo lo anterior cabe en unas decenas de líneas de Python. Este tema describe un sistema de diferenciación automática en modo inverso que opera con escalares, como micrograd~\cite{karpathy}, demuestra que basta un puñado de reglas locales, explica por qué los sistemas reales trabajan con tensores y presenta las piezas de PyTorch que se usan en el resto del curso: tensores con \texttt{requires\_grad}, \texttt{backward}, \texttt{nn.Module} y los optimizadores. Se siguen el artículo de Paszke \emph{et al.}~\cite{paszke}, la nota «Autograd mechanics» de la documentación de PyTorch~\cite{pytorch}, la §2.5 de~\cite{d2l} y la tarea complementaria de autograd del curso 11-785 de Carnegie Mellon~\cite{cmu11785}.
+
+\section{Un autograd escalar}
+
+\begin{definicion}[Nodo de un autograd escalar]\label{def:valor}
+Un \emph{nodo} es un objeto con cuatro atributos: su valor \texttt{dato}; su adjunto \texttt{grad}, inicializado a~0; la lista \texttt{\_prev} de los nodos de los que se ha calculado, y una función \texttt{\_backward} que, leída la variable \texttt{grad} del propio nodo, suma a la \texttt{grad} de cada nodo de \texttt{\_prev} su contribución según la regla local. Cada operación entre nodos crea un nodo nuevo y le asigna su \texttt{\_backward}.
+\end{definicion}
+
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Operación & Hacia delante & Regla local (\texttt{\_backward}) \\
+\midrule
+$s=a+b$ & $a+b$ & $\bar a\mathrel{+}=\bar s$; $\bar b\mathrel{+}=\bar s$ \\
+$p=a\cdot b$ & $a\cdot b$ & $\bar a\mathrel{+}=b\,\bar p$; $\bar b\mathrel{+}=a\,\bar p$ \\
+$q=a^{k}$, $k$ fijo & $a^{k}$ & $\bar a\mathrel{+}=k\,a^{k-1}\,\bar q$ \\
+$t=\tanh a$ & $\tanh a$ & $\bar a\mathrel{+}=(1-t^{2})\,\bar t$ \\
+$e=\exp a$ & $e^{a}$ & $\bar a\mathrel{+}=e\,\bar e$ \\
+$l=\ln a$ & $\ln a$ & $\bar a\mathrel{+}=\bar l/a$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+El método \texttt{backward()} del nodo de salida construye un orden topológico con la \cref{prop:dfs}, pone su propio \texttt{grad} a~1 y llama a \texttt{\_backward} de cada nodo en orden inverso. Por el \cref{teo:inverso}, al terminar cada \texttt{grad} contiene la derivada de la salida respecto a ese nodo. El núcleo del sistema se muestra en la \cref{fig:valor}.
+
+\addtocounter{figure}{1}%
+
+Las demás operaciones de la tabla se escriben como \texttt{\_\_mul\_\_}. Si una misma variable aparece en los dos factores, como en \texttt{x * x}, las dos líneas de \texttt{\_backward} suman cada una su contribución a \texttt{x.grad}, y el resultado es $2x$, como exige la acumulación del \cref{tema:3}.
+
+\begin{proposicion}[Operaciones derivadas]\label{prop:derivadas}
+Si la resta, la negación y la división se definen como $-a=(-1)\cdot a$, $a-b=a+(-1)\cdot b$ y $a/b=a\cdot b^{-1}$, el sistema calcula correctamente sus derivadas sin reglas propias. Por ejemplo, para $f=a/b$ se obtiene $\bar a=1/b$ y $\bar b=-a/b^{2}$.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+Con estos nodos se construye una red: una neurona calcula $\tanh\bigl(\sum_iw_ix_i+b\bigr)$; una capa es una lista de neuronas, y un perceptrón multicapa, una lista de capas. Un perceptrón $3\to 4\to 4\to 1$ tiene $(3\cdot 4+4)+(4\cdot 4+4)+(4\cdot 1+1)=41$ parámetros. Cada paso de descenso de gradiente tiene tres fases: calcular la pérdida; poner a cero todos los \texttt{grad} y llamar a \texttt{backward}; y actualizar cada parámetro con $p\gets p-\eta\,\bar p$. Si se omite la puesta a cero, los adjuntos de pasos sucesivos se suman por la acumulación de la \cref{def:adjunto}.
+
+\begin{observacion}[Límite del enfoque escalar]
+Un producto de dos matrices $1000\times 1000$ ejecuta $10^{9}$ multiplicaciones y casi otras tantas sumas: un autograd escalar crearía del orden de $2\cdot 10^{9}$ nodos, cada uno con su objeto de Python. Los sistemas reales usan \emph{tensores}: un nodo por operación sobre arrays enteros, con un VJP vectorizado como los de la \cref{prop:vjp-lineal} y la \cref{prop:vjp-softmax}, que se ejecuta en una GPU. La tarea complementaria del curso 11-785~\cite[§1 y §3.2]{cmu11785} subraya este cambio de granularidad: el autograd trabaja a nivel de operación, no de capa, y cada operación necesita su función hacia atrás.
+\end{observacion}
+
+\section{PyTorch}
+
+PyTorch~\cite{paszke} es, en esencia, el sistema anterior con tensores, ejecución en GPU y cientos de operaciones con su VJP. Es la herramienta del curso a partir de este módulo. El código de referencia publicado para los modelos LLaMA de Meta usa PyTorch~\cite{llama}; el informe técnico de Gemini indica que se entrenó con JAX y Pathways~\cite{gemini}, y el código de los pesos abiertos de Grok-1, un modelo de 314\,000 millones de parámetros, también es de JAX~\cite{grok}. Anthropic no ha publicado los detalles de su pila de software para Claude.
+
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Pieza de PyTorch & Función & Equivalente escalar \\
+\midrule
+\texttt{Tensor} con \texttt{requires\_grad} & array que registra sus operaciones & \texttt{Valor} \\
+\texttt{grad\_fn}, \texttt{backward()} & nodo del grafo y modo inverso & \texttt{\_backward}, \texttt{backward()} \\
+\texttt{nn.Module} & agrupa parámetros, define \texttt{forward} & neurona, capa, MLP \\
+\texttt{torch.optim} (SGD, AdamW) & aplica la actualización & $p\gets p-\eta\,\bar p$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+La nota «Autograd mechanics» de la documentación~\cite{pytorch} precisa varios comportamientos que se siguen de la teoría de los temas anteriores.
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{Grafo dinámico.} El grafo se reconstruye desde cero en cada iteración, al ejecutar el código; por eso se puede usar el control de flujo de Python, y las derivadas son las de la traza ejecutada (\cref{tema:1}).
+  \item \emph{Acumulación.} Durante \texttt{backward()}, solo los tensores \emph{hoja} (los creados por el usuario) con \texttt{requires\_grad=True} reciben gradiente, y este se \emph{suma} a su atributo \texttt{.grad}. Por eso cada paso empieza con \texttt{opt.zero\_grad()}.
+  \item \emph{Tensores guardados.} Cada operación guarda los tensores que necesita su VJP. Tras la pasada hacia atrás, esos tensores se liberan; una segunda llamada a \texttt{backward()} sobre el mismo grafo produce un error, salvo que la primera se haya hecho con \texttt{retain\_graph=True}.
+  \item \emph{Desactivar el registro.} Dentro de \texttt{with torch.no\_grad():} las operaciones no crean nodos ni guardan tensores; se usa para evaluar en validación y para actualizar los parámetros sin registrar la actualización.
+\end{enumerate}
+
+\addtocounter{figure}{1}%
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Dos detalles de convención]
+\texttt{nn.Linear(n, m)} guarda su peso con forma $(m,n)$ y calcula $XW\T+b$, de modo que \texttt{weight} es la traspuesta de la $W$ del módulo~9. Y \texttt{F.cross\_entropy} recibe logits, no probabilidades: aplica internamente una log-softmax estable (módulo~11) y su VJP es el del \cref{cor:ce}.
+\end{observacion}
+
+\section{Acumulación de gradientes}
+
+La acumulación en \texttt{.grad}, que obliga a llamar a \texttt{zero\_grad()}, es también una herramienta.
+
+\begin{proposicion}[Microlotes]\label{prop:microlotes}
+Sea $\mathcal L(\theta)=\frac1{|S|}\sum_{s\in S}\ell_s(\theta)$ la pérdida media sobre un lote $S$, partido en $k$ microlotes disjuntos $S_1,\dots,S_k$ del mismo tamaño. Si, sin poner a cero los gradientes entre ellos, se llama a \texttt{backward()} sobre $\mathcal L_r/k$ para cada $r$, con $\mathcal L_r=\frac1{|S_r|}\sum_{s\in S_r}\ell_s$, el gradiente acumulado es $\nabla\mathcal L(\theta)$.
+\end{proposicion}
+
+Así se entrenan los LLM con lotes de millones de tokens que no caben a la vez en la memoria de una GPU: se procesan microlotes sucesivos, se acumulan sus gradientes y se da un solo paso del optimizador. Si los microlotes tuvieran tamaños distintos, habría que ponderar cada $\mathcal L_r$ por $|S_r|/|S|$ en lugar de por $1/k$.
+

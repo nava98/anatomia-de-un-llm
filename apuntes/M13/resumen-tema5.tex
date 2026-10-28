@@ -1,0 +1,74 @@
+% =====================================================================
+\chapter{Circuitos de atención y memorias asociativas}
+\label{tema:5}
+% =====================================================================
+
+Los temas anteriores tratan la atención como una operación aislada. Este tema estudia dos lecturas estructurales de ella. La primera, debida a Elhage \emph{et al.}~\cite{elhage}, descompone cada cabeza en un circuito que decide a dónde mirar y otro que decide qué copiar, y muestra que dos cabezas en capas sucesivas pueden componerse para implementar una \emph{cabeza de inducción}, el mecanismo que Olsson \emph{et al.}~\cite{olsson} relacionaron con el aprendizaje en contexto. La segunda, debida a Ramsauer \emph{et al.}~\cite{ramsauer}, identifica la atención con la regla de actualización de una red de Hopfield moderna, una memoria asociativa direccionable por contenido. Se siguen esos tres artículos y la §10.6 de~\cite{jm3}.
+
+\section{El flujo residual y los circuitos QK y OV}
+
+En un Transformer, cada capa \emph{suma} su salida a la representación de cada posición, que recorre así la red como un \emph{flujo residual} (módulos~11 y~14). Elhage \emph{et al.} estudian modelos formados solo por capas de atención, en los que el vector final de la posición $i$ es su embedding más las contribuciones de todas las cabezas de todas las capas~\cite{elhage}. Por la \cref{prop:descomp}, la contribución de una cabeza a la posición $i$ es
+\[
+\sum_{j\le i}\alpha_{ij}\;x_j\,W_{OV},\qquad
+\alpha_{ij}=\softmax_j\Bigl(\frac{x_i\,W_{QK}\,x_j\T}{\sqrt{d_k}}\Bigr),
+\]
+con $W_{QK}=\WQ\WK\T$ y $W_{OV}=\WV\WO^{(r)}$, ambas de tamaño $d\times d$ (en esta sección se omite el índice de la cabeza).
+
+\begin{definicion}[Circuitos QK y OV]\label{def:circuitos}
+En una cabeza de atención, el \emph{circuito QK} es la forma bilineal $W_{QK}=\WQ\WK\T$, que determina los pesos de atención, y el \emph{circuito OV} es la aplicación lineal $W_{OV}=\WV\WO$, que determina qué se escribe en el flujo residual de la posición que atiende a partir de la posición atendida.
+\end{definicion}
+
+Los dos circuitos son independientes: el primero decide \emph{a dónde} se mira; el segundo, \emph{qué} se copia. Si los vectores de entrada son \emph{one-hot}, $x_iW_{QK}x_j\T$ es una entrada de la matriz $W_{QK}$ y la tabla completa de preferencias de la cabeza puede leerse directamente.
+
+\section{Cabezas de inducción}
+
+Una \emph{cabeza de inducción} implementa la regla «si antes apareció $a$ seguido de $b$ y ahora vuelve a aparecer $a$, predecir $b$», es decir, completa patrones del tipo $[a][b]\dots[a]\to[b]$~\cite{olsson}. Permite copiar del propio contexto secuencias que nunca se vieron en el entrenamiento, como un nombre propio inventado que se repite en un texto.
+
+\begin{proposicion}\label{prop:una-capa}
+En un modelo de una sola capa de atención cuyas entradas en cada posición son el embedding de su token más el de su posición, la puntuación $s_{ij}$ es función de $(x_i,x_j)$. En consecuencia, para dos posiciones permitidas $j,l\le i$, el cociente $\alpha_{ij}/\alpha_{il}$ solo depende de $x_i$, $x_j$ y $x_l$; en particular, ninguna cabeza de esa capa puede preferir la posición $j$ a la $l$ en función del token \emph{anterior} $x_{j-1}$.
+\end{proposicion}
+
+Hace falta, por tanto, que una capa anterior haya escrito en la posición $j$ información sobre $x_{j-1}$. La construcción de Elhage \emph{et al.} usa dos cabezas~\cite{elhage}:
+\begin{enumerate}[label=\arabic*.]
+  \item una \emph{cabeza de token anterior} en la capa~1, cuyo mapa de atención es la subdiagonal: la posición $j$ atiende a $j-1$ y su circuito OV copia la identidad del token, de modo que escribe en $j$ «mi token anterior era $x_{j-1}$»;
+  \item una \emph{cabeza de inducción} en la capa~2, cuyas claves se construyen a partir de lo escrito por la capa~1 y cuya consulta es el token actual: la posición $i$ atiende a las $j$ con $x_{j-1}=x_i$, y su circuito OV copia el token $x_j$.
+\end{enumerate}
+Que las claves de la capa~2 lean la salida de una cabeza de la capa~1 se llama \emph{composición K}; análogamente se definen las composiciones Q y V. La \cref{fig:induccion} ilustra el mecanismo.
+
+\addtocounter{figure}{1}%
+
+\begin{teorema}[Cabeza de token anterior]\label{teo:previo}
+Sean $p_0,\dots,p_{n-1}$ vectores \emph{one-hot} de posición y $\beta>0$. Con máscara causal, consultas $q_i=\beta p_i$ y claves $k_j=\beta p_{j+1}$ (con $p_n=0$), y sin escalado adicional, el peso que la posición $i\ge 1$ asigna a $i-1$ es
+\[
+\alpha_{i,i-1}=\frac{e^{\beta^{2}}}{e^{\beta^{2}}+i}\xrightarrow[\beta\to\infty]{}1 .
+\]
+\end{teorema}
+
+Con valores $v_j=e_{x_j}$ (el \emph{one-hot} del token), la salida de esta cabeza en la posición $j$ es, para $\beta$ grande, aproximadamente $e_{x_{j-1}}$. El \cref{eje:5-induccion} completa la construcción con la segunda capa.
+
+\begin{observacion}[Evidencia empírica]
+Olsson \emph{et al.} presentan seis líneas de evidencia complementarias de que las cabezas de inducción explican una parte importante del aprendizaje en contexto: entre otras, que se forman durante el entrenamiento en el mismo intervalo en el que la capacidad de aprendizaje en contexto mejora bruscamente, visible como un escalón en la curva de pérdida. La evidencia es causal en modelos pequeños formados solo por atención y correlacional en modelos mayores con redes de alimentación hacia delante~\cite{olsson}. Jurafsky y Martin resumen estos resultados en la §10.6 de~\cite{jm3}; el módulo~23 retoma los circuitos.
+\end{observacion}
+
+\section{Atención y redes de Hopfield modernas}
+
+Una memoria asociativa almacena patrones y, ante un estímulo parecido a uno de ellos, devuelve el patrón completo. Ramsauer \emph{et al.} definen una red de Hopfield con estados continuos cuya regla de actualización es la atención~\cite[§2]{ramsauer}. En esta sección se usa su convención: $X=(x_1,\dots,x_N)\in\R^{d\times N}$ tiene los patrones almacenados como \emph{columnas} y el estado $\xi\in\R^{d}$ es un vector columna.
+
+\begin{definicion}[Energía de Hopfield moderna]\label{def:hopfield}
+Sean $\beta>0$ y $\lse(\beta,z)=\beta^{-1}\ln\sum_{l=1}^{N}e^{\beta z_l}$. La energía del estado $\xi$ es
+\[
+E(\xi)=-\lse\bigl(\beta,X\T\xi\bigr)+\tfrac12\,\xi\T\xi+\beta^{-1}\ln N+\tfrac12M^{2},\qquad M=\max_l\norm{x_l},
+\]
+y la \emph{regla de actualización} es $\xi^{\text{nuevo}}=X\softmax\bigl(\beta X\T\xi\bigr)$.
+\end{definicion}
+
+\begin{proposicion}[Puntos estacionarios]\label{prop:hopfield}
+El gradiente de la energía es $\nabla E(\xi)=\xi-X\softmax(\beta X\T\xi)$. Por tanto, $\xi$ es un punto estacionario de $E$ si y solo si es un punto fijo de la regla de actualización, y la actualización consiste en saltar al punto que anula el gradiente de la parte cuadrática con la parte $\lse$ congelada.
+\end{proposicion}
+
+Ramsauer \emph{et al.} demuestran además que la actualización hace decrecer la energía y converge, que la red puede almacenar un número de patrones exponencial en la dimensión y que, si los patrones están bien separados, un solo paso basta para recuperar uno de ellos con error exponencialmente pequeño~\cite[§2, teoremas~1 a~5]{ramsauer}.
+
+\begin{observacion}[Hopfield como atención]
+Si los patrones almacenados y los estados se proyectan linealmente para formar claves, valores y consultas y se toma $\beta=1/\sqrt{d_k}$, la regla de actualización, escrita con vectores fila, adopta la forma $\softmax(QK\T/\sqrt{d_k})V$ de la \cref{def:sdpa}~\cite[§2]{ramsauer}. La atención es, pues, un paso de recuperación en una memoria asociativa, y $\beta$ desempeña el papel de inverso de una temperatura: el \cref{teo:limites} describe sus dos regímenes extremos, recuperación de un patrón y media de todos ellos.
+\end{observacion}
+

@@ -1,0 +1,111 @@
+% =====================================================================
+\chapter{Regularización y calendarios de la tasa de aprendizaje}
+\label{tema:6}
+% =====================================================================
+
+Este tema completa la receta de optimización de los modelos de lenguaje actuales con dos ingredientes que no cambian la dirección del paso, sino su forma y su tamaño: el decaimiento de pesos y el calendario de la tasa de aprendizaje. Se estudia primero la regularización $L^{2}$ y su relación con el decaimiento de pesos, que es una equivalencia para el SGD pero no para Adam; de ahí surge AdamW. Después se definen el calentamiento lineal y el decaimiento coseno y se justifican con los resultados de los temas~3 y~5. Se sigue~\cite[§7.1]{gbc}, \cite[§12.11]{d2l} y los artículos~\cite{adamw,sgdr,goyal}.
+
+\section{Regularización \texorpdfstring{$L^{2}$}{L2}}
+
+\begin{definicion}[Regularización $L^{2}$]\label{def:l2}
+Sea $\lambda>0$. La pérdida \emph{regularizada} con penalización $L^{2}$ es
+\[
+J_\lambda(\theta)=J(\theta)+\frac{\lambda}{2}\norm{\theta}^{2}.
+\]
+\end{definicion}
+
+\begin{proposicion}[Encogimiento]\label{prop:encogimiento}
+Un paso de descenso de gradiente sobre $J_\lambda$ es
+\[
+\theta_{k+1}=(1-\eta\lambda)\,\theta_k-\eta\,\nabla J(\theta_k).
+\]
+\end{proposicion}
+
+Cada paso multiplica los pesos por $1-\eta\lambda<1$ antes de aplicar el gradiente: de ahí el nombre de \emph{decaimiento de pesos} (\emph{weight decay}).
+
+\begin{proposicion}[Efecto sobre el minimizador]\label{prop:ridge}
+Sea $J(\theta)=\frac12(\theta-c)\T Q(\theta-c)$ con $Q=\diag(a_1,\dots,a_n)$, $a_i>0$. El minimizador de $J_\lambda$ es
+\[
+\theta^{\ast}_i=\frac{a_i}{a_i+\lambda}\,c_i,\qquad i=1,\dots,n.
+\]
+\end{proposicion}
+
+La regularización encoge hacia~0 cada coordenada en el factor $a_i/(a_i+\lambda)$: apenas afecta a las direcciones de curvatura grande ($a_i\gg\lambda$), en las que la pérdida es sensible, y anula casi por completo las de curvatura pequeña ($a_i\ll\lambda$)~\cite[§7.1.1]{gbc}. Por ejemplo, con $n=1$, $a=2$, $c=3$ y $\lambda=1$, el minimizador pasa de $3$ a $6/3=2$.
+
+\begin{observacion}[Interpretación bayesiana]
+Si $J$ es la log-verosimilitud negativa total de los datos y se adopta sobre $\theta$ una distribución a priori gaussiana $\mathcal{N}(0,\lambda^{-1}I)$, entonces $-\ln p(\theta)=\frac{\lambda}{2}\norm{\theta}^{2}+\text{cte}$, y minimizar $J_\lambda$ equivale a maximizar la distribución a posteriori (estimación MAP; módulo~5).
+\end{observacion}
+
+\section{Decaimiento de pesos desacoplado: AdamW}
+
+Para el SGD, regularizar con $L^{2}$ y encoger los pesos en cada paso es lo mismo (\cref{prop:encogimiento}). Para un método preacondicionado no lo es~\cite[§2]{adamw}.
+
+\begin{observacion}[Adam con $L^{2}$]\label{obs:adam-l2}
+Si se aplica Adam a $J_\lambda$, el término $\lambda\theta$ se suma al gradiente antes de calcular $m_t$ y $v_t$, y queda dividido por $\sqrt{\hat v_t}+\varepsilon$. Cuando la normalización está dominada por $\nabla J$, la contribución del término de regularización al paso de la coordenada $i$ es aproximadamente
+\[
+\frac{\eta\lambda\,\theta_i}{\sqrt{\hat v_{t,i}}+\varepsilon},
+\]
+que depende de la escala del gradiente de esa coordenada, mientras que en el SGD es $\eta\lambda\theta_i$ para todas.
+\end{observacion}
+
+Las coordenadas con gradientes grandes ($\hat v_{t,i}$ grande) apenas se regularizan, y las de gradientes pequeños se regularizan en exceso. Loshchilov y Hutter~\cite{adamw} propusieron aplicar el decaimiento fuera de la normalización.
+
+\begin{definicion}[AdamW]\label{def:adamw}
+Con las cantidades $\hat m_t$ y $\hat v_t$ de la \cref{def:adam}, calculadas con el gradiente de $J$ sin regularizar, \emph{AdamW}~\cite[algoritmo~2]{adamw} realiza
+\[
+\theta_t=\theta_{t-1}-\eta_t\Bigl(\frac{\hat m_t}{\sqrt{\hat v_t}+\varepsilon}+\lambda\,\theta_{t-1}\Bigr),
+\]
+donde $\eta_t$ es la tasa de aprendizaje del calendario y $\lambda$ el coeficiente de decaimiento de pesos.
+\end{definicion}
+
+En AdamW todos los pesos se encogen en el mismo factor $1-\eta_t\lambda$, con independencia de sus gradientes. El \cref{tab:adamw} compara ambos métodos con $\eta=10^{-3}$, $\lambda=0{,}1$ y $\theta=1$.
+
+\begin{table}[h]
+\centering\small
+\caption{Encogimiento de un peso $\theta=1$ en un paso, con $\eta=10^{-3}$ y $\lambda=0{,}1$.}\label{tab:adamw}
+\begin{tabular}{@{}ccc@{}}
+\toprule
+$\hat v$ de la coordenada & Adam con $L^{2}$ ($\eta\lambda\theta/\sqrt{\hat v}$) & AdamW ($\eta\lambda\theta$) \\
+\midrule
+$10^{-4}$ & $0{,}01$ & $0{,}0001$ \\
+$1$ & $0{,}0001$ & $0{,}0001$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Convenios]
+En~\cite{adamw}, el decaimiento de pesos del SGD se escribe $\theta_{t+1}=(1-\lambda')\theta_t-\alpha\nabla J(\theta_t)$, sin multiplicar $\lambda'$ por la tasa $\alpha$; con ese convenio, la equivalencia con $L^{2}$ exige $\lambda=\lambda'/\alpha$~\cite[proposición~1]{adamw}. Aquí se sigue el convenio de la \cref{def:adamw}, en el que el decaimiento por paso es $\eta_t\lambda$ y sigue al calendario. La proposición~2 de~\cite{adamw} demuestra que, para un preacondicionador que no sea múltiplo de la identidad, no existe ningún coeficiente $L^{2}$ que reproduzca el decaimiento desacoplado.
+\end{observacion}
+
+\addtocounter{definicion}{1}%
+
+\section{Calendarios de la tasa de aprendizaje}
+
+La tasa de aprendizaje es el hiperparámetro más influyente: si es demasiado grande, el método diverge (\cref{teo:gd-cuadratica}); si es demasiado pequeña, avanza despacio. Además, con gradientes estocásticos, un paso constante deja un suelo de ruido proporcional a $\eta$ (\cref{prop:suelo}). Por eso no se usa un $\eta$ fijo, sino un \emph{calendario} $\eta_t$~\cite[§12.11]{d2l}.
+
+\begin{definicion}[Calentamiento lineal y decaimiento coseno]\label{def:coseno}
+Sean $0\le\eta_{\min}<\eta_{\max}$, un número de pasos de calentamiento $W\ge 1$ y un número total de pasos $T>W$. El calendario de \emph{calentamiento lineal y decaimiento coseno} es
+\[
+\eta(t)=\begin{cases}
+\eta_{\max}\,\dfrac{t}{W}, & 0\le t<W,\\[3mm]
+\eta_{\min}+\dfrac{\eta_{\max}-\eta_{\min}}{2}\Bigl(1+\cos\Bigl(\pi\,\dfrac{t-W}{T-W}\Bigr)\Bigr), & W\le t\le T.
+\end{cases}
+\]
+\end{definicion}
+
+\begin{proposicion}[Propiedades]\label{prop:coseno}
+El calendario de la \cref{def:coseno} es continuo en $t=W$, vale $\eta_{\max}$ en $t=W$ y $\eta_{\min}$ en $t=T$, es estrictamente decreciente en $[W,T]$ y en el punto medio del tramo coseno vale $(\eta_{\max}+\eta_{\min})/2$.
+\end{proposicion}
+
+\addtocounter{figure}{1}%
+
+\addtocounter{definicion}{1}%
+
+\paragraph{Calentamiento.} Al principio del entrenamiento, los gradientes son grandes e irregulares y los momentos de Adam se han estimado con muy pocos datos. Una tasa grande desde el primer paso puede hacer divergir la pérdida. Subir $\eta$ gradualmente da tiempo a que $\hat m_t$ y $\hat v_t$ se estabilicen; el calentamiento se popularizó para entrenar con lotes grandes~\cite{goyal}. El \cref{eje:5-sin-correccion} muestra que la propia corrección de sesgo de Adam actúa como un calentamiento implícito.
+
+\paragraph{Decaimiento.} Por la \cref{prop:suelo}, el exceso de pérdida estacionario del SGD es proporcional a $\eta$; reducir $\eta$ al final permite que los parámetros se asienten. El decaimiento coseno procede del método SGDR de Loshchilov y Hutter~\cite{sgdr}, que lo combinaba con reinicios periódicos; en el preentrenamiento se usa un único ciclo.
+
+\begin{observacion}[La receta de los modelos de lenguaje abiertos]
+LLaMA documenta exactamente esta receta: AdamW con $\beta_1=0{,}9$, $\beta_2=0{,}95$, decaimiento de pesos $\lambda=0{,}1$, recorte del gradiente a norma~1, 2000 pasos de calentamiento y decaimiento coseno hasta el 10~\% de la tasa máxima~\cite[§2.3]{llama}. Es la misma estructura que la del \cref{ej:coseno}. Como se indicó en el \cref{tema:5}, Anthropic, Google y xAI no han publicado los calendarios ni los optimizadores de Claude, Gemini y Grok.
+\end{observacion}
+

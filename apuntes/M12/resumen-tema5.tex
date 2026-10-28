@@ -1,0 +1,136 @@
+% =====================================================================
+\chapter{Modelos secuenciales: \texorpdfstring{$n$}{n}-gramas, RNN y LSTM}
+\label{tema:5}
+% =====================================================================
+
+Con tokens y embeddings ya definidos, queda modelar la dependencia entre posiciones. Este tema repasa los tres modelos que precedieron al Transformer y demuestra por qué ninguno escala: los $n$-gramas no generalizan, las redes recurrentes sufren el desvanecimiento del gradiente y todas las arquitecturas recurrentes son secuenciales en el tiempo. Se sigue~\cite[cap.~14]{jm3}, la clase~4 de CS224N~\cite{cs224n}, \cite[cap.~10]{gbc} y \cite[§9.7 y §10.1]{d2l}; los resultados sobre el gradiente proceden de Bengio, Simard y Frasconi~\cite{bengio94} y de Pascanu, Mikolov y Bengio~\cite[§2--3]{pascanu}, y la LSTM, de Hochreiter y Schmidhuber~\cite{lstm}.
+
+\section{\texorpdfstring{$N$}{N}-gramas y dispersión}
+
+Un modelo de $n$-gramas (módulo~1) estima $P(x_t\mid x_{t-n+1:t-1})$ por frecuencias relativas y necesita una tabla de $K^{n}$ entradas.
+
+\begin{proposicion}\label{prop:dispersion}
+En un corpus de $N\ge n$ tokens aparecen a lo sumo $N-n+1$ $n$-gramas distintos. Por tanto, la fracción de casillas de la tabla con recuento positivo es a lo sumo $(N-n+1)/K^{n}$.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+El defecto de fondo no es solo el tamaño: cada contexto es una casilla aislada y el modelo no sabe que «el gato come» y «el perro come» se parecen. El modelo neuronal de Bengio \emph{et al.}~\cite{bengio03}, estudiado en el módulo~9, resuelve la generalización con embeddings, pero conserva un contexto de longitud fija.
+
+\section{Redes recurrentes}
+
+\begin{definicion}[Red recurrente]\label{def:rnn}
+Sean $x_1,\dots,x_T\in\R^{d}$ los embeddings de una secuencia. Una \emph{red recurrente} (RNN) simple con estado de dimensión $h$ calcula
+\[
+h_t=\tanh(W h_{t-1}+U x_t+b),\qquad z_t=W_{\mathrm{s}}\,h_t+b_{\mathrm{s}},
+\]
+con $h_0=0$, $W\in\R^{h\times h}$, $U\in\R^{h\times d}$, $b\in\R^{h}$ y una capa de salida $W_{\mathrm{s}}\in\R^{K\times h}$ que produce los logits $z_t$ del token siguiente~\cite[§14.1--14.2]{jm3}.
+\end{definicion}
+
+Los mismos parámetros se usan en todas las posiciones. El estado $h_t$ resume todo el prefijo $x_{1:t}$, de modo que el contexto no tiene, en principio, longitud fija.
+
+\begin{proposicion}\label{prop:param-rnn}
+La parte recurrente de una RNN simple tiene $h(h+d)+h$ parámetros, independientemente de $T$.
+\end{proposicion}
+
+\addtocounter{figure}{1}%
+
+\section{Retropropagación en el tiempo y desvanecimiento del gradiente}
+
+El gradiente de una RNN se calcula aplicando la retropropagación al grafo desplegado de la \cref{fig:rnn}; el procedimiento se llama \emph{retropropagación en el tiempo}~\cite[§9.7]{d2l}.
+
+\begin{lema}\label{lem:jacobiano}
+Sea $a_t=W h_{t-1}+U x_t+b$. El jacobiano de un paso es $\dfrac{\partial h_t}{\partial h_{t-1}}=D_t W$, con $D_t=\diag\bigl(1-\tanh^{2}(a_t)\bigr)$, y
+\[
+\frac{\partial h_T}{\partial h_0}=D_T W\,D_{T-1}W\cdots D_1 W.
+\]
+\end{lema}
+
+\begin{teorema}[Cota exponencial del gradiente]\label{teo:desvanece}
+Sea $\norm{\cdot}$ la norma espectral. En la RNN de la \cref{def:rnn},
+\[
+\Bigl\lVert\frac{\partial h_T}{\partial h_0}\Bigr\rVert\le\norm{W}^{T}.
+\]
+En particular, si $\norm{W}\le\gamma<1$, el gradiente que llega a $h_0$ desde la pérdida en la posición $T$ decae al menos como $\gamma^{T}$.
+\end{teorema}
+
+\begin{corolario}\label{cor:explota}
+Para que el gradiente pueda crecer exponencialmente (\emph{explotar}) es necesario que $\norm{W}>1$. Con una activación de derivada acotada por $\gamma_{\phi}$ (por ejemplo, $\gamma_{\phi}=1/4$ para la sigmoide), la condición necesaria es $\norm{W}>1/\gamma_{\phi}$~\cite[§2.1]{pascanu}.
+\end{corolario}
+
+\begin{table}[h]
+\centering\small
+\caption{Factor $w^{T}$ en la RNN escalar lineal $h_t=w\,h_{t-1}$.}\label{tab:wT}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+$w$ & $T=10$ & $T=50$ & $T=100$ \\
+\midrule
+$0{,}9$ & $0{,}3487$ & $5{,}154\cdot 10^{-3}$ & $2{,}656\cdot 10^{-5}$ \\
+$0{,}99$ & $0{,}9044$ & $0{,}6050$ & $0{,}3660$ \\
+$1{,}1$ & $2{,}594$ & $117{,}4$ & $13\,781$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El caso escalar lineal del \cref{tab:wT} muestra el fenómeno: con $w=0{,}9$, la señal de un token situado 100 posiciones atrás llega multiplicada por $2{,}7\cdot 10^{-5}$, y la red no aprende dependencias largas. Bengio, Simard y Frasconi demostraron que, para que una red recurrente almacene información de forma robusta frente al ruido, debe operar en una región en la que el gradiente se desvanece, de modo que aprender dependencias largas por descenso de gradiente es intrínsecamente difícil~\cite{bengio94}.
+
+\begin{definicion}[Recorte del gradiente]
+Dado un umbral $\tau>0$, el \emph{recorte por norma} sustituye el gradiente $g$ por
+\[
+\clip_{\tau}(g)=\begin{cases} g & \text{si } \norm{g}<\tau,\\ \tau\,g/\norm{g} & \text{si } \norm{g}\ge\tau.\end{cases}
+\]
+Pascanu \emph{et al.} proponen esta regla contra la explosión del gradiente y sugieren un umbral entre la mitad y diez veces la norma media del gradiente~\cite[§3.2]{pascanu}.
+\end{definicion}
+
+\begin{proposicion}\label{prop:clip}
+$\norm{\clip_{\tau}(g)}\le\tau$, y $\clip_{\tau}(g)$ es un múltiplo positivo de $g$; en particular, $g\cdot\clip_{\tau}(g)\ge 0$ y el paso recortado sigue siendo de descenso.
+\end{proposicion}
+
+El recorte resuelve la explosión, pero no el desvanecimiento: un gradiente pequeño no se agranda.
+
+\section{La LSTM}
+
+\begin{definicion}[LSTM]\label{def:lstm}
+Una LSTM añade al estado oculto $h_t$ una \emph{celda de memoria} $c_t\in\R^{h}$ y tres \emph{puertas} con valores en $(0,1)^{h}$:
+\[
+\begin{aligned}
+f_t&=\sigma(W_f h_{t-1}+U_f x_t+b_f), & i_t&=\sigma(W_i h_{t-1}+U_i x_t+b_i),\\
+o_t&=\sigma(W_o h_{t-1}+U_o x_t+b_o), & \tilde c_t&=\tanh(W_c h_{t-1}+U_c x_t+b_c),\\
+c_t&=f_t\odot c_{t-1}+i_t\odot\tilde c_t, & h_t&=o_t\odot\tanh(c_t).
+\end{aligned}
+\]
+La puerta de \emph{olvido} $f_t$ decide qué parte de la memoria se conserva; la de \emph{entrada} $i_t$, qué parte del candidato $\tilde c_t$ se añade, y la de \emph{salida} $o_t$, qué parte de la memoria pasa al estado oculto~\cite{lstm}, \cite[§14.5]{jm3}, \cite[§10.1]{d2l}.
+\end{definicion}
+
+La puerta de olvido no figuraba en el artículo original de 1997; la introdujeron Gers, Schmidhuber y Cummins~\cite{gers}, y es la forma que usan los libros de texto actuales.
+
+\begin{proposicion}\label{prop:lstm-grad}
+El jacobiano de $c_t$ respecto a $c_{t-1}$ a través del camino directo, es decir, manteniendo fijas las puertas y el candidato, es $\diag(f_t)$. A lo largo de $T$ pasos, el producto de estos jacobianos es $\diag\bigl(\prod_{t=1}^{T}f_t\bigr)$, con el producto componente a componente.
+\end{proposicion}
+
+La celda se actualiza \emph{sumando} y no multiplicando por una matriz $W$: si la red aprende $f_t\approx 1$, el gradiente recorre muchos pasos casi sin atenuarse. Con $f_t=0{,}98$ constante, el factor a 100 pasos es $0{,}98^{100}=0{,}1326$, frente a $2{,}7\cdot 10^{-5}$ en la RNN con $w=0{,}9$. Es la misma idea que la conexión residual del módulo~11. En la práctica, las LSTM aprovechan contextos de cientos de tokens.
+
+\begin{corolario}\label{cor:param-lstm}
+Una LSTM con estado de dimensión $h$ y entrada de dimensión $d$ tiene $4\bigl(h(h+d)+h\bigr)$ parámetros recurrentes, cuatro veces los de una RNN simple.
+\end{corolario}
+
+\section{Secuencialidad y el paso al Transformer}
+
+El segundo límite no tiene que ver con el gradiente. En una red recurrente, $h_t$ depende de $h_{t-1}$, de modo que calcular $h_T$ exige $T$ pasos que no pueden ejecutarse a la vez dentro de una secuencia (\cref{fig:rnn}). Una GPU tiene miles de núcleos que quedan ociosos durante esa cadena. El Transformer del módulo~13 calcula las representaciones de todas las posiciones de una capa a la vez, con productos de matrices, y conecta cualquier par de posiciones en un solo paso de atención, a cambio de un coste $O(n^{2})$ en la longitud.
+
+\begin{table}[h]
+\centering\small
+\caption{Modelos de secuencias y sus limitaciones.}\label{tab:modelos-seq}
+\begin{tabularx}{\textwidth}{@{}lll>{\raggedright\arraybackslash}X@{}}
+\toprule
+Modelo & Contexto & Paralelo & Problema principal \\
+\midrule
+$N$-grama & $n-1$ fijo & sí (contar) & tabla de $K^{n}$ casillas; no generaliza \\
+MLP (módulo~9) & fijo & sí & contexto corto y fijo \\
+RNN & ilimitado en teoría & no & desvanecimiento del gradiente; secuencial \\
+LSTM & cientos de tokens & no & secuencial; aprovecha mal la GPU \\
+Transformer & ventana de contexto & sí & atención $O(n^{2})$ (módulo~13) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+

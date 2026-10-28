@@ -1,0 +1,112 @@
+% =====================================================================
+\chapter{Generación e hiperparámetros}
+\label{tema:5}
+% =====================================================================
+
+Generar texto es aplicar la regla de la cadena del módulo~1 con el modelo como calculadora de probabilidades condicionadas: se predice la distribución del token siguiente, se muestrea, se añade el token al contexto y se repite. Este tema formaliza el bucle de generación, estudia las tres transformaciones de la distribución que exponen las interfaces de los modelos actuales (temperatura, top-$k$ y top-$p$) y demuestra que la entropía de la distribución crece con la temperatura. Termina con el efecto de los hiperparámetros sobre el entrenamiento del mini-GPT. Se sigue el §6 de la tarea~1 de CS336~\cite{cs336}, el §9.5.5 de~\cite{d2l}, los artículos de Fan, Lewis y Dauphin~\cite{fan} y de Holtzman \emph{et al.}~\cite{holtzman}, y el §11.4 de~\cite{gbc}.
+
+\section{Generación autorregresiva}
+
+\begin{definicion}[Bucle de generación]\label{def:generacion}
+Sea un modelo con contexto máximo $T$, una secuencia inicial (\emph{prompt}) $w_{1:m}$, un número máximo de tokens nuevos $G$ y una transformación $\Phi$ que convierte unos logits en una distribución. Para $g=1,\dots,G$:
+\begin{enumerate}[label=\arabic*.]
+  \item recortar el contexto a sus últimos $T$ tokens, $c=w_{\max(1,\,m+g-T):\,m+g-1}$;
+  \item evaluar el modelo sobre $c$ y tomar los logits $z$ de la última posición;
+  \item muestrear $w_{m+g}\sim\Phi(z)$ y añadirlo a la secuencia;
+  \item detenerse si $w_{m+g}$ es el token delimitador.
+\end{enumerate}
+\end{definicion}
+
+Por el \cref{cor:una-pasada}, los logits de la última posición son los de la distribución $P_\theta(\cdot\mid c)$. Con $\Phi=\softmax$ se muestrea del propio modelo~\cite[§6, ecuaciones~(21)--(22)]{cs336}; si en cada paso se elige el token más probable, el procedimiento es la \emph{decodificación voraz}~\cite[§9.5.5]{d2l}. Cada paso exige una pasada completa del modelo sobre el contexto; el módulo~19 estudia cómo evitar recalcular lo ya calculado con la caché de claves y valores.
+
+\section{Temperatura}
+
+\begin{definicion}[Softmax con temperatura]\label{def:temperatura}
+Para $\tau>0$, $\softmax(z,\tau)_i=e^{z_i/\tau}\big/\sum_j e^{z_j/\tau}$. En este módulo la temperatura se escribe $\tau$ para no confundirla con la longitud de contexto $T$.
+\end{definicion}
+
+\begin{proposicion}[Límites]\label{prop:limites}
+Sea $z\in\R^{K}$ con un único máximo en el índice $i^{\star}$. Cuando $\tau\to 0^{+}$, $\softmax(z,\tau)\to e_{i^{\star}}$; cuando $\tau\to\infty$, $\softmax(z,\tau)\to(1/K,\dots,1/K)$.
+\end{proposicion}
+
+\begin{teorema}[La entropía crece con la temperatura]\label{teo:entropia-tau}
+Sea $z\in\R^{K}$ no constante y, para $b>0$, $p^{(b)}=\softmax(bz)$, de modo que $b=1/\tau$. Entonces
+\[
+\frac{d}{db}\,H\bigl(p^{(b)}\bigr)=-b\,\Var_{p^{(b)}}(z)<0,
+\]
+donde $\Var_{p}(z)=\sum_i p_iz_i^{2}-\bigl(\sum_i p_iz_i\bigr)^{2}$. En consecuencia, $H\bigl(\softmax(z,\tau)\bigr)$ es estrictamente creciente en $\tau$.
+\end{teorema}
+
+\addtocounter{definicion}{1}%
+
+La temperatura es la misma que la de la distribución de Boltzmann de la física estadística (módulo~1). Holtzman \emph{et al.} observan que bajar la temperatura mejora la calidad del texto generado a costa de reducir su diversidad~\cite[§3.3]{holtzman}.
+
+\section{Muestreo top-\texorpdfstring{$k$}{k} y top-\texorpdfstring{$p$}{p}}
+
+\begin{definicion}[Top-$k$]\label{def:topk}
+Sea $1\le k\le K$ y sea $I_k(z)$ el conjunto de los índices de los $k$ mayores logits, con los empates resueltos por el índice menor. El \emph{muestreo top-$k$} usa la distribución $\softmax\bigl(\topk(z)\bigr)$, donde $\topk(z)_i=z_i$ si $i\in I_k(z)$ y $-\infty$ en otro caso.
+\end{definicion}
+
+Fan, Lewis y Dauphin introdujeron este procedimiento con $k=10$ para generar relatos y observaron que producía textos menos repetitivos que la búsqueda en haz~\cite[§5.4]{fan}. Con $k=1$ el muestreo coincide con la decodificación voraz; con $k=K$ no cambia nada. Con $z=(2;\allowbreak\,1;\allowbreak\,0{,}5;\allowbreak\,-1)$, $k=2$ y $\tau=1$, la distribución pasa a ser $(0{,}731;\allowbreak\,0{,}269;\allowbreak\,0;\allowbreak\,0)$: desaparece la cola de tokens improbables, que con 46 caracteres puede acumular una masa apreciable.
+
+\begin{definicion}[Muestreo de núcleo o top-$p$]\label{def:topp}
+Sea $q$ una distribución sobre $\V$ y $\rho\in(0,1]$. Sea $V(\rho)$ el menor conjunto de índices tal que $\sum_{j\in V(\rho)}q_j\ge\rho$. El \emph{muestreo de núcleo} usa la distribución
+\[
+\tilde q_i=\begin{cases} q_i\big/\sum_{j\in V(\rho)}q_j, & i\in V(\rho),\\ 0, & \text{en otro caso}.\end{cases}
+\]
+\end{definicion}
+
+Es la definición de Holtzman \emph{et al.}~\cite[§3.1, ecuaciones~(2) y~(3)]{holtzman}, reproducida por CS336~\cite[§6, ecuación~(24)]{cs336}, donde el umbral se denota $p$. La distribución $q$ suele ser ya la softmax con temperatura.
+
+\begin{proposicion}[Cálculo del núcleo]\label{prop:nucleo}
+Sean $q_{(1)}\ge q_{(2)}\ge\dots\ge q_{(K)}$ las probabilidades ordenadas y $m=\min\{j:\sum_{i\le j}q_{(i)}\ge\rho\}$. Todo conjunto de masa al menos $\rho$ tiene al menos $m$ elementos, y el conjunto $S_m$ de los $m$ índices más probables alcanza esa masa. Por tanto, los conjuntos mínimos tienen exactamente $m$ elementos y $S_m$ es, entre ellos, uno de masa máxima.
+\end{proposicion}
+
+\begin{observacion}\label{obs:nucleo}
+El conjunto mínimo no es único en general, aunque no haya empates: con $q=(0{,}5;\allowbreak\,0{,}3;\allowbreak\,0{,}2)$ y $\rho=0{,}6$, tanto $\{1,2\}$ como $\{1,3\}$ tienen dos elementos y masa al menos $0{,}6$. Por convenio, $V(\rho)$ designa el conjunto $S_m$, que es el que se obtiene al ordenar la distribución y acumular probabilidades hasta alcanzar $\rho$, como prescribe CS336~\cite[§6]{cs336}.
+\end{observacion}
+
+La ventaja de top-$p$ sobre top-$k$ es que el número de candidatos se adapta a la forma de la distribución. Con una distribución plana, un $k$ pequeño elimina continuaciones razonables; con una distribución muy concentrada, un $k$ grande deja entrar candidatos inapropiados, cuya probabilidad crece al renormalizar~\cite[§3.2]{holtzman}. Las interfaces de programación de modelos comerciales como Claude y Gemini exponen públicamente los parámetros de temperatura, top-$k$ y top-$p$.
+
+\paragraph{Muestras del mini-GPT.} Con $\tau=0{,}8$ y $k=10$, casi todas las líneas generadas son correctas:
+\begin{center}\small
+\begin{tabular}{@{}l@{}}
+\texttt{objeto. una lámpara azul de cristal. sirve para esperar sentado.}\\
+\texttt{objeto. una caja azul de tela. sirve para leer de noche.}\\
+\texttt{receta. hornea verde paperado.}
+\end{tabular}
+\end{center}
+La tercera muestra el límite del modelo: mezcla un color propio de los objetos en una receta. Con $\tau=3$ la salida se degrada a símbolos sueltos, porque la distribución se acerca a la uniforme y los dígitos y signos aparecen en cualquier lugar.
+
+\section{Efecto de los hiperparámetros}
+
+El \cref{tab:hiper} resume entrenamientos de 800 pasos sobre el mismo corpus y con la misma semilla, en los que solo cambia lo indicado.
+
+\begin{table}[h]
+\centering\small
+\caption{Efecto de los hiperparámetros en el mini-GPT (resultados del cuaderno de prácticas). Base: $d=64$, $L=2$, $n_h=4$, $T=32$, $\eta_{\max}=3\cdot 10^{-3}$. Pérdidas de validación en nats por carácter; tiempo relativo al modelo base.}\label{tab:hiper}
+\begin{tabularx}{\textwidth}{@{}lrccc>{\raggedright\arraybackslash}X@{}}
+\toprule
+Cambio & $N$ & Paso 100 & Final & Tiempo & Lectura \\
+\midrule
+Base & 107\,694 & $2{,}046$ & $0{,}324$ & 1 & referencia \\
+$\eta_{\max}=3\cdot 10^{-4}$ & 107\,694 & $2{,}959$ & $1{,}840$ & 1 & demasiado lenta \\
+$\eta_{\max}=3\cdot 10^{-2}$ & 107\,694 & $1{,}304$ & $0{,}297$ & 1 & mejor: tolera tasas altas \\
+ídem, sin calentamiento & 107\,694 & $1{,}232$ & $0{,}306$ & 1 & algo peor \\
+$\eta_{\max}=3\cdot 10^{-1}$ & 107\,694 & $2{,}863$ & $2{,}244$ & 1 & inestable \\
+Tasa constante & 107\,694 & $2{,}046$ & $0{,}337$ & 1 & falta el afinado final \\
+$d=32$ & 29\,294 & $2{,}308$ & $0{,}649$ & $0{,}5$ & poca capacidad \\
+$L=1$ & 57\,902 & $2{,}128$ & $0{,}392$ & $0{,}4$ & un bloque no basta \\
+$n_h=1$ & 107\,694 & $2{,}062$ & $0{,}336$ & $0{,}7$ & algo peor \\
+$T=8$ & 106\,158 & $2{,}068$ & $0{,}694$ & $0{,}3$ & no ve la etiqueta \\
+$d=128$, $L=3$ & 609\,838 & $1{,}441$ & $0{,}297$ & $2{,}4$ & mejor, más caro \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+La tasa de aprendizaje es el factor dominante: entre $3\cdot 10^{-4}$ y $3\cdot 10^{-2}$ la pérdida final pasa de $1{,}840$ a $0{,}297$, y con $3\cdot 10^{-1}$ el entrenamiento se rompe. Goodfellow, Bengio y Courville la señalan como el hiperparámetro más importante si solo se puede ajustar uno~\cite[§11.4.1]{gbc}, y CS336 pide localizar empíricamente la tasa a partir de la cual el entrenamiento diverge y relacionarla con la mejor~\cite[§7.2, problema \emph{learning\_rate}]{cs336}. El contexto es el segundo factor: con $T=8$ la pérdida se duplica, porque el modelo pierde la información que más reduce la incertidumbre, el tipo de línea (\cref{eje:5-contexto}). Multiplicar por $5{,}7$ los parámetros da la misma mejora que subir la tasa a $3\cdot 10^{-2}$ sin coste adicional. El calentamiento y el coseno aportan poco en este modelo (unas centésimas de nat cada uno), porque es pequeño y el recorte ya lo protege; en los modelos grandes son imprescindibles.
+
+\begin{observacion}[Reglas prácticas]\label{obs:reglas}
+De lo anterior se desprenden cuatro reglas: (i) ajustar primero la tasa de aprendizaje, barriendo potencias de 10 o de $\sqrt{10}$, y quedarse con la mayor que sea estable; (ii) antes de escalar, comprobar que el modelo sobreajusta un único lote hasta pérdida casi nula; (iii) elegir $T$ de modo que cubra la dependencia que se quiere capturar, aquí una línea completa de unos 60 a 80 caracteres; (iv) más parámetros solo ayudan si hay datos y pasos suficientes para entrenarlos, como precisan las leyes de escalado del módulo~16.
+\end{observacion}
+

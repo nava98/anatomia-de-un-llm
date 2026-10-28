@@ -1,0 +1,122 @@
+% =====================================================================
+\chapter{Regularización y selección de modelos}
+\label{tema:6}
+% =====================================================================
+
+Regularizar es añadir a la pérdida un término que penaliza los modelos complicados, para cambiar un poco de sesgo por una reducción mayor de la varianza. Este tema estudia la regresión ridge, su interpretación bayesiana, el lasso y el \emph{weight decay}, y la validación cruzada con la que se eligen los hiperparámetros. Se sigue el capítulo~9 de los apuntes de CS229~\cite[§9.1--9.4]{cs229}, las secciones~3.4 y~7.10 de Hastie, Tibshirani y Friedman~\cite{esl}, las secciones~2.6 a~2.8 de las notas de MIT~6.390~\cite{mit6390}, la sección~3.1.4 de Bishop~\cite{bishop} y la sección~3.7 de Zhang \emph{et al.}~\cite{d2l}. Los métodos proceden de los artículos de Hoerl y Kennard~\cite{hoerl} y de Tibshirani~\cite{lasso}.
+
+\section{Regresión ridge}
+
+\begin{definicion}[Regresión ridge]\label{def:ridge}
+Sea $\lambda>0$. El estimador \emph{ridge} es el minimizador de
+\[
+J_\lambda(\theta)=\norm{y-X\theta}^{2}+\lambda\norm{\theta}^{2}.
+\]
+\end{definicion}
+
+\begin{teorema}\label{teo:ridge}
+Para todo $\lambda>0$ y toda matriz $X$, $X^{\top}X+\lambda I$ es definida positiva, y el estimador ridge existe, es único y vale
+\[
+\hat\theta_\lambda=(X^{\top}X+\lambda I)^{-1}X^{\top}y.
+\]
+\end{teorema}
+
+A diferencia de los mínimos cuadrados, ridge no necesita que $X$ tenga rango completo: resuelve también los problemas con más parámetros que datos. Esta fue la motivación original de Hoerl y Kennard~\cite{hoerl}.
+
+\begin{proposicion}[Contracción en la base de valores singulares]\label{prop:ridge-svd}
+Sea $X=UDV^{\top}$ la descomposición en valores singulares reducida, con $u_j$ las columnas de $U$ y $d_j>0$ los valores singulares. Entonces
+\[
+X\hat\theta_\lambda=\sum_{j}\frac{d_j^{2}}{d_j^{2}+\lambda}\,u_j\,(u_j^{\top}y).
+\]
+\end{proposicion}
+
+Los mínimos cuadrados ($\lambda=0$) proyectan $y$ sobre cada dirección $u_j$ sin modificarla (\cref{prop:proyeccion}); ridge multiplica cada componente por $d_j^{2}/(d_j^{2}+\lambda)<1$ y contrae más las direcciones de valor singular pequeño, que son las que el ruido perturba más~\cite[§3.4.1]{esl}. La traza de la matriz que lleva $y$ a $X\hat\theta_\lambda$, $\mathrm{df}(\lambda)=\sum_j d_j^{2}/(d_j^{2}+\lambda)$, se llama \emph{número efectivo de parámetros}: vale $m$ con $\lambda=0$ (\cref{eje:2-traza}) y tiende a 0 cuando $\lambda\to\infty$.
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[El término independiente no se penaliza]
+El término independiente solo desplaza las predicciones y no añade flexibilidad, por lo que no suele penalizarse. Si se centran las columnas de $X$ y el vector $y$, el término independiente óptimo es nulo en el problema centrado, la penalización recae solo sobre $w$ y, al final, $b=\bar y-\hat w^{\top}\bar x$~\cite[§2.6 y §2.7.2]{mit6390}, \cite[§3.4.1]{esl}. Además, ridge no es invariante frente a cambios de escala de las características, que por eso se estandarizan antes de ajustar.
+\end{observacion}
+
+\section{Interpretación bayesiana}
+
+\begin{proposicion}[Ridge como estimación MAP]\label{prop:map}
+Sea $y\mid\theta\sim\N(X\theta,\sigma^{2}I)$ y sea la distribución \emph{a priori} $\theta\sim\N(0,\tau^{2}I)$. El estimador de máximo \emph{a posteriori} (MAP) de $\theta$ es el estimador ridge con $\lambda=\sigma^{2}/\tau^{2}$.
+\end{proposicion}
+
+La demostración se propone en el \cref{eje:6-map}. Regularizar equivale a creer, antes de ver los datos, que los pesos son pequeños; cuanto más firme es esa creencia (menor $\tau$), mayor es $\lambda$~\cite[§9.4]{cs229}, \cite[§3.1.4]{bishop}. Con una distribución \emph{a priori} de Laplace, $p(\theta_j)\propto e^{-\abs{\theta_j}/s}$, el mismo razonamiento conduce a la penalización $\norm{\theta}_1$ de la sección siguiente.
+
+\section{El lasso}
+
+\begin{definicion}[Lasso]
+El estimador \emph{lasso}~\cite{lasso} minimiza $\frac12\norm{y-X\theta}^{2}+\lambda\norm{\theta}_1$, con $\norm{\theta}_1=\sum_j\abs{\theta_j}$.
+\end{definicion}
+
+\begin{proposicion}[Umbral suave]\label{prop:umbral}
+Si las columnas de $X$ son ortonormales ($X^{\top}X=I$) y $\hat\beta=X^{\top}y$ es el estimador de mínimos cuadrados, el lasso tiene solución única
+\[
+\hat\theta_j=\sign(\hat\beta_j)\,\bigl(\abs{\hat\beta_j}-\lambda\bigr)_{+},
+\]
+donde $(t)_{+}=\max(t,0)$. Con la penalización $\frac{\lambda}{2}\norm{\theta}^{2}$ en lugar de $\lambda\norm{\theta}_1$, la solución es $\hat\theta_j=\hat\beta_j/(1+\lambda)$.
+\end{proposicion}
+
+Ridge contrae todos los coeficientes en la misma proporción y nunca los anula; el lasso resta una cantidad fija y anula los que no superan el umbral, de modo que selecciona variables y produce modelos \emph{dispersos}~\cite[§3.4.2--3.4.3]{esl}. Las penalizaciones de tipo $\ell_1$ reaparecen en los autocodificadores dispersos de la interpretabilidad (módulo~23).
+
+\section{\emph{Weight decay} y otras formas de regularización}
+
+\begin{proposicion}[Weight decay]\label{prop:weight-decay}
+Un paso de descenso de gradiente con tasa $\eta$ sobre $J(\theta)+\frac{\lambda}{2}\norm{\theta}^{2}$ es
+\[
+\theta\leftarrow(1-\eta\lambda)\,\theta-\eta\,\nabla J(\theta):
+\]
+antes del paso habitual, cada peso se multiplica por el factor $1-\eta\lambda<1$.
+\end{proposicion}
+
+Con $\eta=0{,}1$ y $\lambda=0{,}01$, el factor es $0{,}999$: los pesos decaen geométricamente salvo que el gradiente de los datos los sostenga~\cite[§3.7.1]{d2l}. La práctica del módulo usa precisamente la pérdida $J+\frac{\lambda}{2}\norm{W}^{2}$, con gradiente $\frac1nX^{\top}(P-Y)+\lambda W$. Con optimizadores adaptativos como Adam la equivalencia entre penalización $\ell_2$ y decaimiento deja de cumplirse, y AdamW aplica el decaimiento por separado~\cite{adamw} (módulo~7).
+
+\begin{table}[h]
+\centering\small
+\caption{Técnicas de regularización y dónde aparecen en el curso.}\label{tab:regularizacion}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.27\textwidth}>{\raggedright\arraybackslash}p{0.36\textwidth}>{\raggedright\arraybackslash}p{0.29\textwidth}@{}}
+\toprule
+Técnica & Efecto & En el curso \\
+\midrule
+$\ell_2$, ridge, \emph{weight decay} & contrae todos los pesos & AdamW (módulo~7), casi todos los LLM \\
+$\ell_1$, lasso & anula pesos; dispersión & autocodificadores dispersos (módulo~23) \\
+Parada temprana & detiene el ajuste cuando sube la validación & ajuste fino (módulo~20) \\
+\emph{Dropout} & apaga unidades al azar durante el entrenamiento & módulo~11 \\
+Más datos & reduce directamente la varianza & estrategia principal de los LLM \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La parada temprana y el propio descenso de gradiente estocástico tienen un efecto de \emph{regularización implícita}: entre las muchas soluciones de un problema sobreparametrizado, el algoritmo tiende a encontrar unas concretas, a menudo de norma pequeña~\cite[§9.2]{cs229}.
+
+\section{Selección de modelos y validación cruzada}
+
+\begin{definicion}[Validación cruzada con $k$ particiones]\label{def:kfold}
+Sea $S$ el conjunto de entrenamiento y $k\ge 2$. Se divide $S$ al azar en $k$ partes disjuntas $S_1,\dots,S_k$ de tamaños lo más parecidos posible. Para cada valor del hiperparámetro y cada $j=1,\dots,k$, se entrena el modelo con $S\setminus S_j$ y se mide su error en $S_j$. La \emph{estimación por validación cruzada} es la media de los $k$ errores. Se elige el hiperparámetro con menor estimación y, por último, se reentrena con todo $S$~\cite[§9.3]{cs229}, \cite[§7.10.1]{esl}.
+\end{definicion}
+
+Cada ejemplo se usa para validar exactamente una vez por cada valor del hiperparámetro, y la media de $k$ errores tiene menos varianza que el error en una única partición de validación. El precio es el coste: $k$ entrenamientos por cada valor. El caso $k=n$ se llama \emph{dejar uno fuera} (\emph{leave-one-out}); su estimación es casi insesgada, pero su coste es de $n$ entrenamientos.
+
+\begin{observacion}[Uso correcto]
+Todo paso que mire las etiquetas, como seleccionar características o elegir umbrales, debe repetirse dentro de cada partición, usando solo $S\setminus S_j$; si se hace antes con todo $S$, la estimación resulta optimista~\cite[§7.10.2]{esl}. Con series temporales no se baraja: se valida siempre con datos posteriores a los de entrenamiento.
+\end{observacion}
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[h]
+\centering\small
+\caption{Exactitud media por validación cruzada ($k=5$) del \cref{ej:cv-digitos}.}\label{tab:cv}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+$\lambda$ & $0$ & $0{,}001$ & $0{,}01$ & $0{,}1$ \\
+\midrule
+Exactitud & $0{,}949$ & $0{,}950$ & $0{,}937$ & $0{,}719$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

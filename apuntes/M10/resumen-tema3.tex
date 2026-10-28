@@ -1,0 +1,75 @@
+% =====================================================================
+\chapter{El modo inverso y la retropropagación}
+\label{tema:3}
+% =====================================================================
+
+El modo inverso recorre la traza dos veces: hacia delante, para calcular y guardar los valores, y hacia atrás, para propagar desde la salida la derivada de esta respecto a cada variable. Este tema define los adjuntos, demuestra que el algoritmo calcula un producto vector-jacobiano, estudia el papel del orden topológico y aplica el método a mano. Se siguen la §3.2 de~\cite{baydin}, el capítulo~3 de~\cite{gw}, las §6.5.2--6.5.6 de~\cite{gbc}, las notas «Backpropagation, Intuitions» de~\cite{cs231n} y la §5.3 de~\cite{d2l}.
+
+\section{Adjuntos}
+
+Se fija una traza de $f\colon\R^{n}\to\R$ con salida escalar $y=v_\ell$, y un punto $x$ en el que se han calculado todos los valores $v_i$.
+
+\begin{definicion}[Adjuntos]\label{def:adjunto}
+Los \emph{adjuntos} de la traza se obtienen así: se inicializan $\bar v_\ell=1$ y $\bar v_j=0$ para $j<\ell$, y se recorren las operaciones en orden decreciente, $i=\ell,\ell-1,\dots,1$, ejecutando para cada argumento $j\pre i$ la actualización
+\[
+\bar v_j\;\mathrel{+}=\;\bar v_i\,\frac{\partial\varphi_i}{\partial v_j}.
+\]
+El valor final de $\bar v_j$ se llama \emph{adjunto} de $v_j$.
+\end{definicion}
+
+Equivalentemente, el valor final de cada adjunto es
+\[
+\bar v_j=\sum_{i\,:\,j\pre i}\bar v_i\,\frac{\partial\varphi_i}{\partial v_j},
+\]
+la suma sobre todas las operaciones que usan $v_j$. El símbolo $\mathrel{+}=$ es esencial: si $v_j$ alimenta a varias operaciones, su adjunto acumula una contribución de cada una.
+
+Para enunciar qué calculan los adjuntos, sea $F_i(v_{1-n},\dots,v_i)$ la salida que se obtiene al ejecutar las operaciones $i+1,\dots,\ell$ de la traza a partir de unos valores \emph{arbitrarios} de las variables $v_{1-n},\dots,v_i$, tratadas como independientes. Así, $F_\ell(v_{1-n},\dots,v_\ell)=v_\ell$ y $F_0(x)=f(x)$, y $\partial F_i/\partial v_i$ mide la sensibilidad de la salida a una perturbación de $v_i$ introducida justo después de calcularla.
+
+\begin{teorema}[Corrección del modo inverso]\label{teo:inverso}
+Para cada $i\in\{0,\dots,\ell\}$, después de procesar las operaciones $\ell,\dots,i+1$, los acumuladores cumplen $\bar v_j=\partial F_i/\partial v_j$ para todo $j\le i$. En particular, al terminar,
+\[
+\bar v_{k-n}=\frac{\partial f}{\partial x_k}(x)\quad(k=1,\dots,n),\qquad\text{es decir,}\qquad(\bar v_{1-n},\dots,\bar v_0)=\nabla f(x)\T ,
+\]
+y el adjunto de cada variable intermedia es $\bar v_i=\partial F_i/\partial v_i$.
+\end{teorema}
+
+La demostración muestra por qué el orden importa: cuando se procesa la operación $i$, el acumulador $\bar v_i$ debe estar completo, lo que exige haber procesado antes todas las operaciones que usan $v_i$. Es la regla de la cadena en un grafo del módulo~9 (tema~5), ahora con su algoritmo.
+
+\begin{proposicion}[El modo inverso calcula $\bar y\T J$]\label{prop:vjp}
+Sea $f\colon\R^{n}\to\R^{m}$ y $\bar y\in\R^{m}$. Si se inicializan los adjuntos de las salidas con las componentes de $\bar y$ y se ejecuta el recorrido de la \cref{def:adjunto}, los adjuntos de las entradas forman el vector fila $\bar x\T=\bar y\T J_f(x)$. En consecuencia, el jacobiano completo requiere $m$ pasadas inversas, una por fila.
+\end{proposicion}
+
+\section{El algoritmo}
+
+\addtocounter{figure}{1}%
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{figure}{1}%
+
+\addtocounter{definicion}{1}%
+
+Las derivadas locales usan valores de la pasada hacia delante: $o$ en el nodo $\tanh$, los factores en cada producto. Por eso el modo inverso debe \emph{guardar} esos valores hasta la pasada hacia atrás; en un LLM, las activaciones guardadas ocupan a menudo más memoria que los pesos (\cref{tema:5}).
+
+\section{El orden topológico}
+
+\begin{definicion}[Orden topológico]\label{def:topologico}
+Un \emph{orden topológico} de un grafo dirigido $G=(V,E)$ es una enumeración $u_1,\dots,u_{\abs{V}}$ de sus nodos tal que toda arista $u_r\to u_s$ cumple $r<s$.
+\end{definicion}
+
+El \cref{teo:inverso} se ha enunciado con el orden de la traza, pero la demostración solo usa que cada operación se procesa después de todas las que usan su resultado. Por tanto, el modo inverso es correcto si las operaciones se procesan en el \emph{inverso} de cualquier orden topológico del grafo.
+
+\begin{proposicion}[Construcción por búsqueda en profundidad]\label{prop:dfs}
+Sea $G$ un grafo dirigido acíclico y sea el procedimiento \textsc{visitar}$(v)$: si $v$ no está marcado, marcarlo, llamar a \textsc{visitar}$(u)$ para cada predecesor $u$ de $v$ (cada $u$ con $u\to v$) y, después, añadir $v$ al final de una lista. Si se llama a \textsc{visitar} desde la salida, la lista resultante es un orden topológico del subgrafo de los nodos de los que depende la salida, y se construye en tiempo $O(\abs{V}+\abs{E})$.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[La cinta]\label{obs:cinta}
+Muchos sistemas no construyen el orden con la \cref{prop:dfs}, sino que registran las operaciones en una lista, la \emph{cinta} (\emph{tape} o lista de Wengert), en el orden en que se ejecutan. Ese orden es topológico, porque ninguna operación se ejecuta antes que sus argumentos, y basta recorrer la cinta al revés. Es el diseño de la tarea complementaria de autograd del curso 11-785 de Carnegie Mellon~\cite[§2.3]{cmu11785}, que sustituye el grafo por una lista lineal de operaciones.
+\end{observacion}
+
+\addtocounter{definicion}{1}%
+

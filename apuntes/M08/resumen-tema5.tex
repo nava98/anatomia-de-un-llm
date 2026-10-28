@@ -1,0 +1,107 @@
+% =====================================================================
+\chapter{Generalización: sesgo y varianza}
+\label{tema:5}
+% =====================================================================
+
+Un modelo que reproduce bien los datos de entrenamiento puede predecir mal datos nuevos. Este tema estudia ese fenómeno, el sobreajuste, y lo explica mediante la descomposición del error en sesgo, varianza y ruido. Se sigue el capítulo~8 de los apuntes de CS229~\cite[§8.1--8.2]{cs229}, las secciones~2.9, 7.2 y~7.3 de Hastie, Tibshirani y Friedman~\cite{esl}, las secciones~1.1 y~3.2 de Bishop~\cite{bishop} y la sección~3.6 de Zhang \emph{et al.}~\cite{d2l}.
+
+\section{Error de entrenamiento y error de generalización}
+
+El experimento clásico de Bishop~\cite[§1.1]{bishop} consiste en ajustar polinomios de grado creciente a pocos puntos ruidosos de una función suave. En la práctica del módulo se toman $n=10$ puntos $x_i$ uniformes en $[0,1]$, con $y_i=\sin(2\pi x_i)+\varepsilon_i$ y $\varepsilon_i\sim\N(0;\,0{,}2^{2})$, se ajusta por mínimos cuadrados un polinomio de grado $p$ (funciones base $1,x,\dots,x^{p}$, \cref{tema:2}) y se mide el error cuadrático medio (ECM) sobre los datos de entrenamiento y sobre 200 puntos nuevos. El \cref{tab:polinomios} recoge el resultado.
+
+\begin{table}[h]
+\centering\small
+\caption{Ajuste polinómico de 10 puntos de $\sin(2\pi x)$ con ruido. La última fila usa la regresión ridge del \cref{tema:6}.}\label{tab:polinomios}
+\begin{tabular}{@{}cccccl@{}}
+\toprule
+Grado $p$ & $\lambda$ & Parámetros & ECM entrenamiento & ECM validación & Diagnóstico \\
+\midrule
+1 & 0 & 2 & $0{,}1183$ & $0{,}2888$ & infraajuste \\
+3 & 0 & 4 & $0{,}0024$ & $0{,}0419$ & equilibrio \\
+9 & 0 & 10 & $0{,}0000$ & $34{,}17$ & sobreajuste \\
+9 & $0{,}001$ & 10 & $0{,}0144$ & $0{,}0652$ & regularizado \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Con $p=9$ hay tantos parámetros como datos y el polinomio pasa exactamente por los diez puntos (\cref{prop:interpolacion}), pero oscila violentamente entre ellos: sus coeficientes alcanzan valores del orden de $5\cdot 10^{6}$.
+
+\begin{definicion}[Infraajuste y sobreajuste]
+Un modelo \emph{infraajusta} si su error de entrenamiento es alto: la clase de hipótesis no puede representar la relación entre $x$ e $y$. Un modelo \emph{sobreajusta} si su error de entrenamiento es pequeño y su error de validación es mucho mayor: el modelo ha reproducido el ruido particular de la muestra.
+\end{definicion}
+
+\begin{proposicion}[Clases encajadas]\label{prop:encajadas}
+Si $\Hc_1\subseteq\Hc_2$, el mínimo del riesgo empírico sobre $\Hc_2$ es menor o igual que sobre $\Hc_1$. En particular, el error de entrenamiento de mínimos cuadrados no aumenta al subir el grado del polinomio.
+\end{proposicion}
+
+\begin{proposicion}[Interpolación]\label{prop:interpolacion}
+Si $x_1,\dots,x_n$ son distintos, existe un único polinomio de grado a lo sumo $n-1$ que pasa por los $n$ puntos $(x_i,y_i)$; su error de entrenamiento es nulo.
+\end{proposicion}
+
+La \cref{prop:encajadas} explica por qué el error de entrenamiento no sirve para elegir el grado: siempre favorece al modelo más flexible. El \cref{tab:polinomios} muestra que el error de validación, en cambio, primero baja y después sube.
+
+\section{La descomposición sesgo-varianza}
+
+Para entender la forma en U del error de validación, se considera el conjunto de entrenamiento $S$ como aleatorio y se estudia cómo varía la predicción $\hat f_S(x)$ en un punto fijo $x$~\cite[§8.1.1]{cs229}, \cite[§7.3]{esl}.
+
+\begin{teorema}[Descomposición sesgo-varianza]\label{teo:sesgo-varianza}
+Sea $y=f(x)+\varepsilon$, donde $f$ es determinista y $\varepsilon$ tiene media nula y varianza $\sigma^{2}$. Sea $\hat f_S$ un modelo entrenado con un conjunto aleatorio $S$, independiente de $\varepsilon$, y sea $\bar f(x)=\E_S[\hat f_S(x)]$. Para cada $x$ fijo,
+\[
+\E_{S,\varepsilon}\bigl[(y-\hat f_S(x))^{2}\bigr]
+=\underbrace{\sigma^{2}}_{\text{ruido}}
++\underbrace{\bigl(f(x)-\bar f(x)\bigr)^{2}}_{\text{sesgo}^{2}}
++\underbrace{\E_S\bigl[(\hat f_S(x)-\bar f(x))^{2}\bigr]}_{\text{varianza}}.
+\]
+\end{teorema}
+
+\begin{definicion}[Sesgo y varianza de un modelo]
+En las condiciones del \cref{teo:sesgo-varianza}, el \emph{sesgo} en $x$ es $\bar f(x)-f(x)$, el error sistemático del modelo promediado sobre los posibles conjuntos de entrenamiento, y la \emph{varianza} es $\Var_S(\hat f_S(x))$, la sensibilidad de la predicción al conjunto concreto. El \emph{ruido} $\sigma^{2}$ es el error irreducible: ningún modelo puede eliminarlo (\cref{teo:regresion}).
+\end{definicion}
+
+Un modelo demasiado simple tiene sesgo alto (no puede seguir a $f$) y varianza baja; uno demasiado flexible tiene sesgo bajo y varianza alta. El error total se minimiza con una complejidad intermedia, lo que se conoce como \emph{compromiso sesgo-varianza}~\cite[§2.9]{esl}.
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[h]
+\centering\small
+\caption{Sesgo y varianza del estimador $a\bar x$ del \cref{ej:encoger}.}\label{tab:encoger}
+\begin{tabular}{@{}lccc@{}}
+\toprule
+$a$ & Sesgo$^{2}$ & Varianza & ECM \\
+\midrule
+$1$ (media muestral) & $0$ & $1$ & $1{,}00$ \\
+$0{,}8$ & $0{,}16$ & $0{,}64$ & $0{,}80$ \\
+$0{,}5$ & $1$ & $0{,}25$ & $1{,}25$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proposicion}[Varianza de los mínimos cuadrados]\label{prop:var-mc}
+En el modelo lineal gaussiano con diseño $X$ fijo de rango $m$, el estimador de mínimos cuadrados es insesgado, $\E[\hat\theta]=\theta$, y $\Cov(\hat\theta)=\sigma^{2}(X^{\top}X)^{-1}$.
+\end{proposicion}
+
+Cada parámetro adicional aporta varianza; el \cref{eje:5-varianza} cuantifica la aportación sobre los puntos de entrenamiento.
+
+\section{Diagnóstico y remedios}
+
+El \cref{tab:diagnostico} traduce la descomposición en reglas prácticas.
+
+\begin{table}[h]
+\centering\small
+\caption{Diagnóstico a partir de los errores de entrenamiento y validación.}\label{tab:diagnostico}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.34\textwidth}>{\raggedright\arraybackslash}p{0.15\textwidth}>{\raggedright\arraybackslash}p{0.42\textwidth}@{}}
+\toprule
+Síntoma & Diagnóstico & Remedios \\
+\midrule
+Error alto en entrenamiento y en validación & sesgo alto & modelo más rico, más características, menos regularización, entrenar más \\
+Error bajo en entrenamiento y alto en validación & varianza alta & más datos, más regularización, modelo más simple, parada temprana \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Doble descenso]
+En modelos muy sobreparametrizados, como las redes neuronales, se observa que, tras el pico de error que aparece cuando el número de parámetros se acerca al de datos, el error de validación vuelve a bajar al seguir aumentando el tamaño del modelo. El fenómeno, llamado \emph{doble descenso}, no contradice el \cref{teo:sesgo-varianza}, pero muestra que el número de parámetros no es siempre una buena medida de la complejidad efectiva~\cite[§8.2]{cs229}.
+\end{observacion}
+
+\addtocounter{definicion}{1}%
+

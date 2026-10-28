@@ -1,0 +1,115 @@
+% =====================================================================
+\chapter{Identificación de sistemas y gemelos digitales}
+\label{tema:2}
+% =====================================================================
+
+El MPC necesita un modelo para predecir y el aprendizaje por refuerzo necesita un simulador en el que equivocarse sin coste. En planta casi nunca se dispone de un modelo físico calibrado: hay que construirlo con datos. Este tema formaliza la \emph{identificación de sistemas} siguiendo a Ljung~\cite{ljung}, texto del curso 6.435 del MIT~\cite{mit6435}, extiende los modelos lineales a los no lineales con redes neuronales como en Narendra y Parthasarathy~\cite{narendra} y define el \emph{gemelo digital} según la clasificación de Kritzinger \emph{et al.}~\cite{kritzinger}. El mensaje central es metodológico: un modelo para control se valida simulando, no prediciendo un paso.
+
+\section{El problema de identificación}
+
+Se dispone de un registro $Z^{N}=\{(u_k,y_k)\}_{k=0}^{N}$ de entradas y salidas. Se elige una \emph{estructura de modelo}, una familia de predictores $\hat y_{k+1}(\theta)$ que dependen de parámetros $\theta$ y de los datos hasta el instante $k$, y se estima $\theta$ minimizando el error de predicción~\cite{ljung}:
+\begin{equation}\label{eq:pem}
+\hat\theta_N=\arg\min_\theta\ V_N(\theta),\qquad V_N(\theta)=\frac1N\sum_{k=0}^{N-1}\bigl(y_{k+1}-\hat y_{k+1}(\theta)\bigr)^{2}.
+\end{equation}
+
+\begin{definicion}[Modelo ARX]\label{def:arx}
+Un modelo ARX$(n_a,n_b)$, \emph{autorregresivo con entradas exógenas}, es
+\[
+y_{k+1}=\sum_{i=1}^{n_a}a_iy_{k+1-i}+\sum_{j=1}^{n_b}b_ju_{k+1-j}+\varepsilon_{k+1},
+\]
+con $\varepsilon$ ruido blanco. Con el \emph{vector de regresores} $\varphi_k=(y_k,\dots,y_{k+1-n_a},u_k,\dots,u_{k+1-n_b})$ y $\theta=(a,b)$, se escribe $y_{k+1}=\varphi_k\T\theta+\varepsilon_{k+1}$: es una regresión lineal.
+\end{definicion}
+
+\begin{proposicion}[Estimador de mínimos cuadrados del ARX]\label{prop:ls}
+Sea $\Phi$ la matriz cuyas filas son los $\varphi_k\T$ e $Y$ el vector de los $y_{k+1}$. Si $\Phi\T\Phi$ es invertible, el minimizador de \eqref{eq:pem} es $\hat\theta_N=(\Phi\T\Phi)^{-1}\Phi\T Y$. Si además los datos proceden de un ARX con parámetro $\theta_0$, entonces
+\[
+\hat\theta_N-\theta_0=\Bigl(\frac1N\sum_k\varphi_k\varphi_k\T\Bigr)^{-1}\frac1N\sum_k\varphi_k\varepsilon_{k+1},
+\]
+y $\hat\theta_N\to\theta_0$ cuando $\frac1N\sum\varphi_k\varphi_k\T$ converge a una matriz invertible y $\frac1N\sum\varphi_k\varepsilon_{k+1}\to0$.
+\end{proposicion}
+
+La condición $\frac1N\sum\varphi_k\varepsilon_{k+1}\to0$ se cumple si $\varepsilon$ es blanco, porque $\varphi_k$ solo contiene datos hasta $k$. Si el ruido está coloreado (por ejemplo, ruido de medida sobre una salida autorregresiva), $y_k$ y $\varepsilon_{k+1}$ están correlacionados y el ARX es sesgado; la solución es estimar también un modelo del ruido (ARMAX, error de salida) o usar variables instrumentales~\cite{ljung}. La condición sobre $\frac1N\sum\varphi_k\varphi_k\T$ exige que la entrada sea suficientemente rica.
+
+\begin{definicion}[Excitación persistente]\label{def:pe}
+Una señal $u$ es \emph{persistentemente excitante de orden $n$} si la matriz de covarianzas $\bigl(R_u(i-j)\bigr)_{i,j=1}^{n}$, con $R_u(\tau)=\lim_N\frac1N\sum_ku_ku_{k-\tau}$, es definida positiva.
+\end{definicion}
+
+Una constante es persistentemente excitante solo de orden~1; una sinusoide, de orden~2; un ruido blanco o una secuencia binaria pseudoaleatoria, de cualquier orden. En planta se usan escalones aleatorios de duración variable, que respetan los límites del actuador y excitan las frecuencias que interesan.
+
+\addtocounter{definicion}{1}%
+
+\section{Modelos no lineales: NARX y redes neuronales}
+
+\begin{definicion}[Modelo NARX]\label{def:narx}
+Un modelo NARX es $y_{k+1}=g(\varphi_k;\theta)+\varepsilon_{k+1}$ con los mismos regresores que el ARX y una función $g$ no lineal: un polinomio, una red de base radial o un perceptrón multicapa (módulo~9). Narendra y Parthasarathy~\cite{narendra} propusieron en 1990 identificar y controlar sistemas dinámicos con redes de este tipo.
+\end{definicion}
+
+Hay tres familias principales, de menos a más estructura física:
+\begin{enumerate}
+  \item \emph{Caja negra}: $g$ es un perceptrón multicapa sobre los regresores. Es flexible, pero solo es fiable dentro del rango de los datos.
+  \item \emph{Modelos de estado neuronales}: un estado latente $h_{k+1}=F(h_k,u_k)$ e $y_k=H(h_k)$ con $F$ y $H$ redes, es decir, una red recurrente (módulo~12, §5.2) entrenada en simulación sobre secuencias, con retropropagación en el tiempo. Captura dinámicas de orden alto sin elegir $n_a$, a costa de un entrenamiento más delicado.
+  \item \emph{Caja gris}: la física aporta la estructura y los datos los parámetros, o una red aprende solo el residuo del modelo físico. Si se conoce la forma no lineal (por ejemplo, un producto entre entrada y perturbación), basta con añadir el regresor correspondiente y el modelo sigue siendo lineal en $\theta$.
+\end{enumerate}
+
+\addtocounter{definicion}{1}%
+
+\section{Validación: predicción a un paso y simulación libre}
+
+\begin{definicion}[Dos formas de validar]\label{def:validacion}
+Sea $\hat f$ un modelo de un paso, $\hat x_{k+1}=\hat f(x_k,u_k)$. La \emph{predicción a un paso} usa en cada instante el estado medido: $\hat x_{k+1}=\hat f(x_k,u_k)$. La \emph{simulación libre} (validación en lazo abierto del modelo, o \emph{free run}) se realimenta con su propia salida: $\tilde x_{k+1}=\hat f(\tilde x_k,u_k)$, $\tilde x_0=x_0$.
+\end{definicion}
+
+El MPC predice $N$ pasos y el agente de RL se entrena durante episodios enteros en el modelo: ambos usan el modelo en simulación libre. La siguiente proposición explica por qué el error a un paso es engañoso.
+
+\begin{proposicion}[Acumulación del error en simulación]\label{prop:acumula}
+Sea $x_{k+1}=f(x_k,u_k)$ el sistema real y $\hat f$ un modelo tal que $\abs{\hat f(x,u)-f(x,u)}\le\varepsilon$ para todo $(x,u)$ y $\hat f$ es lipschitziana en $x$ con constante $L$. Entonces el error de simulación libre cumple
+\[
+\abs{\tilde x_k-x_k}\le\varepsilon\,\frac{1-L^{k}}{1-L}\quad(L\ne1),\qquad\text{y, si }L<1,\quad \abs{\tilde x_k-x_k}\le\frac{\varepsilon}{1-L}.
+\]
+\end{proposicion}
+
+En procesos lentos $L$ es casi~1. Para la zona, $L=a=0{,}9835$ y $1/(1-L)\approx61$: un error de modelo de $0{,}005$ K por paso, invisible a un paso, puede convertirse en $0{,}30$ K en simulación, y en $0{,}24$ K tras las 96 muestras de un horizonte de 24~h.
+
+\begin{proposicion}[Identificabilidad en lazo cerrado]\label{prop:lazo}
+Sea $y_{k+1}=ay_k+bu_k+\varepsilon_{k+1}$ y supóngase que los datos se registran con un controlador proporcional $u_k=-Ky_k$ y sin excitación externa. Entonces $\Phi\T\Phi$ es singular y todos los pares $(a',b')$ con $a'-Kb'=a-Kb$ dan el mismo error de predicción: $a$ y $b$ no son identificables por separado.
+\end{proposicion}
+
+Es la razón por la que no basta con descargar el histórico de un lazo que funciona bien: la entrada es una función de la salida y no aporta información independiente. Las soluciones son añadir excitación (escalones o ruido en la consigna o en la salida del controlador), alternar entre controladores distintos o registrar periodos en manual~\cite{ljung}. El histórico de un PID también es poco informativo por otra razón: el controlador mantiene la planta cerca de un único punto de operación. Lazic \emph{et al.}~\cite{lazic} lo comprobaron en un centro de datos: tres horas de exploración aleatoria y acotada produjeron un modelo mejor que una semana de datos históricos de los PID (\cref{tema:5}).
+
+\begin{observacion}[Partición temporal de los datos]\label{obs:particion}
+Las muestras de una serie temporal no son independientes: barajarlas antes de separar entrenamiento y validación (módulo~8, §1.4) filtra información, porque cada muestra de validación tiene vecinas casi idénticas en el entrenamiento. Se separan \emph{bloques de tiempo} (días o semanas completos) y se reserva el último bloque, con condiciones distintas (otra estación del año, otro régimen de producción), como prueba final.
+\end{observacion}
+
+\section{El gemelo digital}
+
+\begin{definicion}[Modelo, sombra y gemelo digital]\label{def:gemelo}
+Kritzinger \emph{et al.}~\cite{kritzinger} distinguen tres niveles según la automatización del flujo de datos entre el objeto físico y su representación digital: un \emph{modelo digital} intercambia datos con la planta solo de forma manual; una \emph{sombra digital} recibe automáticamente los datos de la planta pero no actúa sobre ella; un \emph{gemelo digital} intercambia datos automáticamente en los dos sentidos.
+\end{definicion}
+
+\addtocounter{figure}{1}%
+
+Para control, el gemelo tiene cuatro componentes (\cref{fig:gemelo}): un \emph{modelo} (físico, de datos o híbrido); un \emph{estimador de estado}, porque no todos los estados se miden (el filtro de Kalman o la estimación de horizonte móvil, \cref{tema:3}); un procedimiento de \emph{recalibración} cuando los residuos derivan, y una \emph{interfaz} estándar para que lo usen otros programas: el estándar FMI~\cite{fmi}, que empaqueta un modelo como unidad intercambiable (FMU), o la interfaz de entornos de Gymnasium~\cite{gymnasium}. Para edificios, el simulador EnergyPlus~\cite{crawley} y bibliotecas de Modelica~\cite{modelica} son la referencia física, y marcos como BOPTEST~\cite{boptest} o Sinergym~\cite{sinergym} los envuelven como entornos de prueba para controladores.
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[htbp]
+\centering\footnotesize
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.0cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+NumPy / SciPy & mínimos cuadrados, ARX, filtrado & libre (BSD-3) & modelos lineales en los parámetros \\
+SysIdentPy & modelos NARMAX, selección de regresores & libre (BSD-3) & NARX polinómicos interpretables \\
+scikit-learn & perceptrones, \emph{ridge}, validación & libre (BSD-3) & NARX neuronales pequeños \\
+PyTorch & redes recurrentes, modelos de estado neuronales, entrenamiento en simulación & libre (tipo BSD) & modelos neuronales con dinámica latente o híbridos con física \\
+MATLAB System Identification Toolbox & ARX, ARMAX, error de salida, subespacios & comercial & entornos ya basados en MATLAB \\
+FMI / FMPy, Modelica & encapsular y ejecutar el gemelo & estándar abierto / libre & conectar el gemelo con otras herramientas \\
+EnergyPlus~\cite{crawley} & simulación energética detallada de edificios & libre (tipo BSD) & gemelo físico de un edificio; generar datos \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para la identificación y los gemelos digitales.}
+\label{tab:tec2}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

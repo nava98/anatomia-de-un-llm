@@ -1,0 +1,99 @@
+% =====================================================================
+\chapter{Regresión softmax y la capa de salida de un LLM}
+\label{tema:4}
+% =====================================================================
+
+La regresión softmax generaliza la logística a $K$ clases: cada ejemplo recibe un vector de $K$ logits, que la función softmax convierte en una distribución. Este tema define el modelo, demuestra que el gradiente de su entropía cruzada respecto a los logits es $p-e_y$, calcula su hessiano y muestra que la última capa de un gran modelo de lenguaje es exactamente este modelo. Se sigue la sección~2.3 de los apuntes de CS229~\cite{cs229}, la sección~4.1 de Zhang \emph{et al.}~\cite{d2l}, la sección~4.3.4 de Bishop~\cite{bishop} y, para la conexión con los LLM, los artículos de Llama~2 y Llama~3~\cite{llama2,llama3}.
+
+\section{El modelo}
+
+\begin{definicion}[Regresión softmax]\label{def:softmax-reg}
+Sea $\Y=\{1,\dots,K\}$. El modelo de \emph{regresión softmax} (o regresión logística multinomial) con parámetros $W\in\R^{d\times K}$ y $b\in\R^{K}$ asigna a cada entrada $x\in\R^{d}$ el vector de logits $z=W^{\top}x+b\in\R^{K}$ y la distribución
+\[
+P(y=k\mid x)=p_k=\softmax(z)_k=\frac{e^{z_k}}{\sum_{j=1}^{K}e^{z_j}},\qquad k=1,\dots,K.
+\]
+\end{definicion}
+
+Si $w_k$ es la columna $k$ de $W$, el logit $z_k=w_k^{\top}x+b_k$ es el producto escalar de la entrada con una \emph{plantilla} de la clase $k$ (módulo~2): el modelo asigna más probabilidad a la clase cuya plantilla se parece más a la entrada. En la práctica del módulo, las columnas de $W$ entrenadas sobre imágenes de $8\times 8$ píxeles se pueden dibujar y recuerdan a los dígitos.
+
+\begin{proposicion}[Relación con la regresión logística]\label{prop:k2}
+\begin{enumerate}
+  \item Si se suma un mismo vector $c$ a todas las columnas de $W$ y una misma constante a todas las componentes de $b$, las probabilidades no cambian. El modelo tiene, por tanto, parámetros redundantes.
+  \item Con $K=2$, $p_1=\sigma(z_1-z_2)$: la regresión logística es la regresión softmax con dos clases y logit $z_1-z_2$.
+\end{enumerate}
+\end{proposicion}
+
+\section{La entropía cruzada}
+
+\begin{proposicion}[Pérdida de la regresión softmax]\label{prop:ce}
+Si $y\mid x\sim\Cat(p_1,\dots,p_K)$ con $p=\softmax(z)$, la log-verosimilitud negativa de un ejemplo de clase $y$ es
+\[
+\ell(z,y)=-\ln p_y=-z_y+\LSE(z),\qquad \LSE(z)=\ln\sum_{j=1}^{K}e^{z_j},
+\]
+que coincide con la entropía cruzada $H(e_y,p)$ entre la distribución degenerada en la clase observada y la predicha.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\section{El gradiente}
+
+\begin{teorema}[Gradiente de la entropía cruzada]\label{teo:grad-softmax}
+Sea $p=\softmax(z)$ y $\ell(z,y)=-\ln p_y$. Entonces
+\[
+\nabla_z\ell=p-e_y,\qquad\text{y en particular}\quad\sum_{k=1}^{K}\frac{\partial\ell}{\partial z_k}=0.
+\]
+\end{teorema}
+
+La suma nula refleja la invariancia por traslación: desplazar todos los logits en la misma cantidad no cambia la pérdida, luego la derivada en la dirección $(1,\dots,1)$ es cero. Subir el logit de la clase correcta equivale a bajar los demás.
+
+\begin{corolario}[Gradiente respecto a los parámetros]\label{cor:grad-W}
+Para un ejemplo, $\nabla_W\ell=x\,(p-e_y)^{\top}\in\R^{d\times K}$ y $\nabla_b\ell=p-e_y$. Para la pérdida media sobre $n$ ejemplos, con $X\in\R^{n\times d}$, $P\in\R^{n\times K}$ la matriz de probabilidades predichas e $Y\in\R^{n\times K}$ la de etiquetas \emph{one-hot},
+\[
+\nabla_W J=\frac{1}{n}X^{\top}(P-Y),\qquad \nabla_bJ=\frac1n(P-Y)^{\top}\mathbf{1}.
+\]
+\end{corolario}
+
+En el \cref{ej:softmax}, $\nabla_z\ell=(-0{,}3348;\,0{,}2447;\,0{,}0900)$: el descenso de gradiente sube el primer logit y baja los otros dos, y las componentes suman cero.
+
+\section{Hessiano y convexidad}
+
+\begin{proposicion}[Hessiano respecto a los logits]\label{prop:hess-softmax}
+El hessiano de $\ell(z,y)$ respecto a $z$ es $\nabla_z^{2}\ell=\diag(p)-pp^{\top}$, que no depende de $y$. Es la matriz de covarianza de un vector aleatorio \emph{one-hot} $E$ con $P(E=e_k)=p_k$; por tanto, es semidefinido positivo, y su núcleo contiene el vector $\mathbf{1}$.
+\end{proposicion}
+
+\begin{corolario}\label{cor:convexa-softmax}
+La pérdida media de la regresión softmax es una función convexa de $(W,b)$.
+\end{corolario}
+
+La convexidad no es estricta, por la redundancia de la \cref{prop:k2}(i): hay una dirección en la que la pérdida es constante. Aun así, todo mínimo local es global, y el descenso de gradiente no queda atrapado en mínimos locales malos. Esta garantía se pierde en cuanto la entrada $x$ la produce una red profunda (módulo~9).
+
+\section{La capa de salida de un LLM}
+
+Un modelo de lenguaje de tipo Transformer procesa el contexto con una pila de bloques y obtiene, para la última posición, un vector oculto $h\in\R^{d_{\text{model}}}$. La capa final, llamada \emph{unembedding} o \emph{cabeza de lenguaje}, calcula los logits $z=W_U^{\top}h$ con $W_U\in\R^{d_{\text{model}}\times\abs{\V}}$, y la softmax los convierte en la distribución del token siguiente (\cref{fig:cabeza}). Es una regresión softmax con $K=\abs{\V}$ clases cuya entrada $h$ no es fija, sino que la aprende la red. El preentrenamiento minimiza la entropía cruzada de la \cref{prop:ce} sobre cada posición de cada texto, y el gradiente que recibe la red a través de los logits es el $p-e_y$ del \cref{teo:grad-softmax}.
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[Pérdida inicial]\label{prop:inicial}
+Si $W=0$ y $b=0$, o en general si todos los logits son iguales, la pérdida de cualquier ejemplo es $\ln K$.
+\end{proposicion}
+
+El valor $\ln K$ es la referencia de un modelo que no ha aprendido nada: $\ln 10=2{,}303$ nats para los dígitos y $\ln 128\,256=11{,}76$ nats para un vocabulario como el de Llama~3. El \cref{tab:cabezas} compara el tamaño de la capa en ambos casos con datos publicados por sus autores~\cite{llama2,llama3}. Anthropic, Google y xAI no publican $d_{\text{model}}$ ni el tamaño del vocabulario de Claude, Gemini o Grok; lo que sí es público es que se trata de Transformers que terminan en esta capa.
+
+\begin{table}[h]
+\centering\small
+\caption{Parámetros de la capa de salida (sin término independiente en los LLM).}\label{tab:cabezas}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Modelo & Entrada $d$ & Clases $K$ & Parámetros \\
+\midrule
+Clasificador de dígitos de la práctica & $64$ & $10$ & $64\cdot 10+10=650$ \\
+Llama~2 7B~\cite{llama2} & $4096$ & $32\,000$ & $131\,072\,000$ \\
+Llama~3 8B~\cite{llama3} & $4096$ & $128\,256$ & $525\,336\,576$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{observacion}[Modelos lineales generalizados]
+La regresión lineal, la logística y la softmax son casos de un mismo esquema, el de los \emph{modelos lineales generalizados}: la distribución de $y$ pertenece a la familia exponencial (normal, Bernoulli, categórica) y su parámetro natural es una función lineal de $x$. Con esa elección (el enlace canónico), el gradiente de la log-verosimilitud negativa es siempre «predicción menos observación» por la entrada~\cite[cap.~3]{cs229}, \cite[§4.3.6]{bishop}. Las fórmulas $(\hat y-y)x$, $(p-y)x$ y $x(p-e_y)^{\top}$ de los temas~2 a~4 son tres instancias del mismo resultado.
+\end{observacion}
+

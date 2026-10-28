@@ -1,0 +1,938 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase III — Módulo 14
+%  El Transformer completo
+%  Compilar: latexmk -r ../latexmkrc M14-transformer.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 14}
+
+\hypersetup{pdftitle={Módulo 14. El Transformer completo (resumen)},pdfauthor={Anatomía de un LLM}}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\uno}{\mathbf{1}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\Var}{\operatorname{Var}}
+\newcommand{\RMS}{\operatorname{RMS}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+\newcommand{\Norm}{\operatorname{Norm}}
+\newcommand{\Attn}{\operatorname{Attn}}
+\newcommand{\MHA}{\operatorname{MHA}}
+\newcommand{\MLP}{\operatorname{MLP}}
+\newcommand{\FFN}{\operatorname{FFN}}
+\newcommand{\SwiGLU}{\operatorname{SwiGLU}}
+\newcommand{\SiLU}{\operatorname{SiLU}}
+\newcommand{\GELU}{\operatorname{GELU}}
+\newcommand{\ReLU}{\operatorname{ReLU}}
+\newcommand{\PE}{\operatorname{PE}}
+\newcommand{\RoPE}{\operatorname{RoPE}}
+\newcommand{\Real}{\operatorname{Re}}
+\newcommand{\Loss}{\mathcal{L}}
+\newcommand{\dff}{d_{\mathrm{ff}}}
+\newcommand{\nctx}{n_{\mathrm{ctx}}}
+\newcommand{\Wdown}{W_{\mathrm{d}}}
+
+\makeatletter
+\newlabel{fig:bloque}{{1.1}{2}{Transformer decoder-only pre-norm. El recuadro discontinuo es un bloque (\cref {def:bloque}), que se repite $L$ veces. Las líneas de la izquierda son las conexiones residuales: el camino desde el embedding hasta $\Norm _f$ solo atraviesa sumas}{figure.1.1}{}}
+\newlabel{fig:bloque@cref}{{[figure][1][1]1.1}{[1][2][]2}}
+\newlabel{eje:1-formas}{{1.1}{5}{}{ejercicio.1.1}{}}
+\newlabel{eje:1-formas@cref}{{[ejercicio][1][1]1.1}{[1][4][]5}}
+\newlabel{eje:1-atados}{{1.2}{5}{}{ejercicio.1.2}{}}
+\newlabel{eje:1-atados@cref}{{[ejercicio][2][1]1.2}{[1][5][]5}}
+\newlabel{eje:1-logits}{{1.3}{5}{}{ejercicio.1.3}{}}
+\newlabel{eje:1-logits@cref}{{[ejercicio][3][1]1.3}{[1][5][]5}}
+\newlabel{eje:1-mascara}{{1.4}{5}{}{ejercicio.1.4}{}}
+\newlabel{eje:1-mascara@cref}{{[ejercicio][4][1]1.4}{[1][5][]5}}
+\newlabel{eje:1-infinito}{{1.5}{5}{}{ejercicio.1.5}{}}
+\newlabel{eje:1-infinito@cref}{{[ejercicio][5][1]1.5}{[1][5][]5}}
+\newlabel{eje:1-perm-mascara}{{1.6}{5}{}{ejercicio.1.6}{}}
+\newlabel{eje:1-perm-mascara@cref}{{[ejercicio][6][1]1.6}{[1][5][]5}}
+\newlabel{ej:aportaciones}{{2.3}{7}{Lectura de aportaciones}{ejemplo.3}{}}
+\newlabel{ej:aportaciones@cref}{{[ejemplo][3][]2.3}{[1][6][]7}}
+\newlabel{ej:crecimiento}{{2.8}{8}{}{ejemplo.8}{}}
+\newlabel{ej:crecimiento@cref}{{[ejemplo][8][]2.8}{[1][8][]8}}
+\newlabel{eje:2-prepost}{{2.1}{9}{}{ejercicio.2.1}{}}
+\newlabel{eje:2-prepost@cref}{{[ejercicio][1][2]2.1}{[1][8][]9}}
+\newlabel{eje:2-final}{{2.2}{9}{}{ejercicio.2.2}{}}
+\newlabel{eje:2-final@cref}{{[ejercicio][2][2]2.2}{[1][9][]9}}
+\newlabel{eje:2-rms}{{2.3}{9}{}{ejercicio.2.3}{}}
+\newlabel{eje:2-rms@cref}{{[ejercicio][3][2]2.3}{[1][9][]9}}
+\newlabel{eje:2-crecimiento}{{2.4}{9}{}{ejercicio.2.4}{}}
+\newlabel{eje:2-crecimiento@cref}{{[ejercicio][4][2]2.4}{[1][9][]9}}
+\newlabel{eje:2-cota}{{2.5}{9}{}{ejercicio.2.5}{}}
+\newlabel{eje:2-cota@cref}{{[ejercicio][5][2]2.5}{[1][9][]9}}
+\newlabel{ej:llama-dff}{{3.7}{12}{LLaMA}{ejemplo.7}{}}
+\newlabel{ej:llama-dff@cref}{{[ejemplo][7][]3.7}{[1][12][]12}}
+\newlabel{eje:3-base}{{3.1}{12}{}{ejercicio.3.1}{}}
+\newlabel{eje:3-base@cref}{{[ejercicio][1][3]3.1}{[1][12][]12}}
+\newlabel{eje:3-llama}{{3.2}{12}{}{ejercicio.3.2}{}}
+\newlabel{eje:3-llama@cref}{{[ejercicio][2][3]3.2}{[1][12][]12}}
+\newlabel{eje:3-swiglu}{{3.3}{12}{}{ejercicio.3.3}{}}
+\newlabel{eje:3-swiglu@cref}{{[ejercicio][3][3]3.3}{[1][12][]12}}
+\newlabel{eje:3-cs336}{{3.4}{12}{}{ejercicio.3.4}{}}
+\newlabel{eje:3-cs336@cref}{{[ejercicio][4][3]3.4}{[1][12][]12}}
+\newlabel{eje:3-silu}{{3.5}{13}{}{ejercicio.3.5}{}}
+\newlabel{eje:3-silu@cref}{{[ejercicio][5][3]3.5}{[1][13][]13}}
+\newlabel{ej:pe4}{{4.3}{15}{}{ejemplo.3}{}}
+\newlabel{ej:pe4@cref}{{[ejemplo][3][]4.3}{[1][15][]15}}
+\newlabel{ej:rope}{{4.10}{16}{Misma distancia, misma puntuación}{ejemplo.10}{}}
+\newlabel{ej:rope@cref}{{[ejemplo][10][]4.10}{[1][16][]16}}
+\newlabel{eje:4-v}{{4.1}{17}{}{ejercicio.4.1}{}}
+\newlabel{eje:4-v@cref}{{[ejercicio][1][4]4.1}{[1][17][]17}}
+\newlabel{eje:4-pe}{{4.2}{17}{}{ejercicio.4.2}{}}
+\newlabel{eje:4-pe@cref}{{[ejercicio][2][4]4.2}{[1][17][]17}}
+\newlabel{eje:4-mk}{{4.3}{17}{}{ejercicio.4.3}{}}
+\newlabel{eje:4-mk@cref}{{[ejercicio][3][4]4.3}{[1][17][]17}}
+\newlabel{eje:4-rope}{{4.4}{17}{}{ejercicio.4.4}{}}
+\newlabel{eje:4-rope@cref}{{[ejercicio][4][4]4.4}{[1][17][]17}}
+\newlabel{eje:4-rope-dem}{{4.5}{17}{}{ejercicio.4.5}{}}
+\newlabel{eje:4-rope-dem@cref}{{[ejercicio][5][4]4.5}{[1][17][]17}}
+\newlabel{eje:4-perm}{{4.6}{17}{}{ejercicio.4.6}{}}
+\newlabel{eje:4-perm@cref}{{[ejercicio][6][4]4.6}{[1][17][]17}}
+\newlabel{eje:4-compleja}{{4.7}{18}{}{ejercicio.4.7}{}}
+\newlabel{eje:4-compleja@cref}{{[ejercicio][7][4]4.7}{[1][18][]18}}
+\newlabel{ej:llama7b}{{5.5}{20}{LLaMA-2~7B}{ejemplo.5}{}}
+\newlabel{ej:llama7b@cref}{{[ejemplo][5][]5.5}{[1][20][]20}}
+\newlabel{eje:5-slp}{{5.1}{21}{}{ejercicio.5.1}{}}
+\newlabel{eje:5-slp@cref}{{[ejercicio][1][5]5.1}{[1][21][]21}}
+\newlabel{eje:5-gpt2}{{5.2}{21}{}{ejercicio.5.2}{}}
+\newlabel{eje:5-gpt2@cref}{{[ejercicio][2][5]5.2}{[1][21][]21}}
+\newlabel{eje:5-13b}{{5.3}{21}{}{ejercicio.5.3}{}}
+\newlabel{eje:5-13b@cref}{{[ejercicio][3][5]5.3}{[1][21][]21}}
+\newlabel{eje:5-mem13b}{{5.4}{21}{}{ejercicio.5.4}{}}
+\newlabel{eje:5-mem13b@cref}{{[ejercicio][4][5]5.4}{[1][21][]21}}
+\newlabel{eje:5-xl}{{5.5}{22}{}{ejercicio.5.5}{}}
+\newlabel{eje:5-xl@cref}{{[ejercicio][5][5]5.5}{[1][21][]22}}
+\newlabel{eje:5-24gb}{{5.6}{22}{}{ejercicio.5.6}{}}
+\newlabel{eje:5-24gb@cref}{{[ejercicio][6][5]5.6}{[1][22][]22}}
+\newlabel{eje:5-fraccion}{{5.7}{22}{}{ejercicio.5.7}{}}
+\newlabel{eje:5-fraccion@cref}{{[ejercicio][7][5]5.7}{[1][22][]22}}
+\newlabel{ej:coste7b}{{6.8}{24}{Coste de LLaMA-2~7B}{ejemplo.8}{}}
+\newlabel{ej:coste7b@cref}{{[ejemplo][8][]6.8}{[1][24][]24}}
+\newlabel{eje:6-2n}{{6.1}{25}{}{ejercicio.6.1}{}}
+\newlabel{eje:6-2n@cref}{{[ejercicio][1][6]6.1}{[1][25][]25}}
+\newlabel{eje:6-horas}{{6.2}{25}{}{ejercicio.6.2}{}}
+\newlabel{eje:6-horas@cref}{{[ejercicio][2][6]6.2}{[1][25][]25}}
+\newlabel{eje:6-small}{{6.3}{25}{}{ejercicio.6.3}{}}
+\newlabel{eje:6-small@cref}{{[ejercicio][3][6]6.3}{[1][25][]25}}
+\newlabel{eje:6-16k}{{6.4}{25}{}{ejercicio.6.4}{}}
+\newlabel{eje:6-16k@cref}{{[ejercicio][4][6]6.4}{[1][25][]25}}
+\newlabel{eje:6-h100}{{6.5}{25}{}{ejercicio.6.5}{}}
+\newlabel{eje:6-h100@cref}{{[ejercicio][5][6]6.5}{[1][25][]25}}
+\newlabel{eje:6-6nd}{{6.6}{25}{}{ejercicio.6.6}{}}
+\newlabel{eje:6-6nd@cref}{{[ejercicio][6][6]6.6}{[1][25][]25}}
+\newlabel{eje:6-atencion}{{6.7}{26}{}{ejercicio.6.7}{}}
+\newlabel{eje:6-atencion@cref}{{[ejercicio][7][6]6.7}{[1][26][]26}}
+\newlabel{ap:soluciones}{{A}{27}{Soluciones de los ejercicios}{appendix.A}{}}
+\newlabel{ap:soluciones@cref}{{[appendix][1][2147483647]A}{[1][27][]27}}
+\newlabel{sol:eje:1-formas}{{A.1}{27}{Tema 1}{section*.3}{}}
+\newlabel{sol:eje:1-formas@cref}{{[subappendix][1][2147483647,1]A.1}{[1][27][]27}}
+\newlabel{sol:eje:1-atados}{{A.1}{27}{Tema 1}{section*.4}{}}
+\newlabel{sol:eje:1-atados@cref}{{[subappendix][1][2147483647,1]A.1}{[1][27][]27}}
+\newlabel{sol:eje:1-logits}{{A.1}{28}{Tema 1}{section*.5}{}}
+\newlabel{sol:eje:1-logits@cref}{{[subappendix][1][2147483647,1]A.1}{[1][28][]28}}
+\newlabel{sol:eje:1-mascara}{{A.1}{28}{Tema 1}{section*.6}{}}
+\newlabel{sol:eje:1-mascara@cref}{{[subappendix][1][2147483647,1]A.1}{[1][28][]28}}
+\newlabel{sol:eje:1-infinito}{{A.1}{29}{Tema 1}{section*.7}{}}
+\newlabel{sol:eje:1-infinito@cref}{{[subappendix][1][2147483647,1]A.1}{[1][28][]29}}
+\newlabel{sol:eje:1-perm-mascara}{{A.1}{29}{Tema 1}{section*.8}{}}
+\newlabel{sol:eje:1-perm-mascara@cref}{{[subappendix][1][2147483647,1]A.1}{[1][29][]29}}
+\newlabel{sol:eje:2-prepost}{{A.2}{29}{Tema 2}{section*.9}{}}
+\newlabel{sol:eje:2-prepost@cref}{{[subappendix][2][2147483647,1]A.2}{[1][29][]29}}
+\newlabel{sol:eje:2-final}{{A.2}{30}{Tema 2}{section*.10}{}}
+\newlabel{sol:eje:2-final@cref}{{[subappendix][2][2147483647,1]A.2}{[1][30][]30}}
+\newlabel{sol:eje:2-rms}{{A.2}{30}{Tema 2}{section*.11}{}}
+\newlabel{sol:eje:2-rms@cref}{{[subappendix][2][2147483647,1]A.2}{[1][30][]30}}
+\newlabel{sol:eje:2-crecimiento}{{A.2}{31}{Tema 2}{section*.12}{}}
+\newlabel{sol:eje:2-crecimiento@cref}{{[subappendix][2][2147483647,1]A.2}{[1][31][]31}}
+\newlabel{sol:eje:2-cota}{{A.2}{31}{Tema 2}{section*.13}{}}
+\newlabel{sol:eje:2-cota@cref}{{[subappendix][2][2147483647,1]A.2}{[1][31][]31}}
+\newlabel{sol:eje:3-base}{{A.3}{32}{Tema 3}{section*.14}{}}
+\newlabel{sol:eje:3-base@cref}{{[subappendix][3][2147483647,1]A.3}{[1][31][]32}}
+\newlabel{sol:eje:3-llama}{{A.3}{32}{Tema 3}{section*.15}{}}
+\newlabel{sol:eje:3-llama@cref}{{[subappendix][3][2147483647,1]A.3}{[1][32][]32}}
+\newlabel{sol:eje:3-swiglu}{{A.3}{32}{Tema 3}{section*.16}{}}
+\newlabel{sol:eje:3-swiglu@cref}{{[subappendix][3][2147483647,1]A.3}{[1][32][]32}}
+\newlabel{sol:eje:3-cs336}{{A.3}{33}{Tema 3}{section*.17}{}}
+\newlabel{sol:eje:3-cs336@cref}{{[subappendix][3][2147483647,1]A.3}{[1][33][]33}}
+\newlabel{sol:eje:3-silu}{{A.3}{33}{Tema 3}{section*.18}{}}
+\newlabel{sol:eje:3-silu@cref}{{[subappendix][3][2147483647,1]A.3}{[1][33][]33}}
+\newlabel{sol:eje:4-v}{{A.4}{34}{Tema 4}{section*.19}{}}
+\newlabel{sol:eje:4-v@cref}{{[subappendix][4][2147483647,1]A.4}{[1][34][]34}}
+\newlabel{sol:eje:4-pe}{{A.4}{34}{Tema 4}{section*.20}{}}
+\newlabel{sol:eje:4-pe@cref}{{[subappendix][4][2147483647,1]A.4}{[1][34][]34}}
+\newlabel{sol:eje:4-mk}{{A.4}{35}{Tema 4}{section*.21}{}}
+\newlabel{sol:eje:4-mk@cref}{{[subappendix][4][2147483647,1]A.4}{[1][35][]35}}
+\newlabel{sol:eje:4-rope}{{A.4}{35}{Tema 4}{section*.22}{}}
+\newlabel{sol:eje:4-rope@cref}{{[subappendix][4][2147483647,1]A.4}{[1][35][]35}}
+\newlabel{sol:eje:4-rope-dem}{{A.4}{35}{Tema 4}{section*.23}{}}
+\newlabel{sol:eje:4-rope-dem@cref}{{[subappendix][4][2147483647,1]A.4}{[1][35][]35}}
+\newlabel{sol:eje:4-perm}{{A.4}{36}{Tema 4}{section*.24}{}}
+\newlabel{sol:eje:4-perm@cref}{{[subappendix][4][2147483647,1]A.4}{[1][36][]36}}
+\newlabel{sol:eje:4-compleja}{{A.4}{36}{Tema 4}{section*.25}{}}
+\newlabel{sol:eje:4-compleja@cref}{{[subappendix][4][2147483647,1]A.4}{[1][36][]36}}
+\newlabel{sol:eje:5-slp}{{A.5}{37}{Tema 5}{section*.26}{}}
+\newlabel{sol:eje:5-slp@cref}{{[subappendix][5][2147483647,1]A.5}{[1][37][]37}}
+\newlabel{sol:eje:5-gpt2}{{A.5}{37}{Tema 5}{section*.27}{}}
+\newlabel{sol:eje:5-gpt2@cref}{{[subappendix][5][2147483647,1]A.5}{[1][37][]37}}
+\newlabel{sol:eje:5-13b}{{A.5}{38}{Tema 5}{section*.28}{}}
+\newlabel{sol:eje:5-13b@cref}{{[subappendix][5][2147483647,1]A.5}{[1][38][]38}}
+\newlabel{sol:eje:5-mem13b}{{A.5}{38}{Tema 5}{section*.29}{}}
+\newlabel{sol:eje:5-mem13b@cref}{{[subappendix][5][2147483647,1]A.5}{[1][38][]38}}
+\newlabel{sol:eje:5-xl}{{A.5}{38}{Tema 5}{section*.30}{}}
+\newlabel{sol:eje:5-xl@cref}{{[subappendix][5][2147483647,1]A.5}{[1][38][]38}}
+\newlabel{sol:eje:5-24gb}{{A.5}{39}{Tema 5}{section*.31}{}}
+\newlabel{sol:eje:5-24gb@cref}{{[subappendix][5][2147483647,1]A.5}{[1][39][]39}}
+\newlabel{sol:eje:5-fraccion}{{A.5}{39}{Tema 5}{section*.32}{}}
+\newlabel{sol:eje:5-fraccion@cref}{{[subappendix][5][2147483647,1]A.5}{[1][39][]39}}
+\newlabel{sol:eje:6-2n}{{A.6}{40}{Tema 6}{section*.33}{}}
+\newlabel{sol:eje:6-2n@cref}{{[subappendix][6][2147483647,1]A.6}{[1][40][]40}}
+\newlabel{sol:eje:6-horas}{{A.6}{40}{Tema 6}{section*.34}{}}
+\newlabel{sol:eje:6-horas@cref}{{[subappendix][6][2147483647,1]A.6}{[1][40][]40}}
+\newlabel{sol:eje:6-small}{{A.6}{40}{Tema 6}{section*.35}{}}
+\newlabel{sol:eje:6-small@cref}{{[subappendix][6][2147483647,1]A.6}{[1][40][]40}}
+\newlabel{sol:eje:6-16k}{{A.6}{41}{Tema 6}{section*.36}{}}
+\newlabel{sol:eje:6-16k@cref}{{[subappendix][6][2147483647,1]A.6}{[1][41][]41}}
+\newlabel{sol:eje:6-h100}{{A.6}{42}{Tema 6}{section*.37}{}}
+\newlabel{sol:eje:6-h100@cref}{{[subappendix][6][2147483647,1]A.6}{[1][41][]42}}
+\newlabel{sol:eje:6-6nd}{{A.6}{42}{Tema 6}{section*.38}{}}
+\newlabel{sol:eje:6-6nd@cref}{{[subappendix][6][2147483647,1]A.6}{[1][42][]42}}
+\newlabel{sol:eje:6-atencion}{{A.6}{43}{Tema 6}{section*.39}{}}
+\newlabel{sol:eje:6-atencion@cref}{{[subappendix][6][2147483647,1]A.6}{[1][42][]43}}
+\makeatother
+
+\begin{document}
+\frontmatter
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase III \textperiodcentered\ Secuencias y Transformer}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 14\par}\vspace{0.3cm}
+{\LARGE El Transformer completo\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Resumen del módulo}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+\chapter*{Sobre este resumen}
+\addcontentsline{toc}{chapter}{Sobre este resumen}
+\markboth{Sobre este resumen}{}
+
+Este documento reúne lo indispensable de los apuntes del Módulo 14: el texto expositivo, todas las definiciones y todos los resultados (teoremas, proposiciones, lemas y corolarios), las tablas y las observaciones de contenido. Se han suprimido las demostraciones, los ejemplos, las lecturas, las figuras, los ejercicios y sus soluciones. La numeración de temas, secciones, enunciados y ecuaciones es la misma que en los apuntes, de modo que cualquier referencia puede buscarse allí; las que remiten a elementos suprimidos (un ejemplo, una figura, una ecuación de una demostración) conservan su número en los apuntes.
+
+\section*{Notación}
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$\V$, $V=\abs{\V}$ & vocabulario y su tamaño \\
+$n$, $\nctx$ & longitud de la secuencia y longitud máxima de contexto \\
+$d$, $h$, $d_k=d/h$ & dimensión del modelo, cabezas y dimensión por cabeza \\
+$L$, $\dff$ & número de bloques y dimensión de la capa intermedia del MLP \\
+$H^{\ell}\in\R^{n\times d}$, $h^{\ell}_t$ & flujo residual tras el bloque $\ell$ y su fila $t$ \\
+$W_E\in\R^{V\times d}$, $W_U\in\R^{d\times V}$ & matrices de embedding y de \emph{unembedding} \\
+$W_Q,W_K,W_V,W_O$ & proyecciones de la atención ($d\times d$) \\
+$W_g,W_u\in\R^{d\times\dff}$ & matrices de puerta y de subida de SwiGLU \\
+$\Wdown\in\R^{\dff\times d}$ & matriz de bajada de SwiGLU \\
+$M\in\{0,-\infty\}^{n\times n}$ & máscara causal \\
+$\sigma(x)$, $\SiLU(x)=x\,\sigma(x)$ & sigmoide logística y función SiLU \\
+$R(\alpha)$, $R_m$ & rotación de ángulo $\alpha$; matriz de RoPE en la posición $m$ \\
+$\PE(p)$ & codificación sinusoidal de la posición $p$ \\
+$N$, $D$, $C$ & número de parámetros, de tokens de entrenamiento y de FLOPs \\
+$P$ & matriz de permutación \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Los vectores de tokens son filas: una secuencia es una matriz $X\in\R^{n\times d}$ y una capa lineal actúa como $X\mapsto XW$, como en~\cite{jm3} y en el código de PyTorch. Los números grandes se escriben con espacio fino como separador de miles ($6\,738\,415\,616$).
+
+
+\tableofcontents
+
+\mainmatter
+% =====================================================================
+\chapter{Arquitectura del Transformer decoder-only}
+\label{tema:1}
+% =====================================================================
+
+Este tema describe la arquitectura completa de un Transformer decoder-only: la entrada (tokens y embeddings), la pila de bloques y la capa de salida que produce los logits. Se demuestran dos propiedades estructurales: cada bloque conserva la forma $n\times d$ y la salida en la posición $t$ solo depende de los tokens $x_{1:t}$. Se sigue~\cite[§7.2--§7.5]{jm3}, \cite[§12.1.7 y §12.3.1]{bishopdl}, el artículo original~\cite[§3]{vaswani} y la descripción de la práctica~1 de CS336~\cite[§3.1 y §3.4]{cs336}.
+
+\section{Entrada: tokens y embeddings}
+
+Un tokenizador (módulo~12) transforma el texto en una secuencia de enteros $x_{1:n}=(x_1,\dots,x_n)$ con $x_t\in\{1,\dots,V\}$.
+
+\begin{definicion}[Embedding de tokens]\label{def:embedding}
+Sea $W_E\in\R^{V\times d}$ una matriz de parámetros cuya fila $j$, $e_j\in\R^{d}$, es el \emph{embedding} del token $j$. La entrada de la red es la matriz $H^{0}\in\R^{n\times d}$ cuya fila $t$ es
+\[
+h^{0}_t=e_{x_t}\;(+\,p_t),
+\]
+donde $p_t\in\R^{d}$ es un vector de posición que solo se suma en los modelos con posiciones absolutas (\cref{tema:4}). Equivalentemente, $H^{0}=OW_E$, siendo $O\in\{0,1\}^{n\times V}$ la matriz cuyas filas son las codificaciones \emph{one-hot} de los tokens.
+\end{definicion}
+
+La forma matricial $OW_E$ muestra que el embedding es una capa lineal sin sesgo aplicada a vectores \emph{one-hot}; en la práctica se implementa como una indexación de filas, que no hace ninguna multiplicación~\cite[§7.4]{jm3}.
+
+\section{El bloque decoder-only}
+
+Se recuerda la atención del módulo~13. Para una matriz $Z\in\R^{n\times d}$ y $h$ cabezas de dimensión $d_k=d/h$, la cabeza $i$ calcula $Q_i=ZW_Q^{(i)}$, $K_i=ZW_K^{(i)}$, $V_i=ZW_V^{(i)}$, con $W_Q^{(i)},W_K^{(i)},W_V^{(i)}\in\R^{d\times d_k}$, y
+\[
+\operatorname{head}_i(Z)=\softmax\Bigl(\frac{Q_iK_i\T}{\sqrt{d_k}}+M\Bigr)V_i,\qquad
+M_{tu}=\begin{cases}0,& u\le t,\\ -\infty,& u>t,\end{cases}
+\]
+donde la softmax se aplica por filas. La atención multicabeza concatena las cabezas y proyecta: $\MHA(Z)=[\operatorname{head}_1(Z)\;\cdots\;\operatorname{head}_h(Z)]\,W_O$, con $W_O\in\R^{d\times d}$. Agrupando por columnas las $h$ matrices $W_Q^{(i)}$ se obtiene una sola matriz $W_Q\in\R^{d\times d}$, y lo mismo para $W_K$ y $W_V$.
+
+\begin{definicion}[Bloque pre-norm]\label{def:bloque}
+Sean $\Norm_1,\Norm_2:\R^{d}\to\R^{d}$ dos normalizaciones (RMSNorm en LLaMA, LayerNorm en GPT-2), aplicadas fila a fila, y sea $\MLP:\R^{d}\to\R^{d}$ un perceptrón aplicado fila a fila (\cref{tema:3}). El \emph{bloque decoder-only pre-norm} es la aplicación $B:\R^{n\times d}\to\R^{n\times d}$, $H\mapsto H'$, dada por
+\[
+A=H+\MHA\bigl(\Norm_1(H)\bigr),\qquad H'=A+\MLP\bigl(\Norm_2(A)\bigr).
+\]
+\end{definicion}
+
+\begin{definicion}[Transformer decoder-only]\label{def:transformer}
+Un \emph{Transformer decoder-only} de $L$ capas es la composición
+\[
+H^{\ell}=B_\ell\bigl(H^{\ell-1}\bigr)\quad(\ell=1,\dots,L),\qquad Z=\Norm_f\bigl(H^{L}\bigr)\,W_U\in\R^{n\times V},
+\]
+donde $H^{0}$ es la entrada de la \cref{def:embedding}, cada $B_\ell$ es un bloque con parámetros propios, $\Norm_f$ es la \emph{normalización final} y $W_U\in\R^{d\times V}$ es la matriz de \emph{unembedding}. La fila $t$ de $Z$ son los logits de la distribución del token siguiente: $P(x_{t+1}=j\mid x_{1:t})=\softmax(z_t)_j$.
+\end{definicion}
+
+La \cref{fig:bloque} representa la arquitectura. Las dos subcapas tienen papeles complementarios: la atención es la única operación que combina filas distintas, es decir, que mezcla información \emph{entre} tokens; las normalizaciones y el MLP actúan sobre cada fila por separado~\cite[§7.2]{jm3}.
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[Conservación de la forma]\label{prop:forma}
+Si $H\in\R^{n\times d}$, entonces $B(H)\in\R^{n\times d}$. En consecuencia, todos los flujos $H^{0},\dots,H^{L}$ tienen forma $n\times d$, y solo la entrada ($n$ enteros $\to n\times d$) y la salida ($n\times d\to n\times V$) cambian de dimensión.
+\end{proposicion}
+
+La \cref{prop:forma} es la razón por la que los bloques pueden apilarse en cualquier número: $L$ es un hiperparámetro libre, que va de $12$ en GPT-2 \emph{small} a $80$ en Llama~2~70B~\cite{gpt2,llama2}.
+
+\section{Causalidad}
+
+\begin{proposicion}[Causalidad del decoder]\label{prop:causal}
+En un Transformer decoder-only, la fila $t$ de $H^{\ell}$, para todo $\ell$, y la fila $t$ de los logits $Z$ solo dependen de los tokens $x_1,\dots,x_t$.
+\end{proposicion}
+
+\begin{corolario}[Una pasada, $n$ predicciones]\label{cor:paralelo}
+Una sola evaluación del Transformer sobre $x_{1:n}$ proporciona las $n$ distribuciones $P(\cdot\mid x_{1:t})$, $t=1,\dots,n$. La pérdida de entrenamiento de una secuencia, la entropía cruzada media del módulo~1,
+\[
+\Loss=-\frac{1}{n-1}\sum_{t=1}^{n-1}\ln\softmax(z_t)_{x_{t+1}},
+\]
+se calcula, por tanto, con una única pasada hacia delante y una única pasada hacia atrás.
+\end{corolario}
+
+Esta propiedad es la que hace eficiente el entrenamiento de los Transformer frente a las redes recurrentes: las $n$ posiciones se procesan en paralelo como un producto de matrices~\cite[§7.3]{jm3}. En la generación, en cambio, los tokens se producen de uno en uno, y la \cref{prop:causal} permite reutilizar las claves y los valores ya calculados (la caché KV del módulo~19).
+
+\section{Salida: unembedding y embeddings atados}
+
+La capa de salida transforma cada vector $h\in\R^{d}$ en $V$ logits mediante $z=hW_U$. Si se escribe $u_j\in\R^{d}$ para la columna $j$ de $W_U$, el logit del token $j$ es el producto escalar $z_j=h\cdot u_j$: el modelo puntúa cada token por la alineación de $h$ con un vector \emph{plantilla} de ese token~\cite[§7.5]{jm3}.
+
+\begin{definicion}[Embeddings atados]\label{def:atados}
+Un Transformer tiene los \emph{embeddings atados} (\emph{weight tying}) si $W_U=W_E\T$, es decir, si la plantilla de salida de cada token coincide con su embedding de entrada: $z_j=h\cdot e_j$.
+\end{definicion}
+
+Press y Wolf~\cite{presswolf} mostraron que atar los embeddings reduce la perplejidad de varios modelos de lenguaje y el número de parámetros. El Transformer original comparte la misma matriz entre los embeddings y la capa previa a la softmax, y multiplica los embeddings por $\sqrt{d}$~\cite[§3.4]{vaswani}. GPT-2 también ata los embeddings; LLaMA y Llama~2 usan dos matrices independientes~\cite{llamacode}.
+
+\begin{proposicion}[Ahorro del atado]\label{prop:ahorro}
+Atar los embeddings reduce el número de parámetros en exactamente $Vd$. Para un vector $h$ fijo, el token de mayor logit es el $j$ que maximiza $\norm{e_j}\cos\angle(h,e_j)$.
+\end{proposicion}
+
+\begin{table}[ht]
+\centering\small
+\caption{Elecciones de arquitectura de tres modelos con detalles públicos.}\label{tab:modelos}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Elemento & Transformer (2017) & GPT-2 (2019) & LLaMA / Llama~2 (2023) \\
+\midrule
+Normalización & LayerNorm, post-norm & LayerNorm, pre-norm & RMSNorm, pre-norm \\
+MLP & ReLU, $\dff=4d$ & GELU, $\dff=4d$ & SwiGLU, $\dff\approx\tfrac83 d$ \\
+Posición & sinusoidal (sumada) & aprendida (sumada) & RoPE (en $q$ y $k$) \\
+Sesgos & sí & sí & no \\
+Embeddings & atados & atados & sin atar \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\addtocounter{definicion}{1}%
+
+
+% =====================================================================
+\chapter{Flujo residual y posición de la normalización}
+\label{tema:2}
+% =====================================================================
+
+En el módulo~11 se estudiaron las conexiones residuales y la normalización para una red genérica. Este tema las aplica al bloque del \cref{tema:1}: desarrolla el flujo residual de un Transformer como suma de $2L$ aportaciones, compara las variantes pre-norm y post-norm y justifica la normalización final y la inicialización escalada. Se sigue~\cite[§7.2]{jm3}, la discusión de la práctica~1 de CS336~\cite[§3.4]{cs336}, el análisis de Xiong \emph{et al.}~\cite{xiong}, la §2.3 de~\cite{gpt2} y la interpretación de Elhage \emph{et al.}~\cite{elhage}.
+
+\section{El flujo residual}
+
+Para simplificar la notación, se numeran las $2L$ subcapas del Transformer en el orden en que se aplican: la subcapa $k=2\ell-1$ es la atención del bloque $\ell$ y la subcapa $k=2\ell$ es su MLP. Sea $F_k$ la función que calcula la subcapa $k$ \emph{incluida su normalización de entrada}: $F_{2\ell-1}=\MHA\circ\Norm_1$ y $F_{2\ell}=\MLP\circ\Norm_2$.
+
+\begin{definicion}[Flujo residual]\label{def:flujo}
+El \emph{flujo residual} es la sucesión de matrices $R^{0}=H^{0}$ y $R^{k}=R^{k-1}+F_k(R^{k-1})$, $k=1,\dots,2L$. Se cumple $R^{2\ell}=H^{\ell}$ y $R^{2\ell-1}=A^{\ell}$, la matriz intermedia del bloque $\ell$. La fila $t$ de $R^{k}$ es el vector del flujo del token $t$.
+\end{definicion}
+
+\begin{proposicion}[Desarrollo telescópico]\label{prop:telescopica}
+En un Transformer pre-norm,
+\[
+H^{L}=H^{0}+\sum_{k=1}^{2L}F_k\bigl(R^{k-1}\bigr).
+\]
+\end{proposicion}
+
+La \cref{prop:telescopica} sustenta la lectura del flujo como un \emph{canal de comunicación}~\cite{elhage}: ninguna subcapa sobrescribe el flujo; cada una lee de él (tras normalizar) y le \emph{suma} su salida. De ahí se siguen tres consecuencias.
+\begin{enumerate}
+  \item Una subcapa puede escribir en una dirección de $\R^{d}$ que lee otra subcapa muchas capas después. Esta descomposición es la base de la interpretabilidad mecanicista (módulo~23).
+  \item Toda subcapa debe producir vectores de $\R^{d}$, pues su salida se suma al flujo. Esa es la función de $W_O$ en la atención y de $\Wdown$ en el MLP.
+  \item Si una subcapa aprende a escribir casi cero, el modelo se comporta como uno con una subcapa menos.
+\end{enumerate}
+
+\addtocounter{definicion}{1}%
+
+\begin{proposicion}[Jacobiano del flujo]\label{prop:jac-flujo}
+Sea $J_k$ el jacobiano de $F_k$ evaluado en $R^{k-1}$, con todas las matrices vectorizadas. Entonces
+\[
+\frac{\partial H^{L}}{\partial H^{0}}=\prod_{k=2L}^{1}\bigl(I+J_k\bigr)=I+\sum_{k=1}^{2L}J_k+\sum_{k>k'}J_kJ_{k'}+\cdots+J_{2L}\cdots J_1,
+\]
+donde el producto se ordena de izquierda a derecha con $k$ decreciente.
+\end{proposicion}
+
+El término $I$ del desarrollo es el \emph{camino identidad}: el gradiente de la pérdida respecto de $H^{L}$ llega a $H^{0}$ sumado, sin atravesar ninguna normalización ni producto de jacobianos. Es la versión para el Transformer del teorema del jacobiano residual del módulo~11.
+
+\section{Pre-norm frente a post-norm}
+
+\begin{definicion}[Post-norm]\label{def:postnorm}
+El \emph{bloque post-norm} del Transformer original~\cite[§3.1]{vaswani} aplica la normalización después de la suma residual:
+\[
+A=\Norm_1\bigl(H+\MHA(H)\bigr),\qquad H'=\Norm_2\bigl(A+\MLP(A)\bigr).
+\]
+\end{definicion}
+
+\begin{proposicion}[No hay camino identidad en post-norm]\label{prop:postnorm}
+En un Transformer post-norm con normalización RMSNorm sin ganancia, $\Norm(x)=x/\RMS(x)$, se cumple $\RMS(h^{\ell}_t)=1$ para toda fila $t$ y toda capa $\ell\ge 1$, y el jacobiano de la salida respecto de la entrada es
+\[
+\frac{\partial H^{L}}{\partial H^{0}}=\prod_{k=2L}^{1}N_k\,(I+J_k),
+\]
+donde $N_k$ es el jacobiano de la normalización $k$. Cada $N_k$ es singular.
+\end{proposicion}
+
+En post-norm, toda la señal, y todo el gradiente, atraviesa $2L$ normalizaciones; no existe un término $I$ aislado como en la \cref{prop:jac-flujo}. Xiong \emph{et al.}~\cite[§3.3, teorema~1]{xiong} cuantifican la diferencia en la inicialización: bajo hipótesis de concentración de las normas, la norma del gradiente de los pesos de la última capa es del orden de $d\sqrt{\ln d}$ en post-norm, sin dependencia de $L$, y del orden de $d\sqrt{\ln d/L}$ en pre-norm. Gradientes grandes en las capas altas obligan a un calentamiento (\emph{warmup}) largo de la tasa de aprendizaje en post-norm; pre-norm se entrena de forma estable con un calentamiento corto o nulo.
+
+\begin{table}[ht]
+\centering\small
+\caption{Comparación de las dos posiciones de la normalización.}\label{tab:prepost}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Aspecto & Post-norm (2017) & Pre-norm (GPT-2, LLaMA) \\
+\midrule
+Ecuación & $\Norm(x+F(x))$ & $x+F(\Norm(x))$ \\
+Camino identidad & no (\cref{prop:postnorm}) & sí (\cref{prop:jac-flujo}) \\
+Norma del flujo & fija & crece con la profundidad \\
+Calentamiento & imprescindible & tolerante \\
+Normalización final & innecesaria & necesaria \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{El precio de pre-norm: crecimiento del flujo}
+
+\begin{proposicion}[Crecimiento del flujo en un Transformer]\label{prop:crecimiento}
+Supóngase que, en la inicialización, las aportaciones $F_k(R^{k-1})_t$ de una fila son vectores aleatorios de media nula, incorrelados entre sí y con $h^{0}_t$, con $\E\norm{F_k(R^{k-1})_t}^{2}=s^{2}$. Entonces
+\[
+\E\norm{h^{L}_t}^{2}=\E\norm{h^{0}_t}^{2}+2L\,s^{2}.
+\]
+\end{proposicion}
+
+La \cref{prop:crecimiento} tiene dos consecuencias prácticas. Primera: como la norma del flujo crece, el vector $h^{L}_t$ debe normalizarse antes del unembedding; de lo contrario, la escala de los logits dependería de la profundidad. Es la normalización final $\Norm_f$ de la \cref{def:transformer}, que GPT-2 introdujo junto con la posición pre-norm~\cite[§2.3]{gpt2} y que Jurafsky y Martin señalan como la capa adicional que exige pre-norm~\cite[§7.2.3]{jm3}. Segunda: GPT-2 multiplica en la inicialización los pesos de las capas que escriben en el flujo ($W_O$ y la última matriz del MLP) por $1/\sqrt{N}$, con $N=2L$ el número de capas residuales; así cada $s^{2}$ se divide por $2L$ y la norma esperada del flujo final queda acotada independientemente de la profundidad.
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{definicion}{1}%
+
+
+% =====================================================================
+\chapter{La subcapa MLP: GELU y SwiGLU}
+\label{tema:3}
+% =====================================================================
+
+La segunda subcapa de cada bloque es un perceptrón de una capa oculta que se aplica por separado a cada token. Contiene unos dos tercios de los parámetros del modelo. Este tema define el MLP clásico del Transformer original y de GPT-2, las unidades lineales con puerta y la variante SwiGLU de LLaMA, demuestra las propiedades de la activación SiLU y justifica la elección $\dff\approx\frac83 d$. Se sigue~\cite[§3.3]{vaswani}, \cite[§11.7.2]{d2l}, \cite[§7.2.1]{jm3}, el artículo de Shazeer~\cite{shazeer} y la §3.4.2 de la práctica de CS336~\cite{cs336}.
+
+\section{El MLP posición a posición}
+
+\begin{definicion}[MLP posición a posición]\label{def:ffn}
+Sea $\phi:\R\to\R$ una función de activación aplicada componente a componente. El \emph{MLP posición a posición} con dimensión intermedia $\dff$ es
+\[
+\FFN(x)=\phi\bigl(xW_1+b_1\bigr)W_2+b_2,\qquad W_1\in\R^{d\times\dff},\;W_2\in\R^{\dff\times d},
+\]
+aplicado a cada fila $x\in\R^{d}$ de la matriz de entrada con los mismos parámetros.
+\end{definicion}
+
+El Transformer original usa $\phi=\ReLU$, $d=512$ y $\dff=2048=4d$~\cite[§3.3]{vaswani}; GPT-2 usa la misma proporción con la activación GELU. Que el MLP actúe fila a fila tiene una consecuencia estructural.
+
+\begin{lema}[Las operaciones fila a fila conmutan con las permutaciones]\label{lem:filas}
+Sea $f:\R^{d}\to\R^{m}$ y sea $\hat f:\R^{n\times d}\to\R^{n\times m}$ la aplicación que actúa como $f$ sobre cada fila. Para toda matriz de permutación $P\in\R^{n\times n}$, $\hat f(PX)=P\,\hat f(X)$.
+\end{lema}
+
+El \cref{lem:filas} se aplica al MLP, a las normalizaciones y a las proyecciones lineales. Por eso la atención es la única subcapa sensible al orden de los tokens, y por eso hace falta codificar la posición (\cref{tema:4}).
+
+\section{Activaciones suaves: GELU y SiLU}
+
+\begin{definicion}[GELU y SiLU]\label{def:gelu-silu}
+Sean $\Phi$ la función de distribución de la normal estándar y $\sigma(x)=1/(1+e^{-x})$ la sigmoide. Se definen
+\[
+\GELU(x)=x\,\Phi(x),\qquad \SiLU(x)=x\,\sigma(x).
+\]
+La función SiLU también se llama \emph{Swish} con parámetro~$1$~\cite{shazeer}.
+\end{definicion}
+
+Ambas multiplican $x$ por un número entre $0$ y $1$ que crece con $x$: son versiones suaves de $\ReLU(x)=x\cdot\mathbf{1}[x>0]$, en las que el interruptor $\mathbf{1}[x>0]$ se sustituye por una función de distribución~\cite{gelu}.
+
+\begin{proposicion}[Propiedades de SiLU]\label{prop:silu}
+La función SiLU cumple:
+\begin{enumerate}
+  \item $\SiLU(x)-\ReLU(x)\to 0$ cuando $x\to\pm\infty$;
+  \item $\SiLU'(x)=\sigma(x)\bigl(1+x(1-\sigma(x))\bigr)$; en particular, $\SiLU(0)=0$ y $\SiLU'(0)=1/2$;
+  \item tiene un único punto crítico $x^{*}<0$, que es un mínimo global, con $\SiLU(x^{*})=x^{*}+1$. Numéricamente, $x^{*}\approx-1{,}2785$ y $\SiLU(x^{*})\approx-0{,}2785$.
+\end{enumerate}
+\end{proposicion}
+
+A diferencia de ReLU, SiLU es derivable en todo punto, no es monótona y deja pasar valores negativos pequeños, lo que evita las neuronas cuyo gradiente es nulo en todo el semieje negativo.
+
+\section{Unidades lineales con puerta y SwiGLU}
+
+\begin{definicion}[SwiGLU]\label{def:swiglu}
+Sean $W_g,W_u\in\R^{d\times\dff}$ y $\Wdown\in\R^{\dff\times d}$. La subcapa \emph{SwiGLU} es
+\[
+\SwiGLU(x)=\bigl(\SiLU(xW_g)\odot xW_u\bigr)\,\Wdown,
+\]
+donde $\odot$ es el producto componente a componente. La rama $xW_g$ es la \emph{puerta} y $xW_u$ la \emph{rama lineal}.
+\end{definicion}
+
+Las unidades lineales con puerta (GLU) de Dauphin \emph{et al.}~\cite{dauphin} multiplican una proyección lineal por una puerta sigmoide; Shazeer~\cite[§2]{shazeer} probó varias funciones en la puerta y encontró que la variante con Swish mejoraba la perplejidad del Transformer. Las componentes de la capa intermedia ya no son $\phi(\text{lineal})$, sino productos de dos formas lineales del token: la puerta decide cuánto de la rama lineal se transmite.
+
+\begin{proposicion}[Presupuesto de parámetros]\label{prop:presupuesto}
+Sin sesgos, el MLP de la \cref{def:ffn} tiene $2d\,\dff$ parámetros, y SwiGLU tiene $3d\,\dff$. Con $\dff=4d$, el primero tiene $8d^{2}$ parámetros; SwiGLU tiene el mismo número si y solo si $\dff=\frac83 d$.
+\end{proposicion}
+
+El mismo argumento iguala el cómputo, porque el coste de cada producto es proporcional al número de pesos (\cref{tema:6}). Shazeer~\cite[§2]{shazeer} reduce $\dff$ en un factor $2/3$ por esta razón: en sus experimentos, el MLP de dos matrices usa $\dff=3072$ y las variantes con puerta $\dff=2048$.
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{definicion}{1}%
+
+
+% =====================================================================
+\chapter{Codificación de la posición: sinusoidal y RoPE}
+\label{tema:4}
+% =====================================================================
+
+Sin información de posición, la atención trata la secuencia como un conjunto. Este tema demuestra esa propiedad, define la codificación sinusoidal del Transformer original y las posiciones aprendidas de GPT-2, y estudia con detalle la codificación rotatoria RoPE de LLaMA, cuya puntuación de atención solo depende de la distancia entre tokens. Se sigue~\cite[§3.5]{vaswani}, \cite[§11.6.3]{d2l}, \cite[§12.1.9]{bishopdl}, \cite[§7.4]{jm3}, el artículo de Su \emph{et al.}~\cite[§3.2]{roformer} y las secciones~2 y~3 de la práctica~4 de CS224N~\cite{cs224n}.
+
+\section{La atención no ve el orden}
+
+\begin{proposicion}[Equivariancia por permutaciones]\label{prop:equivariancia}
+Sea
+\[
+f(X)=\softmax\bigl(XW_Q(XW_K)\T/\sqrt{d_k}\bigr)XW_V
+\]
+la autoatención \emph{sin máscara}, con la softmax por filas. Para toda matriz de permutación $P$, $f(PX)=P\,f(X)$.
+\end{proposicion}
+
+Junto con el \cref{lem:filas}, la \cref{prop:equivariancia} implica que un Transformer sin máscara y sin posiciones es equivariante: barajar los tokens de la entrada solo baraja las filas de la salida, de modo que «el perro muerde al hombre» y «el hombre muerde al perro» producen los mismos vectores por palabra. La máscara causal rompe la simetría (\cref{eje:1-perm-mascara}), y la práctica de CS336 recuerda que un decoder causal puede, en principio, inferir posiciones sin codificación explícita~\cite[§7.3]{cs336}; aun así, todos los modelos de la \cref{tab:modelos} codifican la posición de forma explícita.
+
+\section{Codificación sinusoidal y posiciones aprendidas}
+
+\begin{definicion}[Codificación sinusoidal]\label{def:sinusoidal}
+Sea $d$ par y $\omega_i=10000^{-2i/d}$ para $i=0,\dots,d/2-1$. La \emph{codificación sinusoidal} de la posición $p\in\mathbb{N}$ es el vector $\PE(p)\in\R^{d}$ con componentes
+\[
+\PE(p)_{2i}=\sin(p\,\omega_i),\qquad \PE(p)_{2i+1}=\cos(p\,\omega_i),
+\]
+que se suma al embedding del token: $h^{0}_t=e_{x_t}+\PE(t)$~\cite[§3.5]{vaswani}.
+\end{definicion}
+
+Cada par $(2i,2i+1)$ es un punto que gira sobre la circunferencia unidad con frecuencia angular $\omega_i$; las frecuencias decrecen geométricamente desde $\omega_0=1$ hasta $\omega_{d/2-1}\approx 10^{-4}$. Es como un reloj con $d/2$ agujas que giran a velocidades distintas~\cite[§11.6.3.1]{d2l}.
+
+\addtocounter{definicion}{1}%
+
+\begin{teorema}[Desplazamiento lineal]\label{teo:desplazamiento}
+Para cada $k\in\mathbb{Z}$ existe una matriz ortogonal $M_k\in\R^{d\times d}$, que no depende de $p$, tal que $\PE(p+k)=M_k\,\PE(p)$ para todo $p$.
+\end{teorema}
+
+El \cref{teo:desplazamiento} es la afirmación de Vaswani \emph{et al.}~\cite[§3.5]{vaswani} de que $\PE(p+k)$ es una función lineal de $\PE(p)$ para cada desplazamiento fijo, y la propiedad de posición relativa de~\cite[§11.6.3.2]{d2l}. La esperanza era que la red aprendiera a atender por posiciones relativas mediante esa aplicación lineal.
+
+\begin{definicion}[Posiciones aprendidas]
+Un modelo con \emph{posiciones aprendidas} añade una matriz de parámetros $W_P\in\R^{\nctx\times d}$ y suma su fila $t$ al embedding del token $t$. Es la opción de GPT-2~\cite{gpt2}. Aporta $\nctx d$ parámetros y no define ninguna codificación para posiciones $t>\nctx$.
+\end{definicion}
+
+\section{Codificación rotatoria (RoPE)}
+
+En lugar de sumar la posición al embedding, RoPE la introduce en cada capa, girando las consultas y las claves~\cite{roformer}. Sea
+\[
+R(\alpha)=\begin{pmatrix}\cos\alpha&-\sin\alpha\\ \sin\alpha&\cos\alpha\end{pmatrix}
+\]
+la rotación plana de ángulo $\alpha$.
+
+\begin{lema}[Rotaciones planas]\label{lem:rotaciones}
+Para todos $a,b\in\R$: (i) $R(a)R(b)=R(a+b)$; (ii) $R(a)\T=R(-a)$; (iii) en consecuencia, $R(a)\T R(b)=R(b-a)$ y $R(a)$ es ortogonal.
+\end{lema}
+
+\begin{definicion}[RoPE]\label{def:rope}
+Sea $d_k$ par y $\theta_i=10000^{-2i/d_k}$ para $i=0,\dots,d_k/2-1$. Para cada posición $m$ se define la matriz diagonal por bloques
+\[
+R_m=\diag\bigl(R(m\theta_0),\,R(m\theta_1),\,\dots,\,R(m\theta_{d_k/2-1})\bigr)\in\R^{d_k\times d_k}.
+\]
+RoPE sustituye, en cada cabeza y cada capa, la consulta $q_m$ del token $m$ por $\tilde q_m=R_mq_m$ y la clave $k_n$ del token $n$ por $\tilde k_n=R_nk_n$. Los valores $v_n$ no se modifican.
+\end{definicion}
+
+\begin{teorema}[RoPE es relativa]\label{teo:rope}
+Para todos $q,k\in\R^{d_k}$ y todas las posiciones $m,n$,
+\[
+(R_mq)\T(R_nk)=q\T R_{n-m}\,k.
+\]
+En particular, la puntuación de atención entre el token $m$ y el token $n$ solo depende de las posiciones a través de la diferencia $n-m$.
+\end{teorema}
+
+\begin{corolario}\label{cor:rope-norma}
+RoPE conserva las normas: $\norm{R_mq}=\norm{q}$. Solo modifica el ángulo entre la consulta y la clave.
+\end{corolario}
+
+Para un solo par ($d_k=2$), si $\varphi=(n-m)\theta$, el desarrollo de $q\T R(\varphi)k$ es
+\begin{equation}\label{eq:rope2d}
+q\T R(\varphi)\,k=(q\cdot k)\cos\varphi-(q_1k_2-q_2k_1)\sin\varphi .
+\end{equation}
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[ht]
+\centering\small
+\caption{Puntuaciones $(R_mq)\T(R_nk)$ del \cref{ej:rope}.}\label{tab:rope}
+\begin{tabular}{@{}cccr@{}}
+\toprule
+$m$ (consulta) & $n$ (clave) & $n-m$ & Puntuación \\
+\midrule
+3 & 1 & $-2$ & $-1{,}830$ \\
+5 & 3 & $-2$ & $-1{,}830$ \\
+2 & 0 & $-2$ & $-1{,}830$ \\
+1 & 3 & $+2$ & $6{,}830$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proposicion}[Forma compleja]\label{prop:rope-compleja}
+Identifíquese cada par $(a,b)$ con el número complejo $z=a+ib$. Entonces la rotación $R(\alpha)$ equivale a multiplicar por $e^{i\alpha}$, y, con $\langle u,v\rangle=\Real(u\bar v)$, el producto escalar de dos pares rotados es
+\[
+\bigl\langle z_1e^{im\theta},\,z_2e^{in\theta}\bigr\rangle=\Real\bigl(z_1\bar z_2\,e^{i(m-n)\theta}\bigr).
+\]
+\end{proposicion}
+
+La forma compleja es la que usan el artículo original~\cite[§3.2.1]{roformer} y el código de LLaMA~\cite{llamacode}, que agrupa las componentes consecutivas de $q$ y $k$ en números complejos. La fase $e^{i(m-n)\theta}$ hace el papel del desfase entre dos osciladores de la misma frecuencia: solo importa la diferencia de fases, como en la interferencia de dos ondas.
+
+\begin{table}[ht]
+\centering\small
+\caption{Comparación de las codificaciones de posición. La propiedad relativa es la del \cref{teo:desplazamiento} para la sinusoidal y la del \cref{teo:rope} para RoPE.}\label{tab:posiciones}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Método & Dónde actúa & Parámetros & Relativa & Modelos \\
+\midrule
+Sinusoidal & suma al embedding & $0$ & indirecta & Transformer \\
+Aprendida & suma al embedding & $\nctx d$ & no & GPT-2, GPT-3 \\
+RoPE & gira $q$ y $k$ en cada capa & $0$ & exacta & LLaMA, Qwen \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\addtocounter{definicion}{1}%
+
+
+% =====================================================================
+\chapter{Contar parámetros y memoria}
+\label{tema:5}
+% =====================================================================
+
+A partir de la configuración de un Transformer ($V$, $d$, $L$, $h$, $\dff$) puede calcularse sin ejecutar nada cuántos parámetros tiene y cuánta memoria necesita para la inferencia y para el entrenamiento. Este tema deduce la fórmula exacta para la arquitectura de LLaMA, la aproximación $N\approx 12Ld^{2}$ de Kaplan \emph{et al.}~\cite[§2.1]{kaplan} y el coste en bytes por parámetro del entrenamiento con Adam en precisión mixta. Se sigue también~\cite[§7.1.1 y ejercicio~7.1]{jm3} y el problema \texttt{transformer\_accounting} de CS336~\cite{cs336}.
+
+\section{Parámetros de un bloque}
+
+\begin{proposicion}[La atención no depende del número de cabezas]\label{prop:cabezas}
+Sin sesgos, la atención multicabeza con $h$ cabezas de dimensión $d_k=d/h$ tiene $4d^{2}$ parámetros, cualquiera que sea $h$.
+\end{proposicion}
+
+\begin{proposicion}[Parámetros de un bloque]\label{prop:bloque}
+\begin{enumerate}
+  \item Un bloque de tipo LLaMA (RMSNorm con ganancia, SwiGLU, sin sesgos) tiene $4d^{2}+3d\,\dff+2d$ parámetros.
+  \item Un bloque de tipo GPT-2 (LayerNorm con ganancia y sesgo, MLP con $\dff=4d$, sesgos en todas las capas lineales) tiene $12d^{2}+13d$ parámetros.
+  \item Con $\dff=4d$ en un MLP de dos matrices o $\dff=\frac83 d$ en SwiGLU, la parte matricial del bloque tiene $12d^{2}$ parámetros: $4d^{2}$ en la atención y $8d^{2}$ en el MLP.
+\end{enumerate}
+\end{proposicion}
+
+\section{Parámetros del modelo completo}
+
+\begin{teorema}[Recuento exacto]\label{teo:recuento}
+Un Transformer de tipo LLaMA con embeddings sin atar tiene
+\[
+N=L\bigl(4d^{2}+3d\,\dff+2d\bigr)+2Vd+d
+\]
+parámetros. Con embeddings atados, el término $2Vd$ se sustituye por $Vd$; con posiciones aprendidas, se añaden $\nctx d$.
+\end{teorema}
+
+\begin{corolario}[Aproximación de Kaplan]\label{cor:kaplan}
+Si $\dff=4d$ (o $\frac83 d$ en SwiGLU), los parámetros sin contar embeddings ni normalizaciones son exactamente $12Ld^{2}$, y
+\[
+\frac{N}{12Ld^{2}}=1+\frac{V}{6Ld}+\frac{2L+1}{12Ld}\qquad\text{(sin atar)}.
+\]
+\end{corolario}
+
+Kaplan \emph{et al.}~\cite[§2.1, ecuación~(2.1) y tabla~1]{kaplan} definen $N$ como el número de parámetros \emph{sin embeddings}, $N\approx 2d\,L(2d_{\mathrm{attn}}+\dff)=12Ld^{2}$, porque observaron que las leyes de escalado se expresan mejor con esa cantidad (módulo~16).
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[ht]
+\centering\small
+\caption{Parámetros de un bloque de LLaMA-2~7B.}\label{tab:llama7b}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Pieza & Fórmula & Parámetros \\
+\midrule
+$W_Q,W_K,W_V,W_O$ & $4d^{2}$ & $67\,108\,864$ \\
+SwiGLU & $3d\,\dff$ & $135\,266\,304$ \\
+Dos RMSNorm & $2d$ & $8\,192$ \\
+\midrule
+Bloque & & $202\,383\,360$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Memoria}
+
+\begin{definicion}[Memoria de los parámetros]
+Si cada parámetro se almacena con $b$ bytes, los pesos ocupan $Nb$ bytes. Se usan $b=4$ en fp32, $b=2$ en bf16 y fp16, $b=1$ en int8 y $b=1/2$ en int4 (módulos~11 y~19). En este módulo, $1~\mathrm{GB}=10^{9}$~bytes y $1~\mathrm{GiB}=2^{30}$~bytes.
+\end{definicion}
+
+\begin{proposicion}[Estado del entrenamiento con Adam en precisión mixta]\label{prop:16bytes}
+Entrenar con Adam en precisión mixta requiere, sin contar las activaciones, $16$~bytes por parámetro.
+\end{proposicion}
+
+\begin{table}[ht]
+\centering\small
+\caption{Memoria de LLaMA-2~7B ($N=6\,738\,415\,616$) según el uso.}\label{tab:memoria}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Uso & Bytes por parámetro & Memoria \\
+\midrule
+Inferencia en bf16 & $2$ & $13{,}5$~GB \\
+Inferencia en int4 (módulo~19) & $0{,}5$ & $3{,}4$~GB \\
+Pesos en fp32 & $4$ & $27{,}0$~GB \\
+Entrenamiento, Adam en precisión mixta & $16$ & $107{,}8$~GB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La \cref{tab:memoria} explica por qué un modelo de $7\cdot 10^{9}$ parámetros cabe en una GPU de $24$~GB para la inferencia en bf16, pero no para el entrenamiento: con $16$~bytes por parámetro, en $24$~GB solo caben los estados de un modelo de $1{,}5\cdot 10^{9}$ parámetros, y aún habría que añadir las activaciones. Las técnicas ZeRO y FSDP (módulo~17) reparten estos $16$~bytes entre varias GPU.
+
+\addtocounter{definicion}{1}%
+
+
+% =====================================================================
+\chapter{Contar el cómputo: FLOPs y la regla \texorpdfstring{$6ND$}{6ND}}
+\label{tema:6}
+% =====================================================================
+
+El coste de un Transformer se mide en operaciones de coma flotante (FLOPs). Casi todas proceden de productos de matrices, de modo que basta un único lema para contarlas. Este tema deduce el coste de una pasada hacia delante, unos $2N$ FLOPs por token más un término de atención proporcional al contexto, y el coste del entrenamiento, $C\approx 6ND$. Se sigue~\cite[§2.1]{kaplan}, la sección de contabilidad de recursos de la práctica~1 de CS336~\cite[§3.5]{cs336} y los datos de entrenamiento de Llama~2~\cite[§2.2.1 y tabla~2]{llama2}.
+
+\section{El coste de un producto de matrices}
+
+\begin{definicion}[FLOP]
+Un \emph{FLOP} es una suma o una multiplicación en coma flotante. El \emph{rendimiento} de un acelerador se mide en FLOP/s; su \emph{aprovechamiento} (MFU, \emph{model FLOPs utilization}) es el cociente entre los FLOP/s útiles que alcanza un entrenamiento y el máximo teórico del hardware~\cite[problema \texttt{adamw\_accounting}]{cs336}.
+\end{definicion}
+
+\begin{lema}[Regla $2mkp$]\label{lem:2mkp}
+El producto de una matriz $m\times k$ por una matriz $k\times p$ requiere $2mkp$ FLOPs, contando como $2k$ las operaciones de cada producto escalar de longitud $k$.
+\end{lema}
+
+\section{La pasada hacia delante}
+
+\begin{proposicion}[Coste hacia delante]\label{prop:forward}
+Sea $N_{\mathrm{mat}}$ el número de parámetros de las matrices que multiplican al flujo (proyecciones de atención, MLP y unembedding). Una pasada hacia delante sobre una secuencia de $n$ tokens requiere
+\[
+C_{\mathrm{fwd}}=2nN_{\mathrm{mat}}+4Ln^{2}d
+\]
+FLOPs, más operaciones elemento a elemento (normalizaciones, softmax, activaciones, RoPE) de coste $O(Lnd+Ln^{2}h)$, que se desprecian. Por token, el coste es $2N_{\mathrm{mat}}+4Lnd\approx 2N+4Lnd$.
+\end{proposicion}
+
+\begin{observacion}
+Kaplan \emph{et al.}~\cite[§2.1, ecuación~(2.2)]{kaplan} escriben $C_{\mathrm{fwd}}\approx 2N+2Ln_{\mathrm{ctx}}d$ por token. El factor es la mitad del de la \cref{prop:forward}, lo que concuerda con tener en cuenta la máscara causal: el token $t$ solo atiende a $t$ posiciones, y el promedio de $t$ sobre la secuencia es aproximadamente $n/2$. La práctica de CS336 cuenta los productos completos $n\times n$, como la \cref{prop:forward}.
+\end{observacion}
+
+\begin{corolario}[Contexto en el que la atención iguala a los pesos]\label{cor:nstar}
+El término de atención por token, $4Lnd$, iguala a $2N$ cuando $n^{*}=N/(2Ld)$.
+\end{corolario}
+
+Para LLaMA-2~7B, $n^{*}=6\,738\,415\,616/(2\cdot 32\cdot 4096)\approx 25\,705$ tokens; con su contexto de $4096$ tokens, la atención añade un $15{,}9\,\%$ al coste $2N$. Para contextos mucho mayores domina el término cuadrático, lo que motiva FlashAttention (módulo~17) y la atención con ventana deslizante (módulo~18).
+
+\section{La pasada hacia atrás y la regla \texorpdfstring{$6ND$}{6ND}}
+
+\begin{teorema}[El retroceso cuesta el doble]\label{teo:backward}
+Sea $Y=XW$ una capa lineal con $X\in\R^{n\times a}$ y $W\in\R^{a\times b}$, y sea $G=\partial\Loss/\partial Y\in\R^{n\times b}$. La pasada hacia delante cuesta $2nab$ FLOPs y la pasada hacia atrás, que calcula
+\[
+\frac{\partial\Loss}{\partial X}=GW\T\qquad\text{y}\qquad\frac{\partial\Loss}{\partial W}=X\T G,
+\]
+cuesta $4nab$ FLOPs.
+\end{teorema}
+
+\begin{corolario}[Regla $6ND$]\label{cor:6nd}
+Entrenar un Transformer de $N$ parámetros con $D$ tokens cuesta $C\approx 6ND$ FLOPs, despreciando el término de atención y las operaciones elemento a elemento.
+\end{corolario}
+
+Kaplan \emph{et al.}\ enuncian la misma estimación, $C\approx 6N$ FLOPs por token de entrenamiento~\cite[§2.1]{kaplan}, que es la base de las leyes de escalado del módulo~16.
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{definicion}{1}%
+
+
+
+\backmatter
+% =====================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{chapter}{Bibliografía}
+\markboth{Bibliografía}{}
+\small
+\def\UrlBreaks{\do\/\do-}
+
+\bibitem{bishopdl}
+C.~M. Bishop y H.~Bishop.
+\newblock \emph{Deep Learning: Foundations and Concepts}.
+\newblock Springer, 2024.
+\newblock Cap.~12, «Transformers» (§12.1 «Attention», en particular §12.1.7 «Transformer layers» y §12.1.9 «Positional encoding»; §12.3.1 «Decoder transformers»).
+\newblock \url{https://www.bishopbook.com/}
+
+\bibitem{cs224n}
+CS224N: Natural Language Processing with Deep Learning.
+\newblock Stanford University, invierno de 2025. Práctica~4, «Self-Attention, Transformers, and Pretraining».
+\newblock \url{https://web.stanford.edu/class/cs224n/assignments_w25/a4.pdf}
+
+\bibitem{dauphin}
+Y.~N. Dauphin, A.~Fan, M.~Auli y D.~Grangier.
+\newblock Language modeling with gated convolutional networks.
+\newblock En \emph{International Conference on Machine Learning (ICML)}, 2017.
+\newblock \url{https://arxiv.org/abs/1612.08083}
+
+\bibitem{elhage}
+N.~Elhage \emph{et al.}
+\newblock A mathematical framework for Transformer circuits.
+\newblock \emph{Transformer Circuits Thread}, Anthropic, 2021.
+\newblock \url{https://transformer-circuits.pub/2021/framework/index.html}
+
+\bibitem{gemini15}
+Gemini Team, Google.
+\newblock Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context.
+\newblock Informe técnico, 2024.
+\newblock \url{https://arxiv.org/abs/2403.05530}
+
+\bibitem{cs336}
+T.~Hashimoto y P.~Liang.
+\newblock CS336: Language Modeling from Scratch.
+\newblock Stanford University, primavera de 2026. Práctica~1, «Basics», versión~26.0.3.
+\newblock \url{https://github.com/stanford-cs336/assignment1-basics}
+
+\bibitem{gelu}
+D.~Hendrycks y K.~Gimpel.
+\newblock Gaussian error linear units (GELUs).
+\newblock Prepublicación, 2016.
+\newblock \url{https://arxiv.org/abs/1606.08415}
+
+\bibitem{jm3}
+D.~Jurafsky y J.~H. Martin.
+\newblock \emph{Speech and Language Processing}, 3.ª ed., borrador del 19 de agosto de 2026.
+\newblock Cap.~7, «Transformers and Pretraining».
+\newblock \url{https://web.stanford.edu/~jurafsky/slp3/}
+
+\bibitem{kaplan}
+J.~Kaplan, S.~McCandlish, T.~Henighan, T.~B. Brown, B.~Chess, R.~Child, S.~Gray, A.~Radford, J.~Wu y D.~Amodei.
+\newblock Scaling laws for neural language models.
+\newblock Prepublicación, 2020.
+\newblock \url{https://arxiv.org/abs/2001.08361}
+
+\bibitem{llamacode}
+Meta.
+\newblock Código de inferencia de Llama~2, archivo \texttt{llama/model.py}.
+\newblock Repositorio \texttt{meta-llama/llama}, 2023.
+\newblock \url{https://github.com/meta-llama/llama}
+
+\bibitem{presswolf}
+O.~Press y L.~Wolf.
+\newblock Using the output embedding to improve language models.
+\newblock En \emph{Proceedings of the 15th Conference of the European Chapter of the Association for Computational Linguistics (EACL)}, 2017.
+\newblock \url{https://arxiv.org/abs/1608.05859}
+
+\bibitem{gpt2}
+A.~Radford, J.~Wu, R.~Child, D.~Luan, D.~Amodei e I.~Sutskever.
+\newblock Language models are unsupervised multitask learners.
+\newblock Informe técnico, OpenAI, 2019.
+
+\bibitem{shazeer}
+N.~Shazeer.
+\newblock GLU variants improve Transformer.
+\newblock Prepublicación, 2020.
+\newblock \url{https://arxiv.org/abs/2002.05202}
+
+\bibitem{roformer}
+J.~Su, Y.~Lu, S.~Pan, A.~Murtadha, B.~Wen e Y.~Liu.
+\newblock RoFormer: Enhanced Transformer with rotary position embedding.
+\newblock Prepublicación, 2021. Publicado en \emph{Neurocomputing}, 568, 2024.
+\newblock \url{https://arxiv.org/abs/2104.09864}
+
+\bibitem{llama}
+H.~Touvron \emph{et al.}
+\newblock LLaMA: Open and efficient foundation language models.
+\newblock Prepublicación, 2023.
+\newblock \url{https://arxiv.org/abs/2302.13971}
+
+\bibitem{llama2}
+H.~Touvron \emph{et al.}
+\newblock Llama 2: Open foundation and fine-tuned chat models.
+\newblock Prepublicación, 2023.
+\newblock \url{https://arxiv.org/abs/2307.09288}
+
+\bibitem{vaswani}
+A.~Vaswani, N.~Shazeer, N.~Parmar, J.~Uszkoreit, L.~Jones, A.~N. Gomez, Ł.~Kaiser e I.~Polosukhin.
+\newblock Attention is all you need.
+\newblock En \emph{Advances in Neural Information Processing Systems 30 (NeurIPS)}, 2017.
+\newblock \url{https://arxiv.org/abs/1706.03762}
+
+\bibitem{grok1}
+xAI.
+\newblock Grok-1: código y pesos publicados.
+\newblock 2024.
+\newblock \url{https://github.com/xai-org/grok-1}
+
+\bibitem{xiong}
+R.~Xiong, Y.~Yang, D.~He, K.~Zheng, S.~Zheng, C.~Xing, H.~Zhang, Y.~Lan, L.~Wang y T.-Y. Liu.
+\newblock On layer normalization in the Transformer architecture.
+\newblock En \emph{International Conference on Machine Learning (ICML)}, 2020.
+\newblock \url{https://arxiv.org/abs/2002.04745}
+
+\bibitem{d2l}
+A.~Zhang, Z.~C. Lipton, M.~Li y A.~J. Smola.
+\newblock \emph{Dive into Deep Learning}, versión 1.0.3.
+\newblock Cambridge University Press, 2023.
+\newblock Cap.~11, «Attention Mechanisms and Transformers» (§11.6 «Self-Attention and Positional Encoding» y §11.7 «The Transformer Architecture»).
+\newblock \url{https://d2l.ai/}
+
+\bibitem{rmsnorm}
+B.~Zhang y R.~Sennrich.
+\newblock Root mean square layer normalization.
+\newblock En \emph{Advances in Neural Information Processing Systems 32 (NeurIPS)}, 2019.
+\newblock \url{https://arxiv.org/abs/1910.07467}
+
+\end{thebibliography}
+
+
+\end{document}

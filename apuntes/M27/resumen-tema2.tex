@@ -1,0 +1,134 @@
+% =====================================================================
+\chapter{Optimización de forma y de topología}
+\label{tema:2}
+% =====================================================================
+
+La optimización de topología responde a una pregunta de diseño mecánico: dado un volumen de trabajo, unos apoyos, unas cargas y una cantidad de material, ¿dónde se pone el material para que la pieza sea lo más rígida posible? A diferencia de la optimización de forma, que mueve una frontera ya existente, aquí se permite que aparezcan y desaparezcan agujeros. Este tema sigue el capítulo~1 de Bendsøe y Sigmund~\cite{bs}, el artículo de Bendsøe de 1989 que formuló el problema como distribución de material~\cite{bendsoe89}, los códigos didácticos de 99 y 88 líneas~\cite{sigmund99,andreassen}, el estudio de inestabilidades de Sigmund y Petersson~\cite{sigpet} y el análisis de filtros de Bourdin~\cite{bourdin}. El método adjunto se presenta como en las notas de cálculo matricial del MIT~\cite[§6.3]{mit18s096}.
+
+\section{El problema de flexibilidad mínima}
+
+Se discretiza el dominio de diseño en $N$ elementos finitos cuadrados. El elemento $e$ tiene una densidad $x_e\in[0,1]$ (0 vacío, 1 material) y una matriz de rigidez $E_e\,k_0$, donde $k_0\in\R^{8\times 8}$ es la del elemento bilineal con módulo unidad. El ensamblado da la matriz global $K(x)=\sum_e E_e(x_e)\,P_e^\T k_0P_e$, simétrica y definida positiva una vez impuestos los apoyos, donde $P_e$ extrae los ocho grados de libertad del elemento.
+
+\begin{definicion}[Flexibilidad mínima con restricción de volumen]\label{def:compliance}
+Dadas las cargas $F$ y una fracción de volumen $f_V\in(0,1)$, el problema es
+\[
+\min_{x\in[0,1]^N}\ c(x)=F^\T U(x)\quad\text{sujeto a}\quad K(x)\,U(x)=F,\qquad \frac1N\sum_{e=1}^N x_e=f_V .
+\]
+La \emph{flexibilidad} $c=F^\T U=U^\T KU$ es el trabajo de las cargas exteriores, igual al doble de la energía elástica almacenada; minimizarla equivale a maximizar la rigidez global.
+\end{definicion}
+
+Si las densidades solo pudieran valer 0 o 1, el problema sería combinatorio, con $2^N$ diseños. La relajación a $[0,1]$ lo vuelve continuo y derivable, pero entonces hay que conseguir que el óptimo no esté lleno de material «gris» de densidad intermedia, que no se puede fabricar.
+
+\section{La interpolación SIMP}
+
+\begin{definicion}[SIMP modificado]\label{def:simp}
+El método SIMP (\emph{solid isotropic material with penalization}) interpola el módulo de Young como
+\[
+E_e(x_e)=\Emin+x_e^{\,p}\,(E_0-\Emin),\qquad p>1,
+\]
+con $\Emin>0$ pequeño (por ejemplo $10^{-9}E_0$) para que $K$ no sea singular cuando hay elementos vacíos~\cite[§2.1]{andreassen}.
+\end{definicion}
+
+La penalización funciona porque el volumen es lineal en $x_e$ y la rigidez no. Con $p=3$, un elemento a densidad $0{,}5$ consume la mitad del material pero aporta solo $0{,}5^3=0{,}125$ de la rigidez: la relación rigidez/volumen es $x_e^{p-1}=0{,}25$, cuatro veces peor que la del material sólido. El optimizador aprende así a evitar los grises. El precio es la pérdida de convexidad.
+
+\begin{teorema}[Convexidad con $p=1$]\label{teo:convexo}
+Si $E_e(x_e)=\Emin+x_e(E_0-\Emin)$, es decir, con $p=1$, la flexibilidad $c(x)=F^\T K(x)^{-1}F$ es una función convexa de $x$ en $[0,1]^N$.
+\end{teorema}
+
+Con $p=1$ (la «chapa de espesor variable») el problema es convexo y su óptimo global es fácil de alcanzar, pero contiene grandes zonas grises. Con $p=3$, el valor estándar, desaparece la convexidad y el resultado depende del punto de partida y de los parámetros; el filtrado y las estrategias de continuación en $p$ mitigan el problema~\cite{sigpet}.
+
+\section{Sensibilidades por el método adjunto}
+
+\begin{teorema}[Método adjunto para ecuaciones de equilibrio]\label{teo:adjunto}
+Sea $J(x)=g\bigl(x,U(x)\bigr)$ con $K(x)U=F$, $K(x)$ invertible y derivable, y $F$ independiente de $x$. Sea $\lambda$ la solución del \emph{problema adjunto} $K(x)^\T\lambda=\bigl(\partial g/\partial U\bigr)^\T$. Entonces
+\[
+\frac{dJ}{dx_e}=\frac{\partial g}{\partial x_e}-\lambda^\T\frac{\partial K}{\partial x_e}\,U .
+\]
+\end{teorema}
+
+La demostración es la asociatividad del producto de jacobianos que distingue el modo inverso del directo (módulo~10, §4.2): multiplicar primero $\frac{\partial g}{\partial U}K^{-1}$ cuesta una sola resolución, sea cual sea el número $N$ de variables, mientras que calcular cada $dU/dx_e$ costaría $N$ resoluciones. El vector $\lambda$ es el multiplicador de Lagrange de la restricción $KU=F$ (módulo~10, §5.4).
+
+\begin{corolario}[La flexibilidad es autoadjunta]\label{cor:autoadjunto}
+Para $c=F^\T U$ se tiene $\lambda=U$ y
+\[
+\frac{\partial c}{\partial x_e}=-U^\T\frac{\partial K}{\partial x_e}U=-p\,x_e^{\,p-1}(E_0-\Emin)\,u_e^\T k_0u_e\ \le 0 .
+\]
+\end{corolario}
+
+El signo tiene una lectura física: añadir material nunca hace la estructura más flexible. Calcular el gradiente completo no cuesta ninguna resolución adicional; basta con la energía $u_e^\T k_0u_e$ de cada elemento.
+
+\addtocounter{definicion}{1}%
+
+\section{Actualización por criterios de optimalidad}
+
+Con $V(x)=\sum_ev_ex_e$ (en la malla regular, $v_e=1$), la lagrangiana del problema es $c(x)+\Lambda\bigl(V(x)-Nf_V\bigr)$ más los términos de las cotas. Para un elemento con $0<x_e<1$, la condición de estacionariedad (0.7, §5.4) es $-\partial c/\partial x_e=\Lambda\,v_e$, es decir,
+\[
+B_e:=\frac{-\partial c/\partial x_e}{\Lambda\,\partial V/\partial x_e}=1 .
+\]
+La actualización por criterios de optimalidad (OC) convierte esta condición en una iteración de punto fijo: si $B_e>1$, el elemento rinde más que el precio $\Lambda$ del material y conviene aumentar $x_e$; si $B_e<1$, disminuirla.
+
+\begin{definicion}[Actualización OC]\label{def:oc}
+Con amortiguamiento $\eta=1/2$ y límite de movimiento $m$ (0,2 en~\cite{andreassen}),
+\[
+x_e^{\text{nuevo}}=\clip\Bigl(x_eB_e^{\eta},\ \max(0,x_e-m),\ \min(1,x_e+m)\Bigr),
+\]
+donde $\Lambda$ se elige por bisección para que $x^{\text{nuevo}}$ cumpla la restricción de volumen.
+\end{definicion}
+
+\begin{proposicion}\label{prop:biseccion}
+Si $\partial c/\partial x_e<0$ para todo $e$, el volumen $V\bigl(x^{\text{nuevo}}(\Lambda)\bigr)$ es una función continua y no creciente de $\Lambda>0$; por tanto, la bisección encuentra un $\Lambda$ que cumple la restricción siempre que esta sea alcanzable dentro de los límites de movimiento.
+\end{proposicion}
+
+\section{Inestabilidades numéricas y filtros}
+
+Sin regularización, SIMP produce dos patologías bien documentadas~\cite{sigpet}: \emph{tableros de ajedrez}, zonas de elementos sólidos y vacíos alternados que el elemento bilineal considera artificialmente rígidas, y \emph{dependencia de la malla}: al refinar aparecen cada vez más barras finas, porque el problema continuo carece de solución con microestructura acotada. La solución estándar es imponer una escala de longitud mínima mediante un filtro de radio $\rmin$, con pesos
+\[
+H_{ei}=\max\bigl(0,\ \rmin-\operatorname{dist}(e,i)\bigr),
+\]
+donde la distancia se mide entre centros de elementos.
+
+\begin{definicion}[Filtros de sensibilidades y de densidades]\label{def:filtros}
+El \emph{filtro de sensibilidades}~\cite{sigmund99,andreassen} sustituye las derivadas por un promedio ponderado,
+\[
+\widehat{\frac{\partial c}{\partial x_e}}=\frac{1}{\max(\gamma,x_e)\sum_iH_{ei}}\sum_iH_{ei}\,x_i\,\frac{\partial c}{\partial x_i},\qquad \gamma=10^{-3}.
+\]
+El \emph{filtro de densidades}~\cite{bourdin} define densidades físicas $\xf_e=\sum_iH_{ei}x_i/\sum_iH_{ei}$, con las que se calcula la rigidez; las sensibilidades respecto a las variables de diseño se obtienen por la regla de la cadena,
+\[
+\frac{\partial c}{\partial x_j}=\sum_e\frac{\partial c}{\partial\xf_e}\frac{\partial\xf_e}{\partial x_j}=\sum_e\frac{H_{ej}}{\sum_iH_{ei}}\,\frac{\partial c}{\partial\xf_e}.
+\]
+\end{definicion}
+
+El filtro de densidades tiene una justificación matemática: Bourdin demuestra que el problema filtrado tiene solución y que las aproximaciones por elementos finitos convergen~\cite{bourdin}. El filtro de sensibilidades es heurístico (el gradiente filtrado no es el de ninguna función), pero funciona muy bien en la práctica. En ambos casos, el diseño que se presenta es el de las densidades físicas $\xf$, no el de las variables $x$~\cite[§2.3]{andreassen}. La proyección de Heaviside, $\bar x=1-e^{-\beta\xf}+\xf e^{-\beta}$ con $\beta$ creciente, elimina los grises que el filtro de densidades deja en los bordes.
+
+\section{Caso de estudio: la viga MBB}
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{figure}{1}%
+
+\section{Fabricación aditiva y diseño generativo}
+
+Un diseño optimizado solo es útil si se puede fabricar. Las restricciones más comunes son el tamaño mínimo de las barras y de los huecos, que el radio del filtro controla; la dirección de fabricación, porque en fabricación aditiva las superficies que miran hacia abajo con poca inclinación necesitan soportes (\cref{tema:6}); y, para mecanizado o fundición, la accesibilidad de la herramienta y el desmoldeo. Langelaar propuso un filtro que, capa a capa, solo permite material que esté sostenido por material de la capa inferior, de modo que el resultado es imprimible sin soportes~\cite{langelaar}. Tras optimizar, el flujo habitual es umbralizar $\xf$, extraer la superficie (\emph{marching cubes} o \emph{squares}, \cref{tema:1}), suavizarla, reconstruir una geometría CAD y \emph{volver a verificar} con un análisis de elementos finitos más fino, incluyendo tensiones, que el problema de flexibilidad no controla.
+
+Los programas comerciales de \emph{diseño generativo} empaquetan este flujo. La documentación pública de Autodesk Fusion describe métodos de fabricación seleccionables (sin restricciones, aditiva con dirección de impresión, fresado de 2,5, 3 y 5 ejes, corte en 2 ejes y fundición con espesor mínimo, ángulo de desmoldeo y dirección de expulsión), cada uno de los cuales genera su propio conjunto de resultados~\cite{fusiongd}. El caso publicado más citado es el soporte de cinturón de un asiento de General Motors: según Autodesk, el diseño generativo consolidó ocho piezas en una sola de acero inoxidable, un 40~\% más ligera y un 20~\% más resistente que la anterior~\cite{gmautodesk}. nTop combina el modelado implícito con resultados de optimización de topología y con campos que modulan celosías y espesores~\cite{ntop}. No se han publicado los algoritmos internos de estos productos.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.7cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+top88 y variantes (DTU) & códigos didácticos SIMP en MATLAB & descarga gratuita (DTU) & aprender y prototipar en 2D \\
+numpy + scipy.sparse & montaje y resolución de elementos finitos & BSD & reproducir top88 en Python (cuaderno) \\
+NLopt (MMA) & optimización con muchas restricciones & MIT & sustituir OC cuando hay varias restricciones \\
+dolfin-adjoint & adjuntos automáticos sobre FEniCS & LGPL & EDP generales en 2D y 3D sin derivar a mano \\
+Autodesk Fusion & diseño generativo con restricciones de fabricación & comercial & ingeniería de producto con CAD integrado \\
+nTop & modelado implícito, celosías, campos & comercial & piezas para fabricación aditiva con celosías \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías del tema~2.}
+\label{tab:tec2}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

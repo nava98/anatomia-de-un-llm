@@ -1,0 +1,102 @@
+% =====================================================================
+\chapter{Atención eficiente en memoria: caché KV, MQA, GQA y MLA}
+\label{tema:2}
+% =====================================================================
+
+Al generar texto, un Transformer produce un token cada vez y reutiliza las claves y los valores de las posiciones anteriores. Esa reutilización ahorra cómputo, pero obliga a guardar y a leer en cada paso una caché que crece con la longitud del contexto y con el tamaño del lote, y que en contextos largos ocupa más memoria que los propios pesos. Este tema cuantifica esa caché, demuestra que con atención multicabeza la decodificación está necesariamente limitada por la memoria y estudia las tres variantes que la reducen: la atención multiconsulta (MQA), la atención de consultas agrupadas (GQA) y la atención latente multicabeza (MLA). Se sigue a Shazeer~\cite[§2.4 y §3]{mqa}, a Ainslie \emph{et al.}~\cite[§2]{gqa}, a DeepSeek-AI~\cite[§2.1]{deepseekv2} y la clase~10 de CS336~\cite{cs336}.
+
+\section{La caché de claves y valores}
+
+Sea una capa de atención con $H$ cabezas de dimensión $\dhd$. En la generación autorregresiva, al procesar el token $t$ se necesitan las consultas de $t$ y las claves y los valores de las posiciones $1,\dots,t$. Por la causalidad (módulo~14, tema~1), las claves y los valores de las posiciones $j<t$ no dependen de $t$: se calculan una vez y se guardan.
+
+\begin{definicion}[Caché KV]\label{def:cache}
+La \emph{caché KV} de una capa, tras procesar $T$ tokens, es el par de tensores $(K,V)$ con las claves y los valores de las $T$ posiciones para cada una de las $\nkv$ cabezas de clave y valor. Cada tensor tiene $T\cdot\nkv\cdot\dhd$ números por secuencia.
+\end{definicion}
+
+\begin{proposicion}[Tamaño de la caché KV]\label{prop:cache}
+Un modelo de $L$ capas con $\nkv$ cabezas de clave y valor de dimensión $\dhd$, que procesa un lote de $b$ secuencias de $T$ tokens con $s$ bytes por número, necesita
+\[
+M_{\mathrm{KV}}=2\,L\,\nkv\,\dhd\,T\,b\,s\ \text{bytes}.
+\]
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\section{La decodificación está limitada por la memoria}
+
+El módulo~17 definió la intensidad aritmética de una operación como el cociente entre FLOPs y bytes transferidos, y la comparó con la intensidad crítica del acelerador. El paso de atención de la decodificación tiene una intensidad que no mejora con el lote.
+
+\begin{proposicion}[Intensidad de la atención en la decodificación]\label{prop:intensidad}
+Sea una capa con $H$ cabezas de consulta y $\nkv$ cabezas de clave y valor de dimensión $\dhd$, y sea un paso de decodificación de una secuencia cuyo contexto tiene $T$ posiciones. Contando solo los productos $q\,K\T$ y $a\,V$ y la lectura de la caché, la intensidad aritmética es
+\[
+I=\frac{2H}{s\,\nkv}\ \text{FLOP/byte},
+\]
+independiente de $T$ y del tamaño del lote. Con MHA ($\nkv=H$) en bf16, $I=1$.
+\end{proposicion}
+
+La intensidad crítica de la A100 en bf16 es $\Icrit\approx 156$~FLOP/byte (módulo~17, tema~2). Con MHA, la atención de la decodificación aprovecha menos del $1\,\%$ del cómputo disponible, y aumentar el lote no ayuda. Los productos de las matrices de pesos, en cambio, sí ganan intensidad con el lote, porque todas las secuencias comparten los mismos pesos. Shazeer llega a la misma conclusión con otro recuento: en la decodificación incremental con MHA, el cociente entre accesos a memoria y operaciones es $\Theta(n/d+1/b)$, y el término $n/d$, debido a la lectura de las claves y los valores, no disminuye con el lote~\cite[§2.4.1]{mqa}. Reducir $\nkv$ es la forma directa de atacarlo.
+
+\section{Atención multiconsulta y de consultas agrupadas}
+
+\begin{definicion}[MQA y GQA]\label{def:gqa}
+Sea $H$ divisible por $G$. La \emph{atención de consultas agrupadas} con $G$ grupos (GQA-$G$) divide las $H$ cabezas de consulta en $G$ grupos de $H/G$ cabezas consecutivas; todas las cabezas de un grupo comparten una única cabeza de clave y una de valor~\cite[§2.2]{gqa}. Con proyecciones $W_Q^{(i)}\in\R^{d\times\dhd}$ para $i=1,\dots,H$ y $W_K^{(g)},W_V^{(g)}\in\R^{d\times\dhd}$ para $g=1,\dots,G$, la cabeza $i$ usa la clave y el valor del grupo $g(i)=\lceil iG/H\rceil$. El caso $G=1$ es la \emph{atención multiconsulta} (MQA)~\cite[§3]{mqa}, y el caso $G=H$ es la atención multicabeza.
+\end{definicion}
+
+\begin{proposicion}[Ahorro de GQA]\label{prop:gqa}
+Con $\nkv=G$, respecto de MHA:
+\begin{enumerate}
+  \item la caché KV se divide exactamente por $H/G$;
+  \item las proyecciones de clave y valor pasan de $2d^{2}$ a $2d\,G\dhd$ parámetros, y las de consulta y salida no cambian;
+  \item la intensidad de la \cref{prop:intensidad} se multiplica por $H/G$.
+\end{enumerate}
+\end{proposicion}
+
+\addtocounter{figure}{1}%
+
+Shazeer observó que MQA reduce el tiempo de decodificación por token de 46 a 3,8~microsegundos en su experimento de traducción, con una pérdida de calidad pequeña pero apreciable~\cite[§4.2 y §4.3]{mqa}. Ainslie \emph{et al.} proponen GQA como término medio y muestran, además, que un modelo entrenado con MHA puede convertirse en uno con GQA sin entrenarlo desde cero: se promedian las proyecciones de clave y valor de las cabezas de cada grupo y se continúa el entrenamiento durante un $5\,\%$ de los pasos originales (\emph{uptraining})~\cite[§2.1 y §3.1]{gqa}. GQA con 8 grupos queda cerca de MHA en calidad y cerca de MQA en velocidad. Llama~2 la usa en sus modelos de 34B y 70B~\cite[tabla~1]{llama2}, y Llama~3, Mixtral y Grok-1 en todos sus tamaños (\cref{tab:hiper}).
+
+\addtocounter{definicion}{1}%
+
+\section{Atención latente multicabeza}
+
+GQA reduce la caché eliminando cabezas de clave y valor. MLA, introducida en DeepSeek-V2, conserva $H$ cabezas, pero guarda en la caché un único vector de baja dimensión por token del que se reconstruyen todas las claves y todos los valores~\cite[§2.1.2]{deepseekv2}.
+
+\begin{definicion}[MLA sin codificación de posición]\label{def:mla}
+Sean $\dc\ll H\dhd$, $W^{DKV}\in\R^{d\times\dc}$ y, para cada cabeza $i$, $W^{UK}_i,W^{UV}_i\in\R^{\dc\times\dhd}$ y $W^{Q}_i\in\R^{d\times\dhd}$. Para el token $t$ con entrada $h_t\in\R^{1\times d}$,
+\[
+c_t=h_tW^{DKV}\in\R^{1\times\dc},\qquad k_{t,i}=c_tW^{UK}_i,\qquad v_{t,i}=c_tW^{UV}_i,\qquad q_{t,i}=h_tW^{Q}_i .
+\]
+La caché guarda solo los vectores latentes $c_1,\dots,c_T$.
+\end{definicion}
+
+Guardar $c_t$ en lugar de $k_{t,i}$ y $v_{t,i}$ solo ahorra memoria si no hay que reconstruir explícitamente las claves y los valores en cada paso. La factorización lo evita.
+
+\begin{proposicion}[Absorción de las proyecciones]\label{prop:absorcion}
+Con la notación de la \cref{def:mla}, sean $\tilde q_{t,i}=q_{t,i}(W^{UK}_i)\T\in\R^{1\times\dc}$ y $a_{t,i,j}$ los pesos de atención de la cabeza $i$. Entonces
+\[
+q_{t,i}\,k_{j,i}\T=\tilde q_{t,i}\,c_j\T,\qquad \sum_{j\le t}a_{t,i,j}\,v_{j,i}=\Bigl(\sum_{j\le t}a_{t,i,j}\,c_j\Bigr)W^{UV}_i .
+\]
+En consecuencia, las puntuaciones y la salida de cada cabeza se calculan a partir de los $c_j$, sin formar $k_{j,i}$ ni $v_{j,i}$; además, $W^{UK}_i$ puede integrarse en la proyección de consulta y $W^{UV}_i$, en la de salida.
+\end{proposicion}
+
+\begin{observacion}[RoPE desacoplada]
+La absorción falla con RoPE. Con vectores fila, la rotación de la posición $m$ actúa como $x\mapsto xR_m$, y $R_mR_n\T=R_{m-n}$ (es la versión traspuesta de la identidad del módulo~14, tema~4). Si la consulta y la clave se rotan, la puntuación es $q_{t,i}R_t(c_jW^{UK}_iR_j)\T=q_{t,i}R_{t-j}(W^{UK}_i)\T c_j\T$: entre $q_{t,i}$ y $c_j$ aparece una matriz que depende de la distancia $t-j$, y ya no hay una matriz fija que integrar en la consulta. DeepSeek-V2 lo resuelve añadiendo a cada cabeza una componente de dimensión $d_h^{R}$ que sí se rota y cuya clave $k^{R}_t$ es compartida por todas las cabezas y se guarda también en la caché~\cite[§2.1.3]{deepseekv2}. La caché por token y capa tiene entonces $\dc+d_h^{R}$ números.
+\end{observacion}
+
+\begin{table}[ht]
+\centering\small
+\caption{Números guardados en la caché KV por token, en un modelo de $L$ capas~\cite[tabla~1]{deepseekv2}.}\label{tab:mla}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Mecanismo & Caché por token & DeepSeek-V2 ($L=60$, $H=\dhd=128$) \\
+\midrule
+MHA & $2H\dhd L$ & $1\,966\,080$ \\
+GQA-$G$ & $2G\dhd L$ & $15\,360\,G$ \\
+MQA & $2\dhd L$ & $15\,360$ \\
+MLA & $(\dc+d_h^{R})L$ & $(512+64)\cdot 60=34\,560$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

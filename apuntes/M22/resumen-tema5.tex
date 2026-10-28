@@ -1,0 +1,88 @@
+% =====================================================================
+\chapter{Generación aumentada por recuperación}
+\label{tema:5}
+% =====================================================================
+
+La generación aumentada por recuperación (RAG, del inglés \emph{retrieval-augmented generation}) combina un recuperador, que selecciona fragmentos de una colección, con un modelo de lenguaje que genera la respuesta condicionado a ellos. Este tema formula los dos modelos probabilísticos de Lewis \emph{et al.}, estudia las decisiones de diseño de un sistema práctico (troceo y construcción del \emph{prompt}) y su evaluación, separando el error del recuperador del error del generador. Se siguen el artículo de Lewis \emph{et al.}~\cite{rag}, las §11.4 y §11.6 de Jurafsky y Martin~\cite{jm3}, la clase~10 de CS224N~\cite{cs224n}, la tarea de OpenQA de CS224U~\cite{cs224u} y la segunda tarea de 11-711 de Carnegie Mellon~\cite{cmu711}.
+
+\section{Memoria paramétrica y no paramétrica}
+
+Un modelo de lenguaje guarda conocimiento en sus pesos: es una \emph{memoria paramétrica}, que no se puede consultar ni actualizar sin reentrenar y que no indica de dónde procede cada dato. Una colección de documentos indexada es una \emph{memoria no paramétrica}: se actualiza añadiendo documentos y cada fragmento recuperado tiene una fuente identificable. RAG usa las dos~\cite{rag}. El esquema básico, «recuperar y leer», tiene una fase de indexado, que se hace una vez, y una fase de consulta, que se repite con cada pregunta (\cref{fig:rag})~\cite[§11.4]{jm3}.
+
+\addtocounter{figure}{1}%
+
+\section{Los modelos RAG-Sequence y RAG-Token}
+
+Lewis \emph{et al.} tratan el documento recuperado $z$ como una variable latente~\cite[§2.1]{rag}. El recuperador es un codificador dual (\cref{def:biencoder}) que define $p_\eta(z\mid x)\propto\exp\bigl(E_P(z)^{\top}E_Q(x)\bigr)$, restringida en la práctica a los $k$ documentos de mayor puntuación y renormalizada sobre ellos. El generador $p_\theta(y_i\mid x,z,y_{<i})$ es un modelo de secuencia a secuencia que recibe la pregunta y el documento.
+
+\begin{definicion}[RAG-Sequence y RAG-Token]\label{def:rag}
+Sea $Z_k(x)$ el conjunto de los $k$ documentos recuperados para $x$ y sea $y=y_{1:n}$ la respuesta.
+\begin{enumerate}
+  \item En \emph{RAG-Sequence}, un mismo documento se usa para toda la respuesta:
+  \[
+  p_{\mathrm{seq}}(y\mid x)=\sum_{z\in Z_k(x)}p_\eta(z\mid x)\prod_{i=1}^{n}p_\theta(y_i\mid x,z,y_{<i}).
+  \]
+  \item En \emph{RAG-Token}, cada token puede apoyarse en un documento distinto:
+  \[
+  p_{\mathrm{tok}}(y\mid x)=\prod_{i=1}^{n}\;\sum_{z\in Z_k(x)}p_\eta(z\mid x)\,p_\theta(y_i\mid x,z,y_{<i}).
+  \]
+\end{enumerate}
+\end{definicion}
+
+\begin{proposicion}\label{prop:rag}
+Para cada longitud $n$ fija, $p_{\mathrm{seq}}(\cdot\mid x)$ y $p_{\mathrm{tok}}(\cdot\mid x)$ son distribuciones de probabilidad sobre $\V^{n}$. Coinciden si $n=1$ o si $p_\eta(\cdot\mid x)$ concentra toda la masa en un único documento.
+\end{proposicion}
+
+La demostración se pide en el \cref{eje:5-rag-dem}. RAG-Sequence es una mezcla de $k$ modelos de lenguaje, uno por documento, con pesos $p_\eta(z\mid x)$. RAG-Token mezcla en cada paso las distribuciones del token siguiente; puede, por ejemplo, tomar el título de un libro de un documento y el nombre del autor de otro.
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Entrenamiento]
+Lewis \emph{et al.} entrenan conjuntamente el codificador de consultas y el generador minimizando $-\ln p(y\mid x)$ sobre pares de pregunta y respuesta, sin indicar qué documento es el bueno: el gradiente llega al recuperador a través de los pesos $p_\eta(z\mid x)$ de la mezcla. El codificador de documentos y el índice se mantienen fijos, porque actualizarlos obligaría a recodificar toda la colección~\cite[§2.4]{rag}. En los sistemas actuales con modelos de propósito general es habitual no entrenar nada: el recuperador y el modelo se usan congelados y los fragmentos se insertan en el \emph{prompt}.
+\end{observacion}
+
+\section{Troceo}
+
+\begin{definicion}[Troceo con solape]\label{def:troceo}
+Un documento de $L$ tokens se divide en trozos de $\tau$ tokens con un solape de $s$ tokens, $0\le s<\tau$. El trozo $j=0,1,\dots$ empieza en la posición $j(\tau-s)$; el paso entre inicios es $\tau-s$.
+\end{definicion}
+
+\begin{proposicion}[Número de trozos]\label{prop:troceo}
+Si $L\ge\tau$, el número de trozos necesarios para cubrir el documento es
+\[
+n=\Bigl\lceil\frac{L-\tau}{\tau-s}\Bigr\rceil+1,
+\]
+y el número total de tokens indexados es aproximadamente $L\,\tau/(\tau-s)$.
+\end{proposicion}
+
+Con $L=1000$, $\tau=200$ y $s=50$, los inicios son $0,150,\dots,900$ y hay $\lceil 800/150\rceil+1=7$ trozos. El solape evita cortar una idea por la mitad, a costa de indexar $\tau/(\tau-s)=1{,}33$ veces más texto. Los trozos pequeños dan una recuperación más precisa, pero con poco contexto alrededor; los grandes, lo contrario, y además ocupan más espacio en el \emph{prompt}.
+
+\section{El \emph{prompt} y su coste}
+
+El \emph{prompt} de un sistema RAG suele tener tres partes: instrucciones (responder solo con la información proporcionada, citar el fragmento usado y decir que no se sabe si la respuesta no está), los $k$ fragmentos, cada uno delimitado por marcas con un identificador, y la pregunta. Las marcas separan lo que es material de consulta de lo que son instrucciones, una separación que reaparece en el \cref{tema:6} como defensa parcial frente a la inyección de instrucciones. Con 3 fragmentos de 200 tokens y 50 tokens de pregunta, el \emph{prompt} tiene unos 650 tokens, frente a los 8000 de pegar todo el material (\cref{tema:1}). Como los modelos aprovechan peor la información situada en mitad de contextos largos~\cite{liu-lost}, conviene colocar los fragmentos mejor puntuados al principio o al final.
+
+\section{Evaluación de un sistema RAG}
+
+Un sistema RAG falla por dos motivos distintos: el recuperador no encuentra el fragmento con la respuesta o el generador no la extrae bien. Conviene medirlos por separado.
+
+\begin{proposicion}[Descomposición del acierto]\label{prop:descomp}
+Sea $r$ la probabilidad de que algún fragmento de $T_k$ contenga la respuesta, $a_1$ la probabilidad de que el generador acierte cuando la respuesta está en el contexto y $a_0$ cuando no está. La exactitud del sistema es
+\[
+\operatorname{Acc}=r\,a_1+(1-r)\,a_0\;\le\;r+(1-r)\,a_0 .
+\]
+\end{proposicion}
+
+La probabilidad $a_0$ corresponde a lo que el modelo sabe de memoria, el modo «de libro cerrado». La tarea de 11-711 pide precisamente comparar el sistema con recuperación con el mismo modelo sin ella~\cite{cmu711}. Aumentar $k$ sube $r$, porque $\Rk{k}$ no decrece (\cref{prop:monotonia}), pero puede bajar $a_1$ al llenar el contexto de fragmentos irrelevantes (\cref{eje:5-descomp}).
+
+\begin{definicion}[Exactitud exacta y $F_1$ de tokens]\label{def:em-f1}
+Sea $\nu$ una normalización de cadenas: paso a minúsculas, eliminación de signos de puntuación y de artículos y unificación de espacios. Para una predicción $\hat a$ y una respuesta de referencia $a$, la \emph{exactitud exacta} es $\EM=\mathbb{1}[\nu(\hat a)=\nu(a)]$. Si $\hat T$ y $T$ son los multiconjuntos de tokens de $\nu(\hat a)$ y $\nu(a)$ y $c=\abs{\hat T\cap T}$ es el número de tokens comunes (contados con multiplicidad), la precisión es $c/\abs{\hat T}$, la exhaustividad $c/\abs{T}$ y la $F_1$ su media armónica, o~0 si $c=0$. Con varias referencias se toma el máximo sobre ellas~\cite{squad}, \cite[§11.6]{jm3}.
+\end{definicion}
+
+Son las métricas de SQuAD~\cite{squad}, que la tarea de 11-711 usa junto con la exhaustividad de la respuesta~\cite{cmu711}; la normalización original elimina los artículos ingleses, y aquí se adapta a los españoles.
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Fidelidad al contexto]
+Una respuesta correcta puede no proceder del contexto, sino de la memoria paramétrica. Para seleccionar demostraciones de un \emph{prompt} de pocos ejemplos con recuperación, la tarea de CS224U exige dos condiciones a la vez: que la respuesta del modelo coincida con la de referencia y que la respuesta de referencia aparezca literalmente en los pasajes recuperados~\cite{cs224u}. Así, las demostraciones enseñan al modelo a responder a partir del contexto (\cref{eje:5-cs224u}).
+\end{observacion}
+

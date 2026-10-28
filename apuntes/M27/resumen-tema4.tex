@@ -1,0 +1,88 @@
+% =====================================================================
+\chapter{Renderizado diferenciable y reconstrucción 3D}
+\label{tema:4}
+% =====================================================================
+
+Reconstruir un objeto a partir de fotografías es un problema inverso: se busca la geometría (y la apariencia) cuyas imágenes renderizadas coinciden con las observadas. Si el renderizador es derivable, el problema se resuelve por descenso de gradiente, igual que el entrenamiento de una red. Este tema explica por qué la rasterización clásica no es derivable, cómo la suavizan SoftRas~\cite{softras} y las bibliotecas actuales~\cite{pytorch3d,nvdiffrast,mitsuba3}, y cómo NeRF~\cite{nerf} y el \emph{Gaussian splatting}~\cite{gs} convierten la reconstrucción de escenas en una optimización. Se apoya en las clases «Graphics Pipeline and Rasterization» de MIT 6.837~\cite{mit6837}, en la clase de renderizado neuronal de CS348n~\cite{cs348n} y en las tareas~2 y~3 del curso 16-825 de Carnegie Mellon~\cite{cmu16825}.
+
+\section{Formación de la imagen y rasterización}
+
+Una cámara estenopeica con matriz de rotación $W$, centro $o$ y distancia focal $\phi$ (en píxeles) proyecta el punto $X$ en el píxel $\bigl(\phi\,X_c^{(1)}/X_c^{(3)},\ \phi\,X_c^{(2)}/X_c^{(3)}\bigr)$, con $X_c=W(X-o)$. La rasterización recorre los triángulos proyectados y asigna a cada píxel el triángulo más cercano que lo cubre (\emph{z-buffer})~\cite{mit6837}. La silueta de una malla es la función indicadora de los píxeles cubiertos.
+
+\begin{proposicion}[La rasterización tiene gradiente nulo casi en todas partes]\label{prop:grad-cero}
+Sea $I_p(\theta)\in\{0,1\}$ el valor de la silueta en el píxel $p$ (muestreado en su centro) como función de las coordenadas $\theta$ de los vértices. Entonces $I_p$ es constante a trozos: en todo $\theta$ en que ningún borde de triángulo proyectado pasa exactamente por el centro de $p$, $\nabla_\theta I_p=0$.
+\end{proposicion}
+
+Una pérdida que compare siluetas rasterizadas tiene, por tanto, gradiente nulo salvo en un conjunto de medida nula, donde no existe: el descenso de gradiente no recibe información. Hay dos soluciones: suavizar el renderizador, o calcular explícitamente la contribución de los bordes (como hacen los métodos de antialias derivable de nvdiffrast~\cite{nvdiffrast} y los renderizadores físicos como Mitsuba~3~\cite{mitsuba3}).
+
+\section{Rasterización suave}
+
+\begin{definicion}[Mapa de probabilidad de SoftRas]\label{def:softras}
+Para el píxel $p_i$ y el triángulo proyectado $f_j$, SoftRas~\cite[§3.2]{softras} define
+\[
+D_j^i=\sigm\Bigl(\delta_j^i\,\frac{d^2(i,j)}{\sigma}\Bigr),
+\]
+donde $d(i,j)$ es la distancia del píxel al borde del triángulo, $\delta_j^i=+1$ si el píxel está dentro y $-1$ si está fuera, y $\sigma>0$ controla la nitidez. La silueta suave se obtiene agregando los triángulos como sucesos independientes~\cite[§3.3]{softras},
+\[
+I_s^i=1-\prod_j\bigl(1-D_j^i\bigr).
+\]
+\end{definicion}
+
+Cuando $\sigma\to 0$, $D_j^i$ tiende a la indicadora del triángulo y se recupera la rasterización clásica; con $\sigma>0$, todos los triángulos cercanos reciben gradiente, incluso los ocultos y los vértices alejados del borde. El valor por defecto en el artículo es $\sigma=10^{-4}$ en coordenadas de imagen normalizadas. La pérdida de siluetas más usada es $1-\IoU$ suave, con $\IoU(S,T)=\sum_iS_iT_i/\sum_i(S_i+T_i-S_iT_i)$~\cite[§4.1]{softras}. El compromiso es claro: un $\sigma$ grande da gradientes en una región amplia, útiles al principio, pero sesga la silueta (la «hincha»); un $\sigma$ pequeño es fiel pero casi no da gradiente. De ahí la práctica de \emph{recocer} $\sigma$ de grande a pequeño, que se ve en el caso de estudio.
+
+Las bibliotecas actuales implementan estas ideas con eficiencia. PyTorch3D proporciona estructuras de mallas y nubes por lotes, pérdidas 3D y un renderizador derivable modular~\cite{pytorch3d}. nvdiffrast ofrece primitivas de alto rendimiento (rasterización, interpolación de atributos, filtrado de texturas y antialias) que aprovechan el hardware gráfico y se integran en PyTorch o TensorFlow~\cite{nvdiffrast}. Mitsuba~3, construido sobre el compilador Dr.Jit, calcula derivadas de simulaciones completas de transporte de luz respecto a la cámara, la geometría, los materiales o las texturas~\cite{mitsuba3}.
+
+\section{Renderizado volumétrico y NeRF}
+
+Un campo de radiancia neuronal (NeRF) representa una escena con una red que, para cada punto $X$ y dirección de vista $d$, devuelve una densidad $\sigma(X)\ge 0$ y un color $c(X,d)$~\cite{nerf}. El color de un rayo $r(t)=o+td$ es
+\[
+C(r)=\int_{t_n}^{t_f}T(t)\,\sigma(r(t))\,c(r(t),d)\,dt,\qquad T(t)=\exp\Bigl(-\int_{t_n}^{t}\sigma(r(u))\,du\Bigr),
+\]
+donde $T(t)$ es la transmitancia, la probabilidad de que la luz recorra el rayo hasta $t$ sin ser absorbida. Con muestras $t_1<\dots<t_N$ y $\delta_i=t_{i+1}-t_i$, la cuadratura de NeRF~\cite[§4]{nerf} es
+\[
+\hat C(r)=\sum_{i=1}^N w_i\,c_i,\qquad w_i=T_i\,\alpha_i,\qquad \alpha_i=1-e^{-\sigma_i\delta_i},\qquad T_i=\exp\Bigl(-\sum_{j<i}\sigma_j\delta_j\Bigr)=\prod_{j<i}(1-\alpha_j).
+\]
+
+\begin{proposicion}[Los pesos del rayo]\label{prop:pesos}
+Con $\sigma_i\ge 0$, los pesos cumplen $w_i\ge 0$ y $\sum_{i=1}^Nw_i=1-T_{N+1}\le 1$, donde $T_{N+1}=\prod_{j\le N}(1-\alpha_j)$ es la transmitancia residual.
+\end{proposicion}
+
+Los pesos forman, pues, una distribución de probabilidad (completada con el fondo, de peso $T_{N+1}$) sobre el punto del rayo en que la luz se emite; la profundidad esperada es $\sum_iw_it_i$. El renderizado es derivable respecto a $\sigma_i$ y $c_i$, y por tanto respecto a los pesos de la red. NeRF aplica a las coordenadas una codificación posicional $\gamma(p)=\bigl(\sin(2^0\pi p),\cos(2^0\pi p),\dots,\sin(2^{L-1}\pi p),\cos(2^{L-1}\pi p)\bigr)$ con $L=10$ para la posición y $L=4$ para la dirección, una red de 8 capas de 256 unidades, y minimiza el error cuadrático entre colores renderizados y observados con lotes de 4096 rayos; cada escena necesita entre $10^5$ y $3\cdot 10^5$ iteraciones, uno o dos días en una GPU V100~\cite[§5]{nerf}.
+
+\section{\emph{Gaussian splatting}}
+
+El \emph{Gaussian splatting} 3D~\cite{gs} sustituye la red por un conjunto explícito de gaussianas anisótropas, cada una con media $\mu$, covarianza $\Sigma$, opacidad $o$ y color dependiente de la vista (coeficientes de armónicos esféricos). Para que la covarianza siga siendo válida durante la optimización se parametriza como
+\[
+\Sigma=R\,S\,S^\T R^\T,
+\]
+con $R$ la rotación de un cuaternión normalizado y $S$ diagonal de escalas~\cite[§4]{gs}. Cada gaussiana se proyecta a la imagen con la covarianza $\Sigma'=JW\Sigma W^\T J^\T$, donde $J$ es el jacobiano de la aproximación afín de la proyección, y las gaussianas que cubren un píxel, ordenadas por profundidad, se componen con la misma fórmula que NeRF:
+\[
+C=\sum_i c_i\,\alpha_i\prod_{j<i}(1-\alpha_j),\qquad \alpha_i=o_i\exp\Bigl(-\tfrac12(p-\mu_i')^\T\Sigma_i'^{-1}(p-\mu_i')\Bigr).
+\]
+La pérdida combina $L^1$ y D-SSIM con peso $\lambda=0{,}2$; un control adaptativo clona o divide gaussianas donde el gradiente de posición es grande y elimina las casi transparentes, y un rasterizador por teselas de $16\times 16$ píxeles con ordenación por radix en GPU permite renderizar en tiempo real (al menos 30 fotogramas por segundo a 1080p) escenas de uno a cinco millones de gaussianas~\cite{gs}. Frente a NeRF, el \emph{splatting} cambia una representación implícita y compacta, pero lenta de muestrear, por una explícita, rápida y más voluminosa en memoria.
+
+\section{Caso de estudio: ajuste de una forma a siluetas}
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.9cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia & Cuándo elegirla \\
+\midrule
+PyTorch3D & rasterización suave de mallas y nubes, pérdidas 3D & BSD & ajuste de mallas e investigación en PyTorch \\
+nvdiffrast & primitivas de rasterización derivable de alto rendimiento & licencia de código de NVIDIA & mallas grandes, texturas y antialias en GPU NVIDIA \\
+Mitsuba~3 & renderizado físico (transporte de luz) derivable & BSD-3 (con cláusula adicional) & materiales, iluminación indirecta, medios participantes \\
+Kaolin & conversiones y renderizado derivable & Apache-2.0 & ecosistema NVIDIA \\
+nerfstudio & entrenamiento modular de NeRF & Apache-2.0 & reconstrucción de escenas con varias variantes de NeRF \\
+gsplat & rasterizador de gaussianas & Apache-2.0 & \emph{Gaussian splatting} con licencia permisiva \\
+3DGS original (Inria) & implementación de referencia de~\cite{gs} & solo uso no comercial & investigación y comparación \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías del tema~4, con las licencias publicadas en sus repositorios.}
+\label{tab:tec4}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

@@ -1,0 +1,84 @@
+% =====================================================================
+\chapter{Coste del gradiente y productos vector-jacobiano}
+\label{tema:4}
+% =====================================================================
+
+Este tema responde a la pregunta que justifica el módulo: por qué el modo inverso calcula el gradiente de una función de millones de variables con un coste comparable al de evaluarla. Se demuestra el principio del gradiente barato, se compara el coste de los dos modos mediante la asociatividad del producto de jacobianos, se formulan las reglas locales de los sistemas reales como productos vector-jacobiano y se deduce de ellas la regla $C\approx 6ND$ del cómputo de entrenamiento. Se siguen el capítulo~4 de~\cite{gw}, la §3.2 de~\cite{baydin}, la lección~6 de~\cite{grosse}, el apartado «Gradients for vectorized operations» de~\cite{cs231n} y el artículo de Kaplan \emph{et al.}~\cite{kaplan}.
+
+\section{El principio del gradiente barato}
+
+\begin{teorema}[Gradiente barato]\label{teo:barato}
+Sea $f\colon\R^{n}\to\R$ dada por una traza con operaciones del conjunto $\Phi$ de la \cref{def:elementales}, cada una con a lo sumo $k$ argumentos. Existe una constante $\omega$, que depende solo de $\Phi$ y no de $n$ ni de la traza, tal que el modo inverso calcula $\nabla f(x)$ con a lo sumo $\omega\cdot\ops(f)$ operaciones.
+\end{teorema}
+
+La constante de la demostración es pesimista. Un análisis más fino de cada operación da cotas pequeñas: Baydin \emph{et al.}, siguiendo a Griewank y Walther, indican que el cociente entre el coste del modo inverso y el de la función está por debajo de~6 y suele estar entre~2 y~3~\cite[§3.2]{baydin}, \cite[cap.~4]{gw}. Para funciones racionales, un resultado de este tipo fue demostrado por Baur y Strassen~\cite{baurstrassen}. Lo esencial es que la cota no depende de $n$: diez derivadas y $10^{11}$ derivadas cuestan, en relación con $f$, lo mismo.
+
+\begin{corolario}[Elección del modo]\label{cor:eleccion}
+Para $f\colon\R^{n}\to\R^{m}$, el jacobiano completo cuesta del orden de $n\cdot\ops(f)$ en modo directo y de $m\cdot\ops(f)$ en modo inverso. Conviene el directo si $n\ll m$ y el inverso si $m\ll n$. Entrenar un LLM corresponde a $n\approx 10^{11}$ y $m=1$.
+\end{corolario}
+
+El precio del modo inverso es la memoria: la pasada hacia atrás necesita los valores de la pasada hacia delante. En el modo directo, en cambio, cada tangente se descarta en cuanto deja de usarse. El \cref{tema:5} estudia este compromiso.
+
+\section{Asociatividad del producto de jacobianos}
+
+Sea $f=f_L\circ\dots\circ f_1$ una composición de funciones diferenciables. Por la regla de la cadena (módulo~4), $J_f=J_{f_L}\cdots J_{f_1}$, con cada jacobiano evaluado en el punto correspondiente. El producto de matrices es asociativo y el resultado no depende del orden en que se agrupen los factores, pero el coste sí.
+
+\begin{proposicion}[Coste de las dos agrupaciones]\label{prop:asociatividad}
+Sea $f\colon\R^{m}\to\R$ con $J_f=J_L J_{L-1}\cdots J_1$, donde $J_L\in\R^{1\times m}$ y $J_1,\dots,J_{L-1}\in\R^{m\times m}$, con $L\ge 2$, y cuéntese como coste de un producto $(p\times q)(q\times r)$ el número $pqr$ de multiplicaciones escalares. Entonces:
+\begin{enumerate}
+  \item agrupando de derecha a izquierda, $J_L\bigl(J_{L-1}(\cdots(J_2J_1))\bigr)$, el coste es $(L-2)m^{3}+m^{2}$;
+  \item agrupando de izquierda a derecha, $\bigl(((J_LJ_{L-1})J_{L-2})\cdots\bigr)J_1$, el coste es $(L-1)m^{2}$.
+\end{enumerate}
+\end{proposicion}
+
+La agrupación (i) es la del modo directo con todas las semillas a la vez: propaga la matriz $\partial v/\partial x$, de tamaño $m\times m$. La agrupación (ii) es la del modo inverso: lo que viaja hacia atrás es siempre un vector fila, el adjunto. Con $L=3$ y $m=100$, el cociente de costes es $(100^{3}+100^{2})/(2\cdot 100^{2})=50{,}5$, y en general crece linealmente con $m$. Para composiciones que no son cadenas, encontrar la agrupación óptima es un problema difícil, estudiado en~\cite[cap.~9 y~10]{gw}.
+
+\section{Productos vector-jacobiano}
+
+Los sistemas reales no trabajan con escalares, sino con operaciones sobre tensores, y nunca construyen sus jacobianos~\cite{grosse}.
+
+\begin{definicion}[Producto vector-jacobiano]\label{def:vjp}
+Sea $g\colon\R^{p}\to\R^{q}$ una operación con entrada $u$ y salida $w=g(u)$, y sea $\bar w\in\R^{1\times q}$ el adjunto de la salida. El \emph{producto vector-jacobiano} (VJP) de $g$ en $u$ es la aplicación lineal $\bar w\mapsto\bar u=\bar w\,J_g(u)\in\R^{1\times p}$.
+\end{definicion}
+
+Por el \cref{teo:inverso}, aplicado por bloques, el modo inverso sobre un grafo de operaciones tensoriales solo necesita, para cada tipo de operación, una función que calcule su VJP. Si la entrada o la salida son matrices, se aplanan para la definición y el resultado se devuelve con la forma original.
+
+\addtocounter{definicion}{1}%
+
+\begin{proposicion}[VJP de la capa lineal]\label{prop:vjp-lineal}
+Sea $Y=XW$ con $X\in\R^{B\times n}$, $W\in\R^{n\times m}$, y sea $\bar Y\in\R^{B\times m}$ el adjunto de la salida. Entonces
+\[
+\bar X=\bar Y\,W\T\in\R^{B\times n},\qquad \bar W=X\T\,\bar Y\in\R^{n\times m}.
+\]
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\begin{proposicion}[VJP de la softmax]\label{prop:vjp-softmax}
+Sea $p=\softmax(z)$ con $z\in\R^{1\times K}$ y sea $\bar p\in\R^{1\times K}$. Entonces
+\[
+\bar z=\bar p\,J_{\softmax}(z)=p\odot\bigl(\bar p-\langle\bar p,p\rangle\,\mathbf{1}\bigr),
+\]
+donde $\langle\bar p,p\rangle=\sum_k\bar p_kp_k$ y $\mathbf 1=(1,\dots,1)$. El cálculo cuesta $O(K)$ operaciones.
+\end{proposicion}
+
+\begin{corolario}[Softmax con entropía cruzada]\label{cor:ce}
+Si $L=-\ln p_y$, entonces $\bar z=p-e_y$.
+\end{corolario}
+
+En la práctica, la softmax y la entropía cruzada se tratan como una sola operación con VJP $p-e_y$, que además es numéricamente estable: es lo que hace \texttt{F.cross\_entropy} en PyTorch, que recibe logits y no probabilidades (\cref{tema:6}).
+
+\section{El cómputo de un paso de entrenamiento}
+
+Se cuenta como FLOP una suma o un producto en coma flotante. Un producto de matrices $(p\times q)(q\times r)$ cuesta $pr(2q-1)\approx 2pqr$ FLOPs.
+
+\begin{proposicion}[Coste de una capa lineal]\label{prop:flops}
+Para $Y=XW$ con $X\in\R^{B\times n}$ y $W\in\R^{n\times m}$, la pasada hacia delante cuesta unos $2Bnm$ FLOPs y la pasada hacia atrás unos $4Bnm$: $2Bnm$ para $\bar X$ y $2Bnm$ para $\bar W$. El total es $6Bnm=6\cdot(\text{parámetros})\cdot(\text{filas del lote})$.
+\end{proposicion}
+
+\begin{corolario}[Regla $6ND$]\label{cor:6nd}
+Si el cómputo de un modelo con $N$ parámetros está dominado por productos de matrices en los que cada parámetro actúa una vez por token, entrenarlo con $D$ tokens cuesta $C\approx 6ND$ FLOPs: $2ND$ en las pasadas hacia delante y $4ND$ en las pasadas hacia atrás.
+\end{corolario}
+
+La aproximación ignora las operaciones que no son productos por pesos, como el producto de la atención entre consultas y claves, que crece con la longitud del contexto, y el hecho de que la primera capa no necesita $\bar X$. Kaplan \emph{et al.} la usan como base de las leyes de escalado~\cite{kaplan}, que se estudian en el módulo~16. Por ejemplo, un modelo de $N=10^{8}$ parámetros entrenado con $D=2\cdot 10^{9}$ tokens requiere $C\approx 6\cdot 10^{8}\cdot 2\cdot 10^{9}=1{,}2\cdot 10^{18}$ FLOPs; a $10^{14}$ FLOP/s efectivos, unos $1{,}2\cdot 10^{4}$~s, algo más de tres horas.
+

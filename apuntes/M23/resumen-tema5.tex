@@ -1,0 +1,106 @@
+% =====================================================================
+\chapter{Circuitos e intervenciones causales}
+\label{tema:5}
+% =====================================================================
+
+Las sondas y los diccionarios dicen qué información hay en las activaciones; este tema estudia cómo se procesa y cómo se demuestra que un mecanismo es causal. Un \emph{circuito} es un subgrafo de componentes y pesos que implementa un algoritmo identificable~\cite{olah-zoom}. Se estudian cuatro casos publicados: las cabezas de inducción de Elhage \emph{et al.}~\cite[«Two-Layer Attention-Only Transformers»]{elhage21} y Olsson \emph{et al.}~\cite{olsson}, también tratadas en el §10.6 de Jurafsky y Martin~\cite{jm3}; el circuito de identificación del objeto indirecto de Wang \emph{et al.}~\cite{wang-ioi}; la localización y edición de hechos de Meng \emph{et al.}~\cite{meng}, y el algoritmo de Fourier del \emph{grokking} de Nanda \emph{et al.}~\cite{nanda}. El tema termina con los vectores de dirección~\cite{turner,arditi} y el trazado de circuitos en Claude~3.5 Haiku~\cite{lindsey}. La deducción de la actualización de ROME usa el problema de mínimos cuadrados con restricciones de la clase~16 del curso ENGR108 de Stanford~\cite{engr108}.
+
+\section{Composición de cabezas y cabezas de inducción}
+
+En un Transformer de dos capas, la cabeza de la segunda capa lee un flujo que ya contiene la salida de la primera. Con $x_j=x_{0,j}+h^{1}_j$, sus puntuaciones son
+\[
+\sqrt{d_h}\,s^{2}_{ij}=x_{0,i}\T\WQK^{2}x_{0,j}+\underbrace{x_{0,i}\T\WQK^{2}h^{1}_j}_{\text{composición K}}+\underbrace{(h^{1}_i)\T\WQK^{2}x_{0,j}}_{\text{composición Q}}+(h^{1}_i)\T\WQK^{2}h^{1}_j,
+\]
+y su salida contiene el término $\WOV^{2}h^{1}_j$ (\emph{composición V}; \cref{eje:1-dos-cabezas}). Elhage \emph{et al.} llaman a estas tres vías las tres clases de composición~\cite[«Three Kinds of Composition»]{elhage21}. La composición Q y K permite patrones de atención que dependen de algo más que de los tokens de origen y destino.
+
+\begin{definicion}[Cabeza de inducción]\label{def:induccion}
+Una \emph{cabeza de inducción} es una cabeza de atención que, sobre secuencias de la forma $\ldots[A][B]\ldots[A]$, atiende desde la última $[A]$ a la posición de $[B]$ (\emph{coincidencia de prefijo}) y aumenta el logit de $[B]$ (\emph{copia})~\cite{olsson}.
+\end{definicion}
+
+\begin{proposicion}[Un circuito de inducción explícito]\label{prop:induccion}
+Sean $u_t=\WE e_t$ los embeddings de los tokens, ortonormales, y sean $u'_t$ otros vectores ortonormales, ortogonales a todos los $u_t$. Sea $\Pi=\sum_tu'_tu_t\T$, de modo que $\Pi u_t=u'_t$. Supóngase:
+\begin{enumerate}
+  \item la cabeza~1 atiende siempre a la posición anterior ($A^{1}_{j,j-1}=1$) y tiene $\WOV^{1}=\Pi$, de modo que $h^{1}_j=u'_{t_{j-1}}$ y el flujo tras la capa~1 es $x_j=u_{t_j}+u'_{t_{j-1}}$;
+  \item la cabeza~2 tiene $\WQK^{2}=\beta\sqrt{d_h}\,\Pi\T$, con $\beta>0$, y su circuito OV copia: $\WU\WOV^{2}u_t=\gamma\,e_t$ con $\gamma>0$ y $\WOV^{2}u'_t=0$.
+\end{enumerate}
+Entonces la puntuación de la cabeza~2 desde la posición $i$ hacia la posición $j$ es $s^{2}_{ij}=\beta\,[t_{j-1}=t_i]$, y su aportación a los logits en la posición $i$ es $\gamma\sum_jA^{2}_{ij}e_{t_j}$. Cuando $\beta\to\infty$, la atención se reparte por igual entre las posiciones $j$ con $t_{j-1}=t_i$; en particular, si $t_i$ ha aparecido antes una sola vez, seguido del token $t_j$, el logit de $t_j$ aumenta en $\gamma$.
+\end{proposicion}
+
+La proposición muestra por qué hace falta una cabeza previa: la clave de una posición contiene, de entrada, solo su propio token, y alguien debe escribir en ella cuál era el token anterior. La cabeza~2 lee esa información a través de la composición~K.
+
+Las cabezas de inducción reducen drásticamente la pérdida en texto repetido. Sobre una secuencia aleatoria de tokens de un vocabulario de $K=50\,000$ que se repite, sin inducción la mejor predicción es la uniforme, con pérdida $\ln 50\,000=10{,}82$ nats por token; si en la repetición se copia el token correcto con probabilidad $0{,}9$, la pérdida en esa parte baja a $-\ln 0{,}9=0{,}105$ nats.
+
+Olsson \emph{et al.} definen la \emph{puntuación de aprendizaje en contexto} como la pérdida en el token~500 del contexto menos la pérdida media en el token~50, y observan que, en un intervalo corto del entrenamiento, esta puntuación cae bruscamente al mismo tiempo que se forman las cabezas de inducción y aparece un pequeño saliente en la curva de pérdida~\cite{olsson}. Los modelos de una sola capa no presentan ni las cabezas ni el salto. El trabajo reúne seis argumentos para sostener que las cabezas de inducción son responsables de buena parte del aprendizaje en contexto (módulo~22); los propios autores advierten que, para los modelos grandes, la evidencia es indirecta.
+
+\section{Intervenciones: ablación y parcheo de activaciones}
+
+\begin{definicion}[Ablación y parcheo]\label{def:parcheo}
+Sea $M$ un modelo, $c$ un componente (una cabeza, un MLP o una activación concreta) y $\mu$ una métrica de la salida, por ejemplo la diferencia de logits entre la respuesta correcta y una alternativa.
+\begin{enumerate}
+  \item La \emph{ablación} de $c$ sustituye su salida por cero (\emph{ablación nula}) o por su media sobre un conjunto de datos (\emph{ablación por la media}).
+  \item Dadas una entrada \emph{limpia} $u$ y una entrada \emph{corrupta} $u'$ que solo difiere en la información relevante, el \emph{parcheo de activaciones} ejecuta el modelo sobre $u'$ sustituyendo la salida de $c$ por la que tenía sobre $u$, y mide $\mu$.
+  \item La \emph{fracción recuperada} es $\bigl(\mu_{\mathrm{parcheo}}-\mu_{\mathrm{corrupta}}\bigr)/\bigl(\mu_{\mathrm{limpia}}-\mu_{\mathrm{corrupta}}\bigr)$.
+\end{enumerate}
+\end{definicion}
+
+Meng \emph{et al.} llaman \emph{efecto total} a $\mu_{\mathrm{limpia}}-\mu_{\mathrm{corrupta}}$ y \emph{efecto indirecto} de un estado oculto a la mejora que se obtiene restaurándolo~\cite[§2.1]{meng}. El parcheo distingue lo necesario de lo suficiente: si restaurar $c$ recupera la conducta, $c$ transporta la información decisiva. El \emph{parcheo de caminos} de Wang \emph{et al.} restaura solo el efecto de $c$ a través de ciertos caminos (por ejemplo, el camino directo a los logits) y deja los demás corruptos~\cite[§3.1]{wang-ioi}.
+
+\addtocounter{definicion}{1}%
+
+\section{Localización y edición de hechos: ROME}
+
+Meng \emph{et al.} aplican el parcheo a enunciados de hechos («La Torre Eiffel está en…») corrompiendo con ruido gaussiano los embeddings del sujeto. En GPT-2 XL, el efecto indirecto medio es máximo en los MLP de las capas intermedias, en el último token del sujeto~\cite[§2.2]{meng}. Proponen entonces que esos MLP funcionan como una \emph{memoria asociativa} lineal: la matriz de salida $W$ del MLP asocia una \emph{clave} $k$ (la activación oculta, que codifica el sujeto) con un \emph{valor} $v=Wk$ (que codifica la relación y el objeto).
+
+\begin{teorema}[Actualización de rango uno]\label{teo:rome}
+Sean $K\in\R^{p\times N}$ y $V\in\R^{q\times N}$ matrices de claves y valores, con $C=KK\T$ definida positiva, y sea $W$ la solución de mínimos cuadrados $\min_W\norm{WK-V}_F^{2}$. Dada una nueva asociación $(k_*,v_*)$, la solución de
+\[
+\min_{\hat W}\ \norm{\hat WK-V}_F^{2}\quad\text{sujeto a}\quad \hat Wk_*=v_*
+\]
+es
+\[
+\hat W=W+\Lambda\,(C^{-1}k_*)\T,\qquad \Lambda=\frac{v_*-Wk_*}{(C^{-1}k_*)\T k_*}.
+\]
+\end{teorema}
+
+Es la ecuación~(2) de Meng \emph{et al.}~\cite[§3.1]{meng}, que estiman $C$ con una muestra de texto de Wikipedia. El cambio tiene rango uno y es mínimo en la métrica que define $C$: no altera las claves $k$ con $k\T C^{-1}k_*=0$ (\cref{eje:5-rome}). Meng \emph{et al.} evalúan las ediciones con su conjunto CounterFact, que mide a la vez si la edición generaliza a paráfrasis y si es específica del sujeto~\cite[§3.3]{meng}.
+
+\addtocounter{definicion}{1}%
+
+\section{\emph{Grokking} y el algoritmo de Fourier}
+
+Nanda \emph{et al.} entrenan un Transformer de una capa para la suma modular: dados $a,b\in\{0,\dots,p-1\}$ con $p=113$, predecir $c=(a+b)\bmod p$. Con el $30\,\%$ de los pares como entrenamiento y decaimiento de pesos, la red memoriza primero y generaliza mucho después (\emph{grokking}). La ingeniería inversa muestra que implementa el algoritmo siguiente~\cite[§3.1 y §4]{nanda}: los embeddings representan cada entrada mediante $\cos(\omega_ka)$ y $\sin(\omega_ka)$ para unas pocas frecuencias $\omega_k=2\pi k/p$; la atención y el MLP calculan $\cos(\omega_k(a+b))$ y $\sin(\omega_k(a+b))$ con las identidades trigonométricas
+\[
+\cos(\omega(a+b))=\cos\omega a\cos\omega b-\sin\omega a\sin\omega b,\qquad \sin(\omega(a+b))=\sin\omega a\cos\omega b+\cos\omega a\sin\omega b;
+\]
+y la matriz de salida produce el logit
+\[
+\ell(c)=\sum_k\cos(\omega_k(a+b-c))=\sum_k\bigl[\cos(\omega_k(a+b))\cos(\omega_kc)+\sin(\omega_k(a+b))\sin(\omega_kc)\bigr],
+\]
+que es lineal en las cantidades anteriores. El modelo estudiado usa cinco frecuencias clave, $k\in\{14,35,41,42,52\}$.
+
+\begin{proposicion}[Interferencia constructiva]\label{prop:fourier}
+Sea $p$ primo y sea $\mathcal{K}\subseteq\{1,\dots,p-1\}$ no vacío. La función $\ell(c)=\sum_{k\in\mathcal{K}}\cos\bigl(2\pi k(a+b-c)/p\bigr)$, para $c\in\{0,\dots,p-1\}$, alcanza su máximo, igual a $\abs{\mathcal{K}}$, únicamente en $c\equiv a+b\pmod p$.
+\end{proposicion}
+
+Nanda \emph{et al.} definen además medidas de progreso que evolucionan de forma continua antes del salto en la exactitud de prueba, y distinguen tres fases: memorización, formación del circuito y limpieza, en la que el decaimiento de pesos elimina los componentes que memorizan~\cite[§5]{nanda}. El \emph{grokking} no es, por tanto, un cambio súbito del mecanismo, sino la culminación de un proceso gradual.
+
+\section{Vectores de dirección}
+
+\begin{definicion}[Dirección por adición de activaciones]\label{def:steering}
+Sean $P$ y $N$ conjuntos de entradas con y sin un concepto, y $x_\ell(u)$ el flujo de la capa $\ell$. El \emph{vector de dirección} es la diferencia de medias
+\[
+v=\frac{1}{\abs{P}}\sum_{u\in P}x_\ell(u)-\frac{1}{\abs{N}}\sum_{u\in N}x_\ell(u),
+\]
+y \emph{dirigir} el modelo consiste en sustituir $x_\ell\leftarrow x_\ell+\alpha v$ durante la generación~\cite{turner}.
+\end{definicion}
+
+Si la dirección se suma justo antes de $\WU$ y no hay normalización, los logits cambian en $\alpha\WU v$, de modo que la log-probabilidad de cada token se desplaza en $\alpha(\WU v)_t$ menos una constante común. En capas anteriores el efecto pasa por las capas posteriores y solo puede medirse experimentalmente. Con $\alpha$ excesivo, el flujo sale de la distribución que el modelo ha visto en el entrenamiento y la generación degenera.
+
+\addtocounter{definicion}{1}%
+
+La operación inversa, la \emph{ablación de una dirección}, sustituye $x\leftarrow x-(\hat v\T x)\hat v$ con $\hat v=v/\norm v$, y elimina del flujo la componente según $\hat v$. Arditi \emph{et al.} muestran que en varios modelos abiertos con ajuste de seguridad la negativa a responder peticiones dañinas está mediada por una sola dirección: al eliminarla, el modelo deja de negarse, y al sumarla, se niega incluso ante peticiones inocuas~\cite{arditi}. El resultado ilustra a la vez la potencia de las intervenciones y la fragilidad de algunas salvaguardas. Li \emph{et al.} usan intervenciones de este tipo en cabezas de atención para aumentar la veracidad de las respuestas~\cite{li-iti}, y \emph{Golden Gate Claude} (\cref{tema:4}) es una intervención sobre una característica de un SAE.
+
+\section{Trazado de circuitos en un modelo comercial}
+
+En 2025, Anthropic publicó el análisis de Claude~3.5 Haiku mediante \emph{grafos de atribución}~\cite{lindsey}. Se sustituyen los MLP por un \emph{transcodificador} entre capas, con unos 30 millones de características interpretables, que forma un modelo de reemplazo; se calcula qué características influyen en cuáles para una entrada concreta, y las hipótesis se validan con intervenciones sobre el modelo original. Entre los casos documentados figuran el razonamiento en varios pasos (de «Dallas» a «Texas» y de ahí a «Austin»), la elección de la palabra que rimará antes de escribir un verso, circuitos compartidos entre idiomas y un circuito de «no puedo responder» que se inhibe al reconocer una entidad conocida y cuyo fallo produce alucinaciones. Es información pública de Anthropic; sobre los mecanismos internos de Gemini o de Grok no constan, en la información pública consultada, análisis equivalentes.
+

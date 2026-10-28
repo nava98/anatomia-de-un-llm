@@ -1,0 +1,94 @@
+% =====================================================================
+\chapter{Capacidades emergentes y contexto largo}
+\label{tema:6}
+% =====================================================================
+
+Las leyes de escalado predicen bien la pérdida de preentrenamiento. Este tema trata dos cuestiones en las que la escala produce efectos menos regulares. La primera es la aparición aparentemente brusca de capacidades al crecer el modelo, y si esa brusquedad es una propiedad del modelo o de la forma de medir. La segunda es la ampliación de la ventana de contexto, que tropieza con el coste cuadrático de la atención, con la memoria de la caché de claves y valores y con la codificación de posiciones no vistas en el entrenamiento. Se sigue a Wei \emph{et al.}~\cite{wei}, Schaeffer, Miranda y Koyejo~\cite{schaeffer} y la clase «Capabilities» de CS324~\cite{cs324} para la primera parte, y a Chen \emph{et al.}~\cite{chenpi}, el informe de Llama~3~\cite[§3.4.2]{llama3} y Liu \emph{et al.}~\cite{liu} para la segunda; el modelo probabilístico de las respuestas usa la independencia de Bertsekas y Tsitsiklis~\cite[§1.5]{bt}.
+
+\section{Capacidades emergentes}
+
+\begin{definicion}[Capacidad emergente; Wei \emph{et al.}~\cite{wei}]
+Una capacidad es \emph{emergente} si no está presente en los modelos pequeños de una familia y sí en los grandes, de modo que no puede predecirse extrapolando el rendimiento de los primeros.
+\end{definicion}
+
+Los ejemplos habituales son tareas de aritmética de varias cifras y algunas tareas del conjunto BIG-Bench, en las que la exactitud permanece cerca del azar en varios órdenes de magnitud de cómputo y después sube con rapidez~\cite{wei}. Si fueran saltos genuinos, la planificación de un modelo grande no podría apoyarse en experimentos pequeños, que es justo lo que hacen los temas~\ref{tema:3} a~\ref{tema:5}.
+
+\section{El argumento de la métrica}
+
+Schaeffer, Miranda y Koyejo~\cite{schaeffer} proponen que muchas de esas discontinuidades las crea la métrica. Supóngase que una respuesta tiene $k$ tokens y que el modelo acierta cada uno con probabilidad $p$, de forma independiente~\cite[§1.5]{bt}. La \emph{exactitud exacta} (todo o nada) es la probabilidad de acertar los $k$:
+\[
+\PP(\text{respuesta correcta})=p^{k}.
+\]
+Una mejora gradual de $p$ se convierte en un cambio brusco de $p^{k}$ cuando $k$ es grande:
+\begin{center}\small
+\begin{tabular}{@{}cccccc@{}}
+\toprule
+$p$ & $0{,}5$ & $0{,}8$ & $0{,}9$ & $0{,}95$ & $0{,}99$ \\
+\midrule
+$p^{5}$ & $0{,}031$ & $0{,}328$ & $0{,}590$ & $0{,}774$ & $0{,}951$ \\
+$p^{10}$ & $0{,}001$ & $0{,}107$ & $0{,}349$ & $0{,}599$ & $0{,}904$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+Pasar de $p=0{,}8$ a $p=0{,}95$ lleva la exactitud de $0{,}107$ a $0{,}599$ con $k=10$. En cambio, el número esperado de tokens correctos, $kp$, crece linealmente con~$p$.
+
+La pérdida por token sí sigue una ley de potencia suave en $N$. La proposición siguiente muestra qué forma adopta entonces la exactitud exacta.
+
+\begin{proposicion}[Exactitud exacta bajo una ley de potencia]\label{prop:gompertz}
+Supóngase que la pérdida por token de la respuesta es $\ell(N)=(N_1/N)^{\theta}$, con $N_1,\theta>0$, que $p(N)=e^{-\ell(N)}$ y que la respuesta tiene $k$ tokens. Sea $x=\ln N$. Entonces:
+\begin{enumerate}
+  \item $A(N)=p(N)^{k}=\exp\bigl(-e^{-\theta(x-x_0)}\bigr)$, con $x_0=\ln N_1+(\ln k)/\theta$: una curva de Gompertz en $\ln N$, creciente de $0$ a $1$;
+  \item su único punto de inflexión está en $N_0=N_1k^{1/\theta}$, donde $A=1/e$;
+  \item en cambio, $-\ln A(N)=k\,\ell(N)$ es una ley de potencia en $N$, una recta en escala log-log.
+\end{enumerate}
+\end{proposicion}
+
+La \cref{prop:gompertz} contiene el argumento completo. La capacidad «aparece» en torno a $N_0=N_1k^{1/\theta}$, y el umbral se desplaza hacia modelos mayores cuanto más larga es la respuesta exigida, aunque la mejora por token sea la misma. Con pocos tamaños de modelo y escala lineal en el eje vertical, la curva parece un escalón (\cref{fig:gompertz}); con la métrica continua $-\ln A$, es una recta en escala log-log.
+
+\addtocounter{figure}{1}%
+
+\begin{observacion}[El debate sigue abierto]
+El argumento explica muchas discontinuidades observadas, y Schaeffer \emph{et al.}\ las hacen desaparecer cambiando la métrica o aumentando la resolución estadística~\cite{schaeffer}. No demuestra que no existan cambios cualitativos con la escala: muestra que una curva brusca en una métrica de todo o nada no es, por sí sola, prueba de ellos. Lo que sí está claro es que la pérdida de preentrenamiento es predecible y el rendimiento en una tarea concreta lo es mucho menos.
+\end{observacion}
+
+\section{El coste del contexto largo}
+
+La ventana de contexto ha crecido de $2048$ tokens en GPT-3~\cite{brown} a 128K ($131\,072$) en Llama~3~\cite{llama3}; el informe de Gemini~1.5 describe ventanas de millones de tokens, con recuperación casi perfecta hasta al menos $10$ millones, y cita $200\,000$ tokens para Claude~3.0~\cite{gemini15}. Hay tres obstáculos.
+
+\subsection*{Cómputo de la atención}
+
+Por el módulo~14 (tema~6), una pasada hacia delante cuesta por token unos $2N+4L\nctx d$ FLOP, donde $L$ es el número de bloques y $d$ la dimensión del modelo. El segundo término procede de los productos $QK\T$ y $AV$ y crece linealmente con el contexto; sobre una secuencia completa, el coste de la atención crece como $\nctx^{2}$. Pasar de $4096$ a $10^{6}$ tokens multiplica ese término total por $(10^{6}/4096)^{2}\approx 59\,600$.
+
+\addtocounter{definicion}{1}%
+
+\subsection*{Memoria de la caché KV}
+
+\begin{proposicion}[Tamaño de la caché KV]\label{prop:kv}
+Un Transformer de $L$ bloques con $h_{kv}$ cabezas de claves y valores de dimensión $d_k$, que almacena cada número con $\beta_b$ bytes, necesita para una secuencia de $n$ tokens una caché de
+\[
+M_{KV}=2\,L\,n\,h_{kv}\,d_k\,\beta_b\ \text{bytes}.
+\]
+\end{proposicion}
+
+Para LLaMA-2~7B, con atención multicabeza estándar ($h_{kv}=32$, $d_k=128$) en bf16 ($\beta_b=2$), son $2\cdot 32\cdot 4096\cdot 2=524\,288$ bytes, $0{,}5$ MiB por token: $2$ GiB con $4096$ tokens y $64$ GiB con $131\,072$, más que la memoria de una GPU de $40$ GiB para una sola secuencia. La atención con consultas agrupadas (GQA, módulo~18) reduce $h_{kv}$: con $8$ cabezas de claves y valores, la caché se divide por~$4$. La caché domina el coste de la inferencia con contexto largo (módulo~19).
+
+\section{Posiciones no vistas: interpolación de RoPE}
+
+En RoPE (módulo~14, tema~4), el par de coordenadas $i$ de la consulta y la clave en la posición $m$ se rota un ángulo $m\theta_i$, con $\theta_i=\text{base}^{-2i/d_k}$ para $i=0,\dots,d_k/2-1$, y el producto escalar resultante depende solo de la diferencia de posiciones. Un modelo entrenado con contexto $L_{\mathrm{tr}}$ solo ha visto ángulos en $[0,L_{\mathrm{tr}}\theta_i)$. Para las frecuencias bajas, ese intervalo es una fracción pequeña de una vuelta, y las posiciones $m\ge L_{\mathrm{tr}}$ producen ángulos que el modelo nunca ha visto.
+
+\begin{definicion}[Interpolación de posiciones; Chen \emph{et al.}~\cite{chenpi}]
+Sea $L'>L_{\mathrm{tr}}$ el nuevo contexto. La \emph{interpolación de posiciones} sustituye la posición $m$ por $m\,L_{\mathrm{tr}}/L'$ en todas las rotaciones de RoPE, y se ajusta brevemente el modelo con secuencias de longitud $L'$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:pi}
+Con interpolación de posiciones, para toda posición $0\le m<L'$ y toda frecuencia $i$, el ángulo de rotación está en $[0,L_{\mathrm{tr}}\theta_i)$, el rango visto en el entrenamiento. El producto escalar rotado entre las posiciones $m$ y $n$ sigue dependiendo solo de $m-n$, ahora a través de $(m-n)L_{\mathrm{tr}}/L'$.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+El precio es la resolución: dos posiciones contiguas quedan a $L_{\mathrm{tr}}/L'$ de distancia en lugar de~$1$. Las variantes posteriores reparten el reescalado entre frecuencias (YaRN~\cite{yarn}) o aumentan la base de RoPE; Llama~3 usa base $500\,000$~\cite[§3.2]{llama3}.
+
+\section{La receta habitual y sus límites}
+
+Como el coste de la atención crece con el contexto, casi todo el preentrenamiento se hace con secuencias cortas y se añade una fase final con documentos largos. Llama~3 amplió su ventana de 8K a 128K tokens en seis etapas, con unos $800\,000$ millones de tokens en total~\cite[§3.4.2]{llama3}. Aceptar un contexto largo no equivale a usarlo bien: Liu \emph{et al.}~\cite{liu} observaron que los modelos aprovechan peor la información situada en el centro de un contexto largo que la situada al principio o al final.
+

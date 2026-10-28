@@ -1,0 +1,75 @@
+% =====================================================================
+\chapter{Simuladores diferenciables y modelos sustitutos}
+\label{tema:3}
+% =====================================================================
+
+El \cref{tema:2} obtuvo el gradiente de un simulador de elementos finitos derivando a mano sus ecuaciones. Este tema generaliza la idea a cualquier simulador, estacionario o temporal, y presenta la alternativa cuando derivar no es posible o el simulador es demasiado caro: aprender un modelo sustituto con pocas simulaciones y optimizar sobre él. Se siguen las notas de S.~G. Johnson sobre adjuntos para recurrencias~\cite{johnson}, las de cálculo matricial del MIT~\cite[§6.3]{mit18s096}, los capítulos de modelos sustitutos de Kochenderfer y Wheeler~\cite{kw}, y los artículos de DiffTaichi~\cite{difftaichi}, las redes informadas por la física~\cite{pinn}, el operador neuronal de Fourier~\cite{fno} y MeshGraphNets~\cite{mgn}. La física de la aleta procede del capítulo~3 de Incropera \emph{et al.}~\cite{incropera}.
+
+\section{Derivar a través de un simulador}
+
+Casi todo simulador discreto resuelve un sistema de ecuaciones $R(u,\theta)=0$, donde $u\in\R^m$ es el estado (temperaturas, desplazamientos, velocidades) y $\theta\in\R^n$ son los parámetros de diseño.
+
+\begin{teorema}[Sensibilidad por la función implícita y el adjunto]\label{teo:implicita}
+Sean $R:\R^m\times\R^n\to\R^m$ y $J(\theta)=g\bigl(u(\theta),\theta\bigr)$ funciones continuamente derivables, con $R(u(\theta),\theta)=0$ y $\partial R/\partial u$ invertible en la solución. Entonces
+\[
+\frac{du}{d\theta}=-\Bigl(\frac{\partial R}{\partial u}\Bigr)^{-1}\frac{\partial R}{\partial\theta},\qquad
+\frac{dJ}{d\theta}=\frac{\partial g}{\partial\theta}-\lambda^\T\frac{\partial R}{\partial\theta},\quad\text{con}\quad\Bigl(\frac{\partial R}{\partial u}\Bigr)^{\!\T}\lambda=\Bigl(\frac{\partial g}{\partial u}\Bigr)^{\!\T}.
+\]
+\end{teorema}
+
+El \cref{teo:adjunto} es el caso $R=K(x)U-F$. El coste del adjunto es una resolución con la matriz transpuesta, que en problemas lineales puede reutilizar la factorización ya calculada; el de la sensibilidad directa, $n$ resoluciones. Para simuladores temporales, $u_{k+1}=\Phi(u_k,\theta)$, el mismo razonamiento da una recurrencia adjunta que se recorre hacia atrás en el tiempo~\cite{johnson}:
+\[
+\lambda_N=\Bigl(\frac{\partial g}{\partial u_N}\Bigr)^{\!\T},\qquad \lambda_{k-1}=\Bigl(\frac{\partial\Phi}{\partial u}\Bigr)^{\!\T}_{\!k}\lambda_k,\qquad \frac{dg}{d\theta}=\frac{\partial g}{\partial\theta}+\sum_{k=1}^N\lambda_k^\T\frac{\partial\Phi}{\partial\theta}\Big|_{u_{k-1}} .
+\]
+Es la retropropagación a través del tiempo de una red recurrente (módulo~12, §5.3), con los mismos problemas: hay que guardar todos los estados, lo que se alivia con el recálculo por puntos de control (módulo~10, §5.2), y en dinámicas caóticas o con muchos pasos el gradiente puede explotar.
+
+\section{Diferenciación automática de simuladores}
+
+En lugar de derivar a mano, el simulador se puede escribir en un lenguaje que propague derivadas. JAX transforma programas de Python y NumPy (derivación, vectorización y compilación para GPU y TPU)~\cite{jax}; NVIDIA Warp compila núcleos de Python para GPU que son derivables~\cite{warp}; Taichi, con su extensión DiffTaichi, permite escribir simuladores físicos derivables, y sus autores informan de que su simulador elástico necesita unas 4,2 veces menos líneas que una versión CUDA escrita a mano, con velocidad similar, y es 188 veces más rápido que la implementación en TensorFlow~\cite{difftaichi}. PyTorch también sirve cuando el simulador se expresa con operaciones de tensores, como en el caso de estudio de este tema.
+
+Tres advertencias limitan el enfoque. Los eventos discretos (contactos, cambios de malla, condicionales sobre el estado) producen funciones discontinuas cuya derivada automática es correcta pero inútil, porque vale cero o no ve el salto. Las derivadas de un resolvedor iterativo no deben calcularse a través de sus iteraciones, sino con el \cref{teo:implicita} en la solución convergida. Y el coste de memoria del modo inverso crece con el número de pasos de tiempo.
+
+\section{Modelos sustitutos}
+
+\begin{definicion}[Modelo sustituto]\label{def:sustituto}
+Sea $s:\Theta\to\R$ una respuesta cara de evaluar (el resultado de un simulador). Un \emph{modelo sustituto} es una función $\hat s_\varphi$ barata, ajustada con un conjunto de diseño $\{(\theta_i,s(\theta_i))\}_{i=1}^M$, con la que se sustituye a $s$ dentro de la optimización.
+\end{definicion}
+
+Los sustitutos clásicos son las superficies de respuesta polinómicas ajustadas por mínimos cuadrados y los procesos gaussianos, que además estiman su incertidumbre~\cite{kw}. Los neuronales cubren desde un perceptrón que aproxima una respuesta escalar hasta modelos que aproximan campos completos: las redes informadas por la física (PINN) minimizan el residuo de la ecuación diferencial en puntos de colocación, calculando las derivadas de la red por diferenciación automática~\cite{pinn}; los operadores neuronales de Fourier aprenden la aplicación entre funciones de entrada y de salida, y sus autores informan de aceleraciones de hasta tres órdenes de magnitud frente a resolvedores clásicos~\cite{fno}; MeshGraphNets aprende la dinámica sobre la malla de simulación con una red de grafos~\cite{mgn}. Bibliotecas como NVIDIA PhysicsNeMo (antes Modulus) agrupan estas arquitecturas para construir sustitutos de CFD, mecánica estructural o análisis térmico~\cite{physicsnemo}.
+
+El diseño de experimentos importa tanto como el modelo. El muestreo por hipercubo latino divide el rango de cada variable en $M$ intervalos y toma exactamente una muestra por intervalo, de modo que sus proyecciones sobre cada eje quedan uniformemente repartidas~\cite{kw}.
+
+\begin{proposicion}[Error del óptimo de un sustituto]\label{prop:2eps}
+Sea $\Theta$ compacto, $s$ y $\hat s$ continuas y $\sup_{\theta\in\Theta}\abs{\hat s(\theta)-s(\theta)}\le\varepsilon$. Si $\theta^\star$ minimiza $s$ y $\hat\theta$ minimiza $\hat s$ en $\Theta$, entonces
+\[
+s(\theta^\star)\le s(\hat\theta)\le s(\theta^\star)+2\varepsilon .
+\]
+\end{proposicion}
+
+La proposición es tranquilizadora y peligrosa a la vez: la garantía exige un error \emph{uniforme} en todo $\Theta$, mientras que la validación solo mide el error en unos puntos. El optimizador busca precisamente las zonas en que $\hat s$ es optimista, que suelen ser aquellas en que hay pocos datos. Es el mismo fenómeno que la sobreoptimización de un modelo de recompensa (módulo~21, §6.4). Por eso todo diseño propuesto por un sustituto se verifica con el simulador y, si hay presupuesto, se añade a los datos y se reajusta el modelo.
+
+\section{Caso de estudio: el perfil de una aleta disipadora}
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.3cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia & Cuándo elegirla \\
+\midrule
+JAX & derivación, vectorización y compilación de código NumPy & Apache-2.0 & simuladores nuevos escritos en estilo funcional \\
+NVIDIA Warp & núcleos de simulación derivables en GPU & Apache-2.0 & física de partículas, telas o sólidos en GPU \\
+Taichi (DiffTaichi) & lenguaje para simulación física derivable & Apache-2.0 & simuladores de partículas y rejillas de alto rendimiento \\
+PyTorch & tensores y diferenciación automática & BSD-3 (con componentes de otras licencias) & simuladores pequeños unidos a redes neuronales \\
+NVIDIA PhysicsNeMo & PINN, operadores neuronales y GNN para física & Apache-2.0 & sustitutos de CFD o de estructuras a escala industrial \\
+scikit-learn & MLP, procesos gaussianos, validación & BSD-3 & sustitutos de pocas variables con pocos datos \\
+dolfin-adjoint & adjuntos automáticos de modelos FEniCS & LGPL & EDP generales con elementos finitos \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías del tema~3. Licencias según los metadatos publicados por cada proyecto.}
+\label{tab:tec3}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

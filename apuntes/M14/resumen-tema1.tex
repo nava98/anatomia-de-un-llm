@@ -1,0 +1,103 @@
+% =====================================================================
+\chapter{Arquitectura del Transformer decoder-only}
+\label{tema:1}
+% =====================================================================
+
+Este tema describe la arquitectura completa de un Transformer decoder-only: la entrada (tokens y embeddings), la pila de bloques y la capa de salida que produce los logits. Se demuestran dos propiedades estructurales: cada bloque conserva la forma $n\times d$ y la salida en la posición $t$ solo depende de los tokens $x_{1:t}$. Se sigue~\cite[§7.2--§7.5]{jm3}, \cite[§12.1.7 y §12.3.1]{bishopdl}, el artículo original~\cite[§3]{vaswani} y la descripción de la práctica~1 de CS336~\cite[§3.1 y §3.4]{cs336}.
+
+\section{Entrada: tokens y embeddings}
+
+Un tokenizador (módulo~12) transforma el texto en una secuencia de enteros $x_{1:n}=(x_1,\dots,x_n)$ con $x_t\in\{1,\dots,V\}$.
+
+\begin{definicion}[Embedding de tokens]\label{def:embedding}
+Sea $W_E\in\R^{V\times d}$ una matriz de parámetros cuya fila $j$, $e_j\in\R^{d}$, es el \emph{embedding} del token $j$. La entrada de la red es la matriz $H^{0}\in\R^{n\times d}$ cuya fila $t$ es
+\[
+h^{0}_t=e_{x_t}\;(+\,p_t),
+\]
+donde $p_t\in\R^{d}$ es un vector de posición que solo se suma en los modelos con posiciones absolutas (\cref{tema:4}). Equivalentemente, $H^{0}=OW_E$, siendo $O\in\{0,1\}^{n\times V}$ la matriz cuyas filas son las codificaciones \emph{one-hot} de los tokens.
+\end{definicion}
+
+La forma matricial $OW_E$ muestra que el embedding es una capa lineal sin sesgo aplicada a vectores \emph{one-hot}; en la práctica se implementa como una indexación de filas, que no hace ninguna multiplicación~\cite[§7.4]{jm3}.
+
+\section{El bloque decoder-only}
+
+Se recuerda la atención del módulo~13. Para una matriz $Z\in\R^{n\times d}$ y $h$ cabezas de dimensión $d_k=d/h$, la cabeza $i$ calcula $Q_i=ZW_Q^{(i)}$, $K_i=ZW_K^{(i)}$, $V_i=ZW_V^{(i)}$, con $W_Q^{(i)},W_K^{(i)},W_V^{(i)}\in\R^{d\times d_k}$, y
+\[
+\operatorname{head}_i(Z)=\softmax\Bigl(\frac{Q_iK_i\T}{\sqrt{d_k}}+M\Bigr)V_i,\qquad
+M_{tu}=\begin{cases}0,& u\le t,\\ -\infty,& u>t,\end{cases}
+\]
+donde la softmax se aplica por filas. La atención multicabeza concatena las cabezas y proyecta: $\MHA(Z)=[\operatorname{head}_1(Z)\;\cdots\;\operatorname{head}_h(Z)]\,W_O$, con $W_O\in\R^{d\times d}$. Agrupando por columnas las $h$ matrices $W_Q^{(i)}$ se obtiene una sola matriz $W_Q\in\R^{d\times d}$, y lo mismo para $W_K$ y $W_V$.
+
+\begin{definicion}[Bloque pre-norm]\label{def:bloque}
+Sean $\Norm_1,\Norm_2:\R^{d}\to\R^{d}$ dos normalizaciones (RMSNorm en LLaMA, LayerNorm en GPT-2), aplicadas fila a fila, y sea $\MLP:\R^{d}\to\R^{d}$ un perceptrón aplicado fila a fila (\cref{tema:3}). El \emph{bloque decoder-only pre-norm} es la aplicación $B:\R^{n\times d}\to\R^{n\times d}$, $H\mapsto H'$, dada por
+\[
+A=H+\MHA\bigl(\Norm_1(H)\bigr),\qquad H'=A+\MLP\bigl(\Norm_2(A)\bigr).
+\]
+\end{definicion}
+
+\begin{definicion}[Transformer decoder-only]\label{def:transformer}
+Un \emph{Transformer decoder-only} de $L$ capas es la composición
+\[
+H^{\ell}=B_\ell\bigl(H^{\ell-1}\bigr)\quad(\ell=1,\dots,L),\qquad Z=\Norm_f\bigl(H^{L}\bigr)\,W_U\in\R^{n\times V},
+\]
+donde $H^{0}$ es la entrada de la \cref{def:embedding}, cada $B_\ell$ es un bloque con parámetros propios, $\Norm_f$ es la \emph{normalización final} y $W_U\in\R^{d\times V}$ es la matriz de \emph{unembedding}. La fila $t$ de $Z$ son los logits de la distribución del token siguiente: $P(x_{t+1}=j\mid x_{1:t})=\softmax(z_t)_j$.
+\end{definicion}
+
+La \cref{fig:bloque} representa la arquitectura. Las dos subcapas tienen papeles complementarios: la atención es la única operación que combina filas distintas, es decir, que mezcla información \emph{entre} tokens; las normalizaciones y el MLP actúan sobre cada fila por separado~\cite[§7.2]{jm3}.
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[Conservación de la forma]\label{prop:forma}
+Si $H\in\R^{n\times d}$, entonces $B(H)\in\R^{n\times d}$. En consecuencia, todos los flujos $H^{0},\dots,H^{L}$ tienen forma $n\times d$, y solo la entrada ($n$ enteros $\to n\times d$) y la salida ($n\times d\to n\times V$) cambian de dimensión.
+\end{proposicion}
+
+La \cref{prop:forma} es la razón por la que los bloques pueden apilarse en cualquier número: $L$ es un hiperparámetro libre, que va de $12$ en GPT-2 \emph{small} a $80$ en Llama~2~70B~\cite{gpt2,llama2}.
+
+\section{Causalidad}
+
+\begin{proposicion}[Causalidad del decoder]\label{prop:causal}
+En un Transformer decoder-only, la fila $t$ de $H^{\ell}$, para todo $\ell$, y la fila $t$ de los logits $Z$ solo dependen de los tokens $x_1,\dots,x_t$.
+\end{proposicion}
+
+\begin{corolario}[Una pasada, $n$ predicciones]\label{cor:paralelo}
+Una sola evaluación del Transformer sobre $x_{1:n}$ proporciona las $n$ distribuciones $P(\cdot\mid x_{1:t})$, $t=1,\dots,n$. La pérdida de entrenamiento de una secuencia, la entropía cruzada media del módulo~1,
+\[
+\Loss=-\frac{1}{n-1}\sum_{t=1}^{n-1}\ln\softmax(z_t)_{x_{t+1}},
+\]
+se calcula, por tanto, con una única pasada hacia delante y una única pasada hacia atrás.
+\end{corolario}
+
+Esta propiedad es la que hace eficiente el entrenamiento de los Transformer frente a las redes recurrentes: las $n$ posiciones se procesan en paralelo como un producto de matrices~\cite[§7.3]{jm3}. En la generación, en cambio, los tokens se producen de uno en uno, y la \cref{prop:causal} permite reutilizar las claves y los valores ya calculados (la caché KV del módulo~19).
+
+\section{Salida: unembedding y embeddings atados}
+
+La capa de salida transforma cada vector $h\in\R^{d}$ en $V$ logits mediante $z=hW_U$. Si se escribe $u_j\in\R^{d}$ para la columna $j$ de $W_U$, el logit del token $j$ es el producto escalar $z_j=h\cdot u_j$: el modelo puntúa cada token por la alineación de $h$ con un vector \emph{plantilla} de ese token~\cite[§7.5]{jm3}.
+
+\begin{definicion}[Embeddings atados]\label{def:atados}
+Un Transformer tiene los \emph{embeddings atados} (\emph{weight tying}) si $W_U=W_E\T$, es decir, si la plantilla de salida de cada token coincide con su embedding de entrada: $z_j=h\cdot e_j$.
+\end{definicion}
+
+Press y Wolf~\cite{presswolf} mostraron que atar los embeddings reduce la perplejidad de varios modelos de lenguaje y el número de parámetros. El Transformer original comparte la misma matriz entre los embeddings y la capa previa a la softmax, y multiplica los embeddings por $\sqrt{d}$~\cite[§3.4]{vaswani}. GPT-2 también ata los embeddings; LLaMA y Llama~2 usan dos matrices independientes~\cite{llamacode}.
+
+\begin{proposicion}[Ahorro del atado]\label{prop:ahorro}
+Atar los embeddings reduce el número de parámetros en exactamente $Vd$. Para un vector $h$ fijo, el token de mayor logit es el $j$ que maximiza $\norm{e_j}\cos\angle(h,e_j)$.
+\end{proposicion}
+
+\begin{table}[ht]
+\centering\small
+\caption{Elecciones de arquitectura de tres modelos con detalles públicos.}\label{tab:modelos}
+\begin{tabular}{@{}llll@{}}
+\toprule
+Elemento & Transformer (2017) & GPT-2 (2019) & LLaMA / Llama~2 (2023) \\
+\midrule
+Normalización & LayerNorm, post-norm & LayerNorm, pre-norm & RMSNorm, pre-norm \\
+MLP & ReLU, $\dff=4d$ & GELU, $\dff=4d$ & SwiGLU, $\dff\approx\tfrac83 d$ \\
+Posición & sinusoidal (sumada) & aprendida (sumada) & RoPE (en $q$ y $k$) \\
+Sesgos & sí & sí & no \\
+Embeddings & atados & atados & sin atar \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

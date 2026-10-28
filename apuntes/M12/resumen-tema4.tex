@@ -1,0 +1,118 @@
+% =====================================================================
+\chapter{Embeddings y word2vec}
+\label{tema:4}
+% =====================================================================
+
+Un token es un entero sin estructura: el índice de «gato» no está más cerca del de «perro» que del de «avión». Un \emph{embedding} asigna a cada token un vector de $\R^{d}$, de modo que la geometría pueda reflejar el significado. Este tema define la matriz de embeddings, presenta la hipótesis distribucional y los vectores de coocurrencia, desarrolla el modelo skip-gram de word2vec con softmax y con muestreo negativo, y demuestra que este último factoriza de forma implícita una matriz de información mutua puntual. Se sigue~\cite[§5.2--5.5]{jm3}, la clase~2 de CS224N~\cite{cs224n} y los artículos de Mikolov \emph{et al.}~\cite{mikolov13a,mikolov13b} y de Levy y Goldberg~\cite{levy}.
+
+\section{La matriz de embeddings}
+
+\begin{definicion}[Matriz de embeddings]\label{def:embedding}
+Sea $\V$ un vocabulario de tamaño $K$ con índices $0,\dots,K-1$. Una \emph{matriz de embeddings} es una matriz $E\in\R^{K\times d}$; el \emph{embedding} del token $i$ es su fila $E_{i,:}\in\R^{1\times d}$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:onehot}
+Sea $e_i\in\R^{K}$ el vector \emph{one-hot} del token $i$, con un~1 en la posición $i$ y ceros en el resto. Entonces $e_i^{\top}E=E_{i,:}$.
+\end{proposicion}
+
+La \cref{prop:onehot} muestra que la capa de embeddings es una capa lineal sin sesgo aplicada a una entrada \emph{one-hot}. En la práctica no se multiplica, porque el producto costaría $Kd$ operaciones y la indexación $E[i]$ no cuesta ninguna; pero la equivalencia explica cómo se calcula el gradiente: solo las filas de los tokens presentes reciben gradiente distinto de cero (módulo~9).
+
+\begin{definicion}[Similitud coseno]
+Para $a,b\in\R^{d}$ no nulos, la \emph{similitud coseno} es $\cos(a,b)=\dfrac{a\cdot b}{\norm{a}\,\norm{b}}\in[-1,1]$.
+\end{definicion}
+
+Por la desigualdad de Cauchy--Schwarz (módulo~2), $\abs{\cos(a,b)}\le 1$, con igualdad si y solo si los vectores son proporcionales. El coseno no cambia al multiplicar un vector por una constante positiva (\cref{eje:4-coseno}), y por eso no penaliza que una palabra sea más frecuente que otra~\cite[§5.4]{jm3}.
+
+\section{La hipótesis distribucional}
+
+La \emph{hipótesis distribucional} afirma que las palabras que aparecen en contextos parecidos tienen significados parecidos; Se atribuye a Firth la formulación según la cual una palabra se conoce por las palabras que la acompañan, que la tarea~2 de CS224N toma como punto de partida de word2vec~\cite{cs224n}; véase también~\cite[§5.2]{jm3}. Si «gato» y «perro» aparecen junto a «come», «duerme» y «pelo», sus representaciones deben parecerse.
+
+\begin{definicion}[Matriz de coocurrencias]
+Fijada una ventana de $m$ palabras, la \emph{matriz de coocurrencias} $N\in\R^{K\times K}$ tiene por entrada $N(w,c)$ el número de veces que la palabra $c$ aparece a distancia a lo sumo $m$ de $w$ en el corpus. La fila $N(w,:)$ es una representación de $w$ por recuentos~\cite[§5.3]{jm3}.
+\end{definicion}
+
+Los recuentos están dominados por las palabras frecuentes («de», «que»), que aparecen junto a todas. La información mutua puntual del módulo~6 corrige ese efecto comparando la frecuencia observada de un par con la esperada si las palabras fueran independientes.
+
+\begin{definicion}[Información mutua puntual]\label{def:pmi}
+Sean $P(w,c)=N(w,c)/\abs{\mathcal{D}}$, $P(w)=\sum_c P(w,c)$ y $P(c)=\sum_w P(w,c)$, con $\abs{\mathcal{D}}=\sum_{w,c}N(w,c)$ el número de pares. La \emph{información mutua puntual} y su versión positiva son
+\[
+\PMI(w,c)=\ln\frac{P(w,c)}{P(w)\,P(c)},\qquad \PPMI(w,c)=\max\{\PMI(w,c),0\}.
+\]
+\end{definicion}
+
+La PMI vale~0 si $w$ y $c$ son independientes, es positiva si coinciden más de lo esperado y vale $-\infty$ si el par no se observa nunca; la PPMI evita ese valor. La información mutua del módulo~6 es la esperanza de la PMI bajo $P(w,c)$.
+
+\section{Skip-gram}
+
+Los vectores de recuentos tienen dimensión $K$ y casi todas sus entradas son nulas. Word2vec aprende directamente vectores densos de dimensión $d\ll K$ con una tarea de predicción~\cite{mikolov13a}.
+
+\begin{definicion}[Pares de skip-gram]
+Sea una frase $w_1,\dots,w_n$ y una ventana $m\ge 1$. Los \emph{pares de entrenamiento} de skip-gram son los pares ordenados (centro, contexto) $(w_t,w_{t+j})$ con $1\le\abs{j}\le m$ y $1\le t+j\le n$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:pares}
+Si $n\ge m+1$, una frase de $n$ palabras da $m(2n-m-1)$ pares con ventana $m$.
+\end{proposicion}
+
+Por ejemplo, «el gato come pescado» ($n=4$) da $1\cdot(8-1-1)=6$ pares con $m=1$, $(\text{el},\text{gato})$, $(\text{gato},\text{el})$, $(\text{gato},\text{come})$, $(\text{come},\text{gato})$, $(\text{come},\text{pescado})$ y $(\text{pescado},\text{come})$, y $2\cdot(8-2-1)=10$ con $m=2$.
+
+\begin{definicion}[Skip-gram con softmax]\label{def:skipgram}
+Cada palabra $w$ tiene dos vectores: $v_w\in\R^{d}$ cuando es centro y $u_w\in\R^{d}$ cuando es contexto. El modelo es
+\[
+P(o\mid c)=\frac{\exp(u_o^{\top}v_c)}{\sum_{w\in\V}\exp(u_w^{\top}v_c)}=\softmax(U^{\top}v_c)_o,
+\]
+donde $U\in\R^{d\times K}$ tiene por columnas los $u_w$. La pérdida de un par es $J=-\ln P(o\mid c)$, la entropía cruzada entre el vector \emph{one-hot} $y$ de $o$ y la predicción $\hat y=\softmax(U^{\top}v_c)$~\cite{cs224n}.
+\end{definicion}
+
+\begin{proposicion}[Gradiente respecto al vector central]\label{prop:grad-vc}
+\[
+\frac{\partial J}{\partial v_c}=\sum_{w\in\V}P(w\mid c)\,u_w-u_o.
+\]
+\end{proposicion}
+
+El gradiente es «lo esperado menos lo observado»: el descenso de gradiente acerca $v_c$ al vector del contexto real y lo aleja de la media de los vectores de contexto que el modelo predice. Calcular esa media cuesta $O(Kd)$ por par, demasiado para $K\sim 10^{5}$ y miles de millones de pares.
+
+\section{Muestreo negativo}
+
+\begin{definicion}[Skip-gram con muestreo negativo]\label{def:sgns}
+Sean $w$ la palabra central, $c_{+}$ un contexto real y $c_{1},\dots,c_{k}$ palabras de ruido extraídas al azar. La pérdida de \emph{skip-gram con muestreo negativo} (SGNS) es
+\[
+L=-\ln\sigma(c_{+}\cdot w)-\sum_{i=1}^{k}\ln\sigma(-c_{i}\cdot w),
+\]
+donde $w$ denota el vector central y $c_+,c_i$ los vectores de contexto~\cite[§5.5.2]{jm3}. Mikolov \emph{et al.} extraen el ruido de la distribución unigram elevada a $3/4$ y renormalizada~\cite{mikolov13b}.
+\end{definicion}
+
+La softmax sobre $K$ palabras se sustituye por $k+1$ regresiones logísticas (módulo~8): distinguir el par real de $k$ pares falsos. El coste por par pasa a $O(kd)$, con $k$ entre 2 y 20.
+
+\begin{proposicion}[Gradientes de SGNS]\label{prop:grad-sgns}
+\[
+\frac{\partial L}{\partial c_{+}}=\bigl(\sigma(c_{+}\cdot w)-1\bigr)w,\qquad
+\frac{\partial L}{\partial c_{i}}=\sigma(c_{i}\cdot w)\,w,\qquad
+\frac{\partial L}{\partial w}=\bigl(\sigma(c_{+}\cdot w)-1\bigr)c_{+}+\sum_{i=1}^{k}\sigma(c_{i}\cdot w)\,c_{i}.
+\]
+\end{proposicion}
+
+La demostración es el \cref{eje:4-sgns}. Los signos confirman la intuición: el paso de descenso aumenta $c_{+}\cdot w$ y disminuye cada $c_{i}\cdot w$.
+
+\addtocounter{definicion}{1}%
+
+\section{Muestreo negativo y PMI}
+
+\begin{teorema}[Levy y Goldberg]\label{teo:levy}
+Sea $N(w,c)$ el número de veces que el par $(w,c)$ aparece en el corpus, $N(w)$ y $N(c)$ sus marginales y $\abs{\mathcal{D}}$ el número total de pares, y supóngase que los $k$ negativos de cada par se extraen de la distribución unigram de contextos $P(c)=N(c)/\abs{\mathcal{D}}$. Si la dimensión es suficiente para que cada producto $x=u_c\cdot v_w$ pueda elegirse libremente, la pérdida total esperada de SGNS se minimiza en
+\[
+u_c\cdot v_w=\PMI(w,c)-\ln k
+\]
+para todo par con $N(w,c)>0$.
+\end{teorema}
+
+\begin{observacion}
+El \cref{teo:levy} une los dos enfoques de este tema: el modelo predictivo de word2vec aprende, en el óptimo, la misma información que la matriz de PMI de los métodos de recuentos, comprimida en vectores de dimensión $d$. Es la información mutua del módulo~6 convertida en geometría.
+\end{observacion}
+
+\section{Embeddings en un LLM}
+
+En un LLM, la matriz $E$ se aprende junto con el resto del modelo, sin entrenamiento previo con word2vec, y a menudo se comparte con la matriz de salida (\emph{weight tying})~\cite[§14.2.3]{jm3}. La intuición distribucional se mantiene: tras el entrenamiento, tokens con usos parecidos tienen embeddings cercanos. Pero un embedding de esta tabla es \emph{estático}: «banco» tiene el mismo vector en «banco de peces» y en «Banco de España». En el módulo~13 la atención mezcla los vectores según el contexto y produce representaciones contextuales.
+
+\addtocounter{figure}{1}%
+

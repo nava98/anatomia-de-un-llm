@@ -1,0 +1,122 @@
+% =====================================================================
+\chapter{Codificación de la posición: sinusoidal y RoPE}
+\label{tema:4}
+% =====================================================================
+
+Sin información de posición, la atención trata la secuencia como un conjunto. Este tema demuestra esa propiedad, define la codificación sinusoidal del Transformer original y las posiciones aprendidas de GPT-2, y estudia con detalle la codificación rotatoria RoPE de LLaMA, cuya puntuación de atención solo depende de la distancia entre tokens. Se sigue~\cite[§3.5]{vaswani}, \cite[§11.6.3]{d2l}, \cite[§12.1.9]{bishopdl}, \cite[§7.4]{jm3}, el artículo de Su \emph{et al.}~\cite[§3.2]{roformer} y las secciones~2 y~3 de la práctica~4 de CS224N~\cite{cs224n}.
+
+\section{La atención no ve el orden}
+
+\begin{proposicion}[Equivariancia por permutaciones]\label{prop:equivariancia}
+Sea
+\[
+f(X)=\softmax\bigl(XW_Q(XW_K)\T/\sqrt{d_k}\bigr)XW_V
+\]
+la autoatención \emph{sin máscara}, con la softmax por filas. Para toda matriz de permutación $P$, $f(PX)=P\,f(X)$.
+\end{proposicion}
+
+Junto con el \cref{lem:filas}, la \cref{prop:equivariancia} implica que un Transformer sin máscara y sin posiciones es equivariante: barajar los tokens de la entrada solo baraja las filas de la salida, de modo que «el perro muerde al hombre» y «el hombre muerde al perro» producen los mismos vectores por palabra. La máscara causal rompe la simetría (\cref{eje:1-perm-mascara}), y la práctica de CS336 recuerda que un decoder causal puede, en principio, inferir posiciones sin codificación explícita~\cite[§7.3]{cs336}; aun así, todos los modelos de la \cref{tab:modelos} codifican la posición de forma explícita.
+
+\section{Codificación sinusoidal y posiciones aprendidas}
+
+\begin{definicion}[Codificación sinusoidal]\label{def:sinusoidal}
+Sea $d$ par y $\omega_i=10000^{-2i/d}$ para $i=0,\dots,d/2-1$. La \emph{codificación sinusoidal} de la posición $p\in\mathbb{N}$ es el vector $\PE(p)\in\R^{d}$ con componentes
+\[
+\PE(p)_{2i}=\sin(p\,\omega_i),\qquad \PE(p)_{2i+1}=\cos(p\,\omega_i),
+\]
+que se suma al embedding del token: $h^{0}_t=e_{x_t}+\PE(t)$~\cite[§3.5]{vaswani}.
+\end{definicion}
+
+Cada par $(2i,2i+1)$ es un punto que gira sobre la circunferencia unidad con frecuencia angular $\omega_i$; las frecuencias decrecen geométricamente desde $\omega_0=1$ hasta $\omega_{d/2-1}\approx 10^{-4}$. Es como un reloj con $d/2$ agujas que giran a velocidades distintas~\cite[§11.6.3.1]{d2l}.
+
+\addtocounter{definicion}{1}%
+
+\begin{teorema}[Desplazamiento lineal]\label{teo:desplazamiento}
+Para cada $k\in\mathbb{Z}$ existe una matriz ortogonal $M_k\in\R^{d\times d}$, que no depende de $p$, tal que $\PE(p+k)=M_k\,\PE(p)$ para todo $p$.
+\end{teorema}
+
+El \cref{teo:desplazamiento} es la afirmación de Vaswani \emph{et al.}~\cite[§3.5]{vaswani} de que $\PE(p+k)$ es una función lineal de $\PE(p)$ para cada desplazamiento fijo, y la propiedad de posición relativa de~\cite[§11.6.3.2]{d2l}. La esperanza era que la red aprendiera a atender por posiciones relativas mediante esa aplicación lineal.
+
+\begin{definicion}[Posiciones aprendidas]
+Un modelo con \emph{posiciones aprendidas} añade una matriz de parámetros $W_P\in\R^{\nctx\times d}$ y suma su fila $t$ al embedding del token $t$. Es la opción de GPT-2~\cite{gpt2}. Aporta $\nctx d$ parámetros y no define ninguna codificación para posiciones $t>\nctx$.
+\end{definicion}
+
+\section{Codificación rotatoria (RoPE)}
+
+En lugar de sumar la posición al embedding, RoPE la introduce en cada capa, girando las consultas y las claves~\cite{roformer}. Sea
+\[
+R(\alpha)=\begin{pmatrix}\cos\alpha&-\sin\alpha\\ \sin\alpha&\cos\alpha\end{pmatrix}
+\]
+la rotación plana de ángulo $\alpha$.
+
+\begin{lema}[Rotaciones planas]\label{lem:rotaciones}
+Para todos $a,b\in\R$: (i) $R(a)R(b)=R(a+b)$; (ii) $R(a)\T=R(-a)$; (iii) en consecuencia, $R(a)\T R(b)=R(b-a)$ y $R(a)$ es ortogonal.
+\end{lema}
+
+\begin{definicion}[RoPE]\label{def:rope}
+Sea $d_k$ par y $\theta_i=10000^{-2i/d_k}$ para $i=0,\dots,d_k/2-1$. Para cada posición $m$ se define la matriz diagonal por bloques
+\[
+R_m=\diag\bigl(R(m\theta_0),\,R(m\theta_1),\,\dots,\,R(m\theta_{d_k/2-1})\bigr)\in\R^{d_k\times d_k}.
+\]
+RoPE sustituye, en cada cabeza y cada capa, la consulta $q_m$ del token $m$ por $\tilde q_m=R_mq_m$ y la clave $k_n$ del token $n$ por $\tilde k_n=R_nk_n$. Los valores $v_n$ no se modifican.
+\end{definicion}
+
+\begin{teorema}[RoPE es relativa]\label{teo:rope}
+Para todos $q,k\in\R^{d_k}$ y todas las posiciones $m,n$,
+\[
+(R_mq)\T(R_nk)=q\T R_{n-m}\,k.
+\]
+En particular, la puntuación de atención entre el token $m$ y el token $n$ solo depende de las posiciones a través de la diferencia $n-m$.
+\end{teorema}
+
+\begin{corolario}\label{cor:rope-norma}
+RoPE conserva las normas: $\norm{R_mq}=\norm{q}$. Solo modifica el ángulo entre la consulta y la clave.
+\end{corolario}
+
+Para un solo par ($d_k=2$), si $\varphi=(n-m)\theta$, el desarrollo de $q\T R(\varphi)k$ es
+\begin{equation}\label{eq:rope2d}
+q\T R(\varphi)\,k=(q\cdot k)\cos\varphi-(q_1k_2-q_2k_1)\sin\varphi .
+\end{equation}
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[ht]
+\centering\small
+\caption{Puntuaciones $(R_mq)\T(R_nk)$ del \cref{ej:rope}.}\label{tab:rope}
+\begin{tabular}{@{}cccr@{}}
+\toprule
+$m$ (consulta) & $n$ (clave) & $n-m$ & Puntuación \\
+\midrule
+3 & 1 & $-2$ & $-1{,}830$ \\
+5 & 3 & $-2$ & $-1{,}830$ \\
+2 & 0 & $-2$ & $-1{,}830$ \\
+1 & 3 & $+2$ & $6{,}830$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{proposicion}[Forma compleja]\label{prop:rope-compleja}
+Identifíquese cada par $(a,b)$ con el número complejo $z=a+ib$. Entonces la rotación $R(\alpha)$ equivale a multiplicar por $e^{i\alpha}$, y, con $\langle u,v\rangle=\Real(u\bar v)$, el producto escalar de dos pares rotados es
+\[
+\bigl\langle z_1e^{im\theta},\,z_2e^{in\theta}\bigr\rangle=\Real\bigl(z_1\bar z_2\,e^{i(m-n)\theta}\bigr).
+\]
+\end{proposicion}
+
+La forma compleja es la que usan el artículo original~\cite[§3.2.1]{roformer} y el código de LLaMA~\cite{llamacode}, que agrupa las componentes consecutivas de $q$ y $k$ en números complejos. La fase $e^{i(m-n)\theta}$ hace el papel del desfase entre dos osciladores de la misma frecuencia: solo importa la diferencia de fases, como en la interferencia de dos ondas.
+
+\begin{table}[ht]
+\centering\small
+\caption{Comparación de las codificaciones de posición. La propiedad relativa es la del \cref{teo:desplazamiento} para la sinusoidal y la del \cref{teo:rope} para RoPE.}\label{tab:posiciones}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+Método & Dónde actúa & Parámetros & Relativa & Modelos \\
+\midrule
+Sinusoidal & suma al embedding & $0$ & indirecta & Transformer \\
+Aprendida & suma al embedding & $\nctx d$ & no & GPT-2, GPT-3 \\
+RoPE & gira $q$ y $k$ en cada capa & $0$ & exacta & LLaMA, Qwen \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

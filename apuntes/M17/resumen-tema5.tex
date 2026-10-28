@@ -1,0 +1,123 @@
+% =====================================================================
+\chapter{Entrenamiento distribuido}
+\label{tema:5}
+% =====================================================================
+
+Un modelo grande no cabe en la memoria de un acelerador, y su entrenamiento tardaría siglos en uno solo. Este tema estudia cómo se reparte el trabajo entre muchos dispositivos. Empieza por las operaciones colectivas de comunicación y su coste, enuncia la ley de Amdahl y analiza las tres formas básicas de paralelismo (de datos, de tensores y de etapas), la partición de estados de ZeRO y la recomputación de activaciones. Se siguen la clase~7 de CS336~\cite{cs336} y el §8 de su tarea~2~\cite{cs336a2}, el capítulo~1 de Hennessy y Patterson~\cite{hp} para la ley de Amdahl, la clase «Interconnection networks» de CMU 15-418/618~\cite{cmu418}, los artículos de Patarasuk y Yuan~\cite{patarasuk}, Shoeybi \emph{et al.}~\cite[§3]{megatron}, Huang \emph{et al.}~\cite[§2.3]{gpipe}, Narayanan \emph{et al.}~\cite[§2--3]{narayanan}, Rajbhandari \emph{et al.}~\cite[§3--7]{zero} y Chen \emph{et al.}~\cite{chen-checkpoint}.
+
+\section{Operaciones colectivas}
+
+Sean $n_{\mathrm{d}}$ dispositivos (llamados \emph{rangos}) numerados $0,\dots,n_{\mathrm{d}}-1$, y sea $x^{(r)}$ un vector de $S$ bytes en el rango~$r$.
+
+\begin{definicion}[Operaciones colectivas]
+\begin{enumerate}
+  \item \emph{All-reduce}: al terminar, todos los rangos tienen $\sum_{r}x^{(r)}$.
+  \item \emph{Reduce-scatter}: se divide cada vector en $n_{\mathrm{d}}$ trozos $x^{(r)}_0,\dots,x^{(r)}_{n_{\mathrm{d}}-1}$; al terminar, el rango $c$ tiene solo el trozo $c$ de la suma, $\sum_r x^{(r)}_c$.
+  \item \emph{All-gather}: el rango $c$ tiene un trozo $y_c$; al terminar, todos los rangos tienen la concatenación $(y_0,\dots,y_{n_{\mathrm{d}}-1})$.
+\end{enumerate}
+\end{definicion}
+
+Un all-reduce equivale a un reduce-scatter seguido de un all-gather de los trozos ya sumados~\cite{cs336}.
+
+\begin{proposicion}[All-reduce en anillo]\label{prop:anillo}
+Sean $n_{\mathrm{d}}$ rangos conectados en anillo, cada uno capaz de enviar a su vecino a $W$ bytes/s mientras recibe del otro. El algoritmo en anillo realiza un all-reduce de $S$ bytes enviando cada rango $2(n_{\mathrm{d}}-1)S/n_{\mathrm{d}}$ bytes, en un tiempo (sin contar latencias)
+\[
+t_{\mathrm{AR}}=\frac{2(n_{\mathrm{d}}-1)}{n_{\mathrm{d}}}\cdot\frac{S}{W}.
+\]
+\end{proposicion}
+
+\addtocounter{figure}{1}%
+
+\begin{observacion}
+El volumen $2(n_{\mathrm{d}}-1)S/n_{\mathrm{d}}$ es prácticamente independiente de $n_{\mathrm{d}}$ y tiende a $2S$. Patarasuk y Yuan~\cite{patarasuk} demostraron que, sin compresión de los datos, en todo algoritmo de all-reduce algún rango debe comunicar al menos ese volumen: el anillo es óptimo en ancho de banda. El algoritmo tiene, en cambio, $2(n_{\mathrm{d}}-1)$ pasos, cada uno con su latencia; para tensores pequeños o muchos rangos se prefieren algoritmos en árbol.
+\end{observacion}
+
+\section{La ley de Amdahl}
+
+\begin{teorema}[Ley de Amdahl]\label{teo:amdahl}
+Sea un programa cuyo tiempo en un dispositivo es $t_1$, del que una fracción $f\in[0,1]$ no puede paralelizarse y el resto se reparte perfectamente entre $n_{\mathrm{d}}$ dispositivos. Su aceleración es
+\[
+A(n_{\mathrm{d}})=\frac{t_1}{t_{n_{\mathrm{d}}}}=\frac{1}{f+(1-f)/n_{\mathrm{d}}}\ \le\ \frac{1}{f}.
+\]
+\end{teorema}
+
+En el entrenamiento distribuido, el papel de la fracción serie lo desempeñan la comunicación que no se solapa con el cálculo y las esperas. Una fracción del 5~\% limita la aceleración a~20, sea cual sea el número de GPU (\cref{eje:5-amdahl}).
+
+\section{Paralelismo de datos}
+
+\begin{proposicion}[Equivalencia del paralelismo de datos]\label{prop:datos}
+Sea un lote de $B$ ejemplos con pérdida media $\mathcal{L}(\theta)=B^{-1}\sum_{i=1}^{B}\ell_i(\theta)$, repartido en $n_{\mathrm{d}}$ trozos de $B/n_{\mathrm{d}}$ ejemplos, y sea $g_r$ el gradiente de la pérdida media del trozo $r$. Entonces
+\[
+\nabla\mathcal{L}(\theta)=\frac{1}{n_{\mathrm{d}}}\sum_{r=0}^{n_{\mathrm{d}}-1}g_r.
+\]
+\end{proposicion}
+
+En el \emph{paralelismo de datos}, cada rango guarda una copia completa del modelo, procesa su trozo del lote y, antes de actualizar, se hace un all-reduce de los gradientes. Por la \cref{prop:datos}, el resultado es idéntico al de un solo dispositivo con el lote completo. Con $10^{9}$ parámetros en bf16 ($S=2\cdot 10^{9}$~bytes), $n_{\mathrm{d}}=8$ y $W=100$~GB/s, la \cref{prop:anillo} da $t_{\mathrm{AR}}=2\cdot(7/8)\cdot 2\cdot 10^{9}/10^{11}=35$~ms por paso. Las implementaciones reales solapan esa comunicación con la pasada hacia atrás, enviando los gradientes de las últimas capas mientras se calculan los de las primeras.
+
+\section{Paralelismo de tensores}
+
+\begin{proposicion}[Partición del MLP; Shoeybi \emph{et al.}]\label{prop:megatron}
+Sea el MLP $Z=\GELU(XA)\,B$ con $X\in\R^{T\times d}$, $A\in\R^{d\times h}$, $B\in\R^{h\times d}$. Si se parte $A$ por columnas, $A=[A_1\ A_2]$, y $B$ por filas, $B=\bigl[\begin{smallmatrix}B_1\\ B_2\end{smallmatrix}\bigr]$, con bloques compatibles, entonces
+\[
+Z=\GELU(XA_1)\,B_1+\GELU(XA_2)\,B_2.
+\]
+Por tanto, dos rangos que guardan $(A_1,B_1)$ y $(A_2,B_2)$ calculan cada uno un sumando sin comunicarse, y basta un all-reduce de $Z$ al final.
+\end{proposicion}
+
+La elección de los cortes no es arbitraria. Si se partiera $A$ por filas (y $X$ por columnas), $XA=X_1A_1+X_2A_2$ y haría falta sumar antes de aplicar GELU, porque en general $\GELU(u+v)\ne\GELU(u)+\GELU(v)$: un punto de sincronización más~\cite[§3]{megatron}. En la atención, las proyecciones $Q$, $K$ y $V$ se parten por columnas, es decir, por cabezas, y la proyección de salida por filas. Cada bloque Transformer requiere así dos all-reduce en la pasada hacia delante y dos en la pasada hacia atrás, sobre tensores de tamaño proporcional a $b\cdot T\cdot d$ (microlote por longitud por dimensión)~\cite[§3.2]{narayanan}. Como esta comunicación ocurre en cada capa, el paralelismo de tensores se usa dentro de un nodo, sobre NVLink.
+
+\section{Paralelismo de etapas}
+
+\begin{definicion}[Pipeline de GPipe]
+En el \emph{paralelismo de etapas} (\emph{pipeline}) se reparten las capas en $p_{\mathrm{e}}$ etapas consecutivas, una por rango, y el lote en $m$ microlotes. En el esquema de GPipe~\cite{gpipe}, la etapa $s$ procesa el microlote $j$ hacia delante en cuanto ha terminado el microlote $j-1$ y la etapa $s-1$ le ha entregado las activaciones del microlote $j$; la pasada hacia atrás se hace después, en orden inverso.
+\end{definicion}
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[Burbuja del pipeline]\label{prop:burbuja}
+Si cada microlote tarda $\tau$ en cada etapa (solo pasada hacia delante), el pipeline de GPipe con $p_{\mathrm{e}}$ etapas y $m$ microlotes tarda $(m+p_{\mathrm{e}}-1)\tau$, y la fracción del tiempo en que cada rango está ocioso es
+\[
+\beta_{\mathrm{tot}}=\frac{p_{\mathrm{e}}-1}{m+p_{\mathrm{e}}-1}.
+\]
+\end{proposicion}
+
+La demostración se pide en el \cref{eje:5-burbuja-dem}. Narayanan \emph{et al.}~\cite[§2.2.1]{narayanan} miden la burbuja respecto al tiempo ideal $m\tau$ y no respecto al total: $\beta=(p_{\mathrm{e}}-1)/m$. Ambas medidas se relacionan por $\beta_{\mathrm{tot}}=\beta/(1+\beta)$. Huang \emph{et al.}~\cite[§2.3]{gpipe} observan que la burbuja es despreciable con $m\ge 4p_{\mathrm{e}}$. El esquema 1F1B, que alterna una pasada hacia delante y una hacia atrás, tiene la misma burbuja, pero limita a $p_{\mathrm{e}}$ el número de microlotes cuyas activaciones deben guardarse a la vez, frente a $m$ en GPipe; la variante intercalada, con $v$ trozos de capas por rango, reduce la burbuja a $(p_{\mathrm{e}}-1)/(vm)$ a cambio de multiplicar por $v$ la comunicación~\cite[§2.2.2]{narayanan}.
+
+\section{ZeRO: partición de los estados del entrenamiento}
+
+En el paralelismo de datos, cada rango guarda una copia completa de los 16~bytes por parámetro de la precisión mixta con Adam (\cref{tema:4}): 2 de pesos, 2 de gradientes y $K=12$ de estado del optimizador. ZeRO~\cite{zero} elimina esa redundancia.
+
+\begin{proposicion}[Memoria de ZeRO]\label{prop:zero}
+Sea un modelo de $\Psi$ parámetros entrenado con paralelismo de datos en $n_{\mathrm{d}}$ rangos, con 2~bytes de pesos, 2 de gradientes y $K=12$ de estado del optimizador por parámetro. La memoria de estados por rango es:
+\begin{center}\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Variante & Qué se reparte & Memoria por rango \\
+\midrule
+Sin ZeRO & nada & $16\Psi$ \\
+ZeRO-1 & estado del optimizador & $4\Psi+12\Psi/n_{\mathrm{d}}$ \\
+ZeRO-2 & además, gradientes & $2\Psi+14\Psi/n_{\mathrm{d}}$ \\
+ZeRO-3 & además, pesos & $16\Psi/n_{\mathrm{d}}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+En ZeRO-3, cada rango reúne con un all-gather los pesos de una capa justo antes de usarla y los descarta después; los gradientes se reducen con un reduce-scatter, de modo que cada rango recibe solo su trozo. El volumen de comunicación por paso es $2\Psi$ en ZeRO-1 y ZeRO-2, igual que en el paralelismo de datos, y $3\Psi$ en ZeRO-3, un 50~\% más~\cite[§7]{zero}. FSDP (\emph{Fully Sharded Data Parallel}) es la implementación de ZeRO-3 en PyTorch.
+
+\section{Recomputación de activaciones}
+
+La tabla de la \cref{prop:zero} no incluye las activaciones que la retropropagación necesita (módulo~10), que crecen con el lote y la longitud de la secuencia.
+
+\begin{proposicion}[Recomputación por segmentos]\label{prop:checkpoint}
+Sea una red de $L$ capas en cadena cuyas activaciones ocupan una unidad de memoria cada una. Si se divide en $k$ segmentos de $L/k$ capas, se guardan solo las activaciones en las fronteras de los segmentos y, durante la pasada hacia atrás, se recalcula cada segmento a partir de su frontera, la memoria máxima de activaciones es $k+L/k$, a cambio de una pasada hacia delante adicional. Con $k=\sqrt{L}$ la memoria es $2\sqrt{L}$, mínima entre todas las elecciones de $k$.
+\end{proposicion}
+
+El resultado es el de Chen \emph{et al.}~\cite{chen-checkpoint}. Con $L=64$ capas, la memoria de activaciones baja de $64$ a $16$ unidades a cambio de un tercio más de cómputo (una pasada hacia delante adicional sobre las tres equivalentes del \cref{cor:6nd}). La recomputación no cuenta en el MFU (\cref{def:mfu}).
+
+\begin{observacion}[Paralelismo 3D]
+Los entrenamientos grandes combinan las tres formas: $n_{\mathrm{d}}=d_{\mathrm{dp}}\cdot t\cdot p_{\mathrm{e}}$, con $t$ rangos de paralelismo de tensores dentro de cada nodo (comunicación por capa, sobre NVLink), $p_{\mathrm{e}}$ etapas de pipeline entre nodos (comunicación punto a punto de activaciones) y $d_{\mathrm{dp}}$ réplicas de paralelismo de datos, a menudo con ZeRO, en el nivel exterior (comunicación de gradientes una vez por paso). Narayanan \emph{et al.}~\cite[§3]{narayanan} analizan esta composición y recomiendan limitar $t$ al tamaño del nodo.
+\end{observacion}
+

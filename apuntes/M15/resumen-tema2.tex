@@ -1,0 +1,128 @@
+% =====================================================================
+\chapter{La arquitectura mini-GPT}
+\label{tema:2}
+% =====================================================================
+
+El mini-GPT es el bloque Transformer del módulo~14 apilado $L$ veces entre una capa de entrada, que convierte tokens y posiciones en vectores, y una capa de salida, que devuelve un logit por token del vocabulario. Ninguna pieza es nueva; este tema fija la definición completa del modelo, demuestra la propiedad de causalidad que justifica entrenar las $T$ predicciones de una ventana con una sola pasada y cuenta sus parámetros. La arquitectura es la de GPT-2~\cite[§2.3]{gpt2}, construida sobre el decoder de Vaswani \emph{et al.}~\cite{vaswani}; se sigue también el §3 de la tarea~1 de CS336~\cite{cs336}, la clase~5 de CS224N~\cite{cs224n} y el §11.9.3 de~\cite{d2l}.
+
+\section{Definición del modelo}
+
+Se recuerdan del módulo~11 la \emph{normalización de capa} de un vector $v\in\R^{d}$,
+\[
+\LN(v)=\gamma\odot\frac{v-\mu(v)\mathbf 1}{\sqrt{\sigma^{2}(v)+\varepsilon}}+\beta,\qquad \mu(v)=\frac1d\sum_{i}v_i,\quad \sigma^{2}(v)=\frac1d\sum_i\bigl(v_i-\mu(v)\bigr)^{2},
+\]
+con parámetros $\gamma,\beta\in\R^{d}$, y del módulo~14 el perceptrón por posición $\MLP(v)=W_2\,\GELU(W_1v+b_1)+b_2$, con $W_1\in\R^{4d\times d}$ y $W_2\in\R^{d\times 4d}$.
+
+\begin{definicion}[Atención causal multicabeza]\label{def:mha}
+Sea $H\in\R^{T\times d}$ la matriz cuyas filas son las representaciones de las $T$ posiciones, y sea $n_h$ un divisor de $d$, con $d_k=d/n_h$. Se calculan $\Qm=HW_Q$, $\Km=HW_K$ y $\Vm=HW_V$, con $W_Q,W_K,W_V\in\R^{d\times d}$, y se parten por columnas en $n_h$ bloques $\Qm_r,\Km_r,\Vm_r\in\R^{T\times d_k}$. La \emph{máscara causal} es la matriz $\Mm\in\{0,-\infty\}^{T\times T}$ con $\Mm_{tj}=0$ si $j\le t$ y $\Mm_{tj}=-\infty$ si $j>t$. Cada cabeza calcula
+\[
+\mathrm{head}_r=\softmax\Bigl(\frac{\Qm_r\Km_r^{\top}}{\sqrt{d_k}}+\Mm\Bigr)\Vm_r,\qquad r=1,\dots,n_h,
+\]
+con la softmax aplicada por filas y el convenio $e^{-\infty}=0$, y la salida es
+$\MHA(H)=[\mathrm{head}_1\;\cdots\;\mathrm{head}_{n_h}]\,W_O+\mathbf 1 b_O^{\top}$, con $W_O\in\R^{d\times d}$ y $b_O\in\R^{d}$.
+\end{definicion}
+
+En la implementación, las tres proyecciones se agrupan en una sola matriz $d\times 3d$ sin sesgo, como sugiere CS336~\cite[§3.4]{cs336}; el número de parámetros es el mismo.
+
+\begin{definicion}[Mini-GPT]\label{def:minigpt}
+Sean $K$, $T$, $d$, $L$ y $n_h$ enteros positivos con $n_h\mid d$. El \emph{mini-GPT} con estos hiperparámetros transforma una ventana $x_{1:T}\in\V^{T}$ en logits $z_{1:T}\in\R^{T\times K}$ mediante:
+\begin{enumerate}[label=(\arabic*)]
+  \item \emph{entrada}: $h^{0}_t=E_{x_t}+P_t$, donde $E\in\R^{K\times d}$ es la tabla de embeddings de token y $P\in\R^{T\times d}$ la de embeddings de posición, ambas aprendidas;
+  \item \emph{bloques}: para $\ell=1,\dots,L$, con $H^{\ell-1}$ la matriz de filas $h^{\ell-1}_t$,
+  \[
+  A^{\ell}=H^{\ell-1}+\MHA_{\ell}\bigl(\LN_{\ell,1}(H^{\ell-1})\bigr),\qquad
+  H^{\ell}=A^{\ell}+\MLP_{\ell}\bigl(\LN_{\ell,2}(A^{\ell})\bigr),
+  \]
+  donde $\LN$ y $\MLP$ se aplican a cada fila por separado;
+  \item \emph{salida}: $z_t=W_{\mathrm{s}}\,\LN_{\mathrm{f}}(h^{L}_t)+b_{\mathrm{s}}$, con $W_{\mathrm{s}}\in\R^{K\times d}$ y $b_{\mathrm{s}}\in\R^{K}$.
+\end{enumerate}
+La distribución predicha en la posición $t$ es $p_t=\softmax(z_t)$.
+\end{definicion}
+
+La forma $x\leftarrow x+f(\LN(x))$ se llama \emph{pre-norm}: la normalización se aplica a la entrada de cada subcapa y el flujo residual queda sin normalizar, lo que estabiliza el entrenamiento de redes profundas (módulo~11). GPT-2 introdujo exactamente estos dos cambios respecto de GPT: la normalización en la entrada de cada subbloque y una normalización final tras el último bloque~\cite[§2.3]{gpt2}. La \cref{fig:minigpt} resume el flujo de datos. Suele decirse que la atención es la etapa en la que las posiciones se \emph{comunican} y el MLP aquella en la que cada posición \emph{procesa} lo recibido.
+
+\addtocounter{figure}{1}%
+
+\section{La máscara causal}
+
+\begin{lema}\label{lem:mascara}
+Sea $S\in\R^{T\times T}$ una matriz de puntuaciones. La fila $t$ de $\softmax(S+\Mm)$ vale
+\[
+a_{tj}=\begin{cases}\dfrac{e^{S_{tj}}}{\sum_{j'\le t}e^{S_{tj'}}} & j\le t,\\[3mm] 0 & j>t,\end{cases}
+\]
+es decir, es la softmax de $(S_{t1},\dots,S_{tt})$ completada con ceros. En particular, cada fila suma~1 y la fila~1 es $(1,0,\dots,0)$.
+\end{lema}
+
+\addtocounter{definicion}{1}%
+
+\begin{teorema}[Causalidad]\label{teo:causal}
+En el mini-GPT, para cada $t\in\{1,\dots,T\}$, los logits $z_t$ dependen solo de $x_{1:t}$: si dos ventanas $x$ y $x'$ coinciden en las $t$ primeras posiciones, entonces $z_t(x)=z_t(x')$.
+\end{teorema}
+
+\begin{corolario}\label{cor:una-pasada}
+Una sola evaluación del mini-GPT sobre la ventana $x_{1:T}$ produce, en cada posición $t$, los mismos logits que se obtendrían evaluándolo sobre el prefijo $x_{1:t}$. Por tanto, una pasada calcula las $T$ distribuciones $P_\theta(\cdot\mid x_{1:t})$ de la \cref{def:perdida}, cada una con su contexto correcto.
+\end{corolario}
+
+\begin{observacion}[Fuga del futuro]\label{obs:fuga}
+Sin la máscara, la posición $t$ puede atender a $x_{t+1}=y_t$. Una cabeza que copie el token siguiente lleva la pérdida a casi cero sin aprender a predecir nada, y el modelo falla al generar, cuando el futuro no existe. Una pérdida de validación próxima a cero en los primeros cientos de pasos es el síntoma característico (\cref{tab:sintomas}). La implementación original pone a $-\infty$ las entradas de la softmax correspondientes a conexiones ilegales~\cite[§3.2.3]{vaswani}.
+\end{observacion}
+
+\section{Recuento de parámetros}
+
+\begin{proposicion}[Parámetros del mini-GPT]\label{prop:parametros}
+Con proyecciones $W_Q,W_K,W_V$ sin sesgo, sesgos en $W_O$, en el MLP y en la cabeza, y sin compartir $E$ con $W_{\mathrm{s}}$, el mini-GPT de la \cref{def:minigpt} tiene
+\[
+N=\underbrace{Kd}_{E}+\underbrace{Td}_{P}+L\,(12d^{2}+10d)+\underbrace{2d}_{\LN_{\mathrm{f}}}+\underbrace{dK+K}_{\text{cabeza}}
+\]
+parámetros. El número de cabezas $n_h$ no interviene.
+\end{proposicion}
+
+\begin{table}[h]
+\centering\small
+\caption{Parámetros del mini-GPT de la práctica: $K=46$, $T=32$, $d=64$, $L=2$, $n_h=4$.}\label{tab:parametros}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Pieza & Fórmula & Parámetros \\
+\midrule
+Embedding de token & $Kd$ & 2\,944 \\
+Embedding de posición & $Td$ & 2\,048 \\
+Atención (por bloque) & $3d^{2}+d^{2}+d$ & 16\,448 \\
+MLP (por bloque) & $8d^{2}+5d$ & 33\,088 \\
+Dos normalizaciones (por bloque) & $4d$ & 256 \\
+Bloque completo & $12d^{2}+10d$ & 49\,792 \\
+Dos bloques & $2\,(12d^{2}+10d)$ & 99\,584 \\
+Normalización final & $2d$ & 128 \\
+Cabeza & $dK+K$ & 2\,990 \\
+\midrule
+Total & & 107\,694 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El 92~\% de los parámetros está en los bloques ($99\,584/107\,694=0{,}925$). El término $12d^{2}$ crece con el cuadrado de la anchura, mientras que las tablas crecen linealmente en $d$; en los modelos grandes la proporción de los bloques es aún mayor, salvo que el vocabulario sea muy grande (\cref{eje:2-gpt2}). Es la misma cuenta que el módulo~14 hace para un modelo de $7\cdot 10^{9}$ parámetros.
+
+\begin{observacion}[Pesos atados]\label{obs:atados}
+Vaswani \emph{et al.} comparten la matriz de embeddings con la transformación lineal previa a la softmax~\cite[§3.4]{vaswani}, de modo que $W_{\mathrm{s}}=E$ y se ahorran $Kd$ parámetros. El mini-GPT de la práctica no los ata; con atadura tendría $107\,694-2\,944=104\,750$ parámetros.
+\end{observacion}
+
+\section{Del mini-GPT a los modelos abiertos}
+
+Los modelos abiertos más citados usan la misma estructura con algunas piezas sustituidas. LLaMA normaliza la entrada de cada subcapa con RMSNorm, sustituye la GELU por SwiGLU con dimensión oculta $\tfrac23\cdot 4d$ y elimina los embeddings de posición absolutos en favor de las rotaciones RoPE en cada capa~\cite[§2.2]{llama}; CS336 adopta esas mismas piezas~\cite[§3]{cs336}. GPT-2, además de la normalización en la entrada de cada subbloque, escala por $1/\sqrt{N_{\mathrm{r}}}$ al inicializar los pesos de las capas residuales, con $N_{\mathrm{r}}$ el número de capas residuales, usa un vocabulario de $50\,257$ tokens y un contexto de $1024$~\cite[§2.3]{gpt2}. El \cref{tab:arquitecturas} resume las diferencias.
+
+\begin{table}[h]
+\centering\small
+\caption{Componentes del mini-GPT, de GPT-2 y de LLaMA, según los artículos citados y la implementación de GPT-2 de nanoGPT~\cite{nanogpt}.}\label{tab:arquitecturas}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Componente & Mini-GPT & GPT-2~\cite{gpt2} & LLaMA~\cite{llama} \\
+\midrule
+Posiciones & tabla aprendida $T\times d$ & tabla aprendida & RoPE en cada capa \\
+Normalización & LayerNorm pre-norm & LayerNorm pre-norm y final & RMSNorm pre-norm \\
+MLP & GELU, $d\to 4d\to d$ & GELU, $d\to 4d\to d$ & SwiGLU, dimensión $\tfrac23\cdot 4d$ \\
+Tokenizador & caracteres, $K=46$ & BPE de bytes, $K=50\,257$ & BPE (SentencePiece) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Sobre los modelos comerciales, la información pública es limitada: el informe técnico de Gemini indica que sus modelos se construyen sobre decoders Transformer~\cite[§2]{gemini}; xAI publicó en 2024 los pesos y el código de Grok-1, un Transformer de 64 capas con mezcla de 8 expertos y RoPE~\cite{grok1}, y Anthropic no ha publicado la arquitectura de Claude.
+

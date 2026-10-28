@@ -1,0 +1,94 @@
+% =====================================================================
+\chapter{Deduplicación: MinHash y LSH}
+\label{tema:2}
+% =====================================================================
+
+La web contiene muchas copias del mismo texto: páginas idénticas, plantillas, licencias que solo cambian en el año y el autor, artículos reproducidos con otro pie de página. Este tema estudia cómo detectarlas a escala de miles de millones de documentos. Los duplicados exactos se resuelven con funciones hash; los casi duplicados, con la similitud de Jaccard, las firmas MinHash y el \emph{hashing} sensible a la localidad (LSH). Se sigue el capítulo~3 de Leskovec, Rajaraman y Ullman~\cite{mmds} (§3.1, §3.3 y §3.4), las clases «Locality-Sensitive Hashing~I y~II» del curso CS246~\cite{cs246} y la sección~3 de la práctica de datos de CS336~\cite{cs336a4}. MinHash procede de Broder~\cite{broder}.
+
+\section{Por qué deduplicar}
+
+Lee \emph{et al.}~\cite{lee} mostraron que eliminar duplicados de corpus estándar reduce la frecuencia con que el modelo reproduce texto literal del entrenamiento y permite alcanzar la misma calidad con menos pasos. Hay tres razones complementarias.
+
+\begin{enumerate}
+  \item \emph{Cómputo.} Con un presupuesto $C\approx 6ND$ fijo (módulo~14), cada token repetido ocupa el lugar de uno nuevo.
+  \item \emph{Memorización.} Lo que aparece cientos de veces se aprende literalmente y puede regurgitarse, incluidos datos personales o protegidos.
+  \item \emph{Contaminación.} Si un documento de evaluación tiene copias en el corpus de entrenamiento, las métricas se inflan.
+\end{enumerate}
+
+\section{Duplicados exactos}
+
+\begin{definicion}[Huella]
+Sea $H\colon\Sigma^{*}\to\{0,1\}^{\ell}$ una función hash de $\ell$ bits (por ejemplo, SHA-1 o MD5). La \emph{huella} de un documento normalizado $x$ es $H(x)$. La deduplicación exacta conserva un documento por huella, con un recorrido y un diccionario de huellas: coste lineal en el tamaño del corpus.
+\end{definicion}
+
+\begin{proposicion}[Colisiones]\label{prop:colisiones}
+Supóngase que $H$ asigna a cada uno de $M$ documentos distintos un valor uniforme e independiente en $\{0,1\}^{\ell}$. El número esperado de pares de documentos distintos con la misma huella es $\binom{M}{2}2^{-\ell}$.
+\end{proposicion}
+
+Con $M=10^{9}$ documentos hay $\binom{M}{2}\approx 5\cdot 10^{17}$ pares: una huella de $64$ bits produce en promedio $0{,}027$ colisiones, y una de $128$ bits, $1{,}5\cdot 10^{-21}$. La deduplicación exacta también puede hacerse por líneas: se cuentan las apariciones de cada línea en el corpus y se eliminan las repetidas, lo que borra cabeceras, menús y pies de página~\cite[§3.1]{cs336a4}. Llama~3 elimina las líneas que aparecen más de seis veces en cada grupo de $30$ millones de documentos~\cite[§3.1.1]{llama3}.
+
+\section{Shingles y similitud de Jaccard}
+
+Dos páginas que solo difieren en la fecha tienen huellas distintas. Para detectar casi duplicados se representa cada documento por un conjunto y se mide el solapamiento~\cite[§3.1]{mmds}.
+
+\begin{definicion}[Shingles]
+Sea $k\ge 1$. El conjunto de \emph{$k$-shingles} de un documento de palabras $(u_1,\dots,u_T)$ es $S_k=\{(u_t,\dots,u_{t+k-1}):1\le t\le T-k+1\}$, el conjunto de grupos de $k$ palabras consecutivas.
+\end{definicion}
+
+\begin{definicion}[Similitud de Jaccard]
+Sean $A$ y $B$ conjuntos finitos, no ambos vacíos. Su \emph{similitud de Jaccard} es
+\[
+J(A,B)=\frac{\abs{A\cap B}}{\abs{A\cup B}}\in[0,1].
+\]
+Vale~$1$ si y solo si $A=B$ y vale~$0$ si y solo si son disjuntos. La \emph{distancia de Jaccard} $1-J(A,B)$ es una distancia en el sentido métrico~\cite[cap.~3]{mmds}.
+\end{definicion}
+
+\addtocounter{definicion}{1}%
+
+Comparar todos los pares de $M=10^{9}$ documentos exige unos $5\cdot 10^{17}$ cálculos de $J$, inabordable. Las dos secciones siguientes resuelven, respectivamente, el coste de almacenar los conjuntos y el de compararlos todos.
+
+\section{Firmas MinHash}
+
+\begin{definicion}[MinHash]
+Sea $\Omega$ un universo finito que contiene todos los shingles y sea $\pi$ una permutación de $\Omega$, identificada con una biyección $\pi\colon\Omega\to\{1,\dots,\abs{\Omega}\}$. El \emph{minhash} de un conjunto no vacío $S\subseteq\Omega$ es $h_\pi(S)=\min_{x\in S}\pi(x)$. Con $n$ permutaciones $\pi_1,\dots,\pi_n$, la \emph{firma} de $S$ es el vector $\sig(S)=\bigl(h_{\pi_1}(S),\dots,h_{\pi_n}(S)\bigr)$.
+\end{definicion}
+
+\begin{teorema}[Propiedad fundamental de MinHash]\label{teo:minhash}
+Si $\pi$ es una permutación uniforme de $\Omega$ y $A,B\subseteq\Omega$ son no vacíos,
+\[
+\PP\bigl(h_\pi(A)=h_\pi(B)\bigr)=J(A,B).
+\]
+\end{teorema}
+
+\begin{corolario}[Estimador de Jaccard]\label{cor:estimador}
+Sean $\pi_1,\dots,\pi_n$ permutaciones uniformes e independientes y sea $\hat J$ la fracción de coordenadas en que coinciden $\sig(A)$ y $\sig(B)$. Entonces $n\hat J\sim\mathrm{Bin}(n,J)$, con $J=J(A,B)$; en particular,
+\[
+\E[\hat J]=J\qquad\text{y}\qquad\Var(\hat J)=\frac{J(1-J)}{n}.
+\]
+\end{corolario}
+
+Con $n=100$ funciones, la desviación típica es como mucho $\sqrt{0{,}25/100}=0{,}05$. La firma sustituye un conjunto de miles de shingles por $n$ enteros. En la práctica, las permutaciones se aproximan con funciones hash de una misma familia con semillas distintas~\cite[§3.2]{cs336a4}: calcular $\min_{x\in S}h(x)$ requiere un único recorrido de $S$.
+
+\section{LSH por bandas}
+
+\begin{definicion}[LSH por bandas]
+Sea $n=br$. Se divide la firma en $b$ bandas de $r$ coordenadas consecutivas. Dos documentos son \emph{candidatos} si sus firmas coinciden en todas las coordenadas de al menos una banda. En la práctica se asigna cada banda de cada documento a un cubo mediante una función hash, y solo se comparan los documentos que comparten algún cubo.
+\end{definicion}
+
+\begin{proposicion}[Curva en S]\label{prop:curva-s}
+Sean dos documentos con similitud de Jaccard $s$ y firmas construidas con permutaciones independientes. La probabilidad de que sean candidatos es
+\[
+P(s)=1-\bigl(1-s^{r}\bigr)^{b}.
+\]
+La función $P$ es creciente en $[0,1]$, con $P(0)=0$ y $P(1)=1$; vale $1/2$ en $s_{1/2}=(1-2^{-1/b})^{1/r}$ y, si $r\ge 2$ y $b\ge 2$, tiene un único punto de inflexión en $(0,1)$,
+\[
+s^{*}=\Bigl(\frac{r-1}{rb-1}\Bigr)^{1/r}.
+\]
+\end{proposicion}
+
+Cuando $r$ es grande, $(r-1)/(rb-1)\to 1/b$, y se recupera la aproximación habitual del umbral, $s^{*}\approx(1/b)^{1/r}$~\cite[§3.4]{mmds}. Los pares con $s$ muy por debajo del umbral casi nunca se comparan y los pares con $s$ muy por encima casi siempre (\cref{fig:curva-s}).
+
+\addtocounter{figure}{1}%
+
+\addtocounter{definicion}{1}%
+

@@ -1,0 +1,77 @@
+% =====================================================================
+\chapter{Conexiones residuales}
+\label{tema:2}
+% =====================================================================
+
+Una conexión residual suma a la salida de un bloque su propia entrada. Con este cambio mínimo, el jacobiano de cada bloque pasa a ser la identidad más una corrección, y el producto de jacobianos del \cref{tema:1} contiene siempre un término que no se atenúa con la profundidad. Este tema define las redes residuales, demuestra sus propiedades de propagación hacia delante y hacia atrás, y describe el flujo residual de un Transformer. Se sigue el artículo original de He \emph{et al.}~\cite{resnet}, su continuación sobre aplicaciones identidad~\cite{resnet-id}, \cite[§8.6]{d2l} y \cite[§9.5]{bishopdl}.
+
+\section{Clases de funciones anidadas}
+
+Zhang \emph{et al.}~\cite[§8.6.1]{d2l} motivan las redes residuales con un argumento sobre clases de funciones. Sea $\mathcal{F}_L$ el conjunto de funciones que puede representar una arquitectura de $L$ bloques. Al añadir un bloque se esperaría $\mathcal{F}_L\subseteq\mathcal{F}_{L+1}$: una red más profunda debería poder imitar a la menos profunda. En una red plana esto exige que el bloque nuevo aprenda exactamente la identidad, lo que no es fácil con capas no lineales; empíricamente, las redes planas muy profundas obtienen \emph{mayor} error de entrenamiento que otras menos profundas~\cite{resnet}.
+
+\begin{definicion}[Bloque y red residual]\label{def:residual}
+Un \emph{bloque residual} es una aplicación $\R^{d}\to\R^{d}$ de la forma
+\[
+h\longmapsto h+F(h;\theta),
+\]
+donde $F$, la \emph{rama residual}, es una red diferenciable con parámetros $\theta$. Una \emph{red residual} de $L$ bloques calcula $h_\ell=h_{\ell-1}+F_\ell(h_{\ell-1})$ para $\ell=1,\dots,L$.
+\end{definicion}
+
+\begin{proposicion}[Anidamiento]\label{prop:anidamiento}
+Si cada rama $F_\ell$ termina en una capa lineal $u\mapsto Vu$, la red residual de $L+1$ bloques puede representar cualquier función que represente la de $L$ bloques.
+\end{proposicion}
+
+La proposición explica también la idea de \emph{residuo}: el bloque no tiene que aprender la transformación deseada $H(h)$, sino la diferencia $F(h)=H(h)-h$, que es pequeña cuando $H$ se parece a la identidad.
+
+\section{Propagación en una red residual}
+
+\begin{proposicion}[Propagación hacia delante]\label{prop:adelante}
+En una red residual, para $0\le\ell<L$,
+\[
+h_L=h_\ell+\sum_{k=\ell+1}^{L}F_k(h_{k-1}).
+\]
+\end{proposicion}
+
+La salida es la entrada de cualquier bloque más la suma de las aportaciones de los bloques posteriores. Esta lectura aditiva, destacada en~\cite[§2]{resnet-id}, contrasta con la composición $f_L\circ\cdots\circ f_1$ de una red plana.
+
+\begin{teorema}[Jacobiano de una red residual]\label{teo:jac-residual}
+Sea $J_\ell=\partial F_\ell/\partial h_{\ell-1}$, evaluado en $h_{\ell-1}$. Entonces
+\[
+\frac{\partial h_L}{\partial h_0}=(I+J_L)(I+J_{L-1})\cdots(I+J_1)
+=I+\sum_{\ell=1}^{L}J_\ell+\sum_{1\le\ell<k\le L}J_kJ_\ell+\cdots+J_L\cdots J_1,
+\]
+donde el desarrollo tiene $2^{L}$ términos, uno por cada subconjunto de bloques, con los factores en orden decreciente de índice. En particular, contiene el término $I$.
+\end{teorema}
+
+\begin{corolario}\label{cor:grad-residual}
+$\nabla_{h_0}\Loss=\nabla_{h_L}\Loss+\Bigl(\sum_{\ell}J_\ell+\sum_{\ell<k}J_kJ_\ell+\cdots\Bigr)\T\nabla_{h_L}\Loss$. El gradiente de la salida llega a la entrada sin atenuar, sumado a correcciones.
+\end{corolario}
+
+Cada término del desarrollo corresponde a un camino por la red que atraviesa un subconjunto de ramas y salta las demás. Una red plana solo dispone del camino $J_L\cdots J_1$, que es el último término.
+
+\addtocounter{definicion}{1}%
+
+\begin{proposicion}[Cota inferior]\label{prop:cota-residual}
+Si $\norm{J_\ell}_2\le a<1$ para todo $\ell$, entonces
+\[
+\smin\Bigl(\frac{\partial h_L}{\partial h_0}\Bigr)\ge(1-a)^{L}>0 .
+\]
+En particular, ningún vector de gradiente no nulo en la salida se anula en la entrada.
+\end{proposicion}
+
+En una red plana, en cambio, basta un $J_\ell$ con núcleo no trivial (una capa ReLU con unidades apagadas, por ejemplo) para que algún gradiente se anule. La cota de la \cref{prop:cota-residual} no impide el desvanecimiento si $a$ es grande, pero al inicio del entrenamiento las ramas tienen jacobianos pequeños y $(1\pm a)^{L}$ queda cerca de~1: con $a=0{,}01$ y $L=24$, entre $0{,}99^{24}=0{,}786$ y $1{,}01^{24}=1{,}27$.
+
+\addtocounter{figure}{1}%
+
+\section{El flujo residual de un Transformer}
+
+En un Transformer, el vector $h_\ell\in\R^{d}$ asociado a cada token recorre todos los bloques. Cada subbloque de atención o de perceptrón multicapa lee de él y le suma su aportación; por eso se le llama \emph{flujo residual}. La \cref{prop:adelante} dice que el flujo de la última capa es la suma del embedding inicial y de todas las aportaciones. En el módulo~23 se usará esta descomposición para interpretar qué escribe cada bloque.
+
+\begin{proposicion}[Crecimiento del flujo residual]\label{prop:crecimiento}
+Supóngase que, al inicio del entrenamiento, las aportaciones $F_k(h_{k-1})$ de una componente del flujo son variables aleatorias de media nula, incorreladas entre sí y con $h_0$, y con varianza $v$ cada una. Entonces $\Var\bigl((h_L)_i\bigr)=\Var\bigl((h_0)_i\bigr)+Lv$: la desviación típica del flujo crece como $\sqrt{L}$.
+\end{proposicion}
+
+Este crecimiento motiva dos prácticas de los modelos de lenguaje. GPT-2~\cite[§2.3]{gpt2} multiplica en la inicialización los pesos de las capas que escriben en el flujo por $1/\sqrt{N}$, con $N$ el número de capas residuales, lo que reduce cada varianza $v$ en un factor $N$. Y los Transformer pre-norm añaden una normalización final antes de la capa de salida (\cref{tema:3}).
+
+\addtocounter{definicion}{1}%
+

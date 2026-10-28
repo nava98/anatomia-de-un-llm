@@ -1,0 +1,102 @@
+% =====================================================================
+\chapter{Recuperación densa y búsqueda de vecinos más próximos}
+\label{tema:4}
+% =====================================================================
+
+Los modelos léxicos del \cref{tema:2} solo comparan términos idénticos. La recuperación densa representa consultas y pasajes por vectores de dimensión fija aprendidos por una red, de modo que textos con significado parecido quedan próximos aunque no compartan palabras. Este tema formula los codificadores duales y su entrenamiento contrastivo, relaciona las tres medidas de proximidad habituales (coseno, producto escalar y distancia euclídea) y estudia cómo buscar entre millones de vectores: la cuantización de producto, los índices invertidos, los grafos HNSW y la combinación con la búsqueda léxica. Se siguen la §11.3 de Jurafsky y Martin~\cite{jm3}, los artículos de Karpukhin \emph{et al.}~\cite{dpr}, Jégou, Douze y Schmid~\cite{jegou}, Malkov y Yashunin~\cite{hnsw} y Johnson, Douze y Jégou~\cite{faiss}, y la clase~10 de CS224N~\cite{cs224n}.
+
+\section{Codificadores duales}
+
+\begin{definicion}[Codificador dual]\label{def:biencoder}
+Un \emph{codificador dual} consta de dos redes $E_Q$ y $E_P$ que asignan a cada consulta $q$ y a cada pasaje $p$ vectores de $\R^{d}$. La similitud es el producto escalar
+\[
+s(q,p)=E_Q(q)^{\top}E_P(p).
+\]
+Los vectores $E_P(p)$ de toda la colección se calculan una sola vez, al indexar; ante cada consulta solo se calcula $E_Q(q)$.
+\end{definicion}
+
+En la recuperación densa de pasajes (DPR) de Karpukhin \emph{et al.}, $E_Q$ y $E_P$ son dos codificadores BERT independientes y el vector es el estado del token \texttt{[CLS]}, con $d=768$~\cite{dpr}. La separación en dos redes es lo que permite precalcular el índice: un \emph{codificador cruzado}, que procesa la consulta y el pasaje juntos, suele ser más preciso, pero exige una pasada de la red por cada pasaje candidato, por lo que se reserva para reordenar unos pocos resultados~\cite[§11.3]{jm3}.
+
+\begin{definicion}[Pérdida contrastiva]\label{def:contrastiva}
+Dada una consulta $q$ con un pasaje relevante $p^{+}$ y $r$ pasajes no relevantes $p^{-}_1,\dots,p^{-}_r$, con puntuaciones $s^{+}=s(q,p^{+})$ y $s^{-}_j=s(q,p^{-}_j)$, la pérdida es la log-verosimilitud negativa del positivo bajo una softmax sobre los $r+1$ candidatos:
+\[
+\mathcal{L}=-\ln\frac{e^{s^{+}}}{e^{s^{+}}+\sum_{j=1}^{r}e^{s^{-}_j}} .
+\]
+\end{definicion}
+
+\begin{proposicion}[Gradiente respecto de las puntuaciones]\label{prop:grad-contrastiva}
+Sea $\pi$ la softmax de las $r+1$ puntuaciones. Entonces $\partial\mathcal{L}/\partial s^{+}=\pi^{+}-1$ y $\partial\mathcal{L}/\partial s^{-}_j=\pi^{-}_j$.
+\end{proposicion}
+
+El entrenamiento sube la puntuación del positivo y baja la de cada negativo en proporción a la probabilidad que el modelo le asigna: los negativos difíciles, con puntuación alta, reciben el mayor empuje.
+
+\addtocounter{definicion}{1}%
+
+\begin{definicion}[Negativos del lote]\label{def:inbatch}
+En un lote de $B$ pares $(q_i,p_i^{+})$, sean $Q\in\R^{B\times d}$ y $P\in\R^{B\times d}$ las matrices de vectores de consultas y de pasajes positivos, y $S=QP^{\top}$. Para la consulta $i$, el positivo es $p_i^{+}$ y los negativos son los positivos de las demás consultas: la pérdida del lote es la media de $-\ln\softmax(S_{i,:})_i$.
+\end{definicion}
+
+Con $2B$ codificaciones se obtienen $B^{2}$ puntuaciones y $B-1$ negativos por consulta sin coste adicional de codificación. Karpukhin \emph{et al.} añaden a cada consulta un negativo difícil, el pasaje mejor puntuado por BM25 que no contiene la respuesta~\cite{dpr}.
+
+\section{Coseno, producto escalar y distancia euclídea}
+
+\begin{teorema}\label{teo:dist-coseno}
+Para $a,b\in\R^{d}$, $\norm{a-b}^{2}=\norm{a}^{2}+\norm{b}^{2}-2a^{\top}b$. En particular, si $\norm{a}=\norm{b}=1$, entonces $\norm{a-b}^{2}=2-2\cos(a,b)$.
+\end{teorema}
+
+Con vectores normalizados, mayor coseno equivale a menor distancia, de modo que las estructuras diseñadas para buscar vecinos próximos en distancia euclídea sirven también para el coseno (\cref{eje:4-iir-dist}). Con $a=(0{,}6;\,0{,}8)$ y $b=(1,0)$: $\norm{a-b}^{2}=0{,}16+0{,}64=0{,}8=2-2\cdot 0{,}6$. Si los vectores no están normalizados, buscar el máximo producto escalar (MIPS) no equivale a buscar el vecino más próximo, pero el problema se reduce a él.
+
+\begin{proposicion}[Reducción de MIPS a vecino más próximo]\label{prop:mips}
+Sean $x_1,\dots,x_N\in\R^{d}$, $M\ge\max_i\norm{x_i}$ y los vectores aumentados $\tilde x_i=\bigl(x_i,\sqrt{M^{2}-\norm{x_i}^{2}}\bigr)\in\R^{d+1}$ y $\tilde q=(q,0)$. Entonces $\norm{\tilde q-\tilde x_i}^{2}=\norm{q}^{2}+M^{2}-2q^{\top}x_i$, de modo que el vecino más próximo de $\tilde q$ entre los $\tilde x_i$ es el $x_i$ de máximo producto escalar con $q$.
+\end{proposicion}
+
+La demostración se pide en el \cref{eje:4-mips}. Con $x_1=(3,0)$, $x_2=(1,1)$, $x_3=(0,2)$, $q=(1,1)$ y $M=3$, los productos escalares son $3$, $2$ y $2$, y las distancias al cuadrado de los vectores aumentados, $2+9-6=5$, $7$ y $7$: el orden se conserva.
+
+\section{Búsqueda exacta y aproximada}
+
+La búsqueda exacta de los $k$ vectores más próximos recorre toda la colección: $N$ productos escalares de dimensión $d$, es decir, $Nd$ multiplicaciones y sumas por consulta. Con $N=10^{7}$ pasajes y $d=768$ son $7{,}68\cdot 10^{9}$ por consulta, y el índice ocupa $30{,}7$~GB en coma flotante de 32 bits. La \emph{búsqueda aproximada} renuncia a la exactitud a cambio de velocidad y memoria; su calidad se mide con la exhaustividad respecto de los $k$ vecinos exactos.
+
+\subsection{Cuantización de producto}
+
+\begin{definicion}[Cuantización de producto]\label{def:pq}
+Sea $d=mD$. Cada vector $x\in\R^{d}$ se divide en $m$ subvectores consecutivos $x^{(1)},\dots,x^{(m)}\in\R^{D}$. Para cada $j$ se aprende con $k$-medias un libro de códigos $\{c_{j,1},\dots,c_{j,k^\ast}\}\subset\R^{D}$ sobre los subvectores $j$-ésimos de la colección. El \emph{código} de $x$ es $(i_1,\dots,i_m)$, con $i_j$ el índice del centroide más próximo a $x^{(j)}$, y su reconstrucción es $\hat x=(c_{1,i_1},\dots,c_{m,i_m})$~\cite{jegou}.
+\end{definicion}
+
+\begin{proposicion}[Coste de la cuantización de producto]\label{prop:pq}
+(i) Cada código ocupa $m\log_2 k^\ast$ bits, los libros de códigos ocupan $k^\ast d$ números y el número de reconstrucciones distintas es $(k^\ast)^{m}$. (ii) Para una consulta $y$, la distancia asimétrica $\norm{y-\hat x}^{2}$ se descompone como
+\[
+\norm{y-\hat x}^{2}=\sum_{j=1}^{m}\norm{y^{(j)}-c_{j,i_j}}^{2},
+\]
+de modo que, precalculadas las $m$ tablas de $k^\ast$ distancias $\norm{y^{(j)}-c_{j,i}}^{2}$, con unas $k^\ast d$ operaciones, cada vector de la colección se evalúa con $m$ consultas a tabla y $m-1$ sumas.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+Para no recorrer toda la colección, se añade un \emph{índice invertido}: un cuantizador grueso de $k'$ celdas asigna cada vector a su celda y la búsqueda solo explora las $w$ celdas más próximas a la consulta, una fracción del orden de $w/k'$ de la colección~\cite{jegou}. La biblioteca FAISS implementa estas estructuras, también en GPU~\cite{faiss}.
+
+\subsection{Grafos de mundo pequeño navegables y jerárquicos}
+
+\begin{definicion}[HNSW]\label{def:hnsw}
+Un índice HNSW es una jerarquía de grafos sobre los vectores de la colección. Al insertar un elemento se le asigna un nivel máximo $\lambda=\lfloor-\ln(U)\,m_L\rfloor$, con $U$ uniforme en $(0,1]$ y $m_L>0$, y se inserta en las capas $0,\dots,\lambda$, unido en cada una a unos $M$ vecinos próximos. La búsqueda empieza en un punto de entrada de la capa superior, avanza de forma voraz hacia el vecino más próximo a la consulta en cada capa, usa el resultado como punto de entrada de la capa inferior y, en la capa~0, mantiene una lista de $\mathit{ef}$ candidatos~\cite{hnsw}.
+\end{definicion}
+
+\begin{proposicion}[Distribución de los niveles]\label{prop:hnsw}
+Para cada entero $j\ge 0$, $P(\lambda\ge j)=e^{-j/m_L}$. Con $m_L=1/\ln M$, $P(\lambda\ge j)=M^{-j}$, el número esperado de elementos en la capa $j$ es $NM^{-j}$ y la capa superior esperada está en torno a $\log_M N$.
+\end{proposicion}
+
+Cada capa tiene unas $M$ veces menos elementos que la inferior, como los niveles de una lista con saltos: las capas altas, con enlaces largos, acercan rápidamente la búsqueda a la región de la consulta, y las bajas la refinan. Malkov y Yashunin observan experimentalmente un coste de búsqueda que crece de forma logarítmica con $N$~\cite{hnsw}; no es un teorema para datos arbitrarios. Con $M=16$ y $N=10^{6}$, las capas $1$ a~$5$ tienen en media $62\,500$, $3906$, $244$, $15$ y~$1$ elementos.
+
+\section{Búsqueda híbrida}
+
+Los recuperadores densos y los léxicos fallan en casos distintos. Un recuperador denso sabe que «coche» y «automóvil» se parecen; BM25 no. BM25 acierta con nombres propios, códigos de error o identificadores, que un recuperador denso, entrenado en otro dominio, puede confundir con otros parecidos. Los sistemas de búsqueda híbrida combinan los rankings de ambos.
+
+\begin{definicion}[Fusión por rango recíproco]\label{def:rrf}
+Sean varios rankings $r=1,\dots,R$ y $\operatorname{rank}_r(d)$ la posición de $d$ en el ranking $r$. La puntuación fusionada es
+\[
+\operatorname{RRF}(d)=\sum_{r:\,d\in r}\frac{1}{\kappa+\operatorname{rank}_r(d)},
+\]
+con $\kappa=60$ en la propuesta original de Cormack, Clarke y Büttcher~\cite{cormack}.
+\end{definicion}
+
+\addtocounter{definicion}{1}%
+

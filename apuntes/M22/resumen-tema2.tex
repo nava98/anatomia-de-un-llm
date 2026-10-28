@@ -1,0 +1,104 @@
+% =====================================================================
+\chapter{Recuperación léxica: tf-idf, ordenación probabilística y BM25}
+\label{tema:2}
+% =====================================================================
+
+Un sistema RAG necesita, ante cada pregunta, los fragmentos de una colección que mejor la responden. Este es el problema clásico de la recuperación de información, que dispone de modelos con fundamento probabilístico y de décadas de evaluación. Este tema presenta los modelos léxicos, que comparan consulta y documento a través de los términos que comparten: el modelo de espacio vectorial con pesos tf-idf, el principio de ordenación por probabilidad, el modelo de independencia binaria y la función BM25. Se siguen los capítulos~6 y~11 de Manning, Raghavan y Schütze~\cite{iir}, la monografía de Robertson y Zaragoza~\cite{rz} y la §11.1 de Jurafsky y Martin~\cite{jm3}.
+
+\section{El problema de la recuperación}
+
+\begin{definicion}[Recuperación ordenada]\label{def:recuperacion}
+Sea una \emph{colección} $\Col=\{d_1,\dots,d_N\}$ de documentos (o trozos de documento) y una \emph{consulta} $q$. Para cada par existe un juicio de \emph{relevancia} $\operatorname{rel}(q,d)\in\{0,1\}$, y $\Rel_q=\{d\in\Col:\operatorname{rel}(q,d)=1\}$. Un \emph{sistema de recuperación ordenada} asigna a cada documento una puntuación $s(q,d)\in\R$ y devuelve los documentos en orden decreciente de puntuación. Se denota por $T_k$ el conjunto de los $k$ primeros.
+\end{definicion}
+
+Los documentos se representan por los \emph{términos} que contienen, tras una normalización (minúsculas, eliminación de signos y, a veces, de palabras vacías). Un \emph{índice invertido} guarda, para cada término $t$, la lista de documentos que lo contienen con su frecuencia. Para puntuar una consulta basta recorrer las listas de sus términos, de modo que el coste es proporcional a la suma de las longitudes de esas listas y no a $N$~\cite[§11.1.4]{jm3}.
+
+\section{Frecuencia de término y frecuencia inversa de documento}
+
+\begin{definicion}[Pesos tf-idf]\label{def:tfidf}
+Sean $f_{t,d}$ el número de apariciones del término $t$ en el documento $d$ (\emph{frecuencia de término}) y $\df_t$ el número de documentos de $\Col$ que contienen $t$ (\emph{frecuencia de documento}). La \emph{frecuencia inversa de documento} y el \emph{peso tf-idf} son
+\[
+\idf_t=\ln\frac{N}{\df_t},\qquad w_{t,d}=f_{t,d}\cdot\idf_t .
+\]
+Una variante frecuente sustituye $f_{t,d}$ por el peso sublineal $1+\ln f_{t,d}$ si $f_{t,d}>0$ y por~$0$ en otro caso~\cite[§6.4.1]{iir}.
+\end{definicion}
+
+Manning \emph{et al.} usan logaritmos decimales~\cite[§6.2.1]{iir}. La base no altera ningún ranking basado en el coseno, porque cambiarla multiplica todos los pesos por la misma constante positiva (\cref{prop:escala}).
+
+\begin{observacion}[La idf como información]\label{obs:idf-info}
+Si se elige un documento de $\Col$ al azar con probabilidad uniforme, la probabilidad de que contenga $t$ es $\df_t/N$, e $\idf_t=-\ln(\df_t/N)$ es la información propia de ese suceso, medida en nats (módulo~6). Un término presente en todos los documentos no aporta información sobre cuál es relevante y recibe $\idf_t=0$; un término muy raro es muy informativo. El peso tf-idf es alto cuando el término es frecuente en el documento y raro en la colección.
+\end{observacion}
+
+\section{El modelo de espacio vectorial}
+
+\begin{definicion}[Similitud coseno]\label{def:coseno}
+Fijado un orden del vocabulario de términos, cada documento se representa por el vector $V(d)=(w_{t,d})_t$ y la consulta por $V(q)$, construido del mismo modo. La puntuación del \emph{modelo de espacio vectorial} es
+\[
+\cos(q,d)=\frac{V(q)\cdot V(d)}{\norm{V(q)}\,\norm{V(d)}}\qquad\text{\cite[§6.3]{iir}}.
+\]
+\end{definicion}
+
+\begin{proposicion}[Invariancia de escala]\label{prop:escala}
+Para todo $\lambda,\mu>0$, $\cos(\lambda a,\mu b)=\cos(a,b)$. En particular, el coseno no cambia si todos los pesos se multiplican por una constante ni si un documento se concatena consigo mismo.
+\end{proposicion}
+
+La normalización por la norma elimina así la ventaja de los documentos largos, que contienen más términos de la consulta por azar. Si los vectores se normalizan al indexar, el coseno se reduce a un producto escalar, y puntuar toda la colección es un producto matriz por vector.
+
+\addtocounter{definicion}{1}%
+
+\section{El principio de ordenación por probabilidad}
+
+El modelo de espacio vectorial es geométrico y su justificación es empírica. El enfoque probabilístico parte de la pregunta que importa: ¿cuál es la probabilidad de que $d$ sea relevante para $q$?~\cite[§11.2]{iir}.
+
+\begin{teorema}[Principio de ordenación por probabilidad]\label{teo:prp}
+Sea $p_d=P(R=1\mid d,q)$ la probabilidad de que $d$ sea relevante y supóngase que la relevancia de cada documento no depende de qué otros documentos se muestren. Para cada $k$, entre todos los conjuntos $S\subseteq\Col$ con $\abs{S}=k$, el número esperado de documentos relevantes $\E\bigl[\abs{S\cap\Rel_q}\bigr]$ es máximo cuando $S$ está formado por los $k$ documentos de mayor $p_d$. Por tanto, ordenar por $p_d$ maximiza a la vez la precisión esperada en todos los cortes $k$.
+\end{teorema}
+
+La hipótesis de independencia entre documentos es restrictiva: ignora, por ejemplo, que dos duplicados aportan la misma información. Como $x\mapsto x/(1-x)$ es creciente en $[0,1)$, ordenar por $p_d$ equivale a ordenar por las \emph{razones de probabilidades} $O(R\mid d,q)=p_d/(1-p_d)$, que es lo que estima el modelo siguiente.
+
+\section{El modelo de independencia binaria}
+
+\begin{definicion}[Modelo de independencia binaria]\label{def:bim}
+Cada documento se representa por el vector binario $x=(x_t)_t$ con $x_t=\mathbb{1}[t\in d]$. Para cada término $t$ de la consulta se definen $p_t=P(x_t=1\mid R=1,q)$ y $u_t=P(x_t=1\mid R=0,q)$. El modelo supone que los $x_t$ son independientes condicionalmente a la relevancia y que los términos que no están en la consulta tienen la misma distribución en documentos relevantes y no relevantes~\cite[§11.3]{iir}.
+\end{definicion}
+
+\begin{proposicion}[Valor de estado de recuperación]\label{prop:rsv}
+Bajo el modelo de independencia binaria, ordenar por $O(R\mid x,q)$ equivale a ordenar por
+\[
+\operatorname{RSV}(d)=\sum_{t\in q\cap d}c_t,\qquad c_t=\ln\frac{p_t\,(1-u_t)}{u_t\,(1-p_t)} .
+\]
+\end{proposicion}
+
+\begin{corolario}[Sin juicios de relevancia]\label{cor:rsj}
+Si se toma $p_t=1/2$ y se estima $u_t$ por $\df_t/N$, suponiendo que casi todos los documentos son no relevantes, entonces $c_t=\ln\bigl((N-\df_t)/\df_t\bigr)$, que se aproxima a $\idf_t$ cuando $\df_t\ll N$.
+\end{corolario}
+
+El modelo probabilístico recupera así la idf como peso de un término. Al suavizar las estimaciones sumando $1/2$ a los conteos se obtiene el \emph{peso de Robertson--Spärck Jones}, $\ln\bigl((N-\df_t+0{,}5)/(\df_t+0{,}5)\bigr)$~\cite{rz}, que es negativo cuando $\df_t>N/2$: con $N=10$ y $\df_t=8$ vale $\ln(2{,}5/8{,}5)=-1{,}2238$. Para evitar pesos negativos, muchas implementaciones usan la variante $\ln\bigl(1+(N-\df_t+0{,}5)/(\df_t+0{,}5)\bigr)$, que en ese caso vale $0{,}2578$; es la que se adopta en estos apuntes.
+
+\section{BM25}
+
+El modelo binario ignora cuántas veces aparece un término y la longitud del documento. La función BM25 incorpora ambas cosas con dos principios: la frecuencia \emph{se satura}, de modo que la décima aparición aporta menos que la primera, y la longitud \emph{se normaliza}, porque un documento largo contiene más apariciones por azar~\cite[§11.4.3]{iir}, \cite{rz}.
+
+\begin{definicion}[BM25]\label{def:bm25}
+Sean $k_1\ge 0$ y $0\le b\le 1$, $n_t=\df_t$, $\bar\ell$ la longitud media de los documentos y $\ell=\abs{d}/\bar\ell$. La puntuación BM25 es
+\[
+\BM(q,d)=\sum_{t\in q}\idf^{\mathrm{BM}}_t\;g(f_{t,d},\ell),\qquad
+g(f,\ell)=\frac{f\,(k_1+1)}{f+k_1\,(1-b+b\,\ell)},
+\]
+con $\idf^{\mathrm{BM}}_t=\ln\bigl(1+(N-n_t+0{,}5)/(n_t+0{,}5)\bigr)$. Los valores habituales son $k_1\in[1{,}2;\,2]$ y $b=0{,}75$.
+\end{definicion}
+
+\begin{proposicion}[Saturación y normalización]\label{prop:bm25}
+Sean $k_1>0$ y $0\le b\le 1$. El factor $g(f,\ell)$ es estrictamente creciente en $f$, tiende a $k_1+1$ cuando $f\to\infty$ y, si $b>0$, es estrictamente decreciente en $\ell$ para $f>0$. Además, $g(1,1)=1$; con $b=0$ no depende de $\ell$, y con $k_1=0$ vale~1 para todo $f>0$, de modo que BM25 se reduce a sumar los pesos idf de los términos presentes.
+\end{proposicion}
+
+La demostración de las tres primeras afirmaciones se pide en el \cref{eje:2-sat}; las restantes se comprueban sustituyendo. El parámetro $k_1$ controla la rapidez de la saturación y $b$ la intensidad de la normalización por longitud: con $b=1$ la frecuencia se mide en relación con la longitud relativa del documento. Robertson y Zaragoza justifican la forma de $g$ como aproximación de un modelo de dos poissonianas, en el que cada término es o no «elite» para el documento~\cite{rz}.
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}
+BM25 sigue siendo una referencia difícil de batir en muchas colecciones y es la parte léxica habitual de los sistemas de búsqueda híbrida (tema~4). Acierta con nombres propios, códigos y términos poco frecuentes, en los que la coincidencia exacta es lo que importa, y falla con sinónimos y paráfrasis: «coche» y «automóvil» no comparten ningún término.
+\end{observacion}
+

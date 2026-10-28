@@ -1,0 +1,92 @@
+% =====================================================================
+\chapter{Estabilidad numérica de softmax y entropía cruzada}
+\label{tema:6}
+% =====================================================================
+
+La capa de salida de un modelo de lenguaje calcula una softmax sobre decenas de miles de logits, y la pérdida de entrenamiento es su entropía cruzada (módulo~1). Ambas contienen exponenciales, que en coma flotante desbordan o se anulan con argumentos moderados. Este tema determina esos límites, introduce la función log-sum-exp y su evaluación estable, deduce de ella la forma correcta de calcular la entropía cruzada a partir de los logits y termina con la propagación de \NaN\ y un procedimiento para diagnosticar una pérdida que deja de ser finita. Se sigue~\cite[§4.1]{gbc}, \cite[§4.5.2]{d2l} y las prácticas de CS336~\cite{cs336}.
+
+\section{Límites de la exponencial}
+
+\begin{proposicion}\label{prop:exp-rango}
+En un formato con mayor número finito $x_{\max}$ y menor normal $x_{\min}$, el valor exacto $e^{t}$ es finito y normal si y solo si $\ln x_{\min}\le t\le\ln x_{\max}$. Los intervalos son, aproximadamente,
+\[
+\text{fp32 y bf16: }[-87{,}3;\ 88{,}7],\qquad \text{fp16: }[-9{,}70;\ 11{,}09].
+\]
+\end{proposicion}
+
+Por debajo del límite inferior, el resultado es subnormal, con menos bits de precisión, y algo más abajo se anula. Goodfellow \emph{et al.}~\cite[§4.1]{gbc} describen las dos formas en que falla la softmax ingenua $e^{z_i}/\sum_je^{z_j}$: si algún logit es grande, el numerador y el denominador desbordan y el cociente $\infty/\infty$ es \NaN; si todos son muy negativos, ambos se anulan y $0/0$ es \NaN.
+
+\section{La función log-sum-exp}
+
+\begin{definicion}[Log-sum-exp]\label{def:lse}
+Para $z\in\R^{n}$, $\LSE(z)=\ln\sum_{i=1}^{n}e^{z_i}$. La softmax del módulo~1 se escribe $\softmax(z)_i=e^{z_i-\LSE(z)}$.
+\end{definicion}
+
+\begin{proposicion}[Propiedades de log-sum-exp]\label{prop:lse}
+Sea $z\in\R^{n}$ y $c\in\R$.
+\begin{enumerate}
+  \item $\LSE(z+c\uno)=\LSE(z)+c$ y $\softmax(z+c\uno)=\softmax(z)$.
+  \item $\max_iz_i\le\LSE(z)\le\max_iz_i+\ln n$; la cota superior se alcanza si y solo si todas las componentes son iguales.
+  \item $\nabla\LSE(z)=\softmax(z)$.
+  \item $\nabla^{2}\LSE(z)=\diag(p)-pp\T$ con $p=\softmax(z)$, que es semidefinida positiva; en consecuencia, $\LSE$ es convexa.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proposicion}[Evaluación estable]\label{prop:lse-estable}
+Sea $c=\max_iz_i$. Entonces
+\[
+\LSE(z)=c+\ln S,\qquad \softmax(z)_i=\frac{e^{z_i-c}}{S},\qquad S=\sum_{i=1}^{n}e^{z_i-c}\in[1,n].
+\]
+En esta forma ninguna exponencial desborda, porque todos sus argumentos son $\le 0$, y el denominador nunca se anula, porque contiene el término $e^{0}=1$.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\section{Entropía cruzada a partir de los logits}
+
+\begin{proposicion}[Log-softmax y entropía cruzada]\label{prop:ce}
+Sea $z\in\R^{n}$ el vector de logits y $y\in\{1,\dots,n\}$ la clase correcta. Entonces
+\[
+\ln\softmax(z)_i=z_i-\LSE(z),\qquad \ell(z,y)=-\ln\softmax(z)_y=\LSE(z)-z_y\ge 0,
+\]
+\[
+\nabla_z\ell=\softmax(z)-e_y,
+\]
+donde $e_y$ es el vector canónico.
+\end{proposicion}
+
+La fórmula $\ell=\LSE(z)-z_y$, calculada con la \cref{prop:lse-estable}, no evalúa nunca el logaritmo de un número que pueda haberse anulado. Por eso las funciones de pérdida de las bibliotecas, como \texttt{F.cross\_entropy} de PyTorch, reciben logits y no probabilidades~\cite[§4.5.2]{d2l}, y la composición \texttt{torch.log(torch.softmax(z))} debe evitarse.
+
+\addtocounter{definicion}{1}%
+
+\section{Propagación de \texorpdfstring{\NaN}{NaN} y diagnóstico}
+
+La norma IEEE~754~\cite{ieee754} define como \NaN\ los resultados de las operaciones inválidas ${\infty-\infty}$, ${0\cdot\infty}$, ${0/0}$, ${\infty/\infty}$ y $\sqrt{x}$ con $x<0$, y establece que toda operación aritmética con un operando \NaN\ da \NaN; además, toda comparación con \NaN\ es falsa. En particular, $\NaN\cdot 0=\NaN$: multiplicar por cero no limpia el valor.
+
+\begin{observacion}[Contagio]\label{obs:contagio}
+Si la pérdida de un paso es \NaN, la retropropagación multiplica ese valor por todos los jacobianos locales, de modo que el gradiente de todo parámetro del que depende la pérdida es \NaN, y la actualización convierte esos parámetros en \NaN. A partir de ese paso la red ya no produce números. Por eso el diagnóstico debe hacerse en el primer paso en que aparece un valor no finito.
+\end{observacion}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Síntoma & Causa probable & Remedio \\
+\midrule
+La pérdida crece varios órdenes de magnitud y luego da \NaN & tasa de aprendizaje alta; gradientes que explotan (\cref{tema:1}) & bajar la tasa, calentamiento, recorte del gradiente (\cref{tema:4}) \\
+\Inf\ repentino en fp16 & desbordamiento por encima de $65\,504$ & bf16, o escalado dinámico de la pérdida (\cref{tema:5}) \\
+\NaN\ en una softmax o un logaritmo & exponencial desbordada, $\ln 0$ & \cref{prop:lse-estable}; entropía cruzada con logits \\
+\NaN\ en una normalización & división por $\RMS(x)=0$ & $\epsilon>0$ dentro de la raíz (\cref{tema:3}) \\
+Picos aislados de la pérdida & lote anómalo & recorte, descartar el lote, volver a un punto de control \\
+\bottomrule
+\end{tabularx}
+\caption{Diagnóstico de una pérdida no finita.}
+\label{tab:diagnostico}
+\end{table}
+
+\addtocounter{figure}{1}%
+
+\begin{observacion}[Lo que se observa en la práctica]
+En la práctica del módulo se provoca el fallo a propósito: una red residual sin normalizar entrenada con tasa de aprendizaje~10 pasa de una pérdida de $2{,}6$ a $10^{30}$ y llega a \NaN\ en el paso~24. Con recorte del gradiente a norma~1, la pérdida se mantiene finita durante los 60 pasos.
+\end{observacion}
+

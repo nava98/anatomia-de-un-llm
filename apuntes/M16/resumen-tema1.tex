@@ -1,0 +1,113 @@
+% =====================================================================
+\chapter{Datos de preentrenamiento}
+\label{tema:1}
+% =====================================================================
+
+El preentrenamiento minimiza la entropía cruzada media sobre un corpus (módulo~1, tema~5), de modo que el modelo aprende la distribución del texto que se le muestra. La composición de ese corpus es, por tanto, una decisión de diseño tan importante como la arquitectura. Este tema describe cómo se obtiene un corpus a partir de la web y formaliza tres de sus etapas: los filtros de calidad, el filtro por perplejidad y la mezcla de fuentes. Se siguen las secciones~2 y~4 de la práctica de datos de CS336~\cite{cs336a4}, la clase sobre datos de CS324~\cite{cs324} y los informes de CCNet~\cite{wenzek}, Gopher~\cite[§3.4 y apéndice~A]{rae}, RefinedWeb~\cite[§3]{refinedweb}, FineWeb~\cite{fineweb} y LLaMA~\cite[§2.1]{llama}. La deduplicación, que también forma parte del proceso, se estudia por separado en el \cref{tema:2}.
+
+\section{Del rastreo web al corpus}
+
+\begin{definicion}[Corpus de preentrenamiento]
+Un \emph{corpus de preentrenamiento} es una colección finita de documentos $\mathcal{C}=\{x^{(1)},\dots,x^{(M)}\}$, cada uno una secuencia de tokens. Su \emph{tamaño} es el número total de tokens, $\sum_{m}\abs{x^{(m)}}$. Un \emph{filtro} es un predicado $f$ sobre documentos; aplicarlo a $\mathcal{C}$ produce $\{x\in\mathcal{C}:f(x)=1\}$. Un proceso de preparación es una composición de transformaciones (extracción, normalización) y filtros.
+\end{definicion}
+
+La fuente principal es la web. Common Crawl publica volcados periódicos de miles de millones de páginas; FineWeb, por ejemplo, se construyó a partir de 96 volcados y contiene unos $15$ billones de tokens~\cite{fineweb}. La \cref{fig:proceso} resume las etapas habituales. Casi todo el material en bruto se descarta: en RefinedWeb, la identificación del idioma elimina cerca de la mitad de los documentos, y el conjunto del proceso, casi el $90\,\%$~\cite[§3 y figura~2]{refinedweb}.
+
+\addtocounter{figure}{1}%
+
+\section{Filtros heurísticos de calidad}
+
+Los filtros más sencillos son reglas sobre estadísticas superficiales del documento. Son baratos, deterministas y fáciles de auditar. El informe de Gopher~\cite[apéndice~A]{rae} define un conjunto de ellas; la práctica de CS336~\cite[§2.6]{cs336a4} usa el siguiente subconjunto.
+
+\begin{definicion}[Filtros de Gopher, subconjunto de CS336]\label{def:gopher}
+Un documento con $W$ palabras, longitud media de palabra $\bar{\ell}$ (en caracteres) y $\Lambda$ líneas \emph{pasa} el filtro si se cumplen las cuatro condiciones siguientes:
+\begin{enumerate}
+  \item $50\le W\le 100\,000$;
+  \item $3\le\bar{\ell}\le 10$;
+  \item como mucho el $30\,\%$ de las $\Lambda$ líneas termina en puntos suspensivos;
+  \item al menos el $80\,\%$ de las palabras contiene un carácter alfabético.
+\end{enumerate}
+\end{definicion}
+
+\addtocounter{definicion}{1}%
+
+\section{Filtro por perplejidad}
+
+CCNet~\cite{wenzek} puntúa cada página con un modelo de $n$-gramas entrenado sobre Wikipedia y conserva las de perplejidad baja; LLaMA usó este proceso para su parte de Common Crawl~\cite[§2.1]{llama}. La idea es que el texto parecido al de referencia recibe probabilidad alta. El caso de un modelo de unigramas permite analizar exactamente qué mide el filtro.
+
+\begin{definicion}[Perplejidad de un documento]
+Sea $q$ una distribución sobre $\V$ con $q(v)>0$ para todo $v$ (un modelo de unigramas de referencia) y sea $x=(x_1,\dots,x_T)$ un documento. La perplejidad de $x$ según $q$ es
+\[
+\PPL_q(x)=\exp\Bigl(-\frac1T\sum_{t=1}^{T}\ln q(x_t)\Bigr).
+\]
+La \emph{distribución empírica} de $x$ es $\hat p_x(v)=\abs{\{t:x_t=v\}}/T$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:ppl-kl}
+Para todo documento $x$,
+\[
+\ln\PPL_q(x)=H(\hat p_x,q)=H(\hat p_x)+D(\hat p_x\,\|\,q).
+\]
+\end{proposicion}
+
+La \cref{prop:ppl-kl} muestra que el filtro premia dos cosas distintas: que el documento se parezca a la referencia (divergencia pequeña) y que el documento sea poco variado (entropía empírica pequeña). La segunda es indeseable.
+
+\begin{corolario}[El filtro premia la repetición]\label{cor:repeticion}
+Sea $q_{\max}=\max_v q(v)$. Para todo documento $x$, $\PPL_q(x)\ge 1/q_{\max}$, con igualdad si y solo si todos los tokens de $x$ maximizan $q$.
+\end{corolario}
+
+\addtocounter{definicion}{1}%
+
+\section{Clasificadores de calidad}
+
+Una alternativa es aprender qué es «calidad» a partir de ejemplos. Se toman como positivos documentos de una fuente de referencia (por ejemplo, páginas citadas desde Wikipedia) y como negativos páginas aleatorias de Common Crawl, y se entrena un clasificador lineal~\cite[§2.7]{cs336a4}.
+
+\begin{definicion}[Filtro por clasificador]
+Sea $g\colon\mathcal{X}\to[0,1]$ un clasificador que estima la probabilidad de que un documento proceda de la fuente de referencia. El filtro con umbral $\tau$ conserva los documentos con $g(x)\ge\tau$. Subir $\tau$ aumenta la precisión y reduce la cobertura.
+\end{definicion}
+
+LLaMA entrenó un clasificador lineal que distingue las páginas usadas como referencia en Wikipedia de páginas aleatorias, y descartó las no clasificadas como referencia~\cite[§2.1]{llama}. FineWeb-Edu sustituye la fuente de referencia por anotaciones de un modelo grande: Llama-3-70B-Instruct puntuó el «valor educativo» de una muestra de páginas de $0$ a $5$, se ajustó una regresión sobre embeddings y se conservaron las páginas con puntuación al menos~$3$, unos $1{,}3$ billones de tokens~\cite[§4]{fineweb}.
+
+\begin{observacion}
+«Calidad» es una elección, no una propiedad objetiva del texto. Un clasificador entrenado con Wikipedia como modelo de lo deseable tiende a descartar registros informales, variedades dialectales e idiomas con pocos recursos, y el modelo resultante hereda ese sesgo. Las reglas heurísticas tienen el mismo problema en menor grado: un umbral de longitud media de palabra pensado para el inglés no es neutral para otros idiomas.
+\end{observacion}
+
+\section{Mezcla de fuentes y épocas}
+
+El corpus final combina varias fuentes (web, código, libros, artículos científicos, Wikipedia) con pesos fijados por experimentos.
+
+\begin{definicion}[Mezcla y épocas]\label{def:mezcla}
+Sean $m$ fuentes con $U_i$ tokens únicos cada una y sean $w_i\ge 0$, $\sum_i w_i=1$, los \emph{pesos de muestreo}. Un entrenamiento de $D$ tokens extrae $w_iD$ tokens de la fuente $i$; su número de \emph{épocas} es
+\[
+e_i=\frac{w_iD}{U_i}.
+\]
+Si $e_i>1$, la fuente se \emph{sobremuestrea}: parte de su texto se ve varias veces.
+\end{definicion}
+
+\begin{proposicion}\label{prop:factible}
+Sea $E_{\max}>0$. Existe una mezcla con $e_i\le E_{\max}$ para todo $i$ si y solo si $D\le E_{\max}\sum_{i}U_i$.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\section{La escala de los datos}
+
+La \cref{tab:tokens-param} recoge la relación entre tokens de entrenamiento y parámetros de varios modelos con informe público. El cambio entre 2020 y 2023 se explica en los temas~\ref{tema:4} y~\ref{tema:5}.
+
+\begin{table}[h]
+\centering\small
+\caption{Parámetros, tokens de entrenamiento y tokens por parámetro.}\label{tab:tokens-param}
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Modelo (referencia) & $N$ & $D$ & $D/N$ \\
+\midrule
+GPT-3~\cite{brown} & $1{,}75\cdot 10^{11}$ & $3\cdot 10^{11}$ & $1{,}7$ \\
+Gopher~\cite{rae} & $2{,}8\cdot 10^{11}$ & $3\cdot 10^{11}$ & $1{,}1$ \\
+Chinchilla~\cite{hoffmann} & $7\cdot 10^{10}$ & $1{,}4\cdot 10^{12}$ & $20$ \\
+LLaMA 7B~\cite{llama} & $6{,}7\cdot 10^{9}$ & $10^{12}$ & $149$ \\
+Llama~2 7B~\cite{llama2} & $6{,}74\cdot 10^{9}$ & $2\cdot 10^{12}$ & $297$ \\
+Llama~3 405B~\cite{llama3} & $4{,}05\cdot 10^{11}$ & $1{,}56\cdot 10^{13}$ & $38{,}5$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+

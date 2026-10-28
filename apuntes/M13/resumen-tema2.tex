@@ -1,0 +1,95 @@
+% =====================================================================
+\chapter{Atención por producto escalar escalado}
+\label{tema:2}
+% =====================================================================
+
+Este tema escribe la autoatención de todas las posiciones a la vez como dos productos de matrices y una softmax por filas, resuelve a mano un ejemplo completo, demuestra que la operación es equivariante por permutaciones y justifica el factor $1/\sqrt{d_k}$ con un argumento de varianza y con la jacobiana de la softmax. Se siguen la §3.2.1 de~\cite{vaswani}, las §7.1.1 y §7.3 de~\cite{jm3}, la §11.3 de~\cite{d2l} y la §12.1 de~\cite{bishopdl}.
+
+\section{Forma matricial}
+
+Se apilan las consultas, claves y valores de las $n$ posiciones como filas de $Q=X\WQ\in\R^{n\times d_k}$, $K=X\WK\in\R^{n\times d_k}$ y $V=X\WV\in\R^{n\times d_v}$.
+
+\begin{definicion}[Atención por producto escalar escalado]\label{def:sdpa}
+Para $Q\in\R^{n\times d_k}$, $K\in\R^{m\times d_k}$ y $V\in\R^{m\times d_v}$,
+\[
+\Att(Q,K,V)=\softmax\!\Bigl(\frac{QK\T}{\sqrt{d_k}}\Bigr)V,
+\]
+donde la softmax se aplica a cada fila. La matriz $A=\softmax(QK\T/\sqrt{d_k})\in\R^{n\times m}$ se llama \emph{matriz} (o \emph{mapa}) \emph{de atención}.
+\end{definicion}
+
+La entrada $(i,j)$ de $S=QK\T$ es $q_i\cdot k_j$, de modo que la fila $i$ de $A$ contiene los pesos de la \cref{def:agrupacion} para la consulta $q_i$ con puntuación $q\cdot k/\sqrt{d_k}$, y la fila $i$ de $AV$ es la salida $o_i$. La \cref{tab:formas} resume las formas. Vaswani \emph{et al.} introdujeron el nombre y la fórmula~\cite[§3.2.1, ec.~(1)]{vaswani}; la tarea~1 de CS336 la adopta con $m\ne n$ para cubrir la atención cruzada~\cite[§3.4.4]{cs336}.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}clll@{}}
+\toprule
+Paso & Operación & Forma & Significado \\
+\midrule
+1 & $S=QK\T$ & $n\times m$ & $s_{ij}=q_i\cdot k_j$ \\
+2 & $S/\sqrt{d_k}$ & $n\times m$ & escalado (\cref{sec:escalado}) \\
+3 & $A=\softmax(S/\sqrt{d_k})$ & $n\times m$ & cada fila es una distribución \\
+4 & $O=AV$ & $n\times d_v$ & fila $i$: media ponderada de valores \\
+\bottomrule
+\end{tabular}
+\caption{Formas de las matrices intermedias de la atención.}
+\label{tab:formas}
+\end{table}
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{figure}{1}%
+
+\section{Equivariancia por permutaciones}
+
+\begin{proposicion}[Equivariancia]\label{prop:equivariancia}
+Sea $f(X)=\softmax\bigl(X\WQ(X\WK)\T/\sqrt{d_k}\bigr)X\WV$ la autoatención sin máscara y sea $P\in\R^{n\times n}$ una matriz de permutación. Entonces $f(PX)=P\,f(X)$.
+\end{proposicion}
+
+La autoatención no distingue, por sí sola, el orden de los tokens: «el perro muerde al hombre» y «el hombre muerde al perro» producen las mismas salidas, solo que en otras filas. Por eso los modelos de lenguaje añaden información de posición a los vectores de entrada (módulo~14), y por eso la máscara causal del \cref{tema:3}, que sí depende del orden, rompe esta simetría.
+
+\section{Por qué se divide por \texorpdfstring{$\sqrt{d_k}$}{raíz de dk}}
+\label{sec:escalado}
+
+Vaswani \emph{et al.} justifican el factor con un argumento de varianza que enuncian en una nota al pie~\cite[§3.2.1, nota~4]{vaswani}; Zhang \emph{et al.}~\cite[§11.3.3]{d2l} y Jurafsky y Martin~\cite[§7.1.1]{jm3} lo reproducen. Se da aquí con demostración.
+
+\begin{teorema}[Varianza del producto escalar]\label{teo:varianza}
+Sean $q=(q_1,\dots,q_{d_k})$ y $k=(k_1,\dots,k_{d_k})$ vectores aleatorios cuyas $2d_k$ componentes son independientes, de media~0 y varianza~1. Entonces
+\[
+\E[q\cdot k]=0,\qquad \Var(q\cdot k)=d_k,\qquad \Var\Bigl(\frac{q\cdot k}{\sqrt{d_k}}\Bigr)=1 .
+\]
+\end{teorema}
+
+Por el teorema central del límite, $q\cdot k/\sqrt{d_k}$ es aproximadamente $\mathcal N(0,1)$ para $d_k$ grande. Sin el factor, con $d_k=64$ los parecidos tendrían desviación típica~8 en la inicialización y diferencias de~16 entre dos claves serían frecuentes. Una simulación con $2\cdot 10^{5}$ pares de vectores gaussianos da varianzas empíricas $4{,}00$ para $d_k=4$ y $63{,}8$ para $d_k=64$.
+
+Para ver por qué importa la escala se necesita la jacobiana de la softmax, calculada en el módulo~4 con la regla del cociente.
+
+\begin{proposicion}[Saturación de la softmax]\label{prop:saturacion}
+Sea $p=\softmax(z)\in\R^{n}$ y $J=\partial p/\partial z$, de entradas $J_{ij}=p_i(\delta_{ij}-p_j)$. Entonces
+\[
+\max_{i,j}\abs{J_{ij}}\;\le\;1-\max_{l}p_l .
+\]
+En consecuencia, si una probabilidad tiende a~1, todas las derivadas parciales de la softmax tienden a~0.
+\end{proposicion}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lll@{}}
+\toprule
+Logits $z$ & $\softmax(z)$ & $\max\abs{J_{ij}}$ \\
+\midrule
+$(1,0,0)$ & $(0{,}576;\allowbreak\ 0{,}212;\allowbreak\ 0{,}212)$ & $0{,}244$ \\
+$(8,0,0)$ & $(0{,}9993;\allowbreak\ 0{,}0003;\allowbreak\ 0{,}0003)$ & $0{,}00067$ \\
+\bottomrule
+\end{tabular}
+\caption{Con logits ocho veces mayores, las derivadas de la softmax se reducen en un factor de unos 360.}
+\label{tab:saturacion}
+\end{table}
+
+\begin{observacion}[El factor como temperatura]
+Dividir por $\sqrt{d_k}$ equivale a aplicar la softmax con temperatura $\tau=\sqrt{d_k}$ (módulo~1, tema~4). Sin ella, el modelo empezaría en la región saturada: en el \cref{ej:tres}, sin dividir por~2, el peso de la fila~2 sobre la posición~2 pasa de $0{,}867$ a $0{,}982$. Vaswani \emph{et al.} observan, en la misma línea, que sin escalado la atención aditiva supera a la de producto escalar cuando $d_k$ es grande~\cite[§3.2.1]{vaswani}. Durante el entrenamiento, la red puede modificar la escala efectiva agrandando o encogiendo $\WQ$ y $\WK$.
+\end{observacion}
+
+\begin{observacion}[Evaluación estable]
+Como la softmax es invariante al restar una constante a todas las entradas, se evalúa restando el máximo de cada fila antes de exponenciar, lo que evita desbordamientos en fp16 (módulo~11). La tarea~1 de CS336 exige implementarla así~\cite[§3.4.4]{cs336}.
+\end{observacion}
+

@@ -1,0 +1,97 @@
+% =====================================================================
+\chapter{Decodificación especulativa}
+\label{tema:3}
+% =====================================================================
+
+El \cref{tema:2} mostró que un paso de decodificación está limitado por la lectura de los pesos: procesar unas pocas posiciones más en la misma pasada apenas cuesta tiempo. La \emph{decodificación especulativa} aprovecha esta asimetría entre generar y verificar. Un modelo pequeño (el \emph{borrador}) propone varios tokens y el modelo grande (el \emph{objetivo}) los verifica todos en una sola pasada con una regla de aceptación y rechazo que preserva \emph{exactamente} su distribución. Se siguen el artículo de Leviathan, Kalman y Matias~\cite{leviathan} (secciones~2 y~3 y apéndice~A.1), el de Chen \emph{et al.}~\cite{chen}, que propuso el mismo algoritmo de forma independiente con el nombre de \emph{speculative sampling}, y la clase~10 de CS336~\cite{cs336}.
+
+\section{El algoritmo}
+
+En todo el tema, $p(\cdot\mid x_{<t})$ es la distribución del modelo objetivo y $q(\cdot\mid x_{<t})$ la del borrador, ambas ya modificadas por la regla de muestreo que se desee (temperatura, núcleo, etc.). Cuando el contexto está fijado se escribe simplemente $p(x)$ y $q(x)$.
+
+\begin{definicion}[Ronda de decodificación especulativa]\label{def:ronda}
+Sea $\gamma\ge 1$ un entero y sea $x_{<t}$ el prefijo actual. Una \emph{ronda} consiste en:
+\begin{enumerate}[label=\arabic*.]
+  \item El borrador genera $\tilde x_1,\dots,\tilde x_\gamma$ de forma autorregresiva, con $\tilde x_i\sim q(\cdot\mid x_{<t},\tilde x_{<i})$, y guarda esas probabilidades.
+  \item El modelo objetivo procesa en una sola pasada el prefijo y los $\gamma$ tokens propuestos, y obtiene $p(\cdot\mid x_{<t},\tilde x_{<i})$ para $i=1,\dots,\gamma+1$.
+  \item Para $i=1,\dots,\gamma$, en orden, se acepta $\tilde x_i$ con probabilidad $\min\bigl(1,\,p(\tilde x_i)/q(\tilde x_i)\bigr)$, con ambas distribuciones condicionadas al mismo prefijo.
+  \item En el primer rechazo, en la posición $i$, se emite un token de la \emph{distribución residual}
+  \[
+  r(x)=\frac{\max\bigl(0,\,p(x)-q(x)\bigr)}{\sum_{y}\max\bigl(0,\,p(y)-q(y)\bigr)}
+  \]
+  y la ronda termina.
+  \item Si se aceptan los $\gamma$ tokens, se emite además un token de $p(\cdot\mid x_{<t},\tilde x_{1:\gamma})$, que ya se calculó en el paso~2.
+\end{enumerate}
+\end{definicion}
+
+Cada ronda emite entre $1$ y $\gamma+1$ tokens con una sola pasada del modelo objetivo. Esa pasada procesa $\gamma+1$ posiciones, como un pequeño \emph{prefill}: está limitada por la lectura de los pesos y cuesta casi lo mismo que un paso de decodificación (\cref{teo:cota-memoria}).
+
+\addtocounter{figure}{1}%
+
+\section{Muestreo por rechazo modificado}
+
+Se analiza primero un solo token. Se propone $\tilde x\sim q$, que se acepta con probabilidad $\min(1,p(\tilde x)/q(\tilde x))$; si se rechaza, se emite $x'\sim r$.
+
+\begin{definicion}[Tasa de aceptación]\label{def:beta}
+La \emph{tasa de aceptación} es la probabilidad de aceptar la propuesta~\cite[definición~3.1]{leviathan}:
+\[
+\beta=\sum_{x}q(x)\min\Bigl(1,\frac{p(x)}{q(x)}\Bigr)=\sum_{x}\min\bigl(p(x),q(x)\bigr).
+\]
+\end{definicion}
+
+\begin{lema}[Normalización del residuo]\label{lem:residuo}
+$\sum_{x}\max\bigl(0,p(x)-q(x)\bigr)=1-\beta$. En consecuencia, $r$ está bien definida si $\beta<1$, y $\beta=1$ si y solo si $p=q$.
+\end{lema}
+
+\begin{teorema}[Preservación de la distribución]\label{teo:especulativa}
+El token emitido por el muestreo por rechazo modificado tiene distribución exactamente $p$.
+\end{teorema}
+
+\begin{proposicion}[Aceptación y variación total]\label{prop:beta-tv}
+$1-\beta=\TV(p,q)$, de modo que la tasa de rechazo es la distancia de variación total entre el objetivo y el borrador~\cite[lema~3.3 y teorema~3.5]{leviathan}.
+\end{proposicion}
+
+La demostración se pide en el \cref{eje:3-tv}. Un borrador es bueno exactamente en la medida en que su distribución está próxima, en variación total, a la del objetivo; por eso se suele obtener por destilación del objetivo~\cite{cs336} (\cref{tema:5}).
+
+\addtocounter{definicion}{1}%
+
+\section{Corrección para secuencias}
+
+\begin{teorema}[Preservación en secuencias]\label{teo:especulativa-secuencias}
+Sea un procedimiento que ejecuta rondas sucesivas (\cref{def:ronda}) a partir de un prompt, cada una sobre el prefijo que dejó la anterior. Para todo $T$, los $T$ primeros tokens emitidos tienen la misma distribución conjunta que $T$ pasos de muestreo autorregresivo de $p$.
+\end{teorema}
+
+\begin{corolario}[Versión voraz]\label{cor:voraz}
+Si $p$ y $q$ son distribuciones degeneradas en sus respectivos $\argmax$ (búsqueda voraz), la regla de aceptación acepta $\tilde x_i$ si y solo si coincide con el $\argmax$ del objetivo, y en caso contrario emite ese $\argmax$. La salida es idéntica a la búsqueda voraz con el objetivo.
+\end{corolario}
+
+\section{Rendimiento}
+
+\begin{definicion}[Aceptación media y coste relativo]
+Se supone que las tasas de aceptación de las sucesivas propuestas son variables independientes e idénticamente distribuidas, de media $\alpha=\E[\beta]$~\cite[§3.1]{leviathan}. Se llama \emph{coste relativo} $c$ al cociente entre el tiempo de una pasada del borrador y el de una pasada del objetivo~\cite[definición~3.7]{leviathan}.
+\end{definicion}
+
+\begin{teorema}[Tokens esperados por ronda]\label{teo:tokens-ronda}
+Con aceptaciones independientes de probabilidad $\alpha<1$, el número $N_{\mathrm{r}}$ de tokens emitidos en una ronda cumple
+\[
+\E[N_{\mathrm{r}}]=\sum_{j=0}^{\gamma}\alpha^{j}=\frac{1-\alpha^{\gamma+1}}{1-\alpha}.
+\]
+\end{teorema}
+
+\begin{teorema}[Factor de mejora]\label{teo:mejora}
+En las condiciones anteriores, si el tiempo de una ronda es el de $\gamma$ pasadas del borrador más una del objetivo, el cociente entre el tiempo esperado por token sin y con decodificación especulativa es
+\[
+f(\gamma)=\frac{1-\alpha^{\gamma+1}}{(1-\alpha)(\gamma c+1)}.
+\]
+\end{teorema}
+
+\begin{corolario}\label{cor:alpha-c}
+Si $\alpha>c$, existe $\gamma$ con $f(\gamma)>1$; en concreto, $f(1)=(1+\alpha)/(1+c)>1$~\cite[corolario~3.9]{leviathan}.
+\end{corolario}
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Resultados publicados]
+Leviathan \emph{et al.} obtienen aceleraciones de 2 a 3 veces en T5-XXL con salidas idénticas~\cite{leviathan}, y Chen \emph{et al.}, de 2 a 2{,}5 veces en Chinchilla 70B con un borrador de 4000 millones de parámetros~\cite{chen}. La clase~10 de CS336 describe extensiones en las que el borrador es una pequeña red añadida al propio objetivo~\cite{cs336}. Si Claude, Gemini o Grok emplean decodificación especulativa en su servicio no es información pública.
+\end{observacion}
+

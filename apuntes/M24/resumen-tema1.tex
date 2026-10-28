@@ -1,0 +1,140 @@
+% =====================================================================
+\chapter{Del problema real al modelo matemático}
+\label{tema:1}
+% =====================================================================
+
+Antes de elegir un algoritmo hay que saber qué se decide, qué se quiere mejorar y qué no se puede violar. Este tema fija el vocabulario de la modelización siguiendo el capítulo~1 de Bertsimas y Tsitsiklis~\cite{bt}, la clase~1 («Formulations») del curso 6.251J del MIT~\cite{mit6251} y la clase~2 («Formulations of linear and non-linear programs») del curso 15.053~\cite{mit15053}; describe la arquitectura de un sistema que predice y decide, con dos aplicaciones industriales publicadas~\cite{deepmind,orion}, y traza el mapa de métodos que recorre la fase, con el capítulo~1 de Kochenderfer y Wheeler~\cite{kw} como guía.
+
+\section{Elementos de un modelo de optimización}
+
+Un problema real llega como una descripción verbal: «queremos producir lo más rentable posible sin parar la línea y sin dejar a ningún cliente sin pedido». Modelizar consiste en separar lo que se elige de lo que se sabe y en escribir con precisión lo que se quiere y lo que se exige.
+
+\begin{definicion}[Problema de optimización]\label{def:prob-opt}
+Un \emph{problema de optimización} es
+\[
+\min_{x\in X}\ f(x)\qquad \st g_i(x)\le 0\ \ (i=1,\dots,m),\qquad h_j(x)=0\ \ (j=1,\dots,p),
+\]
+donde $x$ es el vector de \emph{variables de decisión}, $X$ un conjunto básico (por ejemplo $\R^{n}$, $\R^{n}_{\ge 0}$ o $\Z^{n_1}\times\R^{n_2}$), $f$ la \emph{función objetivo} y $g_i,h_j$ las \emph{restricciones}. El \emph{conjunto factible} es $\mathcal{X}=\{x\in X: g_i(x)\le 0,\ h_j(x)=0\}$. Un punto $x^{*}\in\mathcal{X}$ es \emph{óptimo (global)} si $f(x^{*})\le f(x)$ para todo $x\in\mathcal{X}$, y \emph{óptimo local} si la desigualdad se cumple en $\mathcal{X}\cap B(x^{*},r)$ para algún $r>0$. El problema es \emph{infactible} si $\mathcal{X}=\varnothing$ y \emph{no acotado} si $\inf_{\mathcal{X}}f=-\infty$.
+\end{definicion}
+
+\begin{definicion}[Datos, decisiones e indicadores]\label{def:elementos}
+En un modelo se distinguen:
+\begin{enumerate}[label=(\alph*)]
+  \item los \emph{parámetros} o datos $\theta$ (precios, capacidades, demandas, tiempos), que el decisor no controla y que pueden ser inciertos o predichos;
+  \item las \emph{variables de decisión} $x$, que el decisor fija;
+  \item las \emph{restricciones duras}, que ninguna decisión puede violar (seguridad, física, contratos), y las \emph{restricciones blandas}, que pueden violarse con una penalización en el objetivo;
+  \item el \emph{objetivo} $f(x;\theta)$, un único escalar que se optimiza;
+  \item los \emph{indicadores clave} (KPIs, \emph{key performance indicators}): magnitudes que se miden para vigilar el sistema (utilización, nivel de servicio, emisiones, tiempo de cálculo) y que no tienen por qué coincidir con el objetivo.
+\end{enumerate}
+\end{definicion}
+
+\begin{observacion}
+El objetivo es una decisión de diseño: si se optimiza el coste y se vigila el nivel de servicio, conviene comprobar que el óptimo del coste no hunde el servicio. Cuando varios KPIs son igualmente importantes, el problema es multiobjetivo (\cref{tema:5}). Optimizar un indicador que solo aproxima lo que se quiere conduce a la ley de Goodhart que el módulo~21 estudió como sobreoptimización de la recompensa.
+\end{observacion}
+
+Muchos modelos que no parecen lineales lo son tras una reformulación. Las tres siguientes son las más útiles.
+
+\begin{proposicion}[Reformulaciones elementales]\label{prop:reform}
+\begin{enumerate}
+  \item Maximizar $f$ equivale a minimizar $-f$: $\max_{\mathcal{X}}f=-\min_{\mathcal{X}}(-f)$, con los mismos puntos óptimos.
+  \item Una igualdad $h(x)=0$ equivale a las dos desigualdades $h(x)\le 0$ y $-h(x)\le 0$; una desigualdad $a\T x\le b$ equivale a $a\T x+s=b$ con una \emph{holgura} $s\ge 0$.
+  \item Una variable libre $x_j\in\R$ puede sustituirse por $x_j=x_j^{+}-x_j^{-}$ con $x_j^{\pm}\ge 0$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{proposicion}[Epígrafe de un máximo]\label{prop:minimax}
+Sean $f_1,\dots,f_k$ funciones sobre $\mathcal{X}$. Los problemas
+\[
+\text{(P)}\ \ \min_{x\in\mathcal{X}}\ \max_{i}f_i(x)\qquad\text{y}\qquad \text{(Q)}\ \ \min_{x\in\mathcal{X},\,t\in\R}\ t\ \ \st f_i(x)\le t\ \ (i=1,\dots,k)
+\]
+tienen el mismo valor óptimo, y $x^{*}$ es óptimo de (P) si y solo si $(x^{*},\max_i f_i(x^{*}))$ es óptimo de (Q). Si las $f_i$ son afines y $\mathcal{X}$ es un poliedro, (Q) es un programa lineal.
+\end{proposicion}
+
+\begin{proposicion}[Suma de valores absolutos]\label{prop:abs}
+El problema $\min_{x\in\mathcal{X}}\sum_{i=1}^{k}\abs{a_i\T x-b_i}$ equivale a
+\[
+\min_{x\in\mathcal{X},\,e\in\R^{k}}\ \sum_{i=1}^{k}e_i\qquad\st -e_i\le a_i\T x-b_i\le e_i\quad(i=1,\dots,k).
+\]
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+\addtocounter{table}{1}%
+
+\addtocounter{figure}{1}%
+
+\section{Anatomía de un optimizador con IA}
+
+En la industria el modelo matemático es una pieza de un sistema mayor que se ejecuta de forma periódica (cada semana, cada hora, cada cinco minutos). La \cref{fig:anatomia} muestra sus componentes.
+
+\addtocounter{figure}{1}%
+
+\begin{definicion}[Optimizador con IA]\label{def:optimizador-ia}
+Un \emph{optimizador con IA} es un procedimiento que, a partir de observaciones $w$ (contexto: fecha, temperatura, estado de la planta), produce una decisión
+\[
+\hat x(w)\in\argmin_{x\in\mathcal{X}(\hat\theta)}\ f\bigl(x;\hat\theta\bigr),\qquad \hat\theta=m_\phi(w),
+\]
+donde $m_\phi$ es un modelo aprendido de datos con parámetros $\phi$ que predice los parámetros inciertos del problema (o el propio valor de una decisión), y el conjunto factible incluye las restricciones de seguridad. La calidad del sistema se mide por el coste real $f(\hat x(w);\theta)$ con el $\theta$ verdadero, no por el error de predicción.
+\end{definicion}
+
+Los componentes de la \cref{fig:anatomia} son:
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Datos}: históricos, tiempo real y datos maestros (capacidades, recetas, tarifas). Su calidad limita todo lo demás.
+  \item \emph{Modelo predictivo}: estima demandas, tiempos, rendimientos o el estado futuro del sistema (regresión, árboles, redes; módulos~8--11).
+  \item \emph{Modelo de optimización}: la formulación de la \cref{def:prob-opt}, con los parámetros predichos y las restricciones duras.
+  \item \emph{Resolvedor}: el algoritmo elegido según la estructura (\cref{sec:mapa}).
+  \item \emph{Decisión con salvaguardas}: comprobaciones independientes del modelo (límites físicos, cambios máximos entre periodos, plan de respaldo) antes de ejecutar.
+  \item \emph{Monitorización}: KPIs, error de predicción, deriva de los datos, tiempo de cálculo y tasa de intervenciones humanas; disparan el reentrenamiento o la revisión del modelo.
+\end{enumerate}
+
+\addtocounter{definicion}{1}%
+
+\section{Mapa de métodos de la fase}\label{sec:mapa}
+
+La estructura matemática del problema, no la moda, decide el método. El \cref{tab:mapa} resume la elección; la \cref{fig:arbol} la presenta como árbol de decisión.
+
+\begin{table}[h]
+\centering\small
+\caption{Mapa de métodos: estructura del problema, familia y herramienta típica.}\label{tab:mapa}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Estructura & Familia & Métodos y herramientas \\
+\midrule
+objetivo y restricciones lineales, variables continuas & PL (LP) & símplex, punto interior; HiGHS (\cref{tema:2}) \\
+lineal con decisiones discretas (sí/no, lotes, turnos) & PLEM (MILP) & ramificación y acotación con cortes; HiGHS, SCIP, Gurobi (\cref{tema:2}) \\
+secuenciación, rutas, asignación con lógica compleja & combinatoria, programación por restricciones & CP-SAT, OR-Tools Routing, búsqueda local (\cref{tema:3}) \\
+convexo y diferenciable (cuadrático, cónico) & optimización convexa & punto interior; CVXPY con Clarabel u OSQP (\cref{tema:4}) \\
+no convexo y diferenciable & programación no lineal & SQP, punto interior, multiarranque; SciPy (\cref{tema:4}) \\
+caja negra barata, sin derivadas & metaheurísticas & recocido, genéticos, CMA-ES, NSGA-II (\cref{tema:5}) \\
+caja negra cara (simulación, experimento) & optimización bayesiana & modelo sustituto gaussiano y función de adquisición~\cite{garnett,frazier} \\
+decisiones secuenciales con incertidumbre & control y RL & control predictivo, aprendizaje por refuerzo (módulo~21)~\cite{sb} \\
+parámetros inciertos que se predicen & predecir y optimizar, estocástica, robusta & SAA, recurso, conjuntos de incertidumbre (\cref{tema:6}) \\
+espacio de programas o heurísticas & búsqueda con LLM y evaluador & FunSearch~\cite{funsearch}, AlphaEvolve~\cite{alphaevolve}, OPRO~\cite{opro} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\addtocounter{figure}{1}%
+
+\begin{observacion}[Modelos de lenguaje en la optimización]\label{obs:llm}
+Los LLM intervienen en la optimización de dos formas distintas. Como \emph{asistentes de formulación}, traducen un enunciado en lenguaje natural a un modelo para un resolvedor clásico; OptiMUS~\cite{optimus} es un ejemplo publicado para PL y PLEM, y su salida debe verificarse como cualquier código. Como \emph{generadores de candidatos} dentro de un bucle evolutivo con un evaluador automático, proponen programas o soluciones que el evaluador puntúa: FunSearch~\cite{funsearch} encontró así construcciones matemáticas y heurísticas de empaquetado, AlphaEvolve~\cite{alphaevolve} extendió la idea a algoritmos completos y OPRO~\cite{opro} usa el propio LLM como optimizador de instrucciones. En ambos casos la garantía procede del evaluador o del resolvedor, no del modelo de lenguaje; los módulos posteriores de la fase desarrollan este enfoque.
+\end{observacion}
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~1: lenguajes de modelización y resolvedores generales.}\label{tab:tec1}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+SciPy (\texttt{optimize}) & PL y PLEM con HiGHS, mínimos cuadrados, no lineal local & abierta (BSD-3) & prototipos y modelos pequeños sin dependencias extra \\
+PuLP~\cite{pulp} & modelizar PL/PLEM y enviarlos a CBC, HiGHS, SCIP, Gurobi\dots & abierta (MIT) & modelos lineales legibles en Python \\
+Pyomo & modelización algebraica general (lineal y no lineal) & abierta (BSD-3) & modelos grandes, con estructura por índices y varios resolvedores \\
+OR-Tools~\cite{ortools-cpsat} & CP-SAT, rutas, flujos, PL (GLOP) & abierta (Apache~2.0) & combinatoria, programación y rutas \\
+CVXPY~\cite{cvxpy} & optimización convexa disciplinada & abierta (Apache~2.0) & problemas convexos con verificación automática \\
+Gurobi, CPLEX & resolvedores comerciales de PL/PLEM/cuadráticos & comercial (licencia académica gratuita) & PLEM grandes en producción con exigencia de tiempo \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

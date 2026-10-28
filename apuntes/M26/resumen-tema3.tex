@@ -1,0 +1,116 @@
+% =====================================================================
+\chapter{Control predictivo basado en modelo}
+\label{tema:3}
+% =====================================================================
+
+El PID corrige el error presente; no sabe que mañana a las 10 la electricidad será cara, ni que la potencia de la bomba de calor está limitada. El \emph{control predictivo basado en modelo} (MPC) usa un modelo para predecir el futuro, resuelve en cada instante un problema de optimización con restricciones sobre un horizonte y aplica solo la primera decisión. Este tema sigue los capítulos~1 y~2 de Rawlings, Mayne y Diehl~\cite{rmd}, las clases~16 («Linear quadratic regulator: Discrete-time finite horizon») a~18 de EE363 de Stanford~\cite{ee363} y la clase~10 de CS285~\cite{cs285}, que presenta el control óptimo y la planificación como punto de partida del RL basado en modelos. La aplicación a edificios sigue la revisión de Drgoňa \emph{et al.}~\cite{drgona}.
+
+\section{Control óptimo de horizonte finito: el regulador lineal cuadrático}
+
+\begin{definicion}[Problema de control óptimo de horizonte finito]\label{def:ocp}
+Dados el modelo $x_{k+1}=f(x_k,u_k)$, un coste de etapa $\ell(x,u)$, un coste terminal $V_f(x)$, conjuntos admisibles $\Xset$, $\Uset$, $\Xset_f$ y un estado inicial $x$, el problema de horizonte $N$ es
+\[
+\begin{aligned}
+\mathbb P_N(x):\quad V_N^{0}(x)=\min_{u_0,\dots,u_{N-1}}\ &\sum_{j=0}^{N-1}\ell(x_j,u_j)+V_f(x_N)\\
+\text{s.a.}\quad &x_0=x,\quad x_{j+1}=f(x_j,u_j),\quad x_j\in\Xset,\quad u_j\in\Uset,\quad x_N\in\Xset_f .
+\end{aligned}
+\]
+\end{definicion}
+
+Sin restricciones, con modelo lineal y costes cuadráticos, el problema tiene solución explícita.
+
+\begin{teorema}[LQR de horizonte finito]\label{teo:lqr}
+Sean $x_{k+1}=Ax_k+Bu_k$, $\ell(x,u)=x\T Qx+u\T Ru$ y $V_f(x)=x\T P_fx$, con $Q\succeq0$, $P_f\succeq0$ y $R\succ0$, sin restricciones. Se define hacia atrás $P_N=P_f$ y, para $k=N-1,\dots,0$,
+\[
+K_k=(R+B\T P_{k+1}B)^{-1}B\T P_{k+1}A,\qquad P_k=Q+A\T P_{k+1}A-A\T P_{k+1}B\,K_k .
+\]
+Entonces el coste óptimo desde $x$ en el instante $k$ es $V_k(x)=x\T P_kx$ y la decisión óptima es $u_k=-K_kx_k$.
+\end{teorema}
+
+\addtocounter{definicion}{1}%
+
+\section{El horizonte deslizante}
+
+\begin{definicion}[Control predictivo]\label{def:mpc}
+En cada instante $k$ se mide (o se estima) el estado $x_k$, se resuelve $\mathbb P_N(x_k)$, se aplica la primera decisión $u_k=u_0^{*}(x_k)$, se descarta el resto y se repite en $k+1$. La ley de control implícita $\kappa_N(x)=u_0^{*}(x)$ es una realimentación del estado.
+\end{definicion}
+
+\addtocounter{figure}{1}%
+
+La realimentación procede de volver a resolver con cada nueva medida: si una perturbación desvía la planta de la predicción, el siguiente problema parte del estado real. Que la ley resultante estabilice la planta no es automático, porque el controlador optimiza un horizonte finito que se desplaza. El resultado clásico pide unos ingredientes terminales~\cite[cap.~2]{rmd}.
+
+\begin{teorema}[Factibilidad recursiva y estabilidad]\label{teo:mpc}
+Supóngase que $f(0,0)=0$, que $\ell(x,u)\ge c\norm{x}^{2}$ con $c>0$, y que existen un conjunto terminal $\Xset_f\subseteq\Xset$ y una ley local $\kappa_f$ tales que, para todo $x\in\Xset_f$: $\kappa_f(x)\in\Uset$, $f(x,\kappa_f(x))\in\Xset_f$ y $V_f\bigl(f(x,\kappa_f(x))\bigr)-V_f(x)\le-\ell\bigl(x,\kappa_f(x)\bigr)$. Si $\mathbb P_N(x_0)$ es factible, entonces: (i) $\mathbb P_N(x_k)$ es factible para todo $k$; (ii) $V_N^{0}(x_{k+1})\le V_N^{0}(x_k)-\ell\bigl(x_k,\kappa_N(x_k)\bigr)$, y (iii) $x_k\to0$.
+\end{teorema}
+
+En el caso lineal-cuadrático, la elección habitual es $V_f(x)=x\T Px$ con $P$ la solución de la ecuación de Riccati de horizonte infinito y $\kappa_f=-Kx$ el LQR, y $\Xset_f$ un conjunto en el que el LQR no viola ninguna restricción. En la práctica industrial se usan a menudo horizontes largos sin ingredientes terminales explícitos, y la estabilidad se comprueba por simulación.
+
+\section{El MPC lineal con restricciones como programa cuadrático}
+
+Con modelo lineal, la trayectoria predicha es lineal en las decisiones. Sean $U=(u_0,\dots,u_{N-1})$ y $X=(x_1,\dots,x_N)$. Por recursión, $x_j=A^{j}x_0+\sum_{i<j}A^{j-1-i}Bu_i$, es decir,
+\begin{equation}\label{eq:condensada}
+X=\Phi x_0+\Gamma U,\qquad \Phi=\begin{pmatrix}A\\A^{2}\\\vdots\\A^{N}\end{pmatrix},\qquad \Gamma=\begin{pmatrix}B&0&\cdots&0\\AB&B&\cdots&0\\\vdots&&\ddots&\\A^{N-1}B&A^{N-2}B&\cdots&B\end{pmatrix}.
+\end{equation}
+
+\begin{proposicion}[El MPC lineal-cuadrático es un QP estrictamente convexo]\label{prop:qp}
+Sean $\bar Q=\diag(Q,\dots,Q,P_f)\succeq0$ y $\bar R=\diag(R,\dots,R)\succ0$. El coste $\sum_{j<N}(x_j\T Qx_j+u_j\T Ru_j)+x_N\T P_fx_N$ vale
+\[
+J(U)=U\T HU+2x_0\T F\T U+x_0\T(Q+\Phi\T\bar Q\Phi)x_0,\qquad H=\Gamma\T\bar Q\Gamma+\bar R,\quad F=\Gamma\T\bar Q\Phi,
+\]
+y $H\succ0$. Con restricciones lineales sobre $U$ y $X$ (límites de actuadores, de velocidad de cambio, de estados), el problema es un programa cuadrático estrictamente convexo con, a lo sumo, una solución.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\begin{definicion}[Restricciones blandas]\label{def:blandas}
+Una restricción de estado $g(x_j)\le0$ puede volver infactible el problema si una perturbación saca la planta del conjunto admisible. Se \emph{ablanda} con una holgura $s_j\ge0$: $g(x_j)\le s_j$, y se añade $\rho\sum_js_j$ al coste.
+\end{definicion}
+
+\begin{proposicion}[Penalización exacta]\label{prop:exacta}
+Sea el problema convexo $\min f(z)$ s.a. $g_i(z)\le0$, con solución $z^{*}$ y multiplicadores de Karush--Kuhn--Tucker $\lambda_i^{*}\ge0$. Si $\rho\ge\max_i\lambda_i^{*}$, entonces $z^{*}$ minimiza también $f(z)+\rho\sum_i\max\{g_i(z),0\}$, que es la versión con holguras óptimas.
+\end{proposicion}
+
+Es la versión convexa del teorema~17.3 de Nocedal y Wright~\cite[§17.2]{nw}. En la práctica: si $\rho$ es suficientemente grande, las holguras solo se activan cuando el problema con restricciones duras es infactible; si es pequeño, el optimizador «compra» violaciones de confort cuando le salen baratas. En el \cref{ej:mpc-qp}, con la restricción $u_0\ge-0{,}5$ ablandada, cualquier $\rho\ge0{,}5$ reproduce la solución dura.
+
+\begin{definicion}[MPC económico]\label{def:empc}
+Cuando el coste de etapa es un coste económico (euros de energía, producción, emisiones) en lugar de una desviación respecto a una consigna, se habla de \emph{MPC económico}. Si el modelo es lineal y el coste y las restricciones son lineales, el problema es un programa lineal.
+\end{definicion}
+
+\section{Cálculo en tiempo real y modelos no lineales}
+
+Cada problema debe resolverse en una fracción del periodo de muestreo. Los QP de MPC lineal se resuelven con métodos de punto interior, de conjunto activo o de separación de operadores como OSQP~\cite{osqp}, que se benefician de arrancar desde la solución anterior desplazada (\emph{warm start}). Con modelo no lineal, $\mathbb P_N$ es un programa no lineal (NMPC) y no convexo en general. Las técnicas estándar~\cite[cap.~8]{rmd} son el \emph{disparo múltiple} (los estados de cada paso son también variables, con la dinámica como restricción de igualdad, lo que mejora el condicionamiento) y la \emph{iteración en tiempo real}: un solo paso de programación cuadrática secuencial por instante, que aprovecha que el problema cambia poco de un instante al siguiente. CasADi~\cite{casadi} proporciona la diferenciación automática y la formulación; acados~\cite{acados} y do-mpc~\cite{dompc} construyen sobre ellas resolvedores rápidos y herramientas completas de MPC y de \emph{estimación de horizonte móvil}, que es el problema dual de estimar el estado a partir de las últimas medidas.
+
+\section{MPC con modelo aprendido}
+
+El modelo del MPC puede ser el identificado en el \cref{tema:2}:
+\begin{enumerate}
+  \item \emph{Modelo lineal en las entradas} (ARX o NARX lineal en $u$ con coeficientes que dependen de perturbaciones previstas): el MPC sigue siendo un QP o un LP. Es la opción preferida cuando basta.
+  \item \emph{Red neuronal}: $\hat f_\theta$ entra en las restricciones de igualdad del NLP. Los gradientes que necesita el optimizador son productos vector-jacobiano de la red, que proporciona la retropropagación (módulo~10, §5.4, donde se ve que los adjuntos son multiplicadores de Lagrange de la dinámica). Lazic \emph{et al.}~\cite{lazic} optimizaron así un MPC con modelo ARX directamente con Adam (módulo~7, §5.3) en TensorFlow, parametrizando las acciones con una tangente hiperbólica para respetar sus límites.
+  \item \emph{Robustez frente al error de modelo}: la \cref{prop:acumula} permite \emph{endurecer} las restricciones con un margen que crece con el horizonte, $\underline T+\varepsilon(1-L^{j})/(1-L)$ en el paso $j$; un margen constante es la versión más simple.
+\end{enumerate}
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[htbp]
+\centering\footnotesize
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.0cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+CVXPY~\cite{cvxpy} & lenguaje de modelado de problemas convexos; parámetros para resolver repetidamente & libre (Apache-2.0) & MPC lineal (LP, QP) en Python y prototipos \\
+OSQP~\cite{osqp}, Clarabel, HiGHS & resolvedores de QP, cónicos y de LP & libres (Apache-2.0, MIT) & bajo CVXPY o embebidos \\
+CasADi~\cite{casadi} & diferenciación automática simbólica, NLP, integradores, interfaz a IPOPT & libre (LGPL-3) & NMPC y estimación con modelos físicos o neuronales \\
+acados~\cite{acados} & NMPC y estimación en tiempo real (iteración en tiempo real, HPIPM), generación de código C & libre (BSD-2) & sistemas embebidos y muestreo rápido \\
+do-mpc~\cite{dompc} & MPC no lineal, robusto multietapa y estimación de horizonte móvil sobre CasADi & libre (LGPL-3) & prototipos completos de NMPC en Python \\
+Pyomo & modelado algebraico de LP, MILP y NLP & libre (BSD-3) & planificación con variables enteras \\
+MPC comerciales de los fabricantes de DCS & MPC multivariable industrial integrado con el sistema de control & comercial & refinerías y plantas químicas con soporte del fabricante \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para el control predictivo.}
+\label{tab:tec3}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

@@ -1,0 +1,130 @@
+% =====================================================================
+\chapter{Procesos dinámicos y control PID}
+\label{tema:1}
+% =====================================================================
+
+Antes de optimizar un proceso hay que describirlo como sistema dinámico y entender qué hace con él un controlador realimentado. Este tema presenta los modelos en espacio de estados, su discretización exacta y su estabilidad, siguiendo los capítulos~3 y~6 de Åström y Murray~\cite{am}, y el controlador PID con sus reglas de ajuste, según el capítulo~11 del mismo libro, el texto de Seborg \emph{et al.}~\cite{seborg}, la lección~5 del curso 10.450 del MIT~\cite{mit10450} y el método SIMC de Skogestad~\cite{skogestad}. El caso de estudio es la zona de un edificio calentada por una bomba de calor, que reaparece en todo el módulo.
+
+\section{Modelos en espacio de estados}
+
+\begin{definicion}[Sistema en espacio de estados]\label{def:ee}
+Un \emph{sistema dinámico en espacio de estados} en tiempo continuo es un par de ecuaciones
+\[
+\dot x(t)=f\bigl(x(t),u(t),w(t)\bigr),\qquad y(t)=h\bigl(x(t)\bigr),
+\]
+donde $x(t)\in\R^{n}$ es el \emph{estado} (la información mínima que, junto con las entradas futuras, determina la evolución futura), $u(t)\in\R^{m}$ la \emph{entrada manipulada}, $w(t)$ la \emph{perturbación} (entrada que no se elige) e $y(t)$ la \emph{salida medida}. El sistema es \emph{lineal e invariante en el tiempo} (LTI) si $f(x,u,w)=Ax+Bu+Ew$ y $h(x)=Cx$ con matrices constantes.
+\end{definicion}
+
+Los modelos de procesos salen de balances de materia y energía, y casi nunca son lineales. Su comportamiento cerca de un punto de operación se aproxima por uno lineal.
+
+\begin{proposicion}[Linealización]\label{prop:lineal}
+Sea $(\bar x,\bar u,\bar w)$ un \emph{punto de equilibrio}, $f(\bar x,\bar u,\bar w)=0$, con $f$ diferenciable con continuidad. Las desviaciones $\delta x=x-\bar x$, $\delta u=u-\bar u$, $\delta w=w-\bar w$ cumplen
+\[
+\dot{\delta x}=A\,\delta x+B\,\delta u+E\,\delta w+o\bigl(\norm{(\delta x,\delta u,\delta w)}\bigr),
+\]
+con $A=\partial f/\partial x$, $B=\partial f/\partial u$ y $E=\partial f/\partial w$ evaluados en el equilibrio.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+\addtocounter{equation}{1}%
+
+\section{Discretización}
+
+Un controlador digital mide cada $\Dt$ y mantiene su salida constante entre dos muestras: es el \emph{retenedor de orden cero} (ZOH). Con esa hipótesis el modelo discreto es exacto.
+
+\begin{proposicion}[Discretización exacta con ZOH]\label{prop:zoh}
+Sea $\dot x=Ax+Bu$ con $u(t)=u_k$ constante en $[k\Dt,(k+1)\Dt)$. Entonces $x_{k+1}=A_dx_k+B_du_k$, con
+\[
+A_d=e^{A\Dt},\qquad B_d=\Bigl(\int_0^{\Dt}e^{A\sigma}\,d\sigma\Bigr)B,
+\]
+y, si $A$ es invertible, $B_d=A^{-1}\bigl(e^{A\Dt}-I\bigr)B$.
+\end{proposicion}
+
+La alternativa más sencilla, el método de \emph{Euler explícito}, sustituye la derivada por un cociente incremental: $x_{k+1}=(I+A\Dt)x_k+B\Dt\,u_k$. Es solo una aproximación de primer orden, y puede volver inestable un sistema estable (\cref{cor:euler}).
+
+\addtocounter{definicion}{1}%
+\addtocounter{equation}{1}%
+
+\section{Estabilidad}
+
+\begin{definicion}[Estabilidad asintótica]\label{def:estab}
+El sistema discreto $x_{k+1}=A_dx_k$ es \emph{asintóticamente estable} si $x_k\to 0$ para todo estado inicial $x_0$. Se llama \emph{radio espectral} de $A_d$ a $\rho(A_d)=\max_i\abs{\lambda_i}$, con $\lambda_i$ sus autovalores (complejos en general).
+\end{definicion}
+
+\begin{teorema}[Criterio de estabilidad en tiempo discreto]\label{teo:estab}
+Sea $A_d$ diagonalizable. El sistema $x_{k+1}=A_dx_k$ es asintóticamente estable si y solo si $\rho(A_d)<1$.
+\end{teorema}
+
+El resultado es cierto también sin diagonalizabilidad (con la forma de Jordan), y su análogo continuo exige $\operatorname{Re}\lambda_i(A)<0$~\cite[cap.~6]{am}.
+
+\begin{corolario}[ZOH conserva la estabilidad; Euler no siempre]\label{cor:euler}
+Sea $A$ diagonalizable con autovalores reales negativos $\lambda_i$. (i) $A_d=e^{A\Dt}$ tiene autovalores $e^{\lambda_i\Dt}\in(0,1)$: el modelo ZOH es estable para todo $\Dt>0$. (ii) $I+A\Dt$ tiene autovalores $1+\lambda_i\Dt$, y el modelo de Euler es estable si y solo si $\Dt<2/\max_i\abs{\lambda_i}$.
+\end{corolario}
+
+\addtocounter{definicion}{1}%
+
+\section{El controlador PID}
+
+\addtocounter{figure}{1}%
+
+\begin{definicion}[Controlador PID]\label{def:pid}
+Dado el error $e=r-y$ entre la consigna $r$ y la medida $y$ (\cref{fig:lazo}), el controlador PID calcula
+\[
+u(t)=K_c\Bigl(e(t)+\frac{1}{\tau_I}\int_0^{t}e(s)\,ds+\tau_D\,\frac{de}{dt}\Bigr),
+\]
+con ganancia $K_c$, tiempo integral $\tau_I$ y tiempo derivativo $\tau_D$. En forma discreta con periodo $\Dt$ (forma \emph{posicional}),
+\[
+u_k=K_ce_k+I_k+K_c\tau_D\frac{e_k-e_{k-1}}{\Dt},\qquad I_{k+1}=I_k+\frac{K_c\Dt}{\tau_I}\,e_k .
+\]
+\end{definicion}
+
+Los tres términos tienen papeles distintos: el proporcional reacciona al error actual, el integral acumula el error pasado y el derivativo anticipa su tendencia. En procesos térmicos lentos y con medidas ruidosas el término derivativo se suele anular (controlador PI) o filtrar~\cite[cap.~11]{am}.
+
+\begin{proposicion}[Error permanente con control proporcional]\label{prop:offset}
+Sea una planta de primer orden estable de ganancia estática $k$ y un controlador proporcional $u=\bar u+K_ce$ con $kK_c>-1$. Ante un escalón de consigna de amplitud $\Delta r$, el error permanente es $e_\infty=\Delta r/(1+kK_c)$.
+\end{proposicion}
+
+\begin{proposicion}[La acción integral elimina el error permanente]\label{prop:integral}
+Sea un lazo con un controlador que contiene la acción integral $I_{k+1}=I_k+(K_c\Dt/\tau_I)e_k$, con $K_c\ne0$. Si, con consigna y perturbaciones constantes, el lazo converge a un equilibrio en el que la salida del controlador no está saturada, entonces el error en ese equilibrio es nulo.
+\end{proposicion}
+
+La proposición no dice nada sobre si el lazo converge: eso depende del ajuste. Por ejemplo, con la zona del \cref{ej:rc} ($k=14$ K/kW) y $K_c=1{,}43$ kW/K, un control solo proporcional dejaría el $1/(1+20)=4{,}8$~\% del escalón de consigna sin corregir; el PI lo elimina.
+
+\begin{definicion}[Saturación y antisaturación]\label{def:windup}
+Todo actuador tiene límites: $u\in[u_{\min},u_{\max}]$. Si el error persiste mientras la salida está saturada, el término integral crece sin efecto sobre la planta (\emph{windup}) y, cuando el error cambia de signo, el controlador tarda en salir de la saturación, lo que produce sobreoscilaciones. Un mecanismo de \emph{antisaturación} lo evita; el más sencillo es la \emph{integración condicional}: solo se actualiza $I_k$ si la salida no está saturada o si el error tiende a desaturarla~\cite[cap.~11]{am}.
+\end{definicion}
+
+\section{Ajuste del PID}
+
+\begin{definicion}[Modelo de primer orden con retardo]\label{def:fopdt}
+Muchos procesos se aproximan por una respuesta de primer orden con retardo (FOPDT), $y(s)/u(s)=k\,e^{-\theta s}/(\tau s+1)$: ganancia $k$, constante de tiempo $\tau$ y retardo $\theta$, que pueden leerse de un ensayo en escalón. En un lazo digital, el muestreo y el retenedor añaden un retardo efectivo del orden de $\Dt/2$ a $\Dt$.
+\end{definicion}
+
+Las reglas de Ziegler y Nichols~\cite{zn}, de 1942, fueron las primeras reglas sistemáticas; producen lazos agresivos y poco amortiguados. Las reglas SIMC de Skogestad~\cite{skogestad} parten del FOPDT y de un único parámetro de diseño, la constante de tiempo deseada en lazo cerrado $\tau_c$:
+\begin{equation}\label{eq:simc}
+K_c=\frac{\tau}{k\,(\tau_c+\theta)},\qquad \tau_I=\min\bigl\{\tau,\ 4(\tau_c+\theta)\bigr\}.
+\end{equation}
+La elección $\tau_c=\theta$ da un ajuste «firme» con buen compromiso entre rapidez y robustez; valores mayores de $\tau_c$ dan lazos más lentos y robustos. El mínimo en $\tau_I$ evita que, en procesos muy lentos como los térmicos, el integrador tarde demasiado en rechazar perturbaciones.
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[htbp]
+\centering\footnotesize
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.0cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+python-control~\cite{pycontrol} & funciones de transferencia, espacio de estados, discretización, respuesta en frecuencia, LQR & libre (BSD-3) & análisis y diseño lineal en Python; docencia \\
+\texttt{scipy.signal} & sistemas LTI, \texttt{cont2discrete}, simulación & libre (BSD-3) & cuando basta con lo esencial y no se quiere otra dependencia \\
+Modelica / OpenModelica~\cite{modelica} & modelado físico acausal por componentes (térmico, eléctrico, fluidos) & lenguaje abierto; entorno libre & modelos de planta complejos y reutilizables \\
+FMI / FMPy~\cite{fmi} & intercambio de modelos (FMU) entre herramientas y cosimulación & estándar abierto; FMPy libre & conectar un modelo de Modelica o de un fabricante con Python \\
+MATLAB/Simulink & diseño de control, autoajuste PID, generación de código & comercial & entornos industriales que ya lo usan \\
+DCS y PLC (IEC 61131-3) & ejecución en planta de los PID con bloques normalizados & comercial & siempre: es donde vive el control básico \\
+\bottomrule
+\end{tabularx}
+\caption{Tecnologías para el modelado y el control clásico.}
+\label{tab:tec1}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

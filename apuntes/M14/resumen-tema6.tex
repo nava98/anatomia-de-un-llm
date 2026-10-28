@@ -1,0 +1,57 @@
+% =====================================================================
+\chapter{Contar el cómputo: FLOPs y la regla \texorpdfstring{$6ND$}{6ND}}
+\label{tema:6}
+% =====================================================================
+
+El coste de un Transformer se mide en operaciones de coma flotante (FLOPs). Casi todas proceden de productos de matrices, de modo que basta un único lema para contarlas. Este tema deduce el coste de una pasada hacia delante, unos $2N$ FLOPs por token más un término de atención proporcional al contexto, y el coste del entrenamiento, $C\approx 6ND$. Se sigue~\cite[§2.1]{kaplan}, la sección de contabilidad de recursos de la práctica~1 de CS336~\cite[§3.5]{cs336} y los datos de entrenamiento de Llama~2~\cite[§2.2.1 y tabla~2]{llama2}.
+
+\section{El coste de un producto de matrices}
+
+\begin{definicion}[FLOP]
+Un \emph{FLOP} es una suma o una multiplicación en coma flotante. El \emph{rendimiento} de un acelerador se mide en FLOP/s; su \emph{aprovechamiento} (MFU, \emph{model FLOPs utilization}) es el cociente entre los FLOP/s útiles que alcanza un entrenamiento y el máximo teórico del hardware~\cite[problema \texttt{adamw\_accounting}]{cs336}.
+\end{definicion}
+
+\begin{lema}[Regla $2mkp$]\label{lem:2mkp}
+El producto de una matriz $m\times k$ por una matriz $k\times p$ requiere $2mkp$ FLOPs, contando como $2k$ las operaciones de cada producto escalar de longitud $k$.
+\end{lema}
+
+\section{La pasada hacia delante}
+
+\begin{proposicion}[Coste hacia delante]\label{prop:forward}
+Sea $N_{\mathrm{mat}}$ el número de parámetros de las matrices que multiplican al flujo (proyecciones de atención, MLP y unembedding). Una pasada hacia delante sobre una secuencia de $n$ tokens requiere
+\[
+C_{\mathrm{fwd}}=2nN_{\mathrm{mat}}+4Ln^{2}d
+\]
+FLOPs, más operaciones elemento a elemento (normalizaciones, softmax, activaciones, RoPE) de coste $O(Lnd+Ln^{2}h)$, que se desprecian. Por token, el coste es $2N_{\mathrm{mat}}+4Lnd\approx 2N+4Lnd$.
+\end{proposicion}
+
+\begin{observacion}
+Kaplan \emph{et al.}~\cite[§2.1, ecuación~(2.2)]{kaplan} escriben $C_{\mathrm{fwd}}\approx 2N+2Ln_{\mathrm{ctx}}d$ por token. El factor es la mitad del de la \cref{prop:forward}, lo que concuerda con tener en cuenta la máscara causal: el token $t$ solo atiende a $t$ posiciones, y el promedio de $t$ sobre la secuencia es aproximadamente $n/2$. La práctica de CS336 cuenta los productos completos $n\times n$, como la \cref{prop:forward}.
+\end{observacion}
+
+\begin{corolario}[Contexto en el que la atención iguala a los pesos]\label{cor:nstar}
+El término de atención por token, $4Lnd$, iguala a $2N$ cuando $n^{*}=N/(2Ld)$.
+\end{corolario}
+
+Para LLaMA-2~7B, $n^{*}=6\,738\,415\,616/(2\cdot 32\cdot 4096)\approx 25\,705$ tokens; con su contexto de $4096$ tokens, la atención añade un $15{,}9\,\%$ al coste $2N$. Para contextos mucho mayores domina el término cuadrático, lo que motiva FlashAttention (módulo~17) y la atención con ventana deslizante (módulo~18).
+
+\section{La pasada hacia atrás y la regla \texorpdfstring{$6ND$}{6ND}}
+
+\begin{teorema}[El retroceso cuesta el doble]\label{teo:backward}
+Sea $Y=XW$ una capa lineal con $X\in\R^{n\times a}$ y $W\in\R^{a\times b}$, y sea $G=\partial\Loss/\partial Y\in\R^{n\times b}$. La pasada hacia delante cuesta $2nab$ FLOPs y la pasada hacia atrás, que calcula
+\[
+\frac{\partial\Loss}{\partial X}=GW\T\qquad\text{y}\qquad\frac{\partial\Loss}{\partial W}=X\T G,
+\]
+cuesta $4nab$ FLOPs.
+\end{teorema}
+
+\begin{corolario}[Regla $6ND$]\label{cor:6nd}
+Entrenar un Transformer de $N$ parámetros con $D$ tokens cuesta $C\approx 6ND$ FLOPs, despreciando el término de atención y las operaciones elemento a elemento.
+\end{corolario}
+
+Kaplan \emph{et al.}\ enuncian la misma estimación, $C\approx 6N$ FLOPs por token de entrenamiento~\cite[§2.1]{kaplan}, que es la base de las leyes de escalado del módulo~16.
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{definicion}{1}%
+

@@ -1,0 +1,88 @@
+% =====================================================================
+\chapter{Descenso de gradiente estocástico}
+\label{tema:3}
+% =====================================================================
+
+Un modelo de lenguaje se entrena con billones de tokens; calcular el gradiente exacto del riesgo empírico antes de cada paso es inviable. El descenso de gradiente estocástico sustituye ese gradiente por una estimación barata obtenida de un subconjunto aleatorio de ejemplos. Este tema estudia las propiedades estadísticas de esa estimación, demuestra una garantía de convergencia en el caso convexo y explica por qué el ruido obliga a reducir la tasa de aprendizaje al final del entrenamiento. Se sigue~\cite[§12.4 y §12.5]{d2l}, \cite[§8.1.3 y §8.3.1]{gbc}, la revisión~\cite{bottou} y la clase~25 de~\cite{mit18065}.
+
+\section{El gradiente de minibatch}
+
+Sea $J(\theta)=\frac1N\sum_{i=1}^{N}\ell_i(\theta)$ el riesgo empírico (\cref{def:riesgo}), con cada $\ell_i$ diferenciable.
+
+\begin{definicion}[Descenso de gradiente estocástico]\label{def:sgd}
+Sea $B\ge 1$. En cada paso $k$ se eligen índices $I_1,\dots,I_B$ en $\{1,\dots,N\}$, independientes entre sí y de los pasos anteriores, y se calcula el \emph{gradiente de minibatch}
+\[
+\gb_k=\frac1B\sum_{b=1}^{B}\nabla\ell_{I_b}(\theta_k).
+\]
+El \emph{descenso de gradiente estocástico} (SGD) es la iteración $\theta_{k+1}=\theta_k-\eta_k\,\gb_k$. Con $B=1$ se obtiene el SGD en sentido estricto; con $B=N$ y sin aleatoriedad, el descenso de gradiente del \cref{tema:2}.
+\end{definicion}
+
+Para un vector aleatorio $X\in\R^{n}$ se usa la \emph{varianza total} $\Var[X]=\E\norm{X-\E X}^{2}$, suma de las varianzas de las componentes. Sea, para $\theta$ fijo,
+\[
+\sigma^{2}(\theta)=\frac1N\sum_{i=1}^{N}\norm{\nabla\ell_i(\theta)-\nabla J(\theta)}^{2},
+\]
+la varianza de los gradientes individuales.
+
+\begin{teorema}[Insesgadez y varianza del minibatch]\label{teo:minibatch}
+Si $I_1,\dots,I_B$ son independientes y uniformes en $\{1,\dots,N\}$ (muestreo con reemplazamiento), entonces, para $\theta$ fijo,
+\[
+\E[\gb]=\nabla J(\theta),\qquad\Var[\gb]=\frac{\sigma^{2}(\theta)}{B}.
+\]
+\end{teorema}
+
+En la práctica se recorre el conjunto de datos en orden aleatorio, lo que equivale a muestrear sin reemplazamiento dentro de cada época. La varianza es entonces algo menor.
+
+\begin{proposicion}[Muestreo sin reemplazamiento]\label{prop:sin-reemplazo}
+Si $\{I_1,\dots,I_B\}$ es un subconjunto de $B$ índices distintos elegido uniformemente entre los $\binom{N}{B}$ posibles, con $1\le B\le N$, entonces $\E[\gb]=\nabla J(\theta)$ y
+\[
+\Var[\gb]=\frac{\sigma^{2}(\theta)}{B}\cdot\frac{N-B}{N-1}.
+\]
+\end{proposicion}
+
+La demostración se propone en el \cref{eje:3-sin-reemplazo}. El factor $(N-B)/(N-1)$ es la \emph{corrección por población finita} de la estadística clásica: vale~1 si $B=1$ y~0 si $B=N$, caso en que $\gb$ es el gradiente exacto.
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Coste y tamaño del lote]
+La desviación típica del gradiente decrece como $1/\sqrt{B}$, mientras que el coste de calcularlo crece como $B$: duplicar el lote solo divide el ruido por $\sqrt2\approx 1{,}414$. Por eso suele compensar dar muchos pasos ruidosos y baratos antes que pocos exactos~\cite[§8.1.3]{gbc}. El tamaño del lote está limitado además por el paralelismo del hardware (módulo~17). Los modelos de lenguaje usan lotes del orden de millones de tokens: GPT-3, en su versión de $175\cdot 10^{9}$ parámetros, se entrenó con lotes de $3{,}2$ millones de tokens~\cite[tabla~2.1]{gpt3}. Al aumentar el lote, Goyal \emph{et al.}~\cite{goyal} propusieron escalar la tasa de aprendizaje en la misma proporción (\emph{regla de escalado lineal}), acompañada de un calentamiento inicial.
+\end{observacion}
+
+\addtocounter{figure}{1}%
+
+\section{Convergencia en el caso convexo}
+
+\begin{teorema}[SGD en funciones convexas]\label{teo:sgd-convexo}
+Sea $f$ convexa y diferenciable, con minimizador $\theta^{\ast}$. Sea la iteración $\theta_{t+1}=\theta_t-\eta_t g_t$, $t=1,\dots,T$, donde $g_t$ es un gradiente estocástico que, condicionado a $\theta_t$, cumple $\E[g_t\mid\theta_t]=\nabla f(\theta_t)$ y $\E[\norm{g_t}^{2}\mid\theta_t]\le G^{2}$. Sean $r=\norm{\theta_1-\theta^{\ast}}$ y $\bar\theta_T=\sum_t\eta_t\theta_t/\sum_t\eta_t$. Entonces
+\[
+\E\bigl[f(\bar\theta_T)\bigr]-f(\theta^{\ast})\le\frac{r^{2}+G^{2}\sum_{t=1}^{T}\eta_t^{2}}{2\sum_{t=1}^{T}\eta_t}.
+\]
+\end{teorema}
+
+\begin{corolario}\label{cor:sgd-constante}
+Con $T$ fijado y paso constante $\eta_t=\eta=r/(G\sqrt T)$, la cota del \cref{teo:sgd-convexo} vale $rG/\sqrt T$.
+\end{corolario}
+
+\begin{corolario}[Condiciones de Robbins--Monro]\label{cor:robbins}
+Si $\sum_{t\ge 1}\eta_t=\infty$ y $\sum_{t\ge 1}\eta_t^{2}<\infty$, la cota del \cref{teo:sgd-convexo} tiende a~0 cuando $T\to\infty$.
+\end{corolario}
+
+Las dos condiciones del \cref{cor:robbins} proceden del trabajo fundacional de Robbins y Monro sobre aproximación estocástica~\cite{robbins}: los pasos deben sumar lo suficiente para llegar a cualquier punto, pero sus cuadrados, que miden el ruido acumulado, deben ser sumables. La velocidad $O(1/\sqrt T)$ es mucho más lenta que la convergencia lineal del \cref{teo:gd-fuerte}: es el precio del ruido.
+
+\section{El ruido y la tasa de aprendizaje}
+
+Con un paso constante, el SGD no converge al minimizador, sino que fluctúa a su alrededor. La proposición siguiente lo cuantifica en el caso más sencillo.
+
+\begin{proposicion}[Suelo de ruido]\label{prop:suelo}
+Sea $f(x)=\frac{a}{2}x^{2}$ con $a>0$ y la iteración $x_{k+1}=x_k-\eta(ax_k+\xi_k)$, donde las $\xi_k$ son variables aleatorias de media~0 y varianza $s^{2}$, independientes entre sí y de $x_0$. Si $0<\eta a<2$, entonces $\E[x_k]\to 0$ y
+\[
+\lim_{k\to\infty}\E[x_k^{2}]=\frac{\eta\,s^{2}}{a(2-\eta a)},\qquad
+\lim_{k\to\infty}\E[f(x_k)]=\frac{\eta\,s^{2}}{2(2-\eta a)}.
+\]
+\end{proposicion}
+
+El exceso de pérdida estacionario es aproximadamente $\eta s^{2}/4$ si $\eta a\ll 1$: proporcional a la tasa de aprendizaje y a la varianza del gradiente. Reducir $\eta$ al final del entrenamiento rebaja ese suelo; es la justificación del decaimiento de la tasa de aprendizaje que se estudia en el \cref{tema:6}.
+
+\begin{observacion}[El ruido no es solo un inconveniente]
+En problemas no convexos, el ruido del minibatch tiene efectos favorables: una iteración exactamente sobre la variedad estable de una silla, como en el \cref{ej:silla}, se desvía de ella con probabilidad~1, y los lotes pequeños tienden a encontrar mínimos más anchos~\cite{keskar}. Estos efectos se conocen sobre todo empíricamente; su análisis riguroso es materia de investigación.
+\end{observacion}
+

@@ -1,0 +1,90 @@
+% =====================================================================
+\chapter{Problemas combinatorios y programación por restricciones}
+\label{tema:3}
+% =====================================================================
+
+Rutas, secuencias y calendarios tienen un número de soluciones que crece de forma factorial con el tamaño. Este tema estudia cómo formularlos y qué herramientas los resuelven en la práctica. Sigue la clase~17 («Traveling salesman problem») del curso 15.053 del MIT~\cite{mit15053} para la complejidad y las heurísticas, el capítulo~10 de Bertsimas y Tsitsiklis~\cite{bt} para las formulaciones enteras, el artículo de Solomon~\cite{solomon} para las rutas con ventanas horarias, el de Johnson~\cite{johnson} para el taller con dos máquinas y la documentación de OR-Tools~\cite{ortools-vrptw,ortools-js,ortools-cpsat} para la programación por restricciones.
+
+\section{Explosión combinatoria}
+
+\begin{proposicion}[Número de circuitos]\label{prop:circuitos}
+Con $n\ge 3$ ciudades y distancias simétricas hay $(n-1)!/2$ circuitos hamiltonianos distintos.
+\end{proposicion}
+
+Con $n=20$ hay $19!/2\approx 6{,}1\cdot 10^{16}$ circuitos. El problema del viajante (TSP) es NP-difícil: no se conoce un algoritmo polinómico, y encontrarlo daría uno para todos los problemas NP-completos~\cite{mit15053}. En la práctica se combinan tres enfoques:
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{métodos exactos}: PLEM con ramificación, cortes y generación de columnas, o programación dinámica para instancias pequeñas; dan el óptimo y una cota;
+  \item \emph{heurísticas constructivas}: vecino más próximo, inserción, ahorros; dan una solución rápida;
+  \item \emph{búsqueda local y metaheurísticas}: intercambios 2-opt y 3-opt, recolocación de clientes, búsqueda local guiada, recocido (\cref{tema:5}).
+\end{enumerate}
+
+\begin{definicion}[Movimiento 2-opt]\label{def:2opt}
+Dado un circuito $(\dots,a,b,\dots,c,d,\dots)$, el movimiento 2-opt elimina las aristas $(a,b)$ y $(c,d)$ y añade $(a,c)$ y $(b,d)$, invirtiendo el tramo de $b$ a $c$. La longitud cambia en $\Delta=d(a,c)+d(b,d)-d(a,b)-d(c,d)$; el movimiento se aplica si $\Delta<0$. Un circuito es \emph{2-óptimo} si ningún movimiento 2-opt lo mejora.
+\end{definicion}
+
+En el plano euclídeo, un circuito con dos aristas que se cruzan nunca es 2-óptimo: deshacer el cruce lo acorta, por la desigualdad triangular aplicada a los dos triángulos que forman las diagonales (\cref{eje:3-2opt}).
+
+\section{Rutas de vehículos con ventanas horarias}
+
+\begin{definicion}[VRPTW]\label{def:vrptw}
+En el \emph{problema de rutas de vehículos con ventanas horarias} (VRPTW) se tiene un depósito $0$, clientes $1,\dots,n$ con demanda $q_i$, tiempo de servicio $s_i$ y ventana $[a_i,b_i]$, una flota de $K$ vehículos de capacidad $Q$ y tiempos de viaje $t_{ij}$. Se buscan rutas que empiecen y acaben en el depósito, visiten cada cliente exactamente una vez, no superen la capacidad y empiecen cada servicio dentro de su ventana (se puede esperar si se llega antes de $a_i$), minimizando el tiempo total de viaje.
+\end{definicion}
+
+Una formulación PLEM usa $x_{ij}\in\{0,1\}$ (un vehículo va de $i$ a $j$), el instante de inicio de servicio $T_i$ y la carga acumulada $u_i$:
+\begin{align*}
+\min\ &\sum_{i\ne j}t_{ij}x_{ij}\\
+\st\ &\sum_{j}x_{ij}=1,\quad \sum_{j}x_{ji}=1\quad(i=1,\dots,n),\qquad \sum_j x_{0j}\le K,\\
+&T_j\ge T_i+s_i+t_{ij}-M_{ij}(1-x_{ij})\quad(i\ne j,\ j\ge 1),\qquad a_i\le T_i\le b_i,\\
+&u_j\ge u_i+q_j-Q(1-x_{ij})\quad(i\ne j,\ j\ge 1),\qquad q_i\le u_i\le Q .
+\end{align*}
+Las restricciones de tiempo y de carga eliminan además los subcircuitos, porque a lo largo de un ciclo sin depósito $T$ debería crecer indefinidamente.
+
+\begin{proposicion}[Cota big-M de las ventanas]\label{prop:bigm-tw}
+La restricción temporal con $M_{ij}=\max(0,\ b_i+s_i+t_{ij}-a_j)$ es válida: si $x_{ij}=1$ impone la llegada correcta y si $x_{ij}=0$ no elimina ninguna combinación de instantes que respete las ventanas.
+\end{proposicion}
+
+Con más de unas decenas de clientes, la formulación anterior es lenta, y los resolvedores de rutas usan búsqueda local sobre las propias rutas. OR-Tools modela el tiempo como una \emph{dimensión}: una variable acumulada por nodo, con una holgura que representa la espera y un rango que impone la ventana~\cite{ortools-vrptw}.
+
+\addtocounter{definicion}{1}%
+
+\section{Programación por restricciones y taller}
+
+\begin{definicion}[Problema de satisfacción de restricciones]\label{def:csp}
+Un \emph{problema de satisfacción de restricciones} consta de variables $v_1,\dots,v_k$ con dominios finitos $D_1,\dots,D_k$ y un conjunto de restricciones, cada una una relación sobre algunas variables. La \emph{programación por restricciones} (CP) lo resuelve alternando \emph{propagación} (eliminar de los dominios valores que no pueden formar parte de ninguna solución) y \emph{búsqueda} (fijar una variable y retroceder si se llega a un dominio vacío). Con un objetivo, se añade la restricción «objetivo mejor que el incumbente» cada vez que se encuentra una solución.
+\end{definicion}
+
+La CP brilla cuando las restricciones son lógicas o de secuenciación, difíciles de expresar linealmente. Sus restricciones globales encapsulan estructuras frecuentes con propagadores eficientes: \texttt{AllDifferent}, \texttt{NoOverlap} (intervalos que no se solapan en un recurso), \texttt{Cumulative} (recurso con capacidad). CP-SAT, de OR-Tools, combina propagación de restricciones con técnicas de resolvedores SAT y de programación entera, y exige coeficientes enteros~\cite{ortools-cpsat}.
+
+\begin{definicion}[Job-shop]\label{def:jobshop}
+En el problema de \emph{taller} (\emph{job-shop}) hay $J$ trabajos; el trabajo $j$ es una secuencia de operaciones $(m_{j1},p_{j1}),\dots,(m_{jk_j},p_{jk_j})$ que deben ejecutarse en ese orden, cada una en una máquina $m$ y con duración $p$. Cada máquina procesa una operación a la vez y sin interrupción. Se minimiza el \emph{makespan} $C_{\max}$, el instante en que termina el último trabajo.
+\end{definicion}
+
+En CP-SAT cada operación es un intervalo $[S_{jk},S_{jk}+p_{jk})$; se impone $S_{j,k+1}\ge S_{jk}+p_{jk}$, una restricción \texttt{NoOverlap} por máquina y $C_{\max}\ge S_{jk_j}+p_{jk_j}$~\cite{ortools-js}. En PLEM, cada par de operaciones en la misma máquina necesita una binaria de orden y dos restricciones big-M, y la relajación lineal resultante es muy débil.
+
+\begin{proposicion}[Cotas inferiores del makespan]\label{prop:cota-ms}
+Para todo programa factible,
+\[
+C_{\max}\ \ge\ \max\Bigl(\max_{m}\sum_{(j,k):\,m_{jk}=m}p_{jk},\ \ \max_j\sum_{k}p_{jk}\Bigr).
+\]
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~3: combinatoria, rutas y programación por restricciones.}\label{tab:tec3}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+OR-Tools CP-SAT~\cite{ortools-cpsat} & CP con intervalos, \texttt{NoOverlap}, \texttt{Cumulative}; también PLEM con coeficientes enteros & abierta (Apache~2.0) & programación de talleres, turnos y calendarios \\
+OR-Tools Routing~\cite{ortools-vrptw} & VRP con capacidades, ventanas, recogidas y entregas & abierta (Apache~2.0) & rutas reales de decenas a miles de paradas \\
+PLEM (HiGHS, SCIP, Gurobi) & formulaciones con binarias de orden o de arco & abierta o comercial & instancias pequeñas, o con fuerte estructura lineal \\
+Programación dinámica propia & exacto sobre subconjuntos & código propio & certificar instancias pequeñas \\
+Heurísticas propias (2-opt, inserción) & solución rápida y controlable & código propio & tiempo real o reglas de negocio muy específicas \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

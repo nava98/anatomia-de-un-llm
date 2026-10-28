@@ -1,0 +1,100 @@
+% =====================================================================
+\chapter{QLoRA y elección de estrategia}
+\label{tema:6}
+% =====================================================================
+
+Con LoRA, la matriz $W$ no recibe actualizaciones: solo se lee. Puede guardarse, por tanto, en muy baja precisión. QLoRA combina la cuantización del modelo base a 4 bits con adaptadores LoRA entrenados en 16 bits y permite ajustar modelos de decenas de miles de millones de parámetros en una sola GPU. Este tema estudia sus tres ingredientes (el formato NF4, la doble cuantización y los optimizadores paginados), hace la contabilidad de memoria de cada configuración y termina con los criterios para elegir entre ajuste fino, instrucciones en el contexto y recuperación de documentos. Se sigue el artículo de Dettmers \emph{et al.}~\cite[§3 y~§4]{dettmers}, la contabilidad de parámetros de la tarea~1 de CS336~\cite[§3.5]{cs336a1} y el capítulo~8 de Jurafsky y Martin~\cite{jm3}; la cuantización por bloques se estudió en el módulo~19.
+
+\section{Cuantización por bloques}
+
+\begin{definicion}[Cuantización por bloques con un libro de códigos]\label{def:cuant-bloques}
+Sea $\mathcal{Q}=\{q_0<q_1<\dots<q_{2^{b}-1}\}\subset[-1,1]$ un \emph{libro de códigos} de $2^{b}$ niveles. Los pesos se dividen en bloques de $B$ elementos. Para cada bloque $w\in\R^{B}$ se guarda la \emph{constante de escala} $c=\max_j\abs{w_j}$ y, para cada $j$, el índice del nivel de $\mathcal{Q}$ más próximo a $w_j/c$. La \emph{descuantización} devuelve $\hat w_j=c\,q_{i_j}$.
+\end{definicion}
+
+\begin{proposicion}[Bits por parámetro]\label{prop:bits}
+Si cada índice ocupa $b$ bits y cada constante se guarda en coma flotante de 32 bits, la cuantización por bloques ocupa $b+32/B$ bits por parámetro.
+\end{proposicion}
+
+Con $b=4$ y $B=64$, el coste es $4+0{,}5=4{,}5$ bits por parámetro: la constante de escala añade un $12{,}5\,\%$ al tamaño de los índices.
+
+\section{El formato NF4}
+
+La elección del libro de códigos importa. Los pesos de una red preentrenada siguen aproximadamente una distribución normal de media nula, de modo que los valores próximos a cero son mucho más frecuentes que los extremos. Un libro de códigos uniforme desperdicia niveles en zonas poco pobladas.
+
+\begin{proposicion}[Cuantización por cuantiles]\label{prop:cuantiles}
+Sea $X\sim\mathcal{N}(0,1)$ y sean $\beta_i=\Phi^{-1}(i/2^{b})$, $i=0,\dots,2^{b}$, con $\beta_0=-\infty$ y $\beta_{2^{b}}=+\infty$. Si se asigna el código $i$ a los valores de $[\beta_i,\beta_{i+1})$, cada código tiene probabilidad $2^{-b}$, y la entropía del código es $b$ bits, la máxima posible con $2^{b}$ símbolos.
+\end{proposicion}
+
+Así, cada uno de los $2^{b}$ códigos se usa con la misma frecuencia y ninguno se desperdicia. El \emph{NormalFloat} de 4 bits (NF4) de Dettmers \emph{et al.} aplica esta idea con $b=4$: estima los niveles a partir de cuantiles de la normal estándar, los normaliza al intervalo $[-1,1]$ y, para que el cero sea representable exactamente, construye por separado $2^{b-1}$ niveles negativos y $2^{b-1}+1$ positivos y elimina el cero repetido~\cite[§3]{dettmers}. El tamaño de bloque es $B=64$.
+
+\addtocounter{definicion}{1}%
+
+\section{Doble cuantización}
+
+\begin{proposicion}[Coste de las constantes con doble cuantización]\label{prop:doble}
+Si las constantes de escala de primer nivel, una por bloque de $B_1$ pesos, se cuantizan a su vez a 8 bits en bloques de $B_2$ constantes, cada una con una constante de segundo nivel de 32 bits, el coste de las constantes es $8/B_1+32/(B_1B_2)$ bits por parámetro.
+\end{proposicion}
+
+Con $B_1=64$ y $B_2=256$, los valores de QLoRA~\cite[§3]{dettmers}, el coste pasa de $32/64=0{,}5$ a $8/64+32/16\,384=0{,}125+0{,}00195=0{,}127$ bits por parámetro: un ahorro de $0{,}373$ bits por parámetro. Antes de cuantizarlas, las constantes se centran restando su media, lo que permite una cuantización simétrica.
+
+\section{QLoRA}
+
+\begin{definicion}[QLoRA]\label{def:qlora}
+QLoRA almacena los pesos congelados del modelo base en NF4 con doble cuantización y añade adaptadores LoRA en bf16 a las capas lineales. La pasada hacia delante de una capa es
+\[
+Y=X\,\mathrm{dq}(c_1,c_2,W_{\mathrm{NF4}})+s\,X L_1L_2,
+\]
+donde $\mathrm{dq}$ descuantiza primero las constantes y después los pesos, produciendo una matriz en bf16, y $L_1,L_2$ son los factores LoRA~\cite[§3, ecs.~5 y~6]{dettmers}. El tipo de almacenamiento es NF4 y el tipo de cálculo, bf16. Solo se calculan gradientes respecto a los parámetros de LoRA.
+\end{definicion}
+
+En esta definición se usa el convenio de filas de~\cite{dettmers}, $Y=XW$; los factores $L_1,L_2$ desempeñan el papel de $A\T$ y $B\T$. Aunque $W$ no recibe gradiente, la retropropagación sí necesita multiplicar por $W$ descuantizada para propagar el gradiente hacia las capas anteriores, cuyos adaptadores también se entrenan.
+
+El tercer ingrediente son los \emph{optimizadores paginados}: el estado del optimizador se guarda en memoria unificada, que el controlador traslada automáticamente a la memoria de la CPU cuando la GPU se queda sin espacio y devuelve cuando hace falta para la actualización. Con estos tres elementos, Dettmers \emph{et al.} ajustaron un modelo de 65\,000 millones de parámetros en una sola GPU de 48~GB, frente a los más de 780~GB que requería el ajuste completo en 16 bits~\cite[§1]{dettmers}. Su mejor modelo, Guanaco~65B, alcanzó el $99{,}3\,\%$ del rendimiento de ChatGPT en la prueba de Vicuna según la evaluación de GPT-4, con un intervalo de confianza del $95\,\%$ de $\pm 4{,}4$ puntos. Los propios autores advierten que no demostraron que QLoRA iguale al ajuste completo en 16 bits a las escalas de 33\,000 y 65\,000 millones de parámetros~\cite[§8]{dettmers}.
+
+\begin{proposicion}[Memoria de pesos y optimizador]\label{prop:mem-qlora}
+Sin contar las activaciones, la memoria de pesos y estado del optimizador es de unos $16N$ bytes en el ajuste completo con Adam en precisión mixta y de unos $(b_{\mathrm{ef}}/8)\,N+16N_{\mathrm{LoRA}}$ bytes en QLoRA, donde $b_{\mathrm{ef}}$ son los bits efectivos por parámetro del modelo base.
+\end{proposicion}
+
+\begin{table}[h]
+\centering\small
+\caption{Memoria de pesos y optimizador de un modelo de $7\cdot 10^{9}$ parámetros, sin activaciones, tomando 4 bits por parámetro para la base cuantizada ($1\,\mathrm{GB}=10^{9}$ bytes).}\label{tab:memoria}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Configuración & Cálculo & Memoria \\
+\midrule
+Pesos en bf16 & $7\cdot 10^{9}\times 2$ B & $14$ GB \\
+Ajuste completo con Adam, precisión mixta & $7\cdot 10^{9}\times 16$ B & $112$ GB \\
+QLoRA: base en 4 bits & $7\cdot 10^{9}\times 0{,}5$ B & $3{,}5$ GB \\
+QLoRA: $2\cdot 10^{7}$ parámetros LoRA & $2\cdot 10^{7}\times 16$ B & $0{,}32$ GB \\
+QLoRA en total & $3{,}5+0{,}32$ & $3{,}82$ GB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La reducción es de unas $112/3{,}82\approx 29$ veces y permite ajustar un modelo de este tamaño en una GPU de consumo. Con las constantes de escala, $b_{\mathrm{ef}}\approx 4{,}127$ en lugar de 4, lo que añade unos $0{,}11$~GB.
+
+\section{¿Ajustar, dar instrucciones en el contexto o recuperar documentos?}
+
+El ajuste fino no es la única forma de adaptar un modelo. Las otras dos son dar instrucciones y ejemplos en el contexto (\emph{prompting} y aprendizaje con pocos ejemplos) y recuperar documentos relevantes e insertarlos en el contexto (RAG, módulo~22). La regla práctica es que el ajuste cambia \emph{cómo} responde el modelo y el contexto cambia \emph{qué sabe} en cada consulta.
+
+\begin{table}[h]
+\centering\small
+\caption{Criterios para elegir la forma de adaptación.}\label{tab:eleccion}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Criterio & Instrucciones en el contexto & RAG & Ajuste fino \\
+\midrule
+Coste inicial & ninguno & índice de documentos & datos y entrenamiento \\
+Conocimiento nuevo o cambiante & solo si cabe en el contexto & sí, con fuentes citables & mal: caro de actualizar y propenso a inventar \\
+Formato, estilo y tono & aceptable & no ayuda & muy bueno \\
+Coste por consulta & contextos largos & recuperación y contexto & contextos cortos \\
+Riesgo de olvido & ninguno & ninguno & sí (\cref{tema:3}) \\
+Acceso a los pesos & no & no & sí, o una API de ajuste \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\addtocounter{figure}{1}%
+
+En la práctica, las tres formas se combinan: un modelo ajustado para seguir un formato y citar sus fuentes, alimentado con documentos recuperados. Los proveedores de modelos comerciales ofrecen públicamente, según el caso, ajuste fino a través de sus plataformas; los detalles técnicos de esos servicios no siempre se publican.
+

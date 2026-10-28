@@ -1,0 +1,109 @@
+% =====================================================================
+\chapter{Evaluación de la recuperación y de los modelos}
+\label{tema:3}
+% =====================================================================
+
+Para elegir entre dos recuperadores, o entre dos modelos de lenguaje, hace falta medir. Este tema define las métricas clásicas de la recuperación de información, primero para conjuntos de resultados y después para rankings, demuestra sus propiedades básicas y pasa a la evaluación de modelos de lenguaje con pruebas de referencia (\emph{benchmarks}): errores estándar, el estimador insesgado de pass@$k$, la contaminación de los datos y los jueces automáticos. Se siguen el capítulo~8 de Manning, Raghavan y Schütze~\cite{iir}, la §11.2 de Jurafsky y Martin~\cite{jm3}, la clase~11 de CS224N~\cite{cs224n} y los artículos de Chen \emph{et al.}~\cite{chen-codex}, Brown \emph{et al.}~\cite{brown} y Zheng \emph{et al.}~\cite{zheng}.
+
+\section{Conjuntos de resultados}
+
+\begin{definicion}[Precisión, exhaustividad y medida $F$]\label{def:pr}
+Sea $S$ el conjunto de documentos devueltos para una consulta y $\Rel$ el de relevantes, con $S,\Rel\ne\varnothing$. Se definen la \emph{precisión} y la \emph{exhaustividad} (\emph{recall})
+\[
+P=\frac{\abs{S\cap\Rel}}{\abs{S}},\qquad R=\frac{\abs{S\cap\Rel}}{\abs{\Rel}},
+\]
+y, para $\beta>0$, la \emph{medida} $F_\beta=(1+\beta^{2})PR/(\beta^{2}P+R)$, que para $\beta=1$ es la media armónica $F_1=2PR/(P+R)$~\cite[§8.3]{iir}. Si $P=R=0$ se toma $F_\beta=0$.
+\end{definicion}
+
+\begin{proposicion}[Propiedades de $F_1$]\label{prop:f1}
+Si $P+R>0$: (i) $F_1=2\abs{S\cap\Rel}/(\abs{S}+\abs{\Rel})$; (ii) $\min(P,R)\le F_1\le (P+R)/2$, con igualdad en ambos lados si y solo si $P=R$.
+\end{proposicion}
+
+La media armónica queda cerca del menor de los dos valores. Un sistema que devuelve la colección entera tiene $R=1$ y una precisión mínima; su media aritmética sería mayor que $1/2$, pero su $F_1$ es casi nula (\cref{eje:3-iir-f1}).
+
+\section{Rankings}
+
+\begin{definicion}[Métricas de un ranking]\label{def:metricas-ranking}
+Sea un ranking con $T_k$ sus $k$ primeros documentos y sea $\Rel$, con $\abs{\Rel}>0$, el conjunto de relevantes.
+\begin{enumerate}
+  \item \emph{Precisión} y \emph{exhaustividad en el corte $k$}: $\Pk{k}=\abs{T_k\cap\Rel}/k$ y $\Rk{k}=\abs{T_k\cap\Rel}/\abs{\Rel}$.
+  \item \emph{Precisión media}: si $k_1<k_2<\dots$ son las posiciones de los relevantes recuperados, $\AP=\frac{1}{\abs{\Rel}}\sum_i\Pk{k_i}$; los relevantes no recuperados aportan~0. La media de AP sobre un conjunto de consultas es la MAP.
+  \item \emph{R-precisión}: $\Pk{\abs{\Rel}}$.
+  \item \emph{Rango recíproco}: $\RR=1/k_1$, o $0$ si no se recupera ningún relevante; su media sobre las consultas es el MRR.
+  \item \emph{Ganancia acumulada descontada normalizada}: con relevancias graduadas $g_m\ge 0$ en la posición $m$,
+  \[
+  \operatorname{nDCG@}k=\frac{1}{Z_k}\sum_{m=1}^{k}\frac{2^{g_m}-1}{\log_2(1+m)},
+  \]
+  donde $Z_k$ es el valor del sumatorio para el orden ideal, de modo que el ranking perfecto obtiene~1~\cite[§8.4]{iir}.
+\end{enumerate}
+\end{definicion}
+
+\begin{proposicion}[Monotonía]\label{prop:monotonia}
+$\Rk{k}$ es no decreciente en $k$. En cambio, $\Pk{k}$ puede decrecer.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}[Qué métrica importa en RAG]\label{obs:recall-rag}
+En un sistema RAG, los $k$ trozos recuperados se añaden al \emph{prompt}. Si el trozo que contiene la respuesta no está en $T_k$, el generador no puede usarlo; por eso la métrica más relevante es $\Rk{k}$ para el $k$ que se usará, y el orden dentro de $T_k$ importa menos. En la práctica del módulo, sobre 21 apuntes y 8 consultas, un recuperador de trigramas de caracteres obtiene $\Pk{1}=1{,}000$ y tf-idf y BM25 obtienen $0{,}875$: la diferencia es una sola consulta, y con tan pocas no hay base para preferir uno (\cref{sec:se}).
+\end{observacion}
+
+\section{Evaluación de modelos de lenguaje}
+\label{sec:se}
+
+Un \emph{benchmark} es un conjunto de tareas con respuesta comprobable. La \cref{tab:benchmarks} recoge cuatro de los más citados.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Benchmark & Qué mide & Cómo se puntúa \\
+\midrule
+MMLU~\cite{mmlu} & Conocimientos en 57 materias & Pregunta de cuatro opciones \\
+GSM8K~\cite{gsm8k} & Problemas aritméticos de enunciado & Respuesta numérica exacta \\
+HumanEval~\cite{chen-codex} & Escritura de funciones en Python & Superar pruebas unitarias (pass@$k$) \\
+SWE-bench~\cite{swebench} & Corrección de incidencias reales de GitHub & Superar las pruebas del repositorio \\
+\bottomrule
+\end{tabularx}
+\caption{Cuatro \emph{benchmarks} frecuentes en los informes de modelos.}
+\label{tab:benchmarks}
+\end{table}
+
+\begin{proposicion}[Error estándar de una exactitud]\label{prop:se}
+Sean $X_1,\dots,X_n$ los indicadores de acierto en $n$ preguntas, independientes y de Bernoulli de parámetro $p$, y $\hat p=\bar X$. Entonces $\E[\hat p]=p$ y $\operatorname{Var}(\hat p)=p(1-p)/n$. El \emph{error estándar} estimado es $\SE=\sqrt{\hat p(1-\hat p)/n}$ y, por el teorema central del límite, $\hat p\pm 1{,}96\,\SE$ es un intervalo de confianza aproximado del 95\,\%.
+\end{proposicion}
+
+Si dos modelos se evalúan sobre muestras independientes, la varianza de la diferencia de exactitudes es la suma de las varianzas. Si se evalúan sobre las mismas preguntas, $\operatorname{Var}(\hat p_A-\hat p_B)=\operatorname{Var}(\hat p_A)+\operatorname{Var}(\hat p_B)-2\operatorname{Cov}(\hat p_A,\hat p_B)$, y la correlación positiva entre los aciertos de ambos reduce el error; por eso conviene un análisis emparejado pregunta a pregunta.
+
+\addtocounter{definicion}{1}%
+
+\begin{definicion}[pass@$k$]\label{def:passk}
+Para un problema de programación, sea $p$ la probabilidad de que una solución generada supere las pruebas. La métrica \emph{pass@$k$} es la probabilidad de que al menos una de $k$ soluciones independientes las supere, $1-(1-p)^{k}$, promediada sobre los problemas~\cite[§2.1]{chen-codex}.
+\end{definicion}
+
+\begin{proposicion}[Estimador insesgado de pass@$k$]\label{prop:passk}
+Se generan $n\ge k$ soluciones independientes de un problema y $c$ de ellas superan las pruebas. Entonces
+\[
+\widehat{\text{pass@}k}=1-\frac{\binom{n-c}{k}}{\binom{n}{k}}
+\]
+es un estimador insesgado de $1-(1-p)^{k}$, con el convenio $\binom{a}{k}=0$ si $a<k$.
+\end{proposicion}
+
+La demostración se pide en el \cref{eje:3-passk}. Estimar $p$ por $c/n$ y sustituir en $1-(1-p)^{k}$ da un estimador sesgado: con $n=10$, $c=3$ y $k=2$, el estimador insesgado vale $1-\binom72/\binom{10}2=1-21/45=0{,}5333$, y la sustitución, $1-0{,}7^{2}=0{,}51$.
+
+\section{Contaminación, saturación y jueces}
+
+\begin{definicion}[Contaminación]\label{def:contaminacion}
+Un \emph{benchmark} está \emph{contaminado} para un modelo si alguno de sus ejemplos de prueba, o un texto muy próximo, aparece en los datos de entrenamiento. Brown \emph{et al.} marcaron como potencialmente contaminado todo ejemplo que comparte al menos un 13-grama con los datos de entrenamiento y compararon la exactitud en los ejemplos limpios y en los marcados~\cite[§4]{brown}.
+\end{definicion}
+
+Un ejemplo de $L$ tokens contiene $L-12$ 13-gramas, de modo que la prueba consiste en buscar cada uno en un índice de los 13-gramas del corpus. Otras señales de contaminación son que la exactitud caiga con preguntas reformuladas, o que sea mejor en problemas publicados antes de la fecha de corte de los datos que en los posteriores. Por eso surgen benchmarks con preguntas nuevas, privadas o renovadas periódicamente.
+
+\begin{observacion}[Saturación y ley de Goodhart]
+Cuando todos los modelos superan el 90\,\% en un benchmark, este deja de discriminar entre ellos. Y si se ajustan las decisiones de desarrollo mirando el conjunto de prueba, la nota sube sin que suba la capacidad: una medida convertida en objetivo deja de ser una buena medida.
+\end{observacion}
+
+Para respuestas abiertas no existe una respuesta exacta con la que comparar. Se usan dos tipos de jueces. Las \emph{comparaciones humanas por pares}, como las de Chatbot Arena, agregan los votos con el modelo de Bradley--Terry del módulo~21. El \emph{LLM como juez} pide a un modelo fuerte que puntúe o compare respuestas~\cite{zheng}. Zheng \emph{et al.} documentan tres sesgos de estos jueces: preferencia por la respuesta mostrada en primer lugar (sesgo de posición), por las respuestas largas (sesgo de verbosidad) y, a veces, por las generadas por el propio juez. Se mitigan evaluando cada par en los dos órdenes y contando como empate un veredicto que cambia, con rúbricas explícitas y validando la concordancia con jueces humanos~\cite{zheng}.
+

@@ -1,0 +1,111 @@
+% =====================================================================
+\chapter{Normalización: LayerNorm, RMSNorm y pre-norm}
+\label{tema:3}
+% =====================================================================
+
+Normalizar una capa consiste en reescalar cada vector de activaciones con estadísticos calculados sobre él mismo, de modo que su escala no derive de una capa a otra. Este tema define la normalización por lotes, la normalización por capa (LayerNorm) y su simplificación RMSNorm, demuestra sus propiedades de invariancia, calcula el jacobiano de RMSNorm y analiza dónde debe colocarse la normalización respecto de la conexión residual. Se sigue~\cite[§7.4]{bishopdl}, \cite[§8.5]{d2l} y \cite[§8.7.1]{gbc}, junto con los artículos de Ioffe y Szegedy~\cite{ioffe}, Ba, Kiros y Hinton~\cite{layernorm}, Zhang y Sennrich~\cite{rmsnorm} y Xiong \emph{et al.}~\cite{xiong}.
+
+\section{Normalización por lotes y por capa}
+
+\begin{definicion}[Normalización por lotes]\label{def:batchnorm}
+Sea un minibatch de $B$ vectores $x^{(1)},\dots,x^{(B)}\in\R^{d}$. La \emph{normalización por lotes} (BatchNorm) normaliza cada \emph{componente} $i$ con la media y la varianza de esa componente sobre el lote:
+\[
+\hat x^{(b)}_i=\frac{x^{(b)}_i-\mu_i}{\sqrt{\sigma_i^{2}+\epsilon}},\qquad
+\mu_i=\frac1B\sum_{b=1}^{B}x^{(b)}_i,\quad \sigma_i^{2}=\frac1B\sum_{b=1}^{B}\bigl(x^{(b)}_i-\mu_i\bigr)^{2},
+\]
+y después aplica una ganancia y un sesgo aprendidos por componente~\cite{ioffe}.
+\end{definicion}
+
+La salida de BatchNorm para un ejemplo depende de los demás ejemplos del lote; en inferencia se sustituyen $\mu_i$ y $\sigma_i^{2}$ por medias móviles estimadas durante el entrenamiento~\cite[§8.5.2]{d2l}. Para secuencias de longitud variable y para la generación token a token, esta dependencia es un inconveniente. La normalización por capa la elimina normalizando sobre las componentes de cada vector.
+
+\begin{definicion}[LayerNorm]\label{def:layernorm}
+Sea $x\in\R^{d}$, y sean $\gamma,\beta\in\R^{d}$ parámetros y $\epsilon\ge 0$. Con
+\[
+\mu=\frac1d\sum_{i=1}^{d}x_i,\qquad \sigma^{2}=\frac1d\sum_{i=1}^{d}(x_i-\mu)^{2},
+\]
+la \emph{normalización por capa} es
+\[
+\LN(x)_i=\gamma_i\,\frac{x_i-\mu}{\sqrt{\sigma^{2}+\epsilon}}+\beta_i,\qquad i=1,\dots,d~\cite{layernorm}.
+\]
+\end{definicion}
+
+\begin{definicion}[RMSNorm]\label{def:rmsnorm}
+Sea $x\in\R^{d}$, $g\in\R^{d}$ y $\epsilon\ge 0$. Con $\RMS(x)=\sqrt{\frac1d\sum_{i=1}^{d}x_i^{2}+\epsilon}$, se define
+\[
+\RMSNorm(x)_i=g_i\,\frac{x_i}{\RMS(x)},\qquad i=1,\dots,d~\cite{rmsnorm}.
+\]
+\end{definicion}
+
+RMSNorm suprime el centrado y el sesgo $\beta$: solo fija la escala. En un Transformer ambas se aplican por separado al vector de cada token, por lo que funcionan igual en entrenamiento y en inferencia y con lotes de cualquier tamaño.
+
+\addtocounter{definicion}{1}%
+
+\begin{proposicion}[Estadísticos de la salida]\label{prop:estad-salida}
+Sea $\epsilon=0$, $\gamma=g=\uno$ y $\beta=0$.
+\begin{enumerate}
+  \item Si $x$ no es constante, $y=\LN(x)$ cumple $\frac1d\sum_iy_i=0$ y $\frac1d\sum_iy_i^{2}=1$.
+  \item Si $x\ne 0$, $y=\RMSNorm(x)$ cumple $\frac1d\sum_iy_i^{2}=1$, es decir, $\norm{y}=\sqrt d$.
+\end{enumerate}
+\end{proposicion}
+
+\section{Invariancias}
+
+\begin{proposicion}[Invariancias]\label{prop:invariancias}
+Sea $\epsilon=0$, $\alpha>0$ y $c\in\R$.
+\begin{enumerate}
+  \item $\LN(\alpha x+c\uno)=\LN(x)$ para todo $x$ no constante.
+  \item $\RMSNorm(\alpha x)=\RMSNorm(x)$ para todo $x\ne 0$, pero en general $\RMSNorm(x+c\uno)\ne\RMSNorm(x)$.
+  \item Si la entrada de la normalización es $x=Wu$ con $W\in\R^{d\times n}$, la salida no cambia al sustituir $W$ por $\alpha W$, para LayerNorm y para RMSNorm.
+\end{enumerate}
+\end{proposicion}
+
+La propiedad (iii) figura en la tabla de invariancias de Ba \emph{et al.}~\cite[§5.1]{layernorm}: la salida no depende de la escala de los pesos de la capa anterior. Zhang y Sennrich~\cite{rmsnorm} conservan esta invariancia de escala, que consideran la responsable del buen comportamiento de LayerNorm, y renuncian a la de traslación, con lo que se ahorra el cálculo de la media.
+
+\begin{teorema}[Jacobiano de RMSNorm]\label{teo:jac-rms}
+Sea $\epsilon=0$, $x\ne 0$ y $r=\RMS(x)$. El jacobiano de $y=\RMSNorm(x)$ es
+\[
+J=\frac{\partial y}{\partial x}=\frac1r\diag(g)\Bigl(I-\frac{xx\T}{d\,r^{2}}\Bigr)
+=\frac1r\diag(g)\Bigl(I-\frac{xx\T}{\norm{x}^{2}}\Bigr).
+\]
+En consecuencia, $Jx=0$ y, para todo $v\in\R^{d}$, $x\T(J\T v)=0$: el gradiente que atraviesa RMSNorm hacia atrás es ortogonal a $x$, y su norma es a lo sumo $\max_i\abs{g_i}\,\norm{v}/r$.
+\end{teorema}
+
+La identidad $Jx=0$ es la versión infinitesimal de la invariancia de escala: al derivar $\RMSNorm((1+t)x)=\RMSNorm(x)$ en $t=0$ se obtiene $Jx=0$. La cota $\norm{v}/r$ muestra el efecto estabilizador: si una capa anterior infla sus activaciones, $r$ crece y el gradiente que se le devuelve se reduce en la misma proporción.
+
+\begin{observacion}
+Un cálculo análogo, con $\hat y=(x-\mu\uno)/\sigma$, da para LayerNorm con $\gamma=\uno$, $\beta=0$ y $\epsilon=0$
+\[
+\frac{\partial\hat y}{\partial x}=\frac1\sigma\Bigl(I-\frac{\uno\uno\T}{d}-\frac{\hat y\hat y\T}{d}\Bigr),
+\]
+que anula tanto $\uno$ como $x-\mu\uno$, de acuerdo con la invariancia (i) de la \cref{prop:invariancias}.
+\end{observacion}
+
+\section{Post-norm y pre-norm}
+
+\begin{definicion}[Posición de la normalización]\label{def:pre-post}
+Sea $\Norm$ una normalización (LayerNorm o RMSNorm) y $F$ una rama residual. Un bloque es
+\[
+\text{\emph{post-norm} si } h_\ell=\Norm\bigl(h_{\ell-1}+F(h_{\ell-1})\bigr),\qquad
+\text{\emph{pre-norm} si } h_\ell=h_{\ell-1}+F\bigl(\Norm(h_{\ell-1})\bigr).
+\]
+\end{definicion}
+
+El Transformer original~\cite{vaswani} es post-norm. GPT-2~\cite[§2.3]{gpt2} trasladó la normalización a la entrada de cada subbloque y añadió una normalización final tras el último bloque; LLaMA~\cite{llama} usa pre-norm con RMSNorm, y la mayoría de los modelos abiertos posteriores la han adoptado.
+
+\begin{proposicion}[Jacobianos de ambas posiciones]\label{prop:jac-pre-post}
+Sea $N_\ell$ el jacobiano de la normalización del bloque $\ell$ y $J_\ell$ el de la rama $F_\ell$, cada uno evaluado en su argumento. Entonces
+\[
+\text{post-norm: }\frac{\partial h_L}{\partial h_0}=\prod_{\ell=L}^{1}N_\ell\,(I+J_\ell),\qquad
+\text{pre-norm: }\frac{\partial h_L}{\partial h_0}=\prod_{\ell=L}^{1}\bigl(I+J_\ell N_\ell\bigr),
+\]
+donde los productos se escriben con los índices en orden decreciente. Solo el desarrollo de pre-norm contiene el término $I$.
+\end{proposicion}
+
+En pre-norm, el flujo residual no pasa por ninguna normalización y conserva el camino identidad. A cambio, su norma crece con la profundidad (\cref{prop:crecimiento}), y hace falta una normalización final antes de la proyección a logits. Xiong \emph{et al.}~\cite{xiong} demuestran, con argumentos de campo medio, que en post-norm el gradiente esperado de los parámetros próximos a la salida es grande en la inicialización, lo que obliga a un calentamiento largo de la tasa de aprendizaje (módulo~7); en pre-norm los gradientes están acotados y el calentamiento puede acortarse o suprimirse.
+
+\addtocounter{figure}{1}%
+
+\begin{observacion}[Sobre los modelos comerciales]
+Anthropic y Google no han hecho pública la normalización que usan Claude y Gemini. El código publicado de Grok-1~\cite{grok1} incluye capas RMSNorm.
+\end{observacion}
+

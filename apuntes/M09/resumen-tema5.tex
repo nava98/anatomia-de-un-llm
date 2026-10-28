@@ -1,0 +1,91 @@
+% =====================================================================
+\chapter{Retropropagación en un perceptrón multicapa}
+\label{tema:5}
+% =====================================================================
+
+Entrenar una red por descenso de gradiente (módulo~7) exige calcular el gradiente de la pérdida respecto a todos los parámetros. La \emph{retropropagación} lo hace aplicando la regla de la cadena del módulo~4 desde la salida hacia la entrada y reutilizando cada derivada intermedia. Este tema la deduce para un MLP con salida softmax y entropía cruzada y la aplica a mano a una red pequeña. Se sigue la §6.5 de~\cite{gbc}, en particular la §6.5.4, las §6.6.2--6.6.4 de~\cite{jm3}, el capítulo~8 de~\cite{bishopdl}, la §5.3 de~\cite{d2l}, las notas «Backpropagation, Intuitions» de~\cite{cs231n} y la clase~3 de CS224N~\cite{cs224n}. El método se popularizó con el artículo de Rumelhart, Hinton y Williams~\cite{rumelhart}; su generalización a grafos arbitrarios, la diferenciación automática, es el objeto del módulo~10.
+
+\section{Grafos computacionales}
+
+\begin{definicion}[Grafo computacional]
+Un \emph{grafo computacional} es un grafo dirigido acíclico cuyos nodos son variables (escalares, vectores o matrices) y en el que cada nodo no inicial se obtiene aplicando una operación conocida a sus predecesores. La \emph{pasada hacia delante} evalúa los nodos en un orden topológico; la \emph{pasada hacia atrás} recorre el grafo en sentido inverso.
+\end{definicion}
+
+\begin{proposicion}[Regla de la cadena en un grafo]\label{prop:cadena-grafo}
+Sea $L$ un nodo escalar final y $v$ un nodo con sucesores $u_1,\dots,u_r$. Entonces
+\[
+\frac{\partial L}{\partial v}=\sum_{k=1}^{r}\frac{\partial L}{\partial u_k}\,\frac{\partial u_k}{\partial v}.
+\]
+\end{proposicion}
+
+La consecuencia algorítmica es que, si se conocen $\partial L/\partial u_k$ para todos los sucesores de $v$, el gradiente respecto a $v$ se obtiene con operaciones locales. Recorriendo el grafo en orden topológico inverso, cada derivada se calcula una sola vez~\cite[§6.5.3]{gbc}. Cuando un nodo alimenta a varios sucesores, sus contribuciones se \emph{suman}.
+
+\section{El gradiente de la softmax con entropía cruzada}
+
+\begin{proposicion}\label{prop:delta-salida}
+Sea $z\in\R^{1\times K}$, $p=\softmax(z)$ e $y\in\{0,\dots,K-1\}$, y sea $L=-\ln p_y$. Entonces
+\[
+\frac{\partial L}{\partial z_k}=p_k-\ind[k=y],\qquad\text{es decir,}\qquad \nabla_{\!z}L=p-e_y.
+\]
+\end{proposicion}
+
+\begin{corolario}\label{cor:suma-cero}
+Las componentes de $\nabla_{\!z}L$ suman~0.
+\end{corolario}
+
+El gradiente tiene una lectura directa: el descenso sube el logit de la clase correcta, que es la única componente negativa, y baja los demás en proporción a la probabilidad que el modelo les asignaba por error. La misma expresión $p-e_y$ es la que se retropropaga en cada posición durante el preentrenamiento de un LLM.
+
+\section{Capas lineales y de activación}
+
+\begin{proposicion}[Gradientes de una capa afín]\label{prop:capa-lineal}
+Sea $z=xW+b$ con $x\in\R^{1\times n}$, $W\in\R^{n\times m}$ y $b\in\R^{1\times m}$, y sea $g=\nabla_{\!z}L\in\R^{1\times m}$. Entonces
+\[
+\nabla_{\!W}L=x^{\top}g\in\R^{n\times m},\qquad \nabla_{\!b}L=g,\qquad \nabla_{\!x}L=g\,W^{\top}\in\R^{1\times n}.
+\]
+Para un lote $X\in\R^{B\times n}$ con gradientes $G\in\R^{B\times m}$ por filas y pérdida igual a la suma de las pérdidas, $\nabla_{\!W}L=X^{\top}G$, $\nabla_{\!b}L=\mathbf{1}^{\top}G$ y $\nabla_{\!X}L=GW^{\top}$.
+\end{proposicion}
+
+\begin{observacion}[Análisis dimensional]
+El gradiente respecto a una matriz tiene siempre la forma de la matriz. En la \cref{prop:capa-lineal}, $x^{\top}$ es $n\times 1$ y $g$ es $1\times m$, de modo que $x^{\top}g$ es $n\times m$, como $W$. Comprobar las formas basta a menudo para recordar el orden y las trasposiciones: «entrada traspuesta por gradiente de la salida»~\cite{cs231n}. Con vectores columna, como en las notas de~\cite{cs231n}, las mismas fórmulas aparecen traspuestas.
+\end{observacion}
+
+\begin{proposicion}[Gradiente a través de una activación]\label{prop:activacion}
+Sea $h=\phi(z)$ aplicada componente a componente. Entonces $\nabla_{\!z}L=\nabla_{\!h}L\odot\phi'(z)$.
+\end{proposicion}
+
+\section{Las ecuaciones de la retropropagación}
+
+\begin{teorema}[Retropropagación en un MLP de dos capas]\label{teo:backprop}
+Sea el MLP $z^{(1)}=xW_1+b_1$, $h=\phi(z^{(1)})$, $z^{(2)}=hW_2+b_2$, $p=\softmax(z^{(2)})$, $L=-\ln p_y$. Definiendo $\delta^{(2)}=\nabla_{z^{(2)}}L$ y $\delta^{(1)}=\nabla_{z^{(1)}}L$, se cumple
+\[
+\begin{aligned}
+\delta^{(2)}&=p-e_y, & \nabla_{\!W_2}L&=h^{\top}\delta^{(2)}, & \nabla_{\!b_2}L&=\delta^{(2)},\\
+\nabla_{\!h}L&=\delta^{(2)}W_2^{\top}, & \delta^{(1)}&=\nabla_{\!h}L\odot\phi'(z^{(1)}), & & \\
+\nabla_{\!W_1}L&=x^{\top}\delta^{(1)}, & \nabla_{\!b_1}L&=\delta^{(1)}, & \nabla_{\!x}L&=\delta^{(1)}W_1^{\top}.
+\end{aligned}
+\]
+\end{teorema}
+
+\addtocounter{figure}{1}%
+
+\begin{observacion}[Coste]
+La pasada hacia delante realiza dos productos de matrices; la hacia atrás, tres para los gradientes de los parámetros y $\nabla_hL$, más uno opcional para $\nabla_xL$, todos de las mismas dimensiones. El coste de calcular el gradiente completo es, por tanto, del mismo orden que el de evaluar la red: aproximadamente el doble. Calcular cada derivada parcial por separado, con diferencias finitas, costaría una evaluación por parámetro.
+\end{observacion}
+
+\section{Un ejemplo completo}
+
+\addtocounter{definicion}{1}%
+
+\section{Comprobación numérica del gradiente}
+
+Un error en una sola ecuación de la retropropagación produce gradientes incorrectos sin ningún mensaje de error. La comprobación estándar compara con diferencias finitas~\cite{cs231n}.
+
+\begin{proposicion}[Diferencias centradas]\label{prop:centradas}
+Sea $f\colon\R\to\R$ de clase $C^{3}$ en un entorno de $\theta$. Entonces
+\[
+\frac{f(\theta+\varepsilon)-f(\theta-\varepsilon)}{2\varepsilon}=f'(\theta)+O(\varepsilon^{2}).
+\]
+\end{proposicion}
+
+Aplicada a cada entrada de $W_1$ en el \cref{ej:backprop} con $\varepsilon=10^{-6}$, la fórmula reproduce $\nabla_{\!W_1}L$ con un error menor que $10^{-9}$. La función ReLU no es derivable en~0; la comprobación es fiable mientras ninguna preactivación esté a distancia menor que $\varepsilon$ de ese punto.
+

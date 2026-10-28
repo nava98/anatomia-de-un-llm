@@ -1,0 +1,89 @@
+% =====================================================================
+\chapter{Optimización directa de preferencias (DPO)}
+\label{tema:5}
+% =====================================================================
+
+La optimización directa de preferencias (DPO) de Rafailov \emph{et al.}~\cite{dpo} elimina el modelo de recompensa explícito y el bucle de refuerzo de RLHF. La idea es invertir la forma cerrada del \cref{teo:optimo-kl} para expresar la recompensa en función de la política y sustituirla en el modelo de Bradley--Terry, donde la función de partición se cancela. Este tema reproduce la derivación completa, los resultados de equivalencia de la §5.1 del artículo y el gradiente de la §4. El material se complementa con la clase invitada sobre DPO del curso CS234~\cite{cs234} y con la tarea~5 de CS336~\cite{cs336a5s}.
+
+\section{De la política óptima a la recompensa}
+
+\begin{lema}[Reparametrización]\label{lem:reparam}
+Sea $\pi_r^{*}$ la política óptima del objetivo \eqref{eq:obj-kl} para la recompensa $r$ y la referencia $\piref$, y supóngase $\piref(y\mid x)>0$. Entonces, para todo $(x,y)$,
+\[
+r(x,y)=\beta\log\frac{\pi_r^{*}(y\mid x)}{\piref(y\mid x)}+\beta\log Z(x).
+\]
+\end{lema}
+
+El término incómodo, $\beta\log Z(x)$, depende solo de la instrucción $x$ y no de la respuesta. Todo lo que sigue explota este hecho.
+
+\section{Clases de equivalencia de recompensas}
+
+\begin{definicion}[Recompensas equivalentes]\label{def:equiv}
+Dos recompensas $r$ y $r'$ son \emph{equivalentes} si existe una función $f$ tal que $r'(x,y)=r(x,y)+f(x)$ para todo $(x,y)$. Es una relación de equivalencia; sus clases se llaman \emph{clases de recompensas}.
+\end{definicion}
+
+\begin{lema}[Las recompensas equivalentes inducen las mismas preferencias]\label{lem:equiv-pref}
+Si $r$ y $r'$ son equivalentes, inducen la misma distribución de preferencias de Bradley--Terry, y también de Plackett--Luce, sobre las respuestas a cada instrucción.
+\end{lema}
+
+\begin{lema}[Las recompensas equivalentes inducen la misma política óptima]\label{lem:equiv-pol}
+Si $r$ y $r'$ son equivalentes, $\pi_{r'}^{*}=\pi_r^{*}$.
+\end{lema}
+
+\begin{teorema}[Representación de las clases de recompensas]\label{teo:representacion}
+Toda clase de recompensas contiene un representante de la forma $\hat r(x,y)=\beta\log\bigl(\pi(y\mid x)/\piref(y\mid x)\bigr)$ para alguna política $\pi$, y esa política es única: es la política óptima común de la clase.
+\end{teorema}
+
+El teorema~1 de~\cite{dpo} enuncia este resultado: parametrizar las recompensas como $\beta\log(\pi/\piref)$ no pierde generalidad, porque toda clase de recompensas compatible con el modelo de preferencias puede escribirse así. Es el sentido preciso del subtítulo del artículo: el modelo de lenguaje es, en secreto, un modelo de recompensa.
+
+\section{La pérdida DPO}
+
+\begin{proposicion}[Preferencias en función de la política óptima]\label{prop:pref-pol}
+Si las preferencias siguen el modelo de Bradley--Terry con recompensa $r$ y $\pi^{*}=\pi^{*}_r$, entonces
+\[
+P(y_w\pref y_l\mid x)=\sigma\Bigl(\beta\log\frac{\pi^{*}(y_w\mid x)}{\piref(y_w\mid x)}-\beta\log\frac{\pi^{*}(y_l\mid x)}{\piref(y_l\mid x)}\Bigr).
+\]
+\end{proposicion}
+
+\begin{definicion}[Pérdida DPO]\label{def:dpo}
+Sea $\pi_\theta$ una política parametrizada y $\hat r_\theta(x,y)=\beta\log\bigl(\pi_\theta(y\mid x)/\piref(y\mid x)\bigr)$ su \emph{recompensa implícita}. La pérdida DPO sobre un conjunto de comparaciones $\mathcal{D}$ es
+\[
+\LDPO(\theta)=-\E_{(x,y_w,y_l)\sim\mathcal{D}}\Bigl[\log\sigma\Bigl(\beta\log\frac{\pi_\theta(y_w\mid x)}{\piref(y_w\mid x)}-\beta\log\frac{\pi_\theta(y_l\mid x)}{\piref(y_l\mid x)}\Bigr)\Bigr].
+\]
+\end{definicion}
+
+La derivación completa se resume en cuatro pasos: (1) el objetivo con KL tiene la solución cerrada del \cref{teo:optimo-kl}; (2) se despeja la recompensa (\cref{lem:reparam}); (3) se sustituye en Bradley--Terry y se cancela $Z(x)$ (\cref{prop:pref-pol}); (4) se reemplaza $\pi^{*}$ por $\pi_\theta$ y se maximiza la verosimilitud de las preferencias. El paso~(4) es legítimo por el \cref{teo:representacion}: ajustar $\pi_\theta$ equivale a ajustar una recompensa dentro de una familia que, sin restricciones de capacidad, contiene todas las clases. Con otras palabras, $\LDPO$ es la pérdida $\LRM$ de la \cref{prop:bt-mv} con $r_\phi$ sustituida por $\hat r_\theta$, y si $\hat r_\theta$ minimiza $\LRM$, entonces $\pi_\theta$ es la política óptima del objetivo con KL para esa recompensa.
+
+En la implementación, $\log\pi_\theta(y\mid x)=\sum_t\log\pi_\theta(y_t\mid x,y_{<t})$ se obtiene sumando las log-probabilidades por token de la respuesta (\cref{prop:mdp-tokens}), y las de $\piref$ se calculan una vez con el modelo congelado.
+
+\begin{proposicion}[Gradiente de DPO]\label{prop:grad-dpo}
+Sea $h=\hat r_\theta(x,y_w)-\hat r_\theta(x,y_l)$. Entonces
+\[
+\nabla_\theta\LDPO=-\beta\,\E_{\mathcal{D}}\Bigl[\sigma(-h)\bigl(\nabla_\theta\log\pi_\theta(y_w\mid x)-\nabla_\theta\log\pi_\theta(y_l\mid x)\bigr)\Bigr].
+\]
+\end{proposicion}
+
+El gradiente aumenta la log-probabilidad de la respuesta preferida y reduce la de la rechazada. El peso $\sigma(-h)$ es la probabilidad que la recompensa implícita asigna al orden equivocado: es grande cuando el modelo ordena mal el par y casi nulo cuando ya lo ordena bien. Rafailov \emph{et al.} observan que sin este peso el método degenera~\cite[§4]{dpo}.
+
+\addtocounter{definicion}{1}%
+
+\section{DPO frente a RLHF con PPO}
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+ & RLHF con PPO & DPO \\
+\midrule
+Redes en memoria & 4 (política, referencia, recompensa, crítico) & 2 (política, referencia) \\
+Muestreo al entrenar & sí (\emph{on-policy}) & no (datos fijos, \emph{offline}) \\
+Pérdida & objetivo recortado y penalización KL & clasificación binaria \\
+Óptimo teórico & $\pi^{*}$ del objetivo con KL & $\pi^{*}$ del objetivo con KL \\
+\bottomrule
+\end{tabularx}
+\caption{Comparación entre RLHF con PPO y DPO.}
+\label{tab:dpo-ppo}
+\end{table}
+
+Ambos métodos persiguen el mismo óptimo (\cref{tab:dpo-ppo}), pero no son equivalentes en la práctica. DPO solo ve las respuestas del conjunto de datos, generadas en general por otra política, y no explora; PPO evalúa con el modelo de recompensa las respuestas que la política genera en cada momento. Además, DPO controla solo la diferencia $h$: puede reducir a la vez las probabilidades de ambas respuestas siempre que la rechazada baje más, y puede sobreoptimizar su recompensa implícita, por ejemplo favoreciendo respuestas más largas (\cref{tema:6}). El apéndice~A.3 de~\cite{dpo} extiende la pérdida a ordenaciones completas con el modelo de Plackett--Luce.
+

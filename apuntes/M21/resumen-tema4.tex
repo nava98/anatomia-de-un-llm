@@ -1,0 +1,79 @@
+% =====================================================================
+\chapter{Preferencias, modelo de recompensa y RLHF}
+\label{tema:4}
+% =====================================================================
+
+Las personas no asignan con fiabilidad una nota absoluta a una respuesta, pero sí deciden con bastante consistencia cuál de dos respuestas prefieren. Este tema presenta el modelo de comparaciones por pares de Bradley y Terry~\cite{bt}, su estimación por máxima verosimilitud y su uso para entrenar un modelo de recompensa a partir de preferencias humanas, como en Christiano \emph{et al.}~\cite{christiano}, Stiennon \emph{et al.}~\cite{stiennon} y Ouyang \emph{et al.}~\cite{instructgpt}. Termina con el procedimiento completo de RLHF de InstructGPT. La parte de aprendizaje de recompensas sigue además la tarea~3 de CS234~\cite{cs234a3}.
+
+\section{El modelo de Bradley--Terry}
+
+\begin{definicion}[Modelo de Bradley--Terry]\label{def:bt}
+Sean $n$ objetos con puntuaciones latentes $r_1,\dots,r_n\in\R$. El \emph{modelo de Bradley--Terry} postula que, al comparar $i$ con $j$, se prefiere $i$ con probabilidad
+\[
+P(i\pref j)=\frac{e^{r_i}}{e^{r_i}+e^{r_j}}=\sigma(r_i-r_j),
+\]
+y que las comparaciones son independientes entre sí.
+\end{definicion}
+
+La segunda igualdad se obtiene dividiendo numerador y denominador entre $e^{r_i}$. El modelo es una regresión logística (módulo~8) cuyo predictor es la \emph{diferencia} de puntuaciones.
+
+\begin{proposicion}[Propiedades]\label{prop:bt}
+\begin{enumerate}
+  \item $P(i\pref j)+P(j\pref i)=1$, y $P(i\pref j)=\tfrac12$ si y solo si $r_i=r_j$.
+  \item Las probabilidades no cambian si se suma una misma constante $c$ a todas las puntuaciones; las puntuaciones solo están determinadas salvo una traslación.
+  \item Las \emph{razones de probabilidades} se multiplican: $\dfrac{P(i\pref j)}{P(j\pref i)}\cdot\dfrac{P(j\pref k)}{P(k\pref j)}=\dfrac{P(i\pref k)}{P(k\pref i)}$.
+\end{enumerate}
+\end{proposicion}
+
+La propiedad (iii) es una forma de transitividad: si $i$ gana a $j$ con razón $3{:}1$ y $j$ a $k$ con razón $2{:}1$, el modelo predice que $i$ gana a $k$ con razón $6{:}1$, es decir, con probabilidad $6/7$.
+
+\begin{definicion}[Modelo de Plackett--Luce]\label{def:pl}
+Para ordenar $K$ objetos, el modelo de Plackett--Luce elige el primero con probabilidad proporcional a $e^{r_i}$, el segundo entre los restantes con la misma regla, y así sucesivamente:
+\[
+P(i_1\pref i_2\pref\dots\pref i_K)=\prod_{k=1}^{K}\frac{e^{r_{i_k}}}{\sum_{m\ge k}e^{r_{i_m}}}.
+\]
+Con $K=2$ se reduce al modelo de Bradley--Terry.
+\end{definicion}
+
+\section{Estimación por máxima verosimilitud}
+
+\begin{proposicion}[Pérdida del modelo de recompensa]\label{prop:bt-mv}
+Sea $\mathcal{D}=\{(x^{(m)},y_w^{(m)},y_l^{(m)})\}_{m=1}^{M}$ un conjunto de comparaciones en las que $y_w$ fue preferida a $y_l$, y sea $r_\phi(x,y)$ una recompensa parametrizada. Bajo el modelo de Bradley--Terry, el estimador de máxima verosimilitud de $\phi$ minimiza
+\[
+\LRM(\phi)=-\frac1M\sum_{m=1}^{M}\log\sigma\bigl(r_\phi(x^{(m)},y_w^{(m)})-r_\phi(x^{(m)},y_l^{(m)})\bigr).
+\]
+Con $z=r_\phi(x,y_w)-r_\phi(x,y_l)$, el gradiente de cada término es $-(1-\sigma(z))\bigl(\nabla_\phi r_\phi(x,y_w)-\nabla_\phi r_\phi(x,y_l)\bigr)$.
+\end{proposicion}
+
+El factor $1-\sigma(z)=\sigma(-z)$ es la probabilidad que el modelo asigna al orden \emph{equivocado}: los pares ya bien ordenados apenas contribuyen y los mal ordenados empujan con fuerza.
+
+\addtocounter{definicion}{1}%
+
+\begin{proposicion}[Estimador con dos objetos]\label{prop:bt-dos}
+Si en $n$ comparaciones entre $a$ y $b$ se prefiere $a$ en $n_a$ ocasiones, con $0<n_a<n$, el estimador de máxima verosimilitud de la diferencia es $\widehat{r_a-r_b}=\log\bigl(n_a/(n-n_a)\bigr)$, y la probabilidad estimada es la frecuencia observada $n_a/n$.
+\end{proposicion}
+
+Si $n_a=n$, la verosimilitud crece sin cota cuando $z\to\infty$ y el estimador no existe: un modelo de recompensa sobreajustado puede separar las preferencias de entrenamiento con márgenes arbitrariamente grandes. En la práctica lo impiden la regularización y la parada temprana.
+
+\section{Modelos de recompensa neuronales}
+
+En el ajuste de LLM, $r_\phi(x,y)$ es un Transformer, normalmente inicializado desde el modelo SFT, en el que la capa de salida sobre el vocabulario se sustituye por una cabeza lineal que produce un escalar a partir del estado oculto del último token~\cite{stiennon,instructgpt}. Tres detalles merecen mención.
+\begin{itemize}[leftmargin=1.4em,label=\textendash]
+  \item \emph{Comparaciones de segmentos.} Christiano \emph{et al.}~\cite{christiano} aplicaron Bradley--Terry a pares de fragmentos de trayectoria en tareas de control, con la recompensa de un fragmento igual a la suma de recompensas por paso predichas (\cref{eje:4-cs234}).
+  \item \emph{Ordenaciones.} En InstructGPT, los anotadores ordenaban entre $K=4$ y $K=9$ respuestas a la misma instrucción. Cada ordenación produce $\binom{K}{2}$ comparaciones, que se tratan en un mismo lote y se ponderan por $1/\binom{K}{2}$ para que las instrucciones con más respuestas no dominen~\cite[§3.5]{instructgpt}.
+  \item \emph{Normalización.} Por la \cref{prop:bt}(ii), la recompensa aprendida está definida salvo una constante; se suele trasladar para que las demostraciones de referencia tengan recompensa media nula antes del RL~\cite{stiennon,instructgpt}.
+\end{itemize}
+
+\section{El procedimiento RLHF de InstructGPT}
+
+\addtocounter{figure}{1}%
+
+El procedimiento de Ouyang \emph{et al.}~\cite[§3.5]{instructgpt} consta de tres etapas (\cref{fig:rlhf}):
+\begin{enumerate}[label=\arabic*.]
+  \item \emph{Ajuste supervisado}: el modelo preentrenado se ajusta con demostraciones escritas por anotadores (módulo~20).
+  \item \emph{Modelo de recompensa}: se recogen ordenaciones de respuestas del modelo SFT y se entrena $r_\phi$ con la pérdida de la \cref{prop:bt-mv}. En el artículo, los modelos de recompensa tienen $6\cdot 10^{9}$ parámetros.
+  \item \emph{Optimización por refuerzo}: se maximiza $\E[r_\phi(x,y)]-\beta\,\KL(\pi_\theta\,\|\,\piref)$ con PPO (\cref{tema:3}). La variante PPO-ptx añade un término $\gamma\,\E_{x\sim\mathcal{D}_{\mathrm{pre}}}[\log\pi_\theta(x)]$ de verosimilitud sobre datos de preentrenamiento para reducir la pérdida de rendimiento en tareas clásicas.
+\end{enumerate}
+
+Con este procedimiento, las respuestas de un modelo de $1{,}3\cdot 10^{9}$ parámetros fueron preferidas por los evaluadores a las de GPT-3 de $1{,}75\cdot 10^{11}$ parámetros~\cite{instructgpt}. El coste práctico es alto: durante la tercera etapa conviven en memoria la política, la referencia, el modelo de recompensa y el crítico de PPO, cuatro redes del tamaño de un LLM. Esta es la principal motivación práctica de DPO (\cref{tema:5}).
+

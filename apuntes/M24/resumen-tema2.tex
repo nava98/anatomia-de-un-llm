@@ -1,0 +1,122 @@
+% =====================================================================
+\chapter{Programación lineal y entera mixta}
+\label{tema:2}
+% =====================================================================
+
+La programación lineal y la entera mixta resuelven la mayor parte de los problemas de planificación de la industria: producción, mezclas, transporte, turnos, inversiones. Este tema sigue los capítulos~2 a~5, 10 y~11 de Bertsimas y Tsitsiklis~\cite{bt}, que son las lecturas del curso 6.251J del MIT~\cite{mit6251}, y las clases~6 («Sensitivity analysis and shadow prices»), 10--12 (programación entera y ramificación y acotación) del curso 15.053~\cite{mit15053}, con los capítulos~3 («Sensitivity Analysis») y~9 («Integer Programming») de Bradley, Hax y Magnanti~\cite{amp}. La ramificación y acotación procede de Land y Doig~\cite{landdoig}; el resolvedor de referencia es HiGHS~\cite{highs,hh}.
+
+\section{Programas lineales y vértices}
+
+\begin{definicion}[Programa lineal]\label{def:pl}
+Un \emph{programa lineal} (PL) en forma canónica es
+\[
+z^{*}=\max\ c\T x\qquad\st Ax\le b,\quad x\ge 0,
+\]
+con $A\in\R^{m\times n}$, $b\in\R^{m}$ y $c\in\R^{n}$. Su conjunto factible $\mathcal{P}=\{x: Ax\le b,\ x\ge 0\}$ es un \emph{poliedro}. Un punto $v\in\mathcal{P}$ es un \emph{vértice} si no es combinación convexa $\lambda u+(1-\lambda)w$ de dos puntos distintos $u,w\in\mathcal{P}$ con $\lambda\in(0,1)$; equivalentemente, si en $v$ hay $n$ restricciones activas linealmente independientes~\cite{bt}.
+\end{definicion}
+
+\begin{teorema}[Teorema fundamental de la programación lineal]\label{teo:vertice}
+Si $\mathcal{P}$ es no vacío y acotado, el PL tiene un óptimo que es un vértice de $\mathcal{P}$.
+\end{teorema}
+
+El \emph{método símplex} (Dantzig) explota el teorema: recorre vértices adyacentes mejorando el objetivo hasta que ninguna arista mejora. Los \emph{métodos de punto interior} avanzan por el interior del poliedro y tienen complejidad polinómica. HiGHS implementa ambos (su símplex dual revisado paralelo se describe en~\cite{hh}) y un resolvedor de PLEM; SciPy lo usa en \texttt{linprog} y \texttt{milp}~\cite{highs}.
+
+\section{Dualidad y precios sombra}
+
+\begin{definicion}[Problema dual]\label{def:dual}
+El \emph{dual} del PL de la \cref{def:pl} es
+\[
+w^{*}=\min\ b\T y\qquad\st A\T y\ge c,\quad y\ge 0.
+\]
+Cada variable dual $y_i$ corresponde a la restricción $i$ del primal.
+\end{definicion}
+
+\begin{teorema}[Dualidad débil]\label{teo:dual-debil}
+Si $x$ es factible para el primal e $y$ para el dual, entonces $c\T x\le b\T y$. En consecuencia $z^{*}\le w^{*}$, y si $c\T x=b\T y$ ambos son óptimos.
+\end{teorema}
+
+\begin{teorema}[Dualidad fuerte]\label{teo:dual-fuerte}
+Si el primal tiene óptimo, también lo tiene el dual y $z^{*}=w^{*}$ (Bertsimas y Tsitsiklis~\cite{bt}, cap.~4).
+\end{teorema}
+
+\begin{corolario}[Holgura complementaria]\label{cor:holgura}
+Sean $x$ e $y$ factibles. Ambos son óptimos si y solo si
+\[
+y_i\,\bigl(b_i-(Ax)_i\bigr)=0\ \ \text{para todo }i\qquad\text{y}\qquad x_j\,\bigl((A\T y)_j-c_j\bigr)=0\ \ \text{para todo }j.
+\]
+\end{corolario}
+
+La holgura complementaria tiene una lectura económica directa: un recurso que sobra (restricción no activa) tiene precio cero, y un producto que no se fabrica no cubre con su margen el valor de los recursos que consumiría.
+
+\begin{proposicion}[Precios sombra]\label{prop:sombra}
+Sea $z^{*}(b)$ el valor óptimo en función del término independiente. La función $z^{*}$ es cóncava en el conjunto de $b$ con primal factible y acotado, y si $y^{*}$ es una solución dual óptima para $b$, para todo $b'$ de ese conjunto
+\[
+z^{*}(b')\le z^{*}(b)+(y^{*})\T(b'-b).
+\]
+Si el dual óptimo es único, $z^{*}$ es diferenciable en $b$ con $\partial z^{*}/\partial b_i=y_i^{*}$: el \emph{precio sombra} $y_i^{*}$ es lo que aumenta el valor óptimo por unidad adicional del recurso $i$, mientras la base óptima no cambia.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\section{Programación entera mixta}
+
+\begin{definicion}[PLEM y relajación lineal]\label{def:plem}
+Un \emph{programa lineal entero mixto} (PLEM, en inglés MILP) es un PL en el que un subconjunto $J$ de variables debe ser entero: $\max\{c\T x: Ax\le b,\ x\ge 0,\ x_j\in\Z\ (j\in J)\}$. Su \emph{relajación lineal} es el mismo problema sin la condición de integralidad; su valor se denota $z_{\mathrm{LP}}$.
+\end{definicion}
+
+\begin{proposicion}[La relajación acota]\label{prop:relajacion}
+En un problema de maximización, $z^{*}\le z_{\mathrm{LP}}$; en uno de minimización, $z^{*}\ge z_{\mathrm{LP}}$. Si la solución de la relajación cumple la integralidad, es óptima para el PLEM.
+\end{proposicion}
+
+La diferencia relativa entre el mejor valor entero conocido (el \emph{incumbente}) y la mejor cota se llama \emph{gap}; los resolvedores se detienen cuando es menor que una tolerancia (por defecto, del orden de $10^{-4}$).
+
+Las variables binarias $y\in\{0,1\}$ permiten modelizar decisiones lógicas con restricciones lineales:
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{coste fijo o de preparación}: $x\le My$ con coste $fy$ en el objetivo; si se produce ($x>0$), se paga $f$;
+  \item \emph{lote mínimo}: $Ly\le x\le My$; o no se produce, o se producen al menos $L$ unidades;
+  \item \emph{implicación} «si se elige $A$, se elige $B$»: $y_A\le y_B$; \emph{exclusión}: $y_A+y_B\le 1$; \emph{al menos $k$ de $n$}: $\sum_i y_i\ge k$;
+  \item \emph{disyunción} «se cumple $a\T x\le b$ o $d\T x\le e$»: $a\T x\le b+M\delta$, $d\T x\le e+M(1-\delta)$, $\delta\in\{0,1\}$.
+\end{enumerate}
+
+\begin{proposicion}[Validez y fuerza de una cota big-M]\label{prop:bigm}
+Sea $\mathcal{X}$ el conjunto factible sin la restricción $x\le My$ y sea $U=\sup\{x: x\in\mathcal{X}\}$.
+\begin{enumerate}
+  \item La restricción $x\le My$, con $y\in\{0,1\}$, no elimina ninguna solución con $y=1$ si y solo si $M\ge U$.
+  \item Si $U\le M\le M'$, la relajación lineal con $M$ está contenida en la relajación con $M'$; la menor cota válida, $M=U$, da la relajación más ajustada.
+\end{enumerate}
+\end{proposicion}
+
+Con una $M$ grande la relajación permite valores de $y$ diminutos, por ejemplo $y=x/M$, y paga solo una fracción del coste fijo: la cota es mala y el árbol de búsqueda crece. Una $M$ desmesurada causa además errores numéricos, porque los resolvedores trabajan con tolerancias del orden de $10^{-6}$ a $10^{-9}$.
+
+\section{Ramificación y acotación}
+
+La \emph{ramificación y acotación} (\emph{branch and bound})~\cite{landdoig} explora un árbol de subproblemas. En cada nodo se resuelve la relajación lineal con las cotas acumuladas. Para un problema de maximización:
+\begin{enumerate}[label=\arabic*.]
+  \item si la relajación es infactible, el nodo se \emph{poda};
+  \item si su valor no supera el del incumbente, se poda \emph{por cota}: ningún descendiente puede mejorar (\cref{prop:relajacion});
+  \item si la solución es entera, se actualiza el incumbente y se poda;
+  \item si no, se elige una variable $x_j$ con valor fraccionario $x_j^{*}$ y se crean dos hijos con $x_j\le\lfloor x_j^{*}\rfloor$ y $x_j\ge\lceil x_j^{*}\rceil$.
+\end{enumerate}
+Si todas las variables enteras están acotadas, el árbol es finito y el incumbente final es óptimo: cada nodo podado lo es con una justificación válida y las ramas cubren todos los enteros factibles. Si los coeficientes del objetivo son enteros, el valor de cualquier solución entera también lo es, y un nodo puede podarse cuando $\lfloor z_{\mathrm{LP}}\rfloor$ no supera al incumbente. Los resolvedores modernos añaden preproceso, planos de corte (desigualdades válidas que eliminan soluciones fraccionarias; clase~13 de~\cite{mit15053}), heurísticas primales y reglas de ramificación elaboradas.
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~2: programación lineal y entera mixta.}\label{tab:tec2}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.3cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+HiGHS~\cite{highs} & PL (símplex dual, punto interior), PLEM, cuadrático & abierta (MIT) & resolvedor abierto de referencia; incluido en SciPy \\
+SciPy \texttt{linprog}/\texttt{milp} & interfaz matricial a HiGHS, con duales & abierta (BSD-3) & modelos pequeños y docencia \\
+PuLP~\cite{pulp} & modelización por nombres; CBC, HiGHS, SCIP\dots & abierta (MIT) & modelos de planificación legibles \\
+SCIP & PLEM y no lineal entero, con cortes y ramificación configurables & abierta (Apache~2.0 desde la 8.0.3) & investigación y PLEM difíciles sin licencia comercial \\
+Gurobi, CPLEX & PL/PLEM a gran escala & comercial & producción con exigencias de tiempo y soporte \\
+OR-Tools (GLOP, MathOpt) & PL y envoltorio de resolvedores & abierta (Apache~2.0) & si ya se usa OR-Tools para rutas o CP \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

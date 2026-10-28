@@ -1,0 +1,87 @@
+% =====================================================================
+\chapter{Contar parámetros y memoria}
+\label{tema:5}
+% =====================================================================
+
+A partir de la configuración de un Transformer ($V$, $d$, $L$, $h$, $\dff$) puede calcularse sin ejecutar nada cuántos parámetros tiene y cuánta memoria necesita para la inferencia y para el entrenamiento. Este tema deduce la fórmula exacta para la arquitectura de LLaMA, la aproximación $N\approx 12Ld^{2}$ de Kaplan \emph{et al.}~\cite[§2.1]{kaplan} y el coste en bytes por parámetro del entrenamiento con Adam en precisión mixta. Se sigue también~\cite[§7.1.1 y ejercicio~7.1]{jm3} y el problema \texttt{transformer\_accounting} de CS336~\cite{cs336}.
+
+\section{Parámetros de un bloque}
+
+\begin{proposicion}[La atención no depende del número de cabezas]\label{prop:cabezas}
+Sin sesgos, la atención multicabeza con $h$ cabezas de dimensión $d_k=d/h$ tiene $4d^{2}$ parámetros, cualquiera que sea $h$.
+\end{proposicion}
+
+\begin{proposicion}[Parámetros de un bloque]\label{prop:bloque}
+\begin{enumerate}
+  \item Un bloque de tipo LLaMA (RMSNorm con ganancia, SwiGLU, sin sesgos) tiene $4d^{2}+3d\,\dff+2d$ parámetros.
+  \item Un bloque de tipo GPT-2 (LayerNorm con ganancia y sesgo, MLP con $\dff=4d$, sesgos en todas las capas lineales) tiene $12d^{2}+13d$ parámetros.
+  \item Con $\dff=4d$ en un MLP de dos matrices o $\dff=\frac83 d$ en SwiGLU, la parte matricial del bloque tiene $12d^{2}$ parámetros: $4d^{2}$ en la atención y $8d^{2}$ en el MLP.
+\end{enumerate}
+\end{proposicion}
+
+\section{Parámetros del modelo completo}
+
+\begin{teorema}[Recuento exacto]\label{teo:recuento}
+Un Transformer de tipo LLaMA con embeddings sin atar tiene
+\[
+N=L\bigl(4d^{2}+3d\,\dff+2d\bigr)+2Vd+d
+\]
+parámetros. Con embeddings atados, el término $2Vd$ se sustituye por $Vd$; con posiciones aprendidas, se añaden $\nctx d$.
+\end{teorema}
+
+\begin{corolario}[Aproximación de Kaplan]\label{cor:kaplan}
+Si $\dff=4d$ (o $\frac83 d$ en SwiGLU), los parámetros sin contar embeddings ni normalizaciones son exactamente $12Ld^{2}$, y
+\[
+\frac{N}{12Ld^{2}}=1+\frac{V}{6Ld}+\frac{2L+1}{12Ld}\qquad\text{(sin atar)}.
+\]
+\end{corolario}
+
+Kaplan \emph{et al.}~\cite[§2.1, ecuación~(2.1) y tabla~1]{kaplan} definen $N$ como el número de parámetros \emph{sin embeddings}, $N\approx 2d\,L(2d_{\mathrm{attn}}+\dff)=12Ld^{2}$, porque observaron que las leyes de escalado se expresan mejor con esa cantidad (módulo~16).
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[ht]
+\centering\small
+\caption{Parámetros de un bloque de LLaMA-2~7B.}\label{tab:llama7b}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Pieza & Fórmula & Parámetros \\
+\midrule
+$W_Q,W_K,W_V,W_O$ & $4d^{2}$ & $67\,108\,864$ \\
+SwiGLU & $3d\,\dff$ & $135\,266\,304$ \\
+Dos RMSNorm & $2d$ & $8\,192$ \\
+\midrule
+Bloque & & $202\,383\,360$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Memoria}
+
+\begin{definicion}[Memoria de los parámetros]
+Si cada parámetro se almacena con $b$ bytes, los pesos ocupan $Nb$ bytes. Se usan $b=4$ en fp32, $b=2$ en bf16 y fp16, $b=1$ en int8 y $b=1/2$ en int4 (módulos~11 y~19). En este módulo, $1~\mathrm{GB}=10^{9}$~bytes y $1~\mathrm{GiB}=2^{30}$~bytes.
+\end{definicion}
+
+\begin{proposicion}[Estado del entrenamiento con Adam en precisión mixta]\label{prop:16bytes}
+Entrenar con Adam en precisión mixta requiere, sin contar las activaciones, $16$~bytes por parámetro.
+\end{proposicion}
+
+\begin{table}[ht]
+\centering\small
+\caption{Memoria de LLaMA-2~7B ($N=6\,738\,415\,616$) según el uso.}\label{tab:memoria}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Uso & Bytes por parámetro & Memoria \\
+\midrule
+Inferencia en bf16 & $2$ & $13{,}5$~GB \\
+Inferencia en int4 (módulo~19) & $0{,}5$ & $3{,}4$~GB \\
+Pesos en fp32 & $4$ & $27{,}0$~GB \\
+Entrenamiento, Adam en precisión mixta & $16$ & $107{,}8$~GB \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+La \cref{tab:memoria} explica por qué un modelo de $7\cdot 10^{9}$ parámetros cabe en una GPU de $24$~GB para la inferencia en bf16, pero no para el entrenamiento: con $16$~bytes por parámetro, en $24$~GB solo caben los estados de un modelo de $1{,}5\cdot 10^{9}$ parámetros, y aún habría que añadir las activaciones. Las técnicas ZeRO y FSDP (módulo~17) reparten estos $16$~bytes entre varias GPU.
+
+\addtocounter{definicion}{1}%
+

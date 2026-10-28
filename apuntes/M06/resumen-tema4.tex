@@ -1,0 +1,117 @@
+% =====================================================================
+\chapter{Codificación aritmética: predecir es comprimir}
+\label{tema:4}
+% =====================================================================
+
+Este tema presenta la codificación aritmética, que representa un mensaje completo mediante un subintervalo de $[0,1)$ de anchura igual a su probabilidad, y demuestra que con ella cualquier modelo probabilístico se convierte en un compresor cuya longitud es, salvo dos bits, la log-verosimilitud negativa del mensaje en bits. La construcción sigue la codificación de Shannon--Fano--Elias de~\cite[§5.9]{ct} y su extensión a secuencias de~\cite[§13.3]{ct}; la presentación como \emph{stream code} con un modelo adaptativo es la de MacKay~\cite[cap.~6]{mackay}, y la implementación práctica, la de Witten, Neal y Cleary~\cite{wnc}. La conexión con los modelos de lenguaje sigue a Delétang \emph{et al.}~\cite{deletang} y a Gao \emph{et al.}~\cite{pile}.
+
+\section{Intervalos y probabilidades}
+
+Sea $\X=\{x^{(1)},\dots,x^{(K)}\}$ un alfabeto con un orden fijado y sea $q$ un modelo autorregresivo, que asigna a cada contexto $x_{1:t-1}$ una distribución $q(\cdot\mid x_{1:t-1})$ sobre $\X$. La \emph{probabilidad acumulada} de $x$ en la posición $t$ es la masa de los símbolos anteriores en el orden fijado:
+\[
+F_t(x)=\sum_{x'<x}q(x'\mid x_{1:t-1}).
+\]
+
+\begin{definicion}[Intervalo de una secuencia]\label{def:intervalo}
+El \emph{intervalo} de la secuencia $x_{1:n}$ es $I(x_{1:n})=[a_n,a_n+w_n)$, donde $a_0=0$, $w_0=1$ y, para $t=1,\dots,n$,
+\[
+a_t=a_{t-1}+w_{t-1}\,F_t(x_t),\qquad w_t=w_{t-1}\,q(x_t\mid x_{1:t-1}).
+\]
+\end{definicion}
+
+Cada paso divide el intervalo actual en $K$ subintervalos consecutivos, de anchuras proporcionales a las probabilidades del símbolo siguiente, y se queda con el del símbolo observado.
+
+\begin{proposicion}\label{prop:intervalos}
+Para todo $n\ge 0$:
+\begin{enumerate}
+  \item la anchura de $I(x_{1:n})$ es $w_n=q(x_{1:n})=\prod_{t=1}^{n}q(x_t\mid x_{1:t-1})$;
+  \item los intervalos de todas las secuencias de longitud $n$ forman una partición de $[0,1)$;
+  \item $I(x_{1:n})\subseteq I(x_{1:n-1})$ si $n\ge 1$.
+\end{enumerate}
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{figure}{1}%
+
+\section{Palabras de código y longitud}
+
+Para transmitir el intervalo basta enviar una cadena binaria $c$ cuyo intervalo diádico $J(c)$ (\cref{tema:3}) esté contenido en $I(x_{1:n})$: el receptor sabrá entonces que el número enviado, cualesquiera que sean los bits que lo sigan, está dentro del intervalo del mensaje.
+
+\begin{teorema}\label{teo:palabra}
+Sea $I=[a,a+w)\subseteq[0,1)$ con $w>0$, y sea $\ell=\lceil-\log w\rceil+1$. Existe una cadena binaria $c$ de longitud $\ell$ con $J(c)\subseteq I$.
+\end{teorema}
+
+\begin{corolario}[Longitud de la codificación aritmética]\label{cor:longitud}
+Para cada $n$, asignar a cada secuencia $x_{1:n}$ con $q(x_{1:n})>0$ la cadena del \cref{teo:palabra} para $I(x_{1:n})$ define un código prefijo sobre las secuencias de longitud $n$, con
+\[
+\ell(x_{1:n})=\lceil-\log q(x_{1:n})\rceil+1<-\log q(x_{1:n})+2.
+\]
+\end{corolario}
+
+\addtocounter{definicion}{1}%
+
+\paragraph{Descodificación.} El receptor conoce el modelo $q$ y la longitud $n$ (o bien el alfabeto incluye un símbolo de fin, como el símbolo \fin\ del módulo~1). Recibida $c$, para $t=1,\dots,n$ subdivide el intervalo actual según $q(\cdot\mid x_{1:t-1})$, determina el único símbolo $x_t$ cuyo subintervalo contiene a $J(c)$ y lo añade al contexto. Por la \cref{prop:intervalos}, ese símbolo existe, es único y coincide con el enviado. En la práctica, la aritmética de precisión infinita se sustituye por aritmética entera con renormalización, que emite los bits a medida que se fijan, con un sobrecoste despreciable~\cite{wnc}.
+
+\section{Predecir es comprimir}
+
+\begin{teorema}[Compresión con un modelo]\label{teo:compresion}
+Sea $q$ un modelo autorregresivo cualquiera. La codificación aritmética con $q$ codifica cada secuencia $x_{1:n}$ con
+\[
+\ell(x_{1:n})<-\log q(x_{1:n})+2=\sum_{t=1}^{n}-\log q(x_t\mid x_{1:t-1})+2\quad\text{bits}.
+\]
+Si $X_{1:n}$ sigue una distribución $p$, la longitud media cumple
+\[
+H(X_{1:n})\le\E[\ell(X_{1:n})]<H(p,q)+2=H(X_{1:n})+\KL{p}{q}+2,
+\]
+donde $p$ y $q$ denotan aquí las distribuciones de la secuencia completa.
+\end{teorema}
+
+\begin{corolario}\label{cor:por-simbolo}
+Si las $X_t$ son independientes con distribución $p$ y el modelo es sin memoria con distribución $q$, la longitud media por símbolo cumple
+\[
+H(p)\le\frac{\E[\ell(X_{1:n})]}{n}<H(p)+\KL{p}{q}+\frac{2}{n}.
+\]
+Con $q=p$, la codificación aritmética alcanza la entropía con un sobrecoste de $2/n$ bits por símbolo, sin tablas que crezcan con $n$.
+\end{corolario}
+
+El \cref{teo:compresion} es la mitad de la equivalencia anunciada: \emph{todo predictor da un compresor}, y el tamaño del archivo comprimido es la suma de las sorpresas del modelo. La otra mitad se vio en el \cref{teo:cota-inferior}: \emph{todo compresor da un predictor}, porque las longitudes de un código prefijo definen la distribución $r(x)\propto2^{-\ell(x)}$. Mejorar uno equivale a mejorar el otro.
+
+\addtocounter{figure}{1}%
+
+\addtocounter{definicion}{1}%
+
+\section{Bits por byte}
+
+La pérdida por token y la perplejidad dependen del tokenizador: un vocabulario mayor produce menos tokens, cada uno más difícil de predecir, y la cifra por token cambia aunque el modelo comprima igual de bien. Para comparar modelos con tokenizadores distintos se normaliza por la longitud del texto, que no depende del tokenizador.
+
+\begin{definicion}[Bits por byte]\label{def:bpb}
+Sea un texto de $B$ bytes en la codificación UTF-8, dividido por el tokenizador en $N$ tokens. Los \emph{bits por byte} del modelo $q$ sobre el texto son
+\[
+\bpb=\frac{1}{B}\sum_{t=1}^{N}-\log_2 q(x_t\mid x_{1:t-1}).
+\]
+\end{definicion}
+
+\begin{proposicion}\label{prop:bpb}
+Si $\mathcal{J}$ es la pérdida media en nats por token y $\bar b=B/N$ el número medio de bytes por token, entonces $\bpb=\mathcal{J}/(\bar b\ln 2)$.
+\end{proposicion}
+
+Por el \cref{teo:compresion}, el bpb es, salvo un término despreciable, el tamaño del texto comprimido con el modelo dividido por su tamaño original en bytes; un bpb de $b$ significa que el texto se comprime a una fracción $b/8$ de su tamaño.
+
+\addtocounter{definicion}{1}%
+
+\begin{center}
+\begin{tabular}{@{}llcl@{}}
+\toprule
+Métrica & Unidad & Tokenizador & Uso habitual \\
+\midrule
+pérdida & nats por token & depende & entrenamiento \\
+perplejidad & $e^{\text{pérdida}}$ & depende & número efectivo de opciones \\
+bits por carácter & bits por carácter & no depende & modelos de caracteres \\
+bits por byte & bits por byte & no depende & comparar modelos distintos \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Los bits por carácter tampoco dependen del tokenizador, pero sí de cómo se cuentan los caracteres; los bytes UTF-8 están definidos sin ambigüedad. En español, las vocales con tilde, la \emph{ñ} y las comillas angulares ocupan 2 bytes cada una, de modo que un mismo texto tiene más bytes que caracteres y su bpb es algo menor que sus bits por carácter. El artículo del conjunto de datos The Pile~\cite{pile} popularizó el bpb para comparar modelos con tokenizadores distintos. Anthropic, Google y xAI no publican el bpb de sus modelos actuales.
+

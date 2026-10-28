@@ -1,0 +1,140 @@
+% =====================================================================
+\chapter{Agentes y uso de herramientas}
+\label{tema:6}
+% =====================================================================
+
+Un modelo de lenguaje solo produce texto. Para que actúe sobre el mundo (buscar, calcular, ejecutar código, enviar un mensaje) hay que integrarlo en un sistema que interprete parte de ese texto como acciones, las ejecute y le devuelva el resultado. Este tema formaliza ese sistema como un agente en el sentido de la inteligencia artificial clásica y como una política sobre un proceso de decisión parcialmente observable, describe el protocolo de las llamadas a herramientas y dos métodos para aprenderlas o usarlas (Toolformer y ReAct), cuantifica la fiabilidad de una cadena de pasos y estudia el principal riesgo de seguridad, la inyección de instrucciones. Se siguen el capítulo~2 de Russell y Norvig~\cite{aima}, el capítulo~3 de Sutton y Barto~\cite{sb}, el artículo de Kaelbling, Littman y Cassandra~\cite{kaelbling}, los artículos de Yao \emph{et al.}~\cite{react}, Schick \emph{et al.}~\cite{toolformer} y Greshake \emph{et al.}~\cite{greshake}, la clase~10 de CS224N~\cite{cs224n} y el curso CS294-196 de Berkeley~\cite{cs294}.
+
+\section{Agentes racionales}
+
+\begin{definicion}[Agente]\label{def:agente}
+Un \emph{agente} percibe su entorno mediante sensores y actúa sobre él mediante actuadores. Su comportamiento queda descrito por la \emph{función de agente}, que asigna una acción a cada secuencia de percepciones; el \emph{programa de agente} es la implementación concreta de esa función. Un agente es \emph{racional} si, para cada secuencia de percepciones, elige la acción que maximiza el valor esperado de una \emph{medida de rendimiento} dada, según la información que proporcionan las percepciones y el conocimiento previo del agente~\cite[cap.~2]{aima}.
+\end{definicion}
+
+Russell y Norvig describen un entorno de tarea por sus cuatro elementos PEAS (rendimiento, entorno, actuadores y sensores, por sus iniciales en inglés) y lo clasifican según varias propiedades: total o parcialmente observable, determinista o estocástico, episódico o secuencial, estático o dinámico, discreto o continuo, de un agente o multiagente, y conocido o desconocido~\cite[cap.~2]{aima}.
+
+\addtocounter{definicion}{1}%
+
+\section{El agente como proceso de decisión parcialmente observable}
+
+\begin{definicion}[Proceso de decisión de Markov parcialmente observable]\label{def:pomdp}
+Un POMDP es una tupla $(\mathcal{S},\mathcal{A},T,R,\Omega,O,\gamma)$ con estados $\mathcal{S}$, acciones $\mathcal{A}$, probabilidades de transición $T(s'\mid s,a)$, recompensa $R(s,a)$, observaciones $\Omega$, probabilidades de observación $O(o\mid s',a)$ y factor de descuento $\gamma\in[0,1]$~\cite{kaelbling}. El agente no observa el estado, sino la \emph{historia} $h_t=(o_1,a_1,o_2,\dots,a_{t-1},o_t)$. Una \emph{política} es una distribución $\pi(a_t\mid h_t)$. Si las observaciones revelan el estado, el POMDP es un proceso de decisión de Markov~\cite[cap.~3]{sb}.
+\end{definicion}
+
+Un agente basado en un modelo de lenguaje encaja en esta definición: la historia es el contexto (instrucciones, mensajes del usuario, llamadas a herramientas y sus resultados), la política es $p_\theta$ restringida a las acciones admisibles (una llamada a herramienta o una respuesta final) y las observaciones son los resultados de las herramientas. El estado incluye todo lo que el agente no ve: el contenido de una web, el estado de un repositorio, las intenciones del usuario.
+
+\begin{definicion}[Estado de creencia]\label{def:creencia}
+El \emph{estado de creencia} es la distribución $b_t(s)=P(s_t=s\mid h_t)$ sobre el estado oculto, dada la historia.
+\end{definicion}
+
+\begin{proposicion}[Actualización de la creencia]\label{prop:creencia}
+Si el agente tiene la creencia $b$, ejecuta $a$ y observa $o$, la nueva creencia es
+\[
+b'(s')=\frac{O(o\mid s',a)\sum_{s}T(s'\mid s,a)\,b(s)}{\sum_{s''}O(o\mid s'',a)\sum_{s}T(s''\mid s,a)\,b(s)} .
+\]
+\end{proposicion}
+
+Kaelbling \emph{et al.} demuestran que la creencia es un estadístico suficiente de la historia para decidir de forma óptima, de modo que un POMDP equivale a un proceso de decisión de Markov sobre creencias~\cite{kaelbling}. Un modelo de lenguaje no mantiene una creencia explícita, pero condiciona su decisión a la historia completa (o a la parte que cabe en la ventana de contexto), que contiene la misma información.
+
+\addtocounter{definicion}{1}%
+
+\section{Llamadas a herramientas}
+
+\begin{definicion}[Herramienta y llamada]\label{def:herramienta}
+Una \emph{herramienta} se describe por un nombre, una descripción en lenguaje natural y un esquema de argumentos, habitualmente en JSON Schema. Una \emph{llamada} es un texto estructurado generado por el modelo que contiene el nombre de la herramienta, unos argumentos y un identificador. El \emph{sistema} que rodea al modelo valida la llamada contra el esquema, ejecuta la herramienta y añade al contexto el \emph{resultado}, asociado al identificador de la llamada.
+\end{definicion}
+
+El modelo nunca ejecuta nada: genera texto. Que ese texto sea una llamada bien formada en el momento oportuno es algo que se aprende en el ajuste supervisado y por refuerzo (módulos~20 y~21). El bucle del agente es el siguiente:
+\begin{enumerate}[label=\arabic*.]
+  \item Construir el contexto con las instrucciones, las descripciones de las herramientas y la historia.
+  \item Generar con el modelo. Si la salida es una respuesta final, devolverla y terminar.
+  \item Si es una llamada, validar sus argumentos; si no son válidos, añadir un mensaje de error a la historia.
+  \item Ejecutar la herramienta con los permisos del sistema y añadir el resultado a la historia.
+  \item Si se alcanza el número máximo de pasos, terminar con un aviso; si no, volver al paso~2.
+\end{enumerate}
+
+\addtocounter{definicion}{1}%
+
+Las API públicas de los tres modelos comerciales que se mencionan en el curso siguen este esquema (\cref{tab:apis}). En la de Anthropic, cada herramienta tiene \texttt{name}, \texttt{description} e \texttt{input\_schema}; cuando Claude decide usar una, la respuesta termina con \texttt{stop\_reason: "tool\_use"} y contiene bloques \texttt{tool\_use} con \texttt{id}, \texttt{name} e \texttt{input}, y la aplicación responde con bloques \texttt{tool\_result} que llevan el \texttt{tool\_use\_id} correspondiente; la documentación distingue las herramientas que ejecuta la aplicación de las que ejecuta Anthropic en sus servidores, como la búsqueda web~\cite{claude-tools}.
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+& Definición & Llamada del modelo & Resultado \\
+\midrule
+Claude~\cite{claude-tools} & \texttt{name}, \texttt{description}, \texttt{input\_schema} & bloque \texttt{tool\_use} (\texttt{id}, \texttt{name}, \texttt{input}) & bloque \texttt{tool\_result} con \texttt{tool\_use\_id} \\
+Gemini~\cite{gemini-fc} & \texttt{name}, \texttt{description}, \texttt{parameters} & \texttt{function\_call} (\texttt{id}, \texttt{name}, \texttt{arguments}) & \texttt{function\_result} con \texttt{call\_id} \\
+Grok~\cite{xai-fc} & \texttt{name}, \texttt{description}, \texttt{parameters} & \texttt{function\_call} (\texttt{call\_id}, \texttt{name}, \texttt{arguments}) & \texttt{function\_call\_output} con \texttt{call\_id} \\
+\bottomrule
+\end{tabularx}
+\caption{Campos de las llamadas a herramientas en la documentación pública consultada en octubre de 2026. Los nombres pueden cambiar entre versiones de cada API.}
+\label{tab:apis}
+\end{table}
+
+\begin{observacion}[Model Context Protocol]
+En noviembre de 2024, Anthropic presentó el \emph{Model Context Protocol} (MCP), un estándar abierto para conectar aplicaciones de LLM con fuentes de datos y herramientas sin integraciones específicas para cada una~\cite{mcp}. Según su especificación, las aplicaciones (\emph{anfitriones}) contienen \emph{clientes} que se conectan a \emph{servidores} mediante mensajes JSON-RPC~2.0; los servidores ofrecen \emph{recursos} (datos de contexto), \emph{prompts} (plantillas) y \emph{herramientas} (funciones que el modelo puede invocar). La especificación pide el consentimiento explícito del usuario antes de invocar una herramienta y que las descripciones de herramientas procedentes de servidores no fiables se traten como no fiables~\cite{mcp-spec}.
+\end{observacion}
+
+\subsection{Toolformer: aprender cuándo llamar}
+
+Schick \emph{et al.} enseñan a un modelo a insertar llamadas sin anotación humana: el propio modelo propone posibles llamadas en un corpus, se ejecutan y solo se conservan las que ayudan a predecir el texto que sigue~\cite{toolformer}.
+
+\begin{definicion}[Criterio de filtrado de Toolformer]\label{def:toolformer}
+Sea una llamada $c$ insertada en la posición $i$ de un texto $x$, con resultado $r$. Para un prefijo $z$, sea
+\[
+L_i(z)=-\sum_{j\ge i}w_{j-i}\,\ln p_\theta(x_j\mid z,x_{1:j-1}),
+\]
+la pérdida ponderada de los tokens siguientes, con pesos $w_t=\tilde w_t/\sum_s\tilde w_s$ y $\tilde w_t=\max(0,1-0{,}2t)$, que dan más importancia a los tokens próximos. Sean $L_i^{+}$ la pérdida con la llamada y su resultado como prefijo y $L_i^{-}$ el mínimo entre la pérdida sin llamada y con la llamada pero sin resultado. La llamada se conserva si $L_i^{-}-L_i^{+}\ge\tau_f$, para un umbral $\tau_f$~\cite[§2]{toolformer}.
+\end{definicion}
+
+El criterio exige que lo útil sea el \emph{resultado}: comparar también con la llamada sin resultado descarta llamadas cuyo texto, por sí solo, ya facilita la predicción. Con las llamadas conservadas se ajusta el modelo, que aprende a emitirlas donde reducen la pérdida.
+
+\subsection{ReAct: razonar y actuar}
+
+\begin{definicion}[Trayectoria ReAct]\label{def:react}
+En ReAct, la salida del modelo en cada paso es un \emph{pensamiento} en lenguaje natural o una \emph{acción}; tras cada acción, el sistema añade la \emph{observación} correspondiente. Una trayectoria tiene la forma
+\[
+(\text{pensamiento}_1,\ \text{acción}_1,\ \text{observación}_1,\ \text{pensamiento}_2,\ \dots)
+\]
+y termina con una acción de respuesta~\cite{react}.
+\end{definicion}
+
+Los pensamientos no modifican el entorno: sirven para descomponer la tarea, seguir el progreso y reaccionar a resultados inesperados. Yao \emph{et al.} comparan ReAct con el razonamiento sin acciones (cadena de pensamiento), que no puede comprobar hechos y tiende a inventarlos, y con la actuación sin pensamientos, que pierde el hilo en tareas largas~\cite{react}. La mayoría de los agentes actuales siguen esta alternancia, con el razonamiento a veces oculto al usuario.
+
+\section{Fiabilidad de una cadena de pasos}
+
+\begin{proposicion}[Composición de pasos]\label{prop:fiabilidad}
+Si cada paso de un agente tiene éxito con probabilidad $p$, de forma independiente, y la tarea exige $n$ pasos correctos, la probabilidad de completarla es $p^{n}$, y el número de pasos hasta el primer fallo sigue una distribución geométrica de media $1/(1-p)$.
+\end{proposicion}
+
+Con $p=0{,}95$ y $n=10$, $p^{n}=0{,}599$; con $p=0{,}99$, $0{,}904$. Con $p=0{,}95$, el primer fallo llega en media en el paso~20. Si cada paso se \emph{verifica} (por ejemplo, ejecutando las pruebas tras cada edición) y se permite un reintento independiente, la probabilidad de éxito por paso pasa a $1-(1-p)^{2}=0{,}9975$ y la de completar diez pasos, a $0{,}9975^{10}=0{,}975$. Por eso los agentes útiles comprueban sus resultados y pueden corregirse; la independencia de los reintentos es, de nuevo, una idealización.
+
+\section{Riesgos: inyección de instrucciones}
+
+\begin{definicion}[Inyección de instrucciones]\label{def:inyeccion}
+Hay \emph{inyección de instrucciones} cuando un texto que el sistema trata como dato contiene órdenes y el modelo las obedece. Es \emph{directa} si la escribe el propio usuario para saltarse las reglas del sistema, e \emph{indirecta} si llega en un contenido que el agente lee durante la tarea: una web, un correo, un documento recuperado o el resultado de una herramienta~\cite{greshake}.
+\end{definicion}
+
+El problema es estructural. Para el Transformer, instrucciones y datos son una única secuencia de tokens, y no existe un canal separado que distinga «lo que pide el usuario» de «lo que dice una web». Greshake \emph{et al.} muestran que cualquiera que pueda escribir en una fuente que el agente consulta puede intentar controlarlo~\cite{greshake}. Las defensas conocidas son todas parciales (\cref{tab:defensas}).
+
+\begin{table}[h]
+\centering\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Defensa & Qué hace & Límite \\
+\midrule
+Marcar los datos & Delimitar el contenido externo y avisar de que no contiene órdenes & El modelo puede ignorar el aviso \\
+Mínimo privilegio & Lista blanca de herramientas y permisos por tarea & No impide respuestas engañosas \\
+Confirmación humana & Pedir permiso antes de acciones irreversibles & Fatiga: se acepta sin leer \\
+Entrenamiento & Ajuste con ejemplos de ataques & Reduce la tasa de éxito, no la anula \\
+\bottomrule
+\end{tabularx}
+\caption{Defensas frente a la inyección de instrucciones y sus límites.}
+\label{tab:defensas}
+\end{table}
+
+\begin{observacion}[Diseñar para el peor caso]
+El principio de diseño es suponer que el modelo \emph{puede} ser engañado y acotar lo que un modelo engañado puede hacer. Si un ataque tiene éxito sobre el modelo con probabilidad $0{,}1$ y el usuario aprueba sin leer una acción con probabilidad $0{,}2$, una acción dañina que requiere confirmación ocurre con probabilidad $0{,}02$, si ambos sucesos son independientes; si la acción no está en la lista blanca, la probabilidad es nula, porque el sistema la impide aunque el modelo la solicite. La seguridad debe estar en el sistema, no en el \emph{prompt}.
+\end{observacion}
+

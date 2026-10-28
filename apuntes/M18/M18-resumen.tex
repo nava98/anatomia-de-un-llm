@@ -1,0 +1,111 @@
+% =====================================================================
+%  Anatomía de un LLM — Fase IV — Módulo 18
+%  Arquitecturas modernas
+%  Compilar: latexmk -r ../latexmkrc M18-arquitecturas.tex
+% =====================================================================
+\documentclass[11pt,a4paper,twoside,openany]{book}
+\usepackage{../estilo-apuntes}
+
+\newcommand{\ApuntesCurso}{Anatomía de un LLM}
+\newcommand{\ApuntesModulo}{Módulo 18}
+
+% Notación propia del módulo
+\newcommand{\T}{^{\top}}
+\newcommand{\uno}{\mathbf{1}}
+\newcommand{\diag}{\operatorname{diag}}
+\newcommand{\RMS}{\operatorname{RMS}}
+\newcommand{\RMSNorm}{\operatorname{RMSNorm}}
+\newcommand{\LN}{\operatorname{LN}}
+\newcommand{\FFN}{\operatorname{FFN}}
+\newcommand{\Attn}{\operatorname{Attn}}
+\newcommand{\SwiGLU}{\operatorname{SwiGLU}}
+\newcommand{\SiLU}{\operatorname{SiLU}}
+\newcommand{\TopK}{\operatorname{TopK}}
+\newcommand{\softplus}{\operatorname{softplus}}
+\newcommand{\RoPE}{\operatorname{RoPE}}
+\newcommand{\Lbal}{\mathcal{L}_{\mathrm{bal}}}
+\newcommand{\dff}{d_{\mathrm{ff}}}
+\newcommand{\dhd}{d_{h}}
+\newcommand{\nkv}{n_{\mathrm{kv}}}
+\newcommand{\dc}{d_{c}}
+\newcommand{\Abar}{\bar{A}}
+\newcommand{\Bbar}{\bar{B}}
+\newcommand{\Icrit}{I^{\ast}}
+\newcommand{\Nact}{N_{\mathrm{act}}}
+\newcommand{\Ntot}{N_{\mathrm{tot}}}
+\makeatletter\g@addto@macro\UrlBreaks{\do\-}\makeatother
+
+\hypersetup{pdftitle={Módulo 18. Arquitecturas modernas (resumen)},pdfauthor={Anatomía de un LLM}}
+
+\input{resumen-etiquetas}
+\begin{document}
+\frontmatter
+\begin{titlepage}
+\centering
+\vspace*{2.5cm}
+{\large\scshape Anatomía de un LLM}\par
+\vspace{0.4cm}
+{\normalsize Fundamentos matemáticos de los modelos de lenguaje}\par
+\vspace{2.2cm}
+\rule{\textwidth}{0.8pt}\par\vspace{0.5cm}
+{\small\scshape Fase IV \textperiodcentered\ Escala, sistemas y arquitecturas modernas}\par\vspace{0.3cm}
+{\Huge\bfseries Módulo 18\par}\vspace{0.3cm}
+{\LARGE Arquitecturas modernas\par}
+\vspace{0.2cm}
+{\large Normalización, atención eficiente, contexto largo, mezcla de expertos, modelos de espacio de estados y multimodalidad\par}
+\vspace{0.5cm}\rule{\textwidth}{0.4pt}\par
+\vspace{1.6cm}
+{\large Resumen del módulo}\par
+\vfill
+{\small Edición de octubre de 2026}\par
+\end{titlepage}
+
+\chapter*{Sobre este resumen}
+\addcontentsline{toc}{chapter}{Sobre este resumen}
+\markboth{Sobre este resumen}{}
+
+Este documento reúne lo indispensable de los apuntes del Módulo 18: el texto expositivo, todas las definiciones y todos los resultados (teoremas, proposiciones, lemas y corolarios), las tablas y las observaciones de contenido. Se han suprimido las demostraciones, los ejemplos, las lecturas, las figuras, los ejercicios y sus soluciones. La numeración de temas, secciones, enunciados y ecuaciones es la misma que en los apuntes, de modo que cualquier referencia puede buscarse allí; las que remiten a elementos suprimidos (un ejemplo, una figura, una ecuación de una demostración) conservan su número en los apuntes.
+
+\section*{Notación}
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X@{}}
+\toprule
+Símbolo & Significado \\
+\midrule
+$d$, $L$, $\dff$ & dimensión del modelo, número de bloques y dimensión intermedia del MLP \\
+$H$, $\dhd=d/H$ & cabezas de consulta y dimensión por cabeza \\
+$\nkv$, $G$ & cabezas de clave y valor; número de grupos de GQA ($\nkv=G$) \\
+$T$, $b$, $s$ & longitud de la secuencia, tamaño del lote y bytes por número (2 en bf16) \\
+$\dc$, $d_h^{R}$ & dimensión latente de MLA y dimensión de la clave con RoPE desacoplada \\
+$W$ & tamaño de la ventana de atención local \\
+$\theta_i$, $\lambda_i=2\pi/\theta_i$, $\beta_0$ & frecuencias y longitudes de onda de RoPE; base ($10^{4}$ en el artículo original) \\
+$s_{\mathrm{e}}=L'/L_0$ & factor de extensión del contexto, de $L_0$ a $L'$ tokens \\
+$E_1,\dots,E_N$, $k$ & expertos y número de expertos activos por token \\
+$z=xW_r$, $p_i(x)$, $g_i(x)$ & logits del enrutador, probabilidades y pesos de combinación \\
+$f_i$, $P_i$, $\Lbal$ & fracción de tráfico, probabilidad media y pérdida de balanceo del experto $i$ \\
+$\Ntot$, $\Nact$ & parámetros totales y activos por token \\
+$A,B,C$, $\Delta$ & matrices de un modelo de espacio de estados continuo y paso de discretización \\
+$\Abar,\Bbar$, $h_t$ & matrices discretizadas y estado en el instante $t$ \\
+$\sigma$, $\softplus(z)=\ln(1+e^{z})$ & sigmoide logística y función \emph{softplus} \\
+$P$, $C_{\mathrm{in}}$ & lado del parche de un ViT y número de canales de la imagen \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Como en el módulo~14, los vectores de tokens son filas y una capa lineal actúa como $x\mapsto xW$. Los números grandes se escriben con espacio fino como separador de miles ($46\,702\,792\,704$). Las unidades binarias son $1$~KiB $=2^{10}$, $1$~MiB $=2^{20}$ y $1$~GiB $=2^{30}$~bytes; 1~GB son $10^{9}$~bytes.
+
+
+\tableofcontents
+
+\mainmatter
+\input{resumen-tema1}
+\input{resumen-tema2}
+\input{resumen-tema3}
+\input{resumen-tema4}
+\input{resumen-tema5}
+\input{resumen-tema6}
+
+\backmatter
+\input{bibliografia}
+
+\end{document}

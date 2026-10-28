@@ -1,0 +1,104 @@
+% =====================================================================
+\chapter{Olvido catastrófico}
+\label{tema:3}
+% =====================================================================
+
+Al ajustar todos los pesos con una tarea estrecha, el modelo pierde capacidades que tenía. Este tema define el fenómeno, lo analiza en un modelo cuadrático que puede resolverse a mano y deduce la penalización de la consolidación elástica de pesos (EWC) como aproximación bayesiana. El fenómeno se describió en redes conexionistas en el trabajo de McCloskey y Cohen~\cite{mccloskey}; EWC procede de Kirkpatrick \emph{et al.}~\cite{kirkpatrick}; la aproximación de Laplace sigue el §4.4 de Bishop~\cite{bishop}, y el análisis cuadrático de la penalización, el §7.1.1 de Goodfellow, Bengio y Courville~\cite{gbc}.
+
+\section{El fenómeno}
+
+\begin{definicion}[Olvido]\label{def:olvido}
+Sean $\mathcal{L}_A$ la pérdida de una tarea antigua, $\theta_0$ unos parámetros que la resuelven y $\theta_B$ los parámetros obtenidos al ajustar $\theta_0$ con una tarea nueva de pérdida $\mathcal{L}_B$. El \emph{olvido} es el aumento $\mathcal{L}_A(\theta_B)-\mathcal{L}_A(\theta_0)$. Se habla de \emph{olvido catastrófico} cuando ese aumento es comparable al que tendría un modelo sin entrenar en la tarea~$A$.
+\end{definicion}
+
+McCloskey y Cohen~\cite{mccloskey} mostraron en 1989 que una red entrenada secuencialmente en dos tareas pierde casi por completo la primera al aprender la segunda, a diferencia de lo que ocurre en el aprendizaje humano. La causa es que los mismos parámetros codifican ambas tareas y el gradiente de $\mathcal{L}_B$ no tiene en cuenta cuánto importa cada parámetro para~$A$.
+
+\addtocounter{definicion}{1}%
+
+\section{Un modelo cuadrático del compromiso}
+
+\begin{proposicion}[Muelle hacia el modelo preentrenado]\label{prop:muelle}
+Sean $a,\theta_0\in\R$ y $\lambda\ge 0$, y sea
+\[
+\mathcal{L}(\theta)=(\theta-a)^{2}+\lambda(\theta-\theta_0)^{2}.
+\]
+El único minimizador es $\theta^{\ast}=(a+\lambda\theta_0)/(1+\lambda)$. En él, el olvido medido como $(\theta^{\ast}-\theta_0)^{2}$ y el error en la tarea nueva $(\theta^{\ast}-a)^{2}$ valen
+\[
+(\theta^{\ast}-\theta_0)^{2}=\frac{(a-\theta_0)^{2}}{(1+\lambda)^{2}},\qquad (\theta^{\ast}-a)^{2}=\frac{\lambda^{2}(a-\theta_0)^{2}}{(1+\lambda)^{2}}.
+\]
+\end{proposicion}
+
+\begin{corolario}\label{cor:frontera}
+Las distancias $\abs{\theta^{\ast}-\theta_0}$ y $\abs{\theta^{\ast}-a}$ suman $\abs{a-\theta_0}$ para todo $\lambda\ge 0$: $\theta^{\ast}$ recorre el segmento entre $a$ y $\theta_0$, desde $\theta^{\ast}=a$ ($\lambda=0$, olvido máximo) hasta $\theta^{\ast}\to\theta_0$ ($\lambda\to\infty$, ningún aprendizaje).
+\end{corolario}
+
+\addtocounter{definicion}{1}%
+
+La penalización $\lambda(\theta-\theta_0)^{2}$ es la energía potencial de un muelle de constante $2\lambda$ anclado en $\theta_0$, y $\theta^{\ast}$ es el punto de equilibrio entre dos fuerzas lineales. El problema real tiene millones de parámetros, y no todos importan igual para la tarea antigua: conviene un muelle más rígido en los parámetros importantes. Esa es la idea de EWC.
+
+\section{Consolidación elástica de pesos}
+
+\subsection{Justificación bayesiana}
+
+Sean $\mathcal{D}_A$ y $\mathcal{D}_B$ los datos de las dos tareas, condicionalmente independientes dado $\theta$. Por el teorema de Bayes,
+\begin{equation}\label{eq:bayes-secuencial}
+\ln p(\theta\mid\mathcal{D}_A,\mathcal{D}_B)=\ln p(\mathcal{D}_B\mid\theta)+\ln p(\theta\mid\mathcal{D}_A)-\ln p(\mathcal{D}_B\mid\mathcal{D}_A).
+\end{equation}
+El último término no depende de $\theta$. Toda la información sobre la tarea~$A$ está en la distribución a posteriori $p(\theta\mid\mathcal{D}_A)$, que no puede calcularse exactamente. La \emph{aproximación de Laplace}~\cite[§4.4]{bishop} la sustituye por una gaussiana centrada en su moda.
+
+\begin{definicion}[Aproximación de Laplace]\label{def:laplace}
+Sea $\theta_A$ un máximo de $g(\theta)=\ln p(\theta\mid\mathcal{D}_A)$ y sea $H_A=-\nabla^{2}g(\theta_A)$, definida positiva. La aproximación de Laplace es $p(\theta\mid\mathcal{D}_A)\approx\mathcal{N}(\theta;\theta_A,H_A^{-1})$, que se obtiene del desarrollo de Taylor de segundo orden $g(\theta)\approx g(\theta_A)-\frac12(\theta-\theta_A)\T H_A(\theta-\theta_A)$, en el que el término lineal se anula porque $\nabla g(\theta_A)=0$.
+\end{definicion}
+
+Sustituyendo en~\eqref{eq:bayes-secuencial}, maximizar la distribución a posteriori conjunta equivale aproximadamente a minimizar
+\[
+-\ln p(\mathcal{D}_B\mid\theta)+\tfrac12(\theta-\theta_A)\T H_A(\theta-\theta_A).
+\]
+Queda por estimar $H_A$, una matriz de $D\times D$ con $D$ del orden de millones.
+
+\subsection{Información de Fisher}
+
+\begin{definicion}[Información de Fisher]\label{def:fisher}
+Sea $p_\theta$ una familia de distribuciones derivable en $\theta$. Su \emph{matriz de información de Fisher} es
+\[
+\Fis(\theta)=\E_{x\sim p_\theta}\bigl[\nabla_\theta\ln p_\theta(x)\,\nabla_\theta\ln p_\theta(x)\T\bigr].
+\]
+El vector $\nabla_\theta\ln p_\theta(x)$ se llama \emph{función de puntuación} (\emph{score}).
+\end{definicion}
+
+$\Fis(\theta)$ es semidefinida positiva por ser la esperanza de matrices de la forma $vv\T$. Solo requiere gradientes de primer orden.
+
+\begin{proposicion}[Fisher como hessiano esperado]\label{prop:fisher-hess}
+Supóngase que se pueden intercambiar derivada e integral. Entonces $\E_{x\sim p_\theta}[\nabla_\theta\ln p_\theta(x)]=0$ y
+\[
+\Fis(\theta)=-\E_{x\sim p_\theta}\bigl[\nabla^{2}_\theta\ln p_\theta(x)\bigr].
+\]
+\end{proposicion}
+
+Si $\mathcal{D}_A$ consta de $n$ ejemplos y la distribución a priori es plana, $H_A=-\sum_{i}\nabla^{2}\ln p_\theta(x_i)\big|_{\theta_A}$, y por la ley de los grandes números y la \cref{prop:fisher-hess} se aproxima por $n\,\Fis(\theta_A)$ cuando el modelo describe bien los datos. Kirkpatrick \emph{et al.} se quedan además con la diagonal, $F_i=\Fis_{ii}(\theta_A)$, que se estima promediando los cuadrados de las componentes del gradiente.
+
+\begin{definicion}[EWC]\label{def:ewc}
+Sean $\theta_A$ los parámetros tras la tarea~$A$ y $F_i$ la diagonal de su matriz de Fisher. La \emph{consolidación elástica de pesos} minimiza
+\[
+\mathcal{L}_{\mathrm{EWC}}(\theta)=\mathcal{L}_B(\theta)+\sum_{i=1}^{D}\frac{\lambda}{2}F_i\,(\theta_i-\theta_{A,i})^{2},
+\]
+donde $\lambda>0$ regula la importancia de la tarea antigua~\cite{kirkpatrick}.
+\end{definicion}
+
+Cada parámetro tiene su propio muelle, de constante $\lambda F_i$: los parámetros a los que la verosimilitud de la tarea~$A$ es sensible (Fisher grande) quedan rígidos y los demás pueden moverse libremente. La \cref{prop:muelle} es el caso de un solo parámetro en el que el coeficiente $\frac{\lambda}{2}F$ de EWC hace el papel del $\lambda$ de la proposición.
+
+\section{Otros remedios}
+
+\begin{definicion}[Repetición]\label{def:replay}
+La \emph{repetición} (\emph{replay}) mezcla en cada paso ejemplos de la tarea antigua: con $\beta\in[0,1)$, se minimiza $(1-\beta)\mathcal{L}_B(\theta)+\beta\,\mathcal{L}_A(\theta)$.
+\end{definicion}
+
+Otros remedios habituales son una tasa de aprendizaje pequeña y pocas épocas, las técnicas de ULMFiT (\cref{tema:1}) y modificar pocos parámetros, como hacen los métodos del \cref{tema:4} y LoRA (\cref{tema:5}). El módulo~21 penalizará la divergencia de Kullback--Leibler entre el modelo ajustado y uno de referencia. Esa penalización actúa en el espacio de las distribuciones de salida, pero localmente coincide con un muelle en el espacio de parámetros cuya rigidez es la información de Fisher.
+
+\begin{proposicion}[Desarrollo local de la divergencia KL]\label{prop:kl-fisher}
+Bajo las hipótesis de la \cref{prop:fisher-hess}, y si $\ln p_\theta$ es tres veces derivable,
+\[
+D_{\mathrm{KL}}\bigl(p_{\theta_0}\,\big\|\,p_{\theta_0+\delta}\bigr)=\tfrac12\,\delta\T\Fis(\theta_0)\,\delta+O(\norm{\delta}^{3}).
+\]
+\end{proposicion}
+

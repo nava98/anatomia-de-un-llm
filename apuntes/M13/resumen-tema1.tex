@@ -1,0 +1,90 @@
+% =====================================================================
+\chapter{Atención como agrupación ponderada}
+\label{tema:1}
+% =====================================================================
+
+Este tema define la atención en su forma más general: una consulta se compara con un conjunto de claves, los parecidos se convierten en pesos mediante una softmax y la salida es la media de los valores asociados ponderada por esos pesos. Se demuestran las dos propiedades estructurales básicas de la operación, la pertenencia de la salida a la envolvente convexa de los valores y su comportamiento en los límites de temperatura, y se presentan sus dos antecedentes: la regresión por núcleos de Nadaraya y Watson y la atención aditiva de Bahdanau, Cho y Bengio. Se siguen las §11.1, §11.2 y §11.4 de~\cite{d2l}, la §3.1 de~\cite{bahdanau}, la §7.1 de~\cite{jm3} y la clase~5 de~\cite{cs224n}.
+
+\section{Del diccionario a la búsqueda suave}
+
+Un diccionario almacena pares $(k_j,v_j)$ y, ante una consulta $q$, devuelve el valor $v_j$ cuya clave coincide con $q$, o un error si ninguna coincide. La búsqueda es \emph{dura}: el resultado depende de $q$ de forma discontinua y no admite gradientes. La atención sustituye la coincidencia exacta por un grado de parecido y la elección de un valor por una media ponderada~\cite[§11.1]{d2l}.
+
+\begin{definicion}[Agrupación por atención]\label{def:agrupacion}
+Sean $q\in\R^{1\times d_k}$ una \emph{consulta}, $k_1,\dots,k_n\in\R^{1\times d_k}$ unas \emph{claves} y $v_1,\dots,v_n\in\R^{1\times d_v}$ los \emph{valores} asociados. Sea $a\colon\R^{1\times d_k}\times\R^{1\times d_k}\to\R$ una \emph{función de puntuación}. La \emph{agrupación por atención} de los valores respecto de $q$ es
+\[
+\Att\bigl(q;(k_j,v_j)_{j=1}^{n}\bigr)=\sum_{j=1}^{n}\alpha_j\,v_j,\qquad
+\alpha_j=\frac{\exp a(q,k_j)}{\sum_{l=1}^{n}\exp a(q,k_l)},
+\]
+es decir, $(\alpha_1,\dots,\alpha_n)=\softmax\bigl(a(q,k_1),\dots,a(q,k_n)\bigr)$. Los números $\alpha_j$ se llaman \emph{pesos de atención}.
+\end{definicion}
+
+La función de puntuación más usada es el producto escalar, $a(q,k)=q\cdot k=qk\T$, que es grande cuando los dos vectores apuntan en direcciones parecidas y tienen norma grande (módulo~2). Las claves deciden \emph{cuánto} contribuye cada par; los valores, \emph{qué} se contribuye. Separar ambos papeles permite que el criterio por el que un elemento es encontrado no coincida con la información que entrega.
+
+\addtocounter{figure}{1}%
+
+\begin{definicion}[Autoatención]\label{def:autoatencion}
+Sean $x_1,\dots,x_n\in\R^{1\times d}$ los vectores de los tokens de una secuencia y $\WQ,\WK\in\R^{d\times d_k}$, $\WV\in\R^{d\times d_v}$ matrices de parámetros. La \emph{autoatención} asigna a cada posición $i$ la salida $o_i=\Att\bigl(q_i;(k_j,v_j)_{j=1}^{n}\bigr)$, con
+\[
+q_i=x_i\WQ,\qquad k_j=x_j\WK,\qquad v_j=x_j\WV .
+\]
+Si las consultas proceden de una secuencia y las claves y valores de otra, se habla de \emph{atención cruzada}.
+\end{definicion}
+
+\begin{observacion}
+La \cref{fig:qkv} resume la definición. En un modelo de lenguaje del tipo \emph{decoder-only}, como los que se estudian en este curso, toda la atención es autoatención; la atención cruzada aparece en los modelos codificador-decodificador de traducción (\cref{sec:bahdanau}).
+\end{observacion}
+
+\section{Propiedades de la agrupación}
+
+\begin{proposicion}[Envolvente convexa]\label{prop:convexa}
+Para cualesquiera $q$, claves, valores y función de puntuación, la salida de la \cref{def:agrupacion} pertenece a la envolvente convexa $\conv\{v_1,\dots,v_n\}$. En particular, para cada coordenada $c$,
+\[
+\min_j v_j[c]\;\le\;\Att(q)[c]\;\le\;\max_j v_j[c].
+\]
+\end{proposicion}
+
+La atención, por tanto, solo \emph{mezcla} información existente: no puede producir una coordenada mayor que la mayor de los valores. Por esa razón un bloque Transformer combina la atención con una red de alimentación hacia delante y con conexiones residuales (módulo~14).
+
+Para estudiar la dependencia respecto de la escala de las puntuaciones se introduce un factor $\beta>0$, el \emph{inverso de la temperatura} del módulo~1: $\alpha_j(\beta)=\exp(\beta s_j)/\sum_l\exp(\beta s_l)$, con $s_j=a(q,k_j)$.
+
+\begin{teorema}[Límites de temperatura]\label{teo:limites}
+Sean $s_1,\dots,s_n$ las puntuaciones y supóngase que el máximo $s^{\ast}=\max_js_j$ se alcanza en un único índice $j^{\ast}$. Entonces
+\[
+\lim_{\beta\to+\infty}\Att_\beta(q)=v_{j^{\ast}},\qquad
+\lim_{\beta\to 0^{+}}\Att_\beta(q)=\frac{1}{n}\sum_{j=1}^{n}v_j .
+\]
+\end{teorema}
+
+La atención interpola, pues, entre el diccionario exacto (límite $\beta\to\infty$, que devuelve el valor de la clave más parecida) y la media simple de los valores ($\beta\to 0$). El caso con empates se trata en el \cref{eje:1-limites}.
+
+\section{Regresión por núcleos de Nadaraya y Watson}
+
+La idea de promediar respuestas con pesos que dependen del parecido entre la consulta y unos puntos de referencia es anterior al aprendizaje profundo. Zhang \emph{et al.}~\cite[§11.2]{d2l} la presentan a partir de la regresión no paramétrica.
+
+\begin{definicion}[Estimador de Nadaraya--Watson]\label{def:nw}
+Sean $(k_j,v_j)_{j=1}^{n}$ observaciones de entrada y salida y $\kappa(q,k)\ge 0$ un \emph{núcleo}. El estimador de Nadaraya--Watson en el punto $q$ es
+\[
+\hat f(q)=\sum_{j=1}^{n}\frac{\kappa(q,k_j)}{\sum_{l}\kappa(q,k_l)}\,v_j .
+\]
+Con el núcleo gaussiano, $\kappa(q,k)=\exp\bigl(-\tfrac12\norm{q-k}^{2}\bigr)$.
+\end{definicion}
+
+\begin{proposicion}\label{prop:gauss}
+Con el núcleo gaussiano, el estimador de Nadaraya--Watson es la agrupación por atención con puntuación $a(q,k)=-\tfrac12\norm{q-k}^{2}$. Si además todas las claves tienen la misma norma, coincide con la agrupación con puntuación $a(q,k)=q\cdot k$.
+\end{proposicion}
+
+\section{La atención aditiva de Bahdanau}
+\label{sec:bahdanau}
+
+En un traductor codificador-decodificador con redes recurrentes, el codificador produce un vector $h_j$ por cada palabra de la frase de origen. En el modelo clásico, el decodificador solo recibía el último de ellos, un resumen de tamaño fijo de toda la frase; Bahdanau, Cho y Bengio propusieron que en cada paso el decodificador construyese su propio resumen como media ponderada de todos los $h_j$~\cite[§3.1]{bahdanau}.
+
+\begin{definicion}[Atención aditiva]\label{def:aditiva}
+Sean $h_1,\dots,h_{T}$ los vectores del codificador y $s_{i-1}$ el estado del decodificador antes de emitir la palabra $i$. El \emph{vector de contexto} es
+\[
+c_i=\sum_{j=1}^{T}\alpha_{ij}h_j,\qquad \alpha_{ij}=\frac{\exp e_{ij}}{\sum_{l}\exp e_{il}},\qquad e_{ij}=v_a\T\tanh\bigl(W_as_{i-1}+U_ah_j\bigr),
+\]
+donde $W_a$, $U_a$ y $v_a$ son parámetros aprendidos (los vectores de esta definición son columnas, como en el artículo original).
+\end{definicion}
+
+Es una agrupación por atención en la que la consulta es $s_{i-1}$, claves y valores son los $h_j$ y la puntuación es una red de una capa oculta~\cite[apéndice~A.1.2]{bahdanau}. Vaswani \emph{et al.} señalan que la puntuación por producto escalar tiene una complejidad teórica similar, pero es mucho más rápida en la práctica porque se reduce a productos de matrices optimizados~\cite[§3.2.1]{vaswani}; es la que se estudia en el resto del módulo.
+

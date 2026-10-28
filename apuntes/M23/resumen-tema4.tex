@@ -1,0 +1,85 @@
+% =====================================================================
+\chapter{Autoencoders dispersos}
+\label{tema:4}
+% =====================================================================
+
+Si las activaciones de un modelo son superposiciones de muchas características dispersas (\cref{tema:3}), cabe intentar recuperarlas aprendiendo un diccionario sobrecompleto de direcciones tal que cada activación se escriba como combinación de unas pocas. Este tema formula ese problema, estudia el efecto de la penalización $L^{1}$ y describe los resultados publicados. El autoencoder disperso y sus métricas siguen a Bricken \emph{et al.}~\cite{bricken} y a Templeton \emph{et al.}~\cite{templeton}, de Anthropic; la variante JumpReLU, a Lieberum \emph{et al.}~\cite{gemmascope}, de Google DeepMind. El umbral suave y la interpretación bayesiana de la penalización $L^{1}$ remiten al módulo~8, al §3.7 de Zhang \emph{et al.}~\cite{d2l} y al curso CS229 de Stanford~\cite{cs229ps2}.
+
+\section{Aprendizaje de diccionarios}
+
+\begin{definicion}[Diccionario y código disperso]\label{def:diccionario}
+Sea $x\in\R^{d}$ una activación. Un \emph{diccionario} es una familia de $F$ direcciones $d_1,\dots,d_F\in\R^{d}$, con $F\ge d$ (diccionario \emph{sobrecompleto} si $F>d$). Un \emph{código} es un vector $f\in\R^{F}_{\ge 0}$ con $x\approx\sum_jf_jd_j$. Se definen $\norm{f}_0=\abs{\{j:f_j\neq 0\}}$, el número de latentes activos, y $\norm{f}_1=\sum_jf_j$.
+\end{definicion}
+
+Con $F>d$, la ecuación $x=\sum_jf_jd_j$ tiene en general infinitas soluciones. Se busca la más dispersa, con pocos $f_j$ no nulos. Minimizar $\norm{f}_0$ es un problema combinatorio; la penalización $\norm{f}_1$ es su relajación convexa habitual, ya usada en la regresión LASSO del módulo~8.
+
+\section{El autoencoder disperso}
+
+\begin{definicion}[Autoencoder disperso]\label{def:sae}
+Sean $W_e\in\R^{d\times F}$, $b_e\in\R^{F}$, $W_d\in\R^{F\times d}$ con filas $d_1\T,\dots,d_F\T$, y $b_d\in\R^{d}$. El \emph{autoencoder disperso} (SAE) calcula
+\[
+f(x)=\relu\bigl(W_e\T(x-b_d)+b_e\bigr)\in\R^{F},\qquad \hat x=W_d\T f(x)+b_d=\sum_{j=1}^{F}f_j(x)\,d_j+b_d,
+\]
+y se entrena sobre activaciones del modelo con la pérdida
+\[
+\mathcal{L}(x)=\norm{x-\hat x}_2^{2}+\lambda\sum_{j=1}^{F}f_j(x)\,\norm{d_j}_2,
+\]
+donde $\lambda>0$ es el \emph{coeficiente de dispersión}. La fila $d_j$ es la dirección que escribe el latente $j$~\cite{bricken,templeton}.
+\end{definicion}
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[El factor $\norm{d_j}$ evita una trampa de escala]\label{prop:escala}
+Sea $c>0$ y considérese la transformación $W_e\mapsto W_e/c$, $b_e\mapsto b_e/c$, $d_j\mapsto c\,d_j$ para todo $j$, que deja $b_d$ fijo.
+\begin{enumerate}
+  \item La transformación no cambia la reconstrucción $\hat x$ y multiplica cada $f_j$ por $1/c$.
+  \item Si la penalización fuera $\lambda\sum_jf_j$, el valor de la penalización se dividiría por $c$; tomando $c\to\infty$, el ínfimo de la pérdida sería el de la reconstrucción sola y la penalización no tendría efecto.
+  \item Con la penalización $\lambda\sum_jf_j\norm{d_j}$ de la \cref{def:sae}, la pérdida es invariante frente a la transformación.
+\end{enumerate}
+\end{proposicion}
+
+Una alternativa equivalente, usada por Bricken \emph{et al.}, es imponer $\norm{d_j}=1$ durante el entrenamiento.
+
+\addtocounter{definicion}{1}%
+
+\section{La penalización \texorpdfstring{$L^{1}$}{L1}: umbral suave y encogimiento}
+
+\begin{proposicion}[Umbral suave]\label{prop:umbral}
+Sean $a\in\R$ y $\lambda>0$. El problema $\min_{f\ge 0}\,g(f)$, con $g(f)=(a-f)^{2}+\lambda f$, tiene solución única
+\[
+f^{*}=\max\bigl(a-\tfrac{\lambda}{2},\ 0\bigr).
+\]
+\end{proposicion}
+
+La penalización $L^{1}$ tiene dos efectos: anula las activaciones menores que $\lambda/2$, lo que produce la dispersión, y \emph{encoge} en $\lambda/2$ las que sobreviven. El encogimiento es un sesgo sistemático: el SAE subestima la intensidad de las características activas. La forma $\max(a-\lambda/2,0)=\relu(a-\lambda/2)$ coincide con la de un codificador con sesgo negativo, lo que explica la elección del codificador de la \cref{def:sae} (\cref{eje:4-ortonormal}). Para reducir el encogimiento se han propuesto otras activaciones; Gemma Scope usa \emph{JumpReLU}, que pone a cero las preactivaciones por debajo de un umbral aprendido y deja pasar las demás sin restarles nada~\cite{gemmascope}.
+
+La penalización tiene también una interpretación bayesiana: minimizar el error cuadrático más $\lambda\norm{f}_1$ equivale a buscar el código más probable \emph{a posteriori} con ruido gaussiano en la reconstrucción y una distribución \emph{a priori} de Laplace (exponencial, si $f\ge 0$) para cada latente (\cref{eje:4-map}). Suponer que las características son dispersas es elegir esa distribución \emph{a priori}.
+
+\section{Métricas de un diccionario}
+
+\begin{definicion}[Métricas de un SAE]\label{def:metricas}
+Sean $x^{(1)},\dots,x^{(N)}$ activaciones con media $\bar x$, y sean $\hat x^{(k)}$ y $f^{(k)}$ sus reconstrucciones y códigos.
+\begin{enumerate}
+  \item La \emph{fracción de varianza no explicada} es $\FVU=\sum_k\norm{x^{(k)}-\hat x^{(k)}}^{2}\big/\sum_k\norm{x^{(k)}-\bar x}^{2}$.
+  \item El \emph{L0 medio} es $\frac1N\sum_k\norm{f^{(k)}}_0$, el número medio de latentes activos.
+  \item Un latente $j$ está \emph{muerto} si $f^{(k)}_j=0$ para todo $k$ en un conjunto amplio de datos.
+  \item La \emph{pérdida recuperada} compara la entropía cruzada del modelo cuando se sustituye $x$ por $\hat x$ con la del modelo original y con la del modelo con la activación anulada.
+\end{enumerate}
+\end{definicion}
+
+Ninguna métrica basta sola. Un FVU bajo con un L0 alto indica que el SAE reconstruye bien pero no descompone; un L0 bajo con un FVU alto indica que descompone pero pierde información. La pérdida recuperada mide lo que importa para el modelo: un error de reconstrucción pequeño en una dirección que el modelo lee puede ser más dañino que uno grande en una dirección que ignora.
+
+\addtocounter{definicion}{1}%
+
+\section{Resultados publicados}
+
+\begin{itemize}[leftmargin=1.4em]
+  \item \emph{Towards Monosemanticity} (Bricken \emph{et al.}, 2023)~\cite{bricken} entrena SAE sobre las 512 neuronas del MLP de un Transformer de una capa, con diccionarios de hasta $131\,072$ latentes. Los latentes son mucho más interpretables que las neuronas: aparecen características para texto en árabe, secuencias de ADN o codificación base64. El trabajo documenta los latentes muertos y el fenómeno de \emph{división de características}: al aumentar $F$, una característica se parte en varias más específicas.
+  \item \emph{Scaling Monosemanticity} (Templeton \emph{et al.}, 2024)~\cite{templeton} entrena SAE sobre el flujo residual de una capa intermedia de Claude~3 Sonnet, con 1, 4 y 34 millones de latentes. Encuentra características abstractas, multilingües y multimodales (el puente Golden Gate en texto y en imágenes) y otras relevantes para la seguridad, como el engaño, la adulación o el código inseguro. Fijar una característica en un valor alto cambia la conducta: con la del puente activada, el modelo lo menciona en casi cualquier respuesta, demostración pública conocida como \emph{Golden Gate Claude} (mayo de 2024).
+  \item \emph{Gemma Scope} (Lieberum \emph{et al.}, 2024)~\cite{gemmascope} publica SAE JumpReLU abiertos para todas las capas y subcapas de Gemma~2 2B y 9B y para algunas capas de Gemma~2 27B.
+\end{itemize}
+
+\begin{observacion}[Límites]\label{obs:limites-sae}
+Siempre queda varianza sin explicar; el diccionario obtenido depende de $\lambda$ y de $F$, y un latente interpretable no es necesariamente una variable que el modelo use. Como en las sondas (\cref{obs:usado}), la prueba de que una característica es causal exige intervenir sobre ella (\cref{tema:5}).
+\end{observacion}
+

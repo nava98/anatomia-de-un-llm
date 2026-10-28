@@ -1,0 +1,115 @@
+% =====================================================================
+\chapter{El flujo residual y la descomposición lineal}
+\label{tema:1}
+% =====================================================================
+
+Este tema expone la observación estructural en la que se basa casi toda la interpretabilidad mecanicista de los Transformers: cada componente lee del flujo residual mediante una proyección lineal y escribe en él sumando su salida, de modo que todo lo que se aplica linealmente al final se reparte sobre esa suma. La presentación sigue el marco matemático de Elhage \emph{et al.}~\cite{elhage21} (secciones «Transformer Overview», «Zero-Layer Transformers» y «One-Layer Attention-Only Transformers»), la vista del flujo residual del §7.2 de Jurafsky y Martin~\cite{jm3} y el §10.3 del mismo libro para la \emph{logit lens}, propuesta por nostalgebraist~\cite{nostalgebraist} y corregida por Belrose \emph{et al.}~\cite{belrose}. La arquitectura y la notación son las de los módulos~13 a~15.
+
+\section{El flujo residual como suma de aportaciones}
+
+Sea un Transformer decoder-only de $L$ capas y dimensión $d$. Para simplificar, en este tema se prescinde de las normalizaciones (salvo en la \cref{sec:1-norm}), como hacen Elhage \emph{et al.} en su apartado «Model Simplifications»~\cite{elhage21}; según ese trabajo, la normalización puede absorberse, salvo un factor escalar, en los pesos adyacentes.
+
+\begin{definicion}[Flujo residual]\label{def:flujo}
+Sea $x_0\in\R^{d}$ el embedding del token (y de su posición) en una posición fija. Para $\ell=1,\dots,L$, la capa $\ell$ calcula
+\[
+x_{\ell-1/2}=x_{\ell-1}+a_\ell,\qquad x_\ell=x_{\ell-1/2}+m_\ell,
+\]
+donde $a_\ell$ es la suma de las salidas de las cabezas de atención de la capa, que depende de los flujos $x_{\ell-1}$ de todas las posiciones anteriores, y $m_\ell$ es la salida del MLP, que depende de $x_{\ell-1/2}$ en la misma posición. La sucesión $x_0,x_{1/2},x_1,\dots,x_L$ se llama \emph{flujo residual} y $x_{\mathrm{fin}}=x_L$ es el \emph{flujo final}. Los logits del token siguiente son $z=\WU\,x_{\mathrm{fin}}\in\R^{K}$.
+\end{definicion}
+
+\begin{proposicion}[Descomposición del flujo y de los logits]\label{prop:descomposicion}
+Con la notación de la \cref{def:flujo},
+\[
+x_{\mathrm{fin}}=x_0+\sum_{\ell=1}^{L}\bigl(a_\ell+m_\ell\bigr),\qquad
+z=\WU x_0+\sum_{\ell=1}^{L}\bigl(\WU a_\ell+\WU m_\ell\bigr).
+\]
+\end{proposicion}
+
+\begin{definicion}[Atribución directa a los logits]\label{def:dla}
+Sea $c$ cualquiera de los sumandos $x_0$, $a_\ell$, $m_\ell$ (o la salida de una sola cabeza, ya que $a_\ell$ es suma de las salidas de sus cabezas). Su \emph{atribución directa a los logits} es el vector $\WU c\in\R^{K}$. Para comparar dos tokens $t$ y $t'$ se usa la \emph{diferencia de logits} $(\WU c)_t-(\WU c)_{t'}$.
+\end{definicion}
+
+La palabra \emph{directa} es importante. La salida $a_1$ influye en los logits por dos vías: directamente, a través del sumando $\WU a_1$, e indirectamente, porque modifica la entrada de todas las capas posteriores y, con ello, $a_2,m_2,\dots$. La \cref{prop:descomposicion} solo reparte el primer tipo de efecto; el segundo exige intervenciones (\cref{tema:5}).
+
+\addtocounter{figure}{1}%
+
+\addtocounter{definicion}{1}%
+
+\section{Pesos virtuales y subespacios}
+
+Como el flujo residual no realiza ningún cálculo propio, dos componentes separados por varias capas se comunican a través de él como si estuvieran conectados directamente.
+
+\begin{definicion}[Pesos virtuales]\label{def:virtuales}
+Sea $W_{\mathrm{out}}^{(1)}\in\R^{d\times p}$ la matriz con la que un componente escribe en el flujo y $W_{\mathrm{in}}^{(2)}\in\R^{q\times d}$ la matriz con la que un componente posterior lo lee. El producto $W_{\mathrm{in}}^{(2)}W_{\mathrm{out}}^{(1)}\in\R^{q\times p}$ se llama \emph{matriz de pesos virtuales} entre ambos~\cite[«Virtual Weights and the Residual Stream as a Communication Channel»]{elhage21}.
+\end{definicion}
+
+Por la \cref{prop:descomposicion}, la parte de la entrada del segundo componente que procede del primero es exactamente $W_{\mathrm{in}}^{(2)}W_{\mathrm{out}}^{(1)}h$, donde $h$ es la activación interna del primero, sea cual sea el número de capas intermedias. Como cada cabeza escribe en un subespacio de dimensión a lo sumo $d_h\ll d$, componentes distintos pueden usar subespacios casi disjuntos del flujo; Elhage \emph{et al.} describen el flujo como un canal de comunicación de ancho de banda limitado, en el que las dimensiones son un recurso escaso.
+
+\section{Circuitos QK y OV}
+
+Sea una cabeza de atención con matrices $W_Q,W_K,W_V\in\R^{d_h\times d}$ y $W_O\in\R^{d\times d_h}$ (módulo~13). En la posición $i$, con flujos $x_1,\dots,x_i$ en las posiciones visibles, la cabeza calcula
+\[
+s_{ij}=\frac{(W_Qx_i)\T(W_Kx_j)}{\sqrt{d_h}},\qquad A_{ij}=\frac{e^{s_{ij}}}{\sum_{j'\le i}e^{s_{ij'}}},\qquad h_i=W_O\sum_{j\le i}A_{ij}\,W_Vx_j.
+\]
+
+\begin{definicion}[Circuitos QK y OV]\label{def:qkov}
+Se llaman \emph{circuito QK} y \emph{circuito OV} de la cabeza a las matrices $d\times d$
+\[
+\WQK=W_Q\T W_K,\qquad \WOV=W_OW_V.
+\]
+\end{definicion}
+
+\begin{proposicion}[Factorización de una cabeza]\label{prop:qkov}
+Con la notación anterior:
+\begin{enumerate}
+  \item las puntuaciones son la forma bilineal $s_{ij}=x_i\T\WQK\,x_j/\sqrt{d_h}$, de modo que el patrón de atención solo depende de $W_Q$ y $W_K$ a través de $\WQK$;
+  \item la salida es $h_i=\sum_{j\le i}A_{ij}\,\WOV x_j$, de modo que, fijado el patrón, la cabeza es lineal en los flujos de origen y solo depende de $W_O$ y $W_V$ a través de $\WOV$;
+  \item $\rango\WQK\le d_h$ y $\rango\WOV\le d_h$.
+\end{enumerate}
+\end{proposicion}
+
+El circuito QK decide \emph{a dónde mira} la cabeza y el circuito OV, \emph{qué copia} de la posición atendida y cómo lo escribe. Solo el patrón $A$ es no lineal; Elhage \emph{et al.} subrayan que, fijado $A$, la cabeza es una aplicación lineal~\cite[«Splitting Attention Head terms into Query-Key and Output-Value Circuits»]{elhage21}. Con $d=512$ y $d_h=64$, $\WOV$ es una matriz de $512\times 512=262\,144$ entradas, pero está determinada por los $2\cdot 512\cdot 64=65\,536$ parámetros de $W_O$ y $W_V$.
+
+\section{Transformers de cero y una capa}
+
+Sea $\WE\in\R^{d\times K}$ la matriz de embedding, cuya columna $t$ es el embedding del token $t$, y sea $e_t\in\R^{K}$ el vector canónico del token actual.
+
+\begin{proposicion}[Transformer de cero capas]\label{prop:cero}
+Si $L=0$ y se omiten los embeddings de posición, los logits son $z=\WU\WE\,e_t$, es decir, la columna $t$ de la matriz $\WU\WE\in\R^{K\times K}$. La distribución del token siguiente depende solo del token actual: el modelo es un modelo de bigramas (módulo~1) con matriz de logits $\WU\WE$.
+\end{proposicion}
+
+Si se entrena con la entropía cruzada, la matriz $\WU\WE$, de rango a lo sumo $d$, aproxima los logaritmos de las probabilidades de bigramas del corpus~\cite[«Zero-Layer Transformers»]{elhage21}.
+
+\begin{teorema}[Expansión en caminos de una capa de atención]\label{teo:caminos}
+Sea un Transformer de una capa, solo de atención, con cabezas $h\in\mathcal{H}$, patrones $A^{h}$ y circuitos $\WOV^{h}$, sin embeddings de posición y sin normalización. Sea $t_j$ el token de la posición $j$. Los logits en la posición $i$ son
+\[
+z_i=\underbrace{\WU\WE e_{t_i}}_{\text{camino directo}}+\sum_{h\in\mathcal{H}}\sum_{j\le i}A^{h}_{ij}\;\underbrace{\WU\WOV^{h}\WE}_{K\times K}\,e_{t_j},
+\]
+y las puntuaciones de la cabeza $h$ son $s^{h}_{ij}=e_{t_i}\T\bigl(\WE\T\WQK^{h}\WE\bigr)e_{t_j}/\sqrt{d_h}$.
+\end{teorema}
+
+El teorema muestra que un modelo de una capa es una suma de un término de bigramas y de un término por cabeza que relaciona tres tokens: el token de origen $t_j$ (que el circuito OV copia o transforma), el de destino $t_i$ (que, con $t_j$, determina la atención a través del circuito QK) y el token predicho. Elhage \emph{et al.} llaman \emph{skip-trigramas} a estas reglas de la forma «$A\ldots B\to C$»~\cite[«Interpretation as Skip-Trigrams»]{elhage21}. Una cabeza cuyo circuito $\WU\WOV\WE$ tiene una diagonal grande y positiva \emph{copia}: si atiende a una aparición previa del token $A$, aumenta el logit de $A$.
+
+\section{La \emph{logit lens} y la normalización final}
+\label{sec:1-norm}
+
+\begin{definicion}[\emph{Logit lens}]\label{def:lens}
+Sea $x_\ell$ el flujo residual tras la capa $\ell$ (o tras cualquier subcapa). La \emph{logit lens} es la distribución $\softmax(\WU x_\ell)$: la predicción que daría el modelo si las capas restantes no añadieran nada~\cite{nostalgebraist}, \cite[§10.3]{jm3}.
+\end{definicion}
+
+\addtocounter{definicion}{1}%
+
+En modelos reales, la \emph{logit lens} es poco fiable en las primeras capas: el flujo todavía no está expresado en la base que lee $\WU$. La \emph{tuned lens} de Belrose \emph{et al.}~\cite{belrose} sustituye $\WU x_\ell$ por $\WU(A_\ell x_\ell+b_\ell)$, con una transformación afín por capa entrenada para que su predicción se parezca a la del modelo completo.
+
+Los modelos actuales aplican una normalización antes de $\WU$, de modo que $z=\WU\,\gamma\odot\RMSNorm(x_{\mathrm{fin}})$, con $\RMSNorm(v)=v/\RMS(v)$ y $\RMS(v)=\bigl(\tfrac1d\sum_kv_k^{2}\bigr)^{1/2}$ (módulo~18).
+
+\begin{proposicion}[La normalización rompe la aditividad]\label{prop:rmsnorm}
+Para $v\neq 0$ y $c\neq 0$, $\RMSNorm(cv)=\signo(c)\,\RMSNorm(v)$. En consecuencia, $\RMSNorm$ no es aditiva: en general $\RMSNorm(u+v)\neq\RMSNorm(u)+\RMSNorm(v)$. Sin embargo, si se fija $s=\RMS(x_{\mathrm{fin}})$, se cumple
+\[
+z=\sum_{c}\WU\,\gamma\odot\frac{c}{s},
+\]
+donde la suma recorre las aportaciones de la \cref{prop:descomposicion}.
+\end{proposicion}
+
+La proposición justifica la práctica habitual de «congelar» la escala: se calcula $s$ en la pasada hacia delante y se trata como una constante, con lo que la atribución directa vuelve a sumar exactamente los logits. El precio es que la atribución deja de reflejar que un componente que escribe mucho también reduce, a través de $s$, la contribución relativa de todos los demás.
+

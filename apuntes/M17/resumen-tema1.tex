@@ -1,0 +1,69 @@
+% =====================================================================
+\chapter{Cómputo matricial y aceleradores}
+\label{tema:1}
+% =====================================================================
+
+Casi todo el cómputo de un modelo de lenguaje consiste en productos de matrices densas. Este tema cuenta con precisión esas operaciones, deduce la regla de seis operaciones por parámetro y por token del entrenamiento y describe los dos diseños de hardware que las ejecutan de forma eficiente: la GPU, con sus núcleos tensoriales, y la matriz sistólica de la TPU. Se siguen los capítulos~4 y~7 de Hennessy y Patterson~\cite{hp}, la clase sobre GPU de CMU 15-418/618~\cite{cmu418}, la contabilidad de recursos de la tarea~1 de CS336~\cite[§3.5]{cs336a1}, el artículo de Kaplan \emph{et al.}~\cite[§2.1]{kaplan} y el de Jouppi \emph{et al.}~\cite{jouppi}.
+
+\section{Contar operaciones}
+
+\begin{definicion}[FLOP]
+Se llama \emph{operación en coma flotante} (FLOP, del inglés \emph{floating-point operation}) a una suma o a una multiplicación de dos números reales representados en coma flotante. Una multiplicación seguida de una suma acumulada, $c\gets c+ab$ (operación MAC o FMA), cuenta como dos FLOP. El \emph{rendimiento} de un dispositivo se mide en FLOP por segundo (FLOP/s).
+\end{definicion}
+
+Conviene distinguir \emph{FLOP} (cantidad de operaciones) de \emph{FLOP/s} (velocidad). En este módulo, $1$~TFLOP/s $=10^{12}$~FLOP/s.
+
+\begin{proposicion}[Coste del producto de matrices]\label{prop:flop-matmul}
+Sean $A\in\R^{m\times k}$ y $B\in\R^{k\times n}$. El cálculo directo de $C=AB$ requiere $2mkn$ FLOP.
+\end{proposicion}
+
+\begin{observacion}
+Estrictamente bastan $k-1$ sumas por elemento, pero el convenio $2mkn$ es el habitual~\cite[§3.5]{cs336a1} y coincide con el número de operaciones MAC multiplicado por dos. Algoritmos como el de Strassen reducen el exponente asintótico, pero no se usan en el entrenamiento de redes porque son menos estables numéricamente y peor adaptados al hardware.
+\end{observacion}
+
+\addtocounter{definicion}{1}%
+
+\section{La regla de seis operaciones por parámetro y token}
+
+\begin{proposicion}[Coste de entrenamiento de una capa lineal]\label{prop:6nd-capa}
+Sea una capa lineal $Y=XW$ con $X\in\R^{T\times a}$ y $W\in\R^{a\times b}$, y sea $G=\partial\mathcal{L}/\partial Y\in\R^{T\times b}$ el gradiente que llega a su salida. La pasada hacia delante cuesta $2Tab$ FLOP y la pasada hacia atrás, que calcula $\partial\mathcal{L}/\partial X$ y $\partial\mathcal{L}/\partial W$, cuesta $4Tab$ FLOP. En total, $6$ FLOP por parámetro y por token.
+\end{proposicion}
+
+\begin{corolario}[Regla $C\approx 6ND$]\label{cor:6nd}
+Si casi todos los parámetros de un modelo pertenecen a capas lineales y se desprecian las operaciones que no multiplican pesos (normalizaciones, activaciones, producto $QK\T$ de la atención), entrenar un modelo de $N$ parámetros con $D$ tokens cuesta $C\approx 6ND$ FLOP: $2ND$ en la pasada hacia delante y $4ND$ en la pasada hacia atrás.
+\end{corolario}
+
+La aproximación es la de Kaplan \emph{et al.}~\cite[§2.1 y tabla~1]{kaplan}, que estiman la pasada hacia delante en $2N+2n_{\mathrm{capas}}n_{\mathrm{ctx}}d$ FLOP por token; el segundo término, debido a la atención, es pequeño cuando $n_{\mathrm{ctx}}\ll 12d$. Los parámetros de la tabla de \emph{embeddings} de entrada no intervienen en productos de matrices (se leen por índice) y suelen excluirse de $N$.
+
+\section{Arquitectura de una GPU}
+
+Una CPU dedica la mayor parte de su superficie a hacer rápido un único hilo de ejecución: cachés grandes, predicción de saltos, ejecución fuera de orden. Una GPU invierte el compromiso y dedica la superficie a muchas unidades aritméticas sencillas que ejecutan la misma instrucción sobre datos distintos~\cite[cap.~4]{hp}.
+
+\begin{definicion}[Modelo de ejecución SIMT]
+Una GPU de NVIDIA está formada por \emph{multiprocesadores de streaming} (SM). Un programa para GPU (\emph{kernel}) se lanza como una rejilla de \emph{bloques de hilos}; cada bloque se asigna a un SM y sus hilos pueden cooperar a través de una memoria compartida del SM. El SM ejecuta los hilos en grupos de 32, llamados \emph{warps}, que avanzan con la misma instrucción sobre datos distintos (\emph{single instruction, multiple threads}).
+\end{definicion}
+
+Si los hilos de un warp toman ramas distintas de una condición, el SM ejecuta las dos ramas una tras otra (\emph{divergencia}), y el rendimiento cae. Mientras un warp espera un dato de memoria, el SM ejecuta otro: la GPU oculta la latencia de la memoria con paralelismo, no con cachés~\cite{cmu418}. La A100 tiene 108 SM, cada uno con un banco de registros de 256~KB y 192~KB de memoria L1 y compartida~\cite{a100}.
+
+\begin{definicion}[Núcleo tensorial]
+Un \emph{núcleo tensorial} (\emph{tensor core}) es una unidad que ejecuta en una sola instrucción el producto acumulado $D\gets AB+C$ de pequeñas matrices, con $A$ y $B$ en un formato de baja precisión (fp16, bf16, fp8) y el acumulador en mayor precisión (normalmente fp32).
+\end{definicion}
+
+Los núcleos tensoriales aparecieron en la arquitectura Volta (2017). En la A100, el rendimiento máximo en bf16 con núcleos tensoriales es de 312~TFLOP/s, frente a 19{,}5~TFLOP/s en fp32 con las unidades ordinarias~\cite{a100}: un factor $312/19{,}5=16$. Un programa que no expresa su cálculo como productos de matrices en baja precisión desaprovecha casi todo el chip.
+
+\section{Matrices sistólicas}
+
+\begin{definicion}[Matriz sistólica]
+Una \emph{matriz sistólica} de $n\times n$ es una rejilla de celdas MAC conectadas solo con sus vecinas. En cada ciclo de reloj, cada celda recibe un valor por la izquierda y otro por arriba, acumula su producto y los reenvía a la derecha y hacia abajo. En la variante \emph{de salida estacionaria}, la celda $(i,j)$ acumula el elemento $C_{ij}$ del producto.
+\end{definicion}
+
+El nombre alude al latido del corazón: los datos recorren la rejilla a ritmo constante. La ventaja es la reutilización. Cada elemento de $A$ que entra por el borde izquierdo es usado por las $n$ celdas de su fila sin volver a leerse de memoria, y lo mismo cada elemento de $B$ en su columna. Para ello las filas de $A$ y las columnas de $B$ entran escalonadas, como en la \cref{fig:sistolica}; el \cref{eje:1-sistolica} demuestra que cada celda recibe los factores correctos en el mismo ciclo.
+
+\addtocounter{figure}{1}%
+
+\addtocounter{definicion}{1}%
+
+\begin{observacion}
+Los núcleos tensoriales de una GPU y la matriz sistólica de una TPU son dos soluciones al mismo problema: aumentar el número de operaciones por cada dato leído. El \cref{tema:2} cuantifica esta idea con la intensidad aritmética. El capítulo~7 de Hennessy y Patterson~\cite{hp} presenta la TPU como ejemplo de \emph{arquitectura de dominio específico}: renuncia a la generalidad a cambio de eficiencia en una sola operación.
+\end{observacion}
+

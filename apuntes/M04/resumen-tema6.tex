@@ -1,0 +1,92 @@
+% =====================================================================
+\chapter{Diferenciación numérica y comprobación de gradientes}
+\label{tema:6}
+% =====================================================================
+
+Un error en la implementación de un gradiente no suele provocar un fallo visible: el entrenamiento avanza, pero peor de lo que debería. La herramienta estándar para detectarlo es comparar el gradiente analítico con una aproximación por diferencias finitas. Este tema analiza el error de truncamiento de las diferencias finitas con el teorema de Taylor, el error de redondeo de la aritmética de coma flotante y el compromiso entre ambos, y describe el procedimiento de comprobación de gradientes. Se sigue~\cite[§4.1]{gbc} y las notas de~\cite{cs231n}.
+
+\section{Diferencias finitas}
+
+\begin{definicion}[Diferencias finitas]\label{def:diferencias}
+Sea $f\colon\R^{n}\to\R$ y $h>0$. Las \emph{diferencias hacia delante} y \emph{centrada} en la coordenada $i$ son
+\[
+\Delta_i^{+}f(x)=\frac{f(x+h\,e_i)-f(x)}{h},\qquad
+\Delta_i^{c}f(x)=\frac{f(x+h\,e_i)-f(x-h\,e_i)}{2h}.
+\]
+Ambas aproximan $\partial f/\partial x_i(x)$ cuando $h\to 0$.
+\end{definicion}
+
+\begin{proposicion}[Error de truncamiento]\label{prop:truncamiento}
+Sea $\phi\colon\R\to\R$ y $x\in\R$.
+\begin{enumerate}
+  \item Si $\phi\in C^{2}$, existe $\xi\in(x,x+h)$ tal que $\dfrac{\phi(x+h)-\phi(x)}{h}=\phi'(x)+\dfrac{h}{2}\,\phi''(\xi)$.
+  \item Si $\phi\in C^{3}$, existe $\xi\in(x-h,x+h)$ tal que $\dfrac{\phi(x+h)-\phi(x-h)}{2h}=\phi'(x)+\dfrac{h^{2}}{6}\,\phi'''(\xi)$.
+\end{enumerate}
+En consecuencia, el error de la diferencia hacia delante es $O(h)$ y el de la centrada es $O(h^{2})$.
+\end{proposicion}
+
+Para una función de varias variables se aplica la proposición a $\phi(t)=f(x+t\,e_i)$.
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[h]
+\centering\small
+\caption{Diferencias finitas para $f(x)=e^{x}$ en $x=0$ (\cref{ej:exp}).}\label{tab:exp}
+\begin{tabular}{@{}lllll@{}}
+\toprule
+$h$ & Hacia delante & Error & Centrada & Error \\
+\midrule
+$0{,}1$ & $1{,}051709$ & $5{,}17\cdot 10^{-2}$ & $1{,}001668$ & $1{,}67\cdot 10^{-3}$ \\
+$0{,}01$ & $1{,}005017$ & $5{,}02\cdot 10^{-3}$ & $1{,}0000167$ & $1{,}67\cdot 10^{-5}$ \\
+$0{,}001$ & $1{,}000500$ & $5{,}00\cdot 10^{-4}$ & $1{,}00000017$ & $1{,}67\cdot 10^{-7}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Error de redondeo y elección del paso}
+
+En aritmética de coma flotante, cada evaluación de $f$ tiene un error relativo de redondeo del orden del \emph{épsilon de la máquina} $\varepsilon_{\text{máq}}$: unos $1{,}1\cdot 10^{-16}$ en doble precisión (fp64), $6{,}0\cdot 10^{-8}$ en simple precisión (fp32) y $3{,}9\cdot 10^{-3}$ en el formato bf16 que se usa para entrenar modelos de lenguaje~\cite[§4.1]{gbc}. Al restar dos valores casi iguales, $f(x+h)$ y $f(x-h)$, los errores absolutos, de tamaño $\varepsilon_{\text{máq}}\abs{f(x)}$, no disminuyen, y al dividir por $2h$ se amplifican.
+
+\begin{proposicion}[Paso óptimo de la diferencia centrada]\label{prop:h-optimo}
+Supóngase que cada evaluación de $f$ tiene un error absoluto a lo sumo $\varepsilon\abs{f}$ y que $\abs{\phi'''}\le M$ cerca de $x$. Entonces el error total de la diferencia centrada está acotado por
+\[
+E(h)=\frac{\varepsilon\abs{f}}{h}+\frac{M h^{2}}{6},
+\]
+que alcanza su mínimo en
+\[
+h^{*}=\Bigl(\frac{3\varepsilon\abs{f}}{M}\Bigr)^{1/3},\qquad E(h^{*})=\frac{M}{2}\,(h^{*})^{2}=O\bigl(\varepsilon^{2/3}\bigr).
+\]
+\end{proposicion}
+
+Con $\abs{f}\approx M\approx 1$ y doble precisión, $h^{*}\approx(3{,}3\cdot 10^{-16})^{1/3}\approx 7\cdot 10^{-6}$ y el error mínimo es del orden de $10^{-11}$. Pasos más pequeños empeoran el resultado (\cref{fig:error-h}). En simple precisión, $h^{*}\approx 6\cdot 10^{-3}$ y el error mínimo es del orden de $10^{-5}$; en bf16 la comprobación carece de sentido. Por ello, los gradientes se comprueban siempre en doble precisión.
+
+\addtocounter{figure}{1}%
+
+\section{Comprobación de gradientes}
+
+\begin{definicion}[Error relativo]\label{def:error-relativo}
+Sean $a$ una componente del gradiente analítico y $n$ la correspondiente aproximación numérica, no ambas nulas. Su \emph{error relativo} es
+\[
+r(a,n)=\frac{\abs{a-n}}{\max(\abs{a},\abs{n})}.
+\]
+\end{definicion}
+
+El error relativo, a diferencia del absoluto, no depende de la escala del gradiente. Las notas de~\cite{cs231n} proponen como orientación, para comprobaciones en doble precisión: $r>10^{-2}$ indica casi con seguridad un error; $10^{-4}<r<10^{-2}$ es sospechoso, salvo en funciones con puntos no derivables; $r\le 10^{-7}$ indica un gradiente correcto. En redes profundas, el error relativo tiende a crecer con la profundidad.
+
+\begin{proposicion}[Coste de la comprobación]\label{prop:coste-fd}
+Calcular el gradiente completo de $f\colon\R^{N}\to\R$ por diferencias centradas requiere $2N$ evaluaciones de $f$. En cambio, para una dirección $v\in\R^{N}$, la derivada direccional $\nabla f(x)\T v$ se aproxima con dos evaluaciones:
+\[
+\nabla f(x)\T v=\frac{f(x+hv)-f(x-hv)}{2h}+O(h^{2}).
+\]
+\end{proposicion}
+
+La retropropagación obtiene el gradiente completo con un coste equivalente a unas pocas evaluaciones de $f$ (\cref{prop:modos}). Las diferencias finitas, por tanto, no sirven para entrenar, sino para \emph{verificar}. El procedimiento habitual es el siguiente~\cite{cs231n}:
+\begin{enumerate}[label=\arabic*.]
+  \item usar doble precisión y un modelo o un lote pequeños, con pocos datos;
+  \item comparar componentes elegidas al azar, o derivadas direccionales en direcciones aleatorias, mediante el error relativo;
+  \item tomar $h$ del orden de $10^{-5}$ y repetir con $10^{-4}$ y $10^{-6}$ si el resultado es dudoso;
+  \item vigilar los puntos no derivables, como $t=0$ en ReLU: si $x-h$ y $x+h$ quedan a distintos lados de uno de ellos, la aproximación numérica no es fiable.
+\end{enumerate}
+
+\addtocounter{definicion}{1}%
+

@@ -1,0 +1,123 @@
+% =====================================================================
+\chapter{Optimización proximal y regularización KL}
+\label{tema:3}
+% =====================================================================
+
+REINFORCE usa cada lote de muestras para un único paso de gradiente. Este tema estudia cómo reutilizar las muestras sin alejarse demasiado de la política que las generó, mediante el muestreo de importancia y el recorte de PPO~\cite{ppo}, y cómo se impide que la política se aleje del modelo de partida mediante una penalización de Kullback--Leibler. La parte de PPO sigue la clase~9 de CS285~\cite{cs285}; la forma cerrada de la política óptima procede del apéndice~A.1 de Rafailov \emph{et al.}~\cite{dpo}, y el objetivo con KL, de la §3.5 de InstructGPT~\cite{instructgpt}.
+
+\section{Muestreo de importancia y objetivo sustituto}
+
+\begin{proposicion}[Muestreo de importancia]\label{prop:is}
+Sean $p$ y $q$ distribuciones sobre un conjunto finito con $q(z)>0$ siempre que $p(z)>0$. Para toda función $f$,
+\[
+\E_{z\sim p}[f(z)]=\E_{z\sim q}\Bigl[\frac{p(z)}{q(z)}\,f(z)\Bigr].
+\]
+\end{proposicion}
+
+Sea $\piold$ la política con la que se generaron las muestras. Para una pareja estado-acción se define el \emph{cociente de importancia}
+\[
+\rho_t(\theta)=\frac{\pi_\theta(a_t\mid s_t)}{\piold(a_t\mid s_t)}.
+\]
+El \emph{objetivo sustituto} $L(\theta)=\E_{\piold}[\rho_t(\theta)\,\widehat A_t]$ estima, con muestras de $\piold$, la mejora local de la política $\pi_\theta$; la aproximación consiste en ignorar que la distribución de estados también cambia con $\theta$, lo que es aceptable si $\pi_\theta$ y $\piold$ están próximas~\cite{cs285}.
+
+\begin{proposicion}\label{prop:sustituto}
+$\nabla_\theta\rho_t(\theta)=\rho_t(\theta)\,\nabla_\theta\log\pi_\theta(a_t\mid s_t)$. En particular, en $\theta=\theta_{\mathrm{old}}$, $\nabla_\theta L=\E_{\piold}[\nabla_\theta\log\pi_\theta(a_t\mid s_t)\,\widehat A_t]$, el gradiente de política con ventaja del \cref{tema:2}.
+\end{proposicion}
+
+Optimizar $L$ durante varios pasos con las mismas muestras es tentador, pero si $\rho_t$ se aleja mucho de~1 la estimación pierde validez y su varianza crece. TRPO resuelve el problema con una restricción explícita sobre la divergencia KL entre $\piold$ y $\pi_\theta$; PPO lo resuelve con un recorte, mucho más sencillo de implementar~\cite{cs285,ppo}.
+
+\section{El objetivo recortado de PPO}
+
+\begin{definicion}[Objetivo recortado]\label{def:ppo}
+Sea $\varepsilon>0$ (típicamente $\varepsilon=0{,}2$) y sea $\clip(\rho,1-\varepsilon,1+\varepsilon)=\min\{\max\{\rho,1-\varepsilon\},1+\varepsilon\}$. El objetivo de PPO es~\cite[§3]{ppo}
+\[
+L^{\mathrm{CLIP}}(\theta)=\E_t\Bigl[\min\bigl(\rho_t(\theta)\widehat A_t,\ \clip(\rho_t(\theta),1-\varepsilon,1+\varepsilon)\,\widehat A_t\bigr)\Bigr].
+\]
+\end{definicion}
+
+\begin{proposicion}[Análisis por casos]\label{prop:ppo-casos}
+Para un término con ventaja $A$ y cociente $\rho$, sea $\ell(\rho)=\min(\rho A,\clip(\rho)A)$.
+\begin{enumerate}
+  \item $\ell(\rho)\le\rho A$ siempre: el recorte nunca aumenta el objetivo.
+  \item Si $A>0$, $\ell(\rho)=\min(\rho,1+\varepsilon)\,A$: el término deja de crecer, y su derivada respecto a $\rho$ se anula, cuando $\rho>1+\varepsilon$.
+  \item Si $A<0$, $\ell(\rho)=\max(\rho,1-\varepsilon)\,A$: la derivada se anula cuando $\rho<1-\varepsilon$.
+\end{enumerate}
+\end{proposicion}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}rrrrrl@{}}
+\toprule
+$\rho$ & $A$ & $\rho A$ & $\clip(\rho)A$ & $\ell$ & Lectura \\
+\midrule
+$1{,}5$ & $+2$ & $3{,}0$ & $2{,}4$ & $2{,}4$ & acción buena que ya subió: sin incentivo para subir más \\
+$0{,}5$ & $+2$ & $1{,}0$ & $1{,}6$ & $1{,}0$ & acción buena que bajó: el gradiente la corrige \\
+$1{,}5$ & $-1$ & $-1{,}5$ & $-1{,}2$ & $-1{,}5$ & acción mala que subió: se penaliza entera \\
+$0{,}5$ & $-1$ & $-0{,}5$ & $-0{,}8$ & $-0{,}8$ & acción mala que ya bajó: gradiente nulo \\
+\bottomrule
+\end{tabular}
+\caption{Los cuatro casos del objetivo recortado con $\varepsilon=0{,}2$.}
+\label{tab:ppo}
+\end{table}
+
+El mínimo convierte $L^{\mathrm{CLIP}}$ en una cota \emph{pesimista} del objetivo sustituto: el recorte elimina el incentivo para alejarse más de $\varepsilon$ en la dirección favorable, pero nunca impide corregir un movimiento desfavorable (\cref{tab:ppo}). En la práctica, PPO combina $L^{\mathrm{CLIP}}$ con una pérdida cuadrática para el crítico y una bonificación de entropía cuando ambos comparten parámetros, y el artículo describe también una variante con penalización KL adaptativa respecto a $\piold$~\cite[§4]{ppo}.
+
+\section{Penalización KL respecto a un modelo de referencia}
+
+En el ajuste por refuerzo de modelos de lenguaje no se maximiza solo la recompensa. Sea $\piref$ el modelo de partida congelado (el modelo SFT). El objetivo regularizado es~\cite{instructgpt}
+\begin{equation}\label{eq:obj-kl}
+\begin{aligned}&\max_{\pi}\ \E_{x}\bigl[J_\beta(\pi;x)\bigr],\\ &J_\beta(\pi;x)=\E_{y\sim\pi(\cdot\mid x)}[r(x,y)]-\beta\,\KL\bigl(\pi(\cdot\mid x)\,\|\,\piref(\cdot\mid x)\bigr),\end{aligned}
+\end{equation}
+con $\beta>0$.
+
+La penalización cumple tres funciones: impide que la política explote errores del modelo de recompensa, que solo es fiable cerca de los datos con que se entrenó (\cref{tema:6}); conserva la fluidez y el conocimiento del preentrenamiento, y mantiene la diversidad, ya que sin ella el óptimo es una política determinista que solo emite la respuesta de máxima recompensa.
+
+\begin{proposicion}[KL de secuencias como suma por tokens]\label{prop:kl-tokens}
+Sean $\pi$ y $\piref$ modelos autorregresivos sobre respuestas. Entonces
+\[
+\begin{aligned}
+\KL\bigl(\pi(\cdot\mid x)\,\|\,\piref(\cdot\mid x)\bigr)&=\E_{y\sim\pi}\Bigl[\sum_{t=1}^{T}\log\frac{\pi(y_t\mid x,y_{<t})}{\piref(y_t\mid x,y_{<t})}\Bigr]\\
+&=\E_{y\sim\pi}\Bigl[\sum_{t=1}^{T}\KL\bigl(\pi(\cdot\mid s_{t-1})\,\|\,\piref(\cdot\mid s_{t-1})\bigr)\Bigr],
+\end{aligned}
+\]
+con $s_{t-1}=(x,y_{<t})$.
+\end{proposicion}
+
+La proposición justifica la implementación habitual: a la recompensa de cada token muestreado se le resta $\beta\log\bigl(\pi_\theta(y_t\mid s_{t-1})/\piref(y_t\mid s_{t-1})\bigr)$, cuyo valor esperado acumulado es la KL. Cada término individual puede ser negativo; solo su esperanza es no negativa (\cref{eje:3-estimadores}).
+
+\addtocounter{definicion}{1}%
+
+\section{La política óptima en forma cerrada}
+
+\begin{teorema}[Política óptima con penalización KL]\label{teo:optimo-kl}
+Para cada $x$, el objetivo \eqref{eq:obj-kl} sobre las distribuciones $\pi(\cdot\mid x)$ alcanza su máximo, de forma única, en
+\[
+\pi^{*}(y\mid x)=\frac{1}{Z(x)}\,\piref(y\mid x)\exp\Bigl(\frac{r(x,y)}{\beta}\Bigr),\qquad Z(x)=\sum_{y}\piref(y\mid x)\,e^{r(x,y)/\beta},
+\]
+y el valor máximo es $\beta\log Z(x)$.
+\end{teorema}
+
+\addtocounter{definicion}{1}%
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+$\beta$ & $\pi^{*}$ & $\E_{\pi^{*}}[r]$ & $\KL(\pi^{*}\,\|\,\piref)$ \\
+\midrule
+$\infty$ (referencia) & $(0{,}500;\ 0{,}300;\ 0{,}200)$ & $1{,}100$ & $0$ \\
+$2$ & $(0{,}448;\ 0{,}443;\ 0{,}109)$ & $1{,}335$ & $0{,}058$ \\
+$1$ & $(0{,}360;\ 0{,}587;\ 0{,}053)$ & $1{,}534$ & $0{,}205$ \\
+$0{,}5$ & $(0{,}182;\ 0{,}808;\ 0{,}010)$ & $1{,}798$ & $0{,}587$ \\
+\bottomrule
+\end{tabular}
+\caption{Política óptima del \cref{ej:beta} en función de $\beta$.}
+\label{tab:beta}
+\end{table}
+
+\begin{observacion}[Distribución de Boltzmann y energía libre]\label{obs:boltzmann}
+Con $E(y)=-r(y)$ y temperatura $\beta$, la política óptima es $\pi^{*}\propto\piref\,e^{-E/\beta}$: una distribución de Boltzmann (la softmax con temperatura del módulo~1) con $\piref$ como medida de fondo. El objetivo cambiado de signo, $\E_\pi[E]+\beta\,\KL(\pi\,\|\,\piref)$, es una energía libre, y la demostración del \cref{teo:optimo-kl} es el principio variacional de Gibbs: el mínimo vale $-\beta\log Z$. Cuando $\beta\to 0$, $\pi^{*}$ se concentra en las respuestas de máxima recompensa; cuando $\beta\to\infty$, $\pi^{*}\to\piref$ (\cref{eje:3-limites}).
+\end{observacion}
+
+El \cref{teo:optimo-kl} no puede aplicarse directamente a un LLM, porque $Z(x)$ es una suma sobre las $\abs{\V}^{T}$ respuestas (\cref{obs:bandido}). Por eso RLHF optimiza \eqref{eq:obj-kl} con PPO. El \cref{tema:5} muestra que la forma cerrada sí puede aprovecharse si se trabaja con diferencias de recompensas, en las que $Z(x)$ se cancela.
+

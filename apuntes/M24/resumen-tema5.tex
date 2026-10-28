@@ -1,0 +1,88 @@
+% =====================================================================
+\chapter{Metaheurísticas, optimización sin derivadas y multiobjetivo}
+\label{tema:5}
+% =====================================================================
+
+Cuando el objetivo solo puede evaluarse (un simulador, un código heredado, un ensayo) o cuando la estructura del problema es tan irregular que ningún resolvedor exacto escala, se recurre a métodos que solo usan evaluaciones de $f$. Este tema sigue los capítulos~7 («Direct Methods»), 8 («Stochastic Methods»), 9 («Population Methods») y~12 («Multiobjective Optimization») de Kochenderfer y Wheeler~\cite{kw}, la clase~17 del curso 15.053~\cite{mit15053} para el recocido, y los artículos originales de Kirkpatrick, Gelatt y Vecchi~\cite{kirkpatrick} (recocido simulado), Hansen~\cite{hansen} (CMA-ES) y Deb \emph{et al.}~\cite{nsga2} (NSGA-II).
+
+\section{Optimización de caja negra}
+
+\begin{definicion}[Problema de caja negra]\label{def:caja-negra}
+Un problema $\min_{x\in\mathcal{X}}f(x)$ es de \emph{caja negra} si solo se dispone de un oráculo que devuelve $f(x)$ (quizá con ruido) para cada $x$ consultado, sin gradientes ni estructura explícita. Su coste se mide por el \emph{número de evaluaciones}.
+\end{definicion}
+
+Hay dos regímenes. Si cada evaluación es barata (milisegundos), se pueden permitir miles o millones de evaluaciones y se usan metaheurísticas. Si es cara (horas de simulación o un experimento de planta), cada evaluación debe elegirse con cuidado con un modelo sustituto, como en la optimización bayesiana~\cite{garnett,frazier}, que la fase desarrolla más adelante. Los métodos directos locales, como Nelder--Mead o Powell (cap.~7 de~\cite{kw}), son adecuados cuando el problema es continuo, de pocas variables y con un único valle.
+
+\section{Recocido simulado}
+
+El recocido simulado~\cite{kirkpatrick} imita el enfriamiento lento de un metal. Desde una solución $x$ se propone un vecino $x'$ (por ejemplo, intercambiar dos departamentos) con un mecanismo simétrico, $\Prob(x\to x')=\Prob(x'\to x)$, y se acepta con la probabilidad de Metropolis
+\[
+\alpha(x,x')=\min\Bigl(1,\ e^{-(f(x')-f(x))/T}\Bigr),
+\]
+donde la temperatura $T>0$ disminuye según un calendario, típicamente $T_{k+1}=\rho T_k$ con $\rho\in(0{,}9;\ 0{,}999)$. Con $T$ alta se aceptan muchos empeoramientos y se explora; con $T$ baja solo se aceptan mejoras y se explota.
+
+\begin{proposicion}[Distribución estacionaria de Boltzmann]\label{prop:boltzmann}
+Sea $\mathcal{X}$ finito, la propuesta simétrica e irreducible y $T$ fija. La cadena de Markov del recocido satisface el equilibrio detallado con
+\[
+\pi_T(x)=\frac{e^{-f(x)/T}}{\sum_{z\in\mathcal{X}}e^{-f(z)/T}},
+\]
+que es por tanto una distribución estacionaria. Cuando $T\to 0$, $\pi_T$ se concentra uniformemente en el conjunto de mínimos globales.
+\end{proposicion}
+
+La distribución de Boltzmann es la del módulo~6 (tema~5). La garantía de convergencia al óptimo exige calendarios logarítmicos, demasiado lentos; en la práctica se usa el geométrico y varias ejecuciones independientes.
+
+\section{Algoritmos genéticos y estrategias evolutivas}
+
+Un \emph{algoritmo genético} mantiene una población de soluciones y la renueva con tres operadores (cap.~9 de~\cite{kw}): \emph{selección} de padres favoreciendo a los mejores (por ejemplo, por torneo entre dos individuos al azar), \emph{cruce} que combina dos padres y \emph{mutación} que perturba un hijo. Con \emph{elitismo} los mejores pasan intactos a la generación siguiente. La representación debe respetar las restricciones: para permutaciones, el \emph{cruce por orden} (OX) copia un tramo del primer padre y completa los huecos con los genes que faltan en el orden en que aparecen en el segundo, de modo que el hijo sigue siendo una permutación.
+
+\begin{definicion}[CMA-ES]\label{def:cmaes}
+La \emph{estrategia evolutiva con adaptación de la matriz de covarianza} (CMA-ES)~\cite{hansen} optimiza en $\R^{n}$ manteniendo una distribución $\mathcal N(m,\sigma^{2}C)$. En cada generación:
+\begin{enumerate}[label=\arabic*.]
+  \item muestrea $\lambda$ candidatos $x_k=m+\sigma y_k$, con $y_k\sim\mathcal N(0,C)$, y los ordena por $f$;
+  \item actualiza la media con los $\mu$ mejores: $m\leftarrow\sum_{i=1}^{\mu}w_ix_{i:\lambda}$, con pesos positivos decrecientes que suman~1; la referencia propone $w_i\propto\ln\frac{\lambda+1}{2}-\ln i$;
+  \item actualiza $C$ con los pasos que tuvieron éxito (actualizaciones de rango uno y de rango $\mu$) y ajusta $\sigma$ comparando la longitud del camino evolutivo con la esperada bajo selección aleatoria.
+\end{enumerate}
+El \emph{tamaño efectivo de selección} es $\mu_{\mathrm{eff}}=1/\sum_iw_i^{2}$.
+\end{definicion}
+
+CMA-ES aprende la forma del valle: en un problema mal condicionado, $C$ tiende a una matriz proporcional a la inversa del hessiano, de modo que se comporta como un método de segundo orden sin derivadas. Es invariante a transformaciones monótonas de $f$ (solo usa el orden) y a rotaciones del espacio. Es una elección sólida para calibrar simuladores de caja negra con decenas de parámetros continuos y miles de evaluaciones posibles.
+
+\section{Optimización multiobjetivo}
+
+\begin{definicion}[Dominancia y frente de Pareto]\label{def:pareto}
+Sea $F=(f_1,\dots,f_k)$ un vector de objetivos que se minimizan. Se dice que $x$ \emph{domina} a $x'$, $x\succ x'$, si $f_i(x)\le f_i(x')$ para todo $i$ y $f_j(x)<f_j(x')$ para algún $j$. Un punto factible es \emph{Pareto-óptimo} si ningún otro punto factible lo domina. La imagen $F(\mathcal{X}^{\mathrm{P}})$ del conjunto de Pareto-óptimos es el \emph{frente de Pareto}.
+\end{definicion}
+
+\begin{proposicion}[Suma ponderada]\label{prop:suma-ponderada}
+Si $w_i>0$ para todo $i$ y $x^{*}$ minimiza $\sum_iw_if_i(x)$ en $\mathcal{X}$, entonces $x^{*}$ es Pareto-óptimo. El recíproco es falso: los puntos del frente que no están en la frontera de su envolvente convexa no minimizan ninguna suma ponderada.
+\end{proposicion}
+
+El método de la $\varepsilon$-restricción, $\min f_1$ s.a. $f_2\le\varepsilon$, sí alcanza los puntos no apoyados variando $\varepsilon$ (\cref{eje:5-eps}). Para problemas de caja negra, el \emph{NSGA-II}~\cite{nsga2} combina un algoritmo genético con dos ideas:
+\begin{enumerate}[label=(\alph*)]
+  \item \emph{ordenación no dominada}: la población se divide en frentes $\mathcal{F}_1$ (no dominados), $\mathcal{F}_2$ (no dominados al quitar $\mathcal{F}_1$), etc., y el rango de un individuo es el índice de su frente;
+  \item \emph{distancia de aglomeración} (\emph{crowding distance}): dentro de un frente, para cada objetivo se ordenan los puntos, los extremos reciben distancia infinita y cada punto interior suma $(f_k^{\text{sig}}-f_k^{\text{ant}})/(f_k^{\max}-f_k^{\min})$; se prefieren los puntos aislados para mantener la diversidad.
+\end{enumerate}
+La selección por torneo compara primero el rango y después la distancia, y la nueva generación se forma con los mejores frentes de la unión de padres e hijos (elitismo).
+
+\addtocounter{definicion}{1}%
+
+\addtocounter{figure}{1}%
+
+\begin{table}[h]
+\centering\small
+\caption{Tecnologías del tema~5: metaheurísticas y multiobjetivo.}\label{tab:tec5}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Herramienta & Para qué sirve & Licencia o tipo & Cuándo elegirla \\
+\midrule
+\texttt{cma} (Hansen \emph{et al.}) & CMA-ES de referencia, con restricciones de caja y ruido & abierta (BSD-3) & calibrar simuladores continuos de caja negra \\
+pymoo~\cite{pymoo} & NSGA-II, NSGA-III, indicadores de calidad de frentes & abierta (Apache~2.0) & problemas multiobjetivo con operadores estándar \\
+SciPy \texttt{optimize} & recocido dual, evolución diferencial, Nelder--Mead, Powell & abierta (BSD-3) & continuo, pocas variables, sin dependencias extra \\
+Optuna & búsqueda de hiperparámetros (muestreadores TPE y CMA-ES, multiobjetivo) & abierta (MIT) & ajustar modelos o configuraciones con evaluaciones caras \\
+Código propio & recocido, búsqueda tabú, genéticos sobre una representación específica & propio & combinatoria con vecindarios propios del dominio \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\addtocounter{definicion}{1}%
+

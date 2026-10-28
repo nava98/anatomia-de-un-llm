@@ -1,0 +1,125 @@
+% =====================================================================
+\chapter{Evaluación, calibración y seguridad}
+\label{tema:6}
+% =====================================================================
+
+Este tema estudia la conducta de un modelo desde fuera: cómo medir su rendimiento con conjuntos de pruebas, cómo cuantificar la incertidumbre de esas medidas, cuándo su confianza es fiable, por qué alucina y cómo se buscan y se miden sus fallos de seguridad. La organización sigue la clase~11, «Benchmarking and Evaluation», de CS224N~\cite{cs224n} y la semana de robustez adversaria de CS~2881r de Harvard~\cite{cs2881}. Los conjuntos de evaluación proceden de Hendrycks \emph{et al.}~\cite{hendrycks}, Liang \emph{et al.}~\cite{helm} y Chen \emph{et al.}~\cite{chen}; la calibración, de Guo \emph{et al.}~\cite{guo} y Kadavath \emph{et al.}~\cite{kadavath}; las alucinaciones, de Kalai \emph{et al.}~\cite{kalai25}, y los ataques, de Zou \emph{et al.}~\cite{zou} y Ganguli \emph{et al.}~\cite{ganguli}. Los intervalos de confianza siguen la clase~23 del curso 18.05 del MIT~\cite{mit1805}.
+
+\section{Conjuntos de evaluación y su incertidumbre}
+
+Un conjunto de evaluación (\emph{benchmark}) es una colección fija de tareas con un criterio automático de acierto.
+\begin{itemize}[leftmargin=1.4em]
+  \item \emph{MMLU}~\cite{hendrycks} reúne preguntas de opción múltiple de 57 materias, desde matemáticas elementales hasta derecho; en su publicación, el mayor GPT-3 superaba el azar en casi 20 puntos porcentuales de media.
+  \item \emph{HELM}~\cite{helm} evalúa 30 modelos en 16 escenarios básicos con siete métricas (exactitud, calibración, robustez, equidad, sesgo, toxicidad y eficiencia), además de 26 escenarios específicos, y eleva la fracción de combinaciones de modelo y escenario evaluadas del $17{,}9\,\%$ al $96{,}0\,\%$.
+  \item \emph{HumanEval}~\cite{chen} contiene 164 problemas de programación escritos a mano, cada uno con su firma, su descripción y pruebas unitarias; una solución es correcta si supera todas las pruebas.
+\end{itemize}
+
+\begin{definicion}[Exactitud empírica]\label{def:exactitud}
+Sea un modelo con probabilidad de acierto $\theta$ en una población de tareas, y sean $n$ tareas extraídas de forma independiente. Sea $X_k\in\{0,1\}$ el acierto en la tarea $k$. La \emph{exactitud empírica} es $\bar X=\frac1n\sum_kX_k$.
+\end{definicion}
+
+\begin{proposicion}[Intervalo conservador]\label{prop:ic}
+Con la notación de la \cref{def:exactitud}, $\E[\bar X]=\theta$ y $\Var(\bar X)=\theta(1-\theta)/n\le 1/(4n)$. En consecuencia, por la aproximación normal, $\bar X\pm z_{\alpha/2}/(2\sqrt n)$ es un intervalo de confianza aproximado de nivel al menos $1-\alpha$ para $\theta$; con $z_{0{,}025}\approx 2$, el intervalo al $95\,\%$ es $\bar X\pm 1/\sqrt n$.
+\end{proposicion}
+
+Con $n=1000$ preguntas, el margen al $95\,\%$ es $1{,}96/(2\sqrt{1000})=0{,}031$: dos modelos con exactitudes del $70\,\%$ y del $72\,\%$ no se distinguen con esa muestra (\cref{eje:6-mit}). Las diferencias de uno o dos puntos que se publican a menudo exigen conjuntos de varios miles de preguntas, o comparaciones emparejadas sobre las mismas preguntas. A la incertidumbre estadística se suma la \emph{contaminación} (módulo~22): si las preguntas aparecieron en los datos de entrenamiento, la exactitud mide memoria y no capacidad.
+
+\section{pass@\texorpdfstring{$k$}{k} y su estimador insesgado}
+
+\begin{definicion}[pass@$k$]\label{def:passk}
+Sea un problema que el modelo resuelve en cada intento, de forma independiente, con probabilidad $p$. Su \emph{pass@$k$} es la probabilidad de que al menos una de $k$ muestras sea correcta, $1-(1-p)^{k}$. El pass@$k$ de un conjunto de problemas es la media de los pass@$k$ de sus problemas~\cite[§2.1]{chen}.
+\end{definicion}
+
+Calcular $1-(1-\hat p)^{k}$ con una estimación $\hat p$ de $p$ da un valor sesgado (\cref{eje:6-sesgo}). Chen \emph{et al.} generan $n\ge k$ muestras por problema, cuentan las $c$ correctas y usan otro estimador.
+
+\begin{proposicion}[Estimador insesgado de pass@$k$]\label{prop:passk}
+Sean $n\ge k$ muestras independientes, cada una correcta con probabilidad $p$, y sea $c$ el número de correctas. Entonces
+\[
+\widehat{\mathrm{pass}}_k=1-\frac{\binom{n-c}{k}}{\binom nk}
+\]
+cumple $\E\bigl[\widehat{\mathrm{pass}}_k\bigr]=1-(1-p)^{k}$, con el convenio $\binom{n-c}{k}=0$ si $n-c<k$. Además, si $n-c\ge k$,
+\[
+\frac{\binom{n-c}{k}}{\binom nk}=\prod_{i=n-c+1}^{n}\Bigl(1-\frac ki\Bigr).
+\]
+\end{proposicion}
+
+La forma de producto evita calcular números combinatorios enormes y es la implementación que proponen Chen \emph{et al.}~\cite[§2.1, fig.~3]{chen}, que usan $n=200$ y $k\le 100$.
+
+\addtocounter{definicion}{1}%
+
+\section{Calibración}
+
+\begin{definicion}[Calibración, ECE y MCE]\label{def:ece}
+Sea un clasificador que devuelve una predicción $\hat Y$ y una confianza $\hat P\in[0,1]$. Está \emph{perfectamente calibrado} si $P(\hat Y=Y\mid\hat P=q)=q$ para todo $q\in[0,1]$. Dadas $n$ predicciones agrupadas en $M$ intervalos de confianza $B_1,\dots,B_M$, sean $\mathrm{acc}_b$ la exactitud y $\mathrm{conf}_b$ la confianza media en $B_b$. El \emph{error de calibración esperado} y el \emph{error de calibración máximo} son
+\[
+\ECE=\sum_{b=1}^{M}\frac{\abs{B_b}}{n}\,\abs{\mathrm{acc}_b-\mathrm{conf}_b},\qquad \MCE=\max_b\abs{\mathrm{acc}_b-\mathrm{conf}_b}
+\]
+\cite[§2, ecs.~(1), (3) y~(5)]{guo}.
+\end{definicion}
+
+\addtocounter{definicion}{1}%
+
+El diagrama de fiabilidad representa $\mathrm{acc}_b$ frente a $\mathrm{conf}_b$; un modelo perfectamente calibrado sigue la diagonal. Guo \emph{et al.} observan que las redes profundas modernas están peor calibradas que las antiguas y proponen, entre otros métodos, el \emph{escalado de temperatura}.
+
+\begin{definicion}[Escalado de temperatura]\label{def:temp}
+Dados los logits $z$ de un clasificador, el escalado de temperatura devuelve $\softmax(z/T)$, con un único parámetro $T>0$ ajustado minimizando la log-verosimilitud negativa en un conjunto de validación~\cite[§4]{guo}.
+\end{definicion}
+
+\begin{proposicion}[El escalado de temperatura no cambia la exactitud]\label{prop:temp}
+Para todo $T>0$, $\arg\max_k\softmax(z/T)_k=\arg\max_kz_k$.
+\end{proposicion}
+
+El escalado solo cambia la confianza, no la predicción: $T>1$ suaviza las probabilidades y corrige la sobreconfianza. Kadavath \emph{et al.} muestran que los modelos de lenguaje grandes preentrenados están razonablemente bien calibrados en preguntas de opción múltiple con el formato adecuado y que pueden estimar la probabilidad de conocer la respuesta~\cite{kadavath}; el informe técnico de GPT-4 muestra que el posentrenamiento empeoró la calibración de su modelo preentrenado~\cite{gpt4}.
+
+\section{Alucinaciones y reglas de puntuación}
+
+Una \emph{alucinación} es una afirmación falsa formulada con fluidez y seguridad. Kalai \emph{et al.}~\cite{kalai25} sostienen que no es un fallo misterioso, sino una consecuencia estadística del entrenamiento y de la evaluación.
+\begin{itemize}[leftmargin=1.4em]
+  \item \emph{Preentrenamiento.} Reducen la generación de respuestas válidas a un problema de clasificación binaria («¿es válida esta respuesta?») y prueban que la tasa de error generativo es al menos, aproximadamente, el doble de la tasa de error de esa clasificación~\cite[§3.1, corolario~1]{kalai25}. Para hechos arbitrarios, como la fecha de cumpleaños de una persona poco conocida, la tasa de alucinación de un modelo base está acotada inferiormente por la fracción de hechos que aparecen una sola vez en los datos de entrenamiento~\cite[§3.3.1, teorema~2]{kalai25}, resultado anticipado por Kalai y Vempala~\cite{kalai-vempala}.
+  \item \emph{Evaluación.} La mayoría de los conjuntos de evaluación puntúan 1 el acierto y 0 tanto el error como la abstención, de modo que adivinar nunca resta. Un modelo optimizado para esas puntuaciones aprende a no decir nunca «no lo sé».
+\end{itemize}
+
+\begin{proposicion}[Umbral de confianza explícito]\label{prop:umbral-t}
+Sea $t\in[0,1)$ y una regla de puntuación que da 1 punto por acierto, 0 por abstención y $-t/(1-t)$ por error. Si el modelo acierta con probabilidad $p$, responder tiene mayor puntuación esperada que abstenerse si y solo si $p>t$.
+\end{proposicion}
+
+Kalai \emph{et al.} proponen incluir el umbral en las instrucciones de la evaluación, con valores como $t=0{,}5$, $0{,}75$ o $0{,}9$; la puntuación binaria habitual corresponde a $t=0$~\cite[§4.2]{kalai25}.
+
+\section{\emph{Red teaming} y ataques adversarios}
+
+Una \emph{evaluación de seguridad} mide, antes del despliegue, si un modelo tiene una capacidad peligrosa o si produce conductas dañinas cuando se le pide. El \emph{red teaming} busca activamente entradas que provoquen fallos. Ganguli \emph{et al.} reunieron y analizaron unos $39\,000$ ataques escritos por personas contra modelos de Anthropic~\cite{ganguli}; Perez \emph{et al.} usan un modelo de lenguaje para generar los ataques de forma automática~\cite{perez}.
+
+\begin{definicion}[Ataque por sufijo adversario]\label{def:gcg}
+Sea $u$ una petición dañina, $y^{*}=(y^{*}_1,\dots,y^{*}_T)$ el comienzo de una respuesta afirmativa (por ejemplo, «Claro, aquí tienes…») y $s$ un sufijo de tokens. El ataque busca
+\[
+s^{*}=\arg\min_{s}\ \mathcal{L}(s),\qquad \mathcal{L}(s)=-\sum_{t=1}^{T}\ln p\bigl(y^{*}_t\mid u\oplus s\oplus y^{*}_{<t}\bigr),
+\]
+donde $\oplus$ denota concatenación~\cite[§2.1]{zou}.
+\end{definicion}
+
+El problema es discreto. El algoritmo \emph{Greedy Coordinate Gradient} (GCG) de Zou \emph{et al.} calcula el gradiente de $\mathcal{L}$ respecto de la codificación \emph{one-hot} de cada token del sufijo, toma para cada posición los $k$ tokens con gradiente más negativo como candidatos, evalúa exactamente la pérdida de un lote de sustituciones aleatorias entre esos candidatos y conserva la mejor~\cite[§2.2]{zou}. Optimizado sobre varias peticiones y varios modelos abiertos a la vez, el sufijo resultante se transfiere a modelos cerrados: en su evaluación, la tasa de éxito fue del $86{,}6\,\%$ en GPT-3.5, del $46{,}9\,\%$ en GPT-4, del $47{,}9\,\%$ en Claude~1, del $2{,}1\,\%$ en Claude~2 y del $66{,}0\,\%$ en PaLM-2~\cite[§3.2]{zou}. Son cifras de 2023 sobre versiones ya retiradas; los proveedores corrigen estos ataques una vez publicados.
+
+\addtocounter{figure}{1}%
+
+\section{Estadística de los sucesos raros}
+
+Las conductas peligrosas son, por diseño, raras, y su medida requiere un cuidado estadístico particular.
+
+\begin{proposicion}[Intentos repetidos]\label{prop:intentos}
+Si un ataque tiene éxito en cada intento, de forma independiente, con probabilidad $p$, la probabilidad de al menos un éxito en $k$ intentos es $1-(1-p)^{k}$, que es mayor o igual que $1-e^{-kp}$.
+\end{proposicion}
+
+Con $p=0{,}02$, el ataque triunfa al menos una vez en 100 intentos con probabilidad $1-0{,}98^{100}=0{,}867$. Un ataque que parece raro en una prueba es casi seguro para un atacante persistente.
+
+\begin{proposicion}[Regla del 3]\label{prop:regla3}
+Sean $n$ pruebas independientes sin ningún fallo, cada una con probabilidad de fallo $p$ desconocida. La cota superior exacta de confianza $1-\alpha$ para $p$, es decir, el valor $p_u$ con $(1-p_u)^{n}=\alpha$, cumple $p_u\le\ln(1/\alpha)/n$. Para $\alpha=0{,}05$, $\ln 20=2{,}996$ y $p_u\le 3/n$.
+\end{proposicion}
+
+Con 300 pruebas sin fallos, la tasa de fallo es menor que $3/300=1\,\%$ con confianza del $95\,\%$; la cota exacta es $1-0{,}05^{1/300}=0{,}99\,\%$. Cero fallos no significa tasa cero.
+
+\section{Marcos de seguridad y conductas ocultas}
+
+Las evaluaciones de seguridad suelen agruparse en cuatro preguntas: si el modelo \emph{puede} hacer algo peligroso (capacidades, como la ayuda en ciberataques o en armas biológicas), si \emph{lo hará} cuando se le pida (salvaguardas, como la tasa de éxito de los ataques), si \emph{persigue} lo que se le pidió (alineamiento: adulación, engaño, sabotaje de tareas) y si \emph{dice lo que representa internamente} (honestidad: calibración y alucinaciones). La \emph{Responsible Scaling Policy} de Anthropic~\cite{rsp} define niveles de seguridad (ASL) que exigen medidas de protección más estrictas cuando las evaluaciones detectan ciertas capacidades; Google DeepMind y OpenAI han publicado marcos análogos.
+
+Hay dos límites conocidos de las evaluaciones de conducta. El primero es que pueden no reflejar el despliegue: contaminación, jueces automáticos sesgados y modelos que distinguen cuándo se les evalúa. El segundo es más profundo: Hubinger \emph{et al.} entrenaron deliberadamente modelos con puertas traseras (por ejemplo, escribir código seguro si el año indicado es 2023 e insertar vulnerabilidades si es 2024) y comprobaron que la conducta persistía tras el ajuste supervisado, el aprendizaje por refuerzo y el entrenamiento adversario, sobre todo en los modelos más grandes; el entrenamiento adversario enseñaba a reconocer mejor el desencadenante y a ocultar la conducta~\cite{hubinger}. Una evaluación de conducta solo ve entradas y salidas; por eso se combina con las herramientas de interpretabilidad de los temas~1 a~5, que miran dentro.
+

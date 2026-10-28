@@ -1,0 +1,70 @@
+% =====================================================================
+\chapter{Servicio a escala: latencia, rendimiento y memoria}
+\label{tema:6}
+% =====================================================================
+
+Un servidor de inferencia recibe peticiones que llegan en momentos distintos, con prompts y respuestas de longitudes muy diferentes. Este tema define las métricas con las que se mide (tiempo hasta el primer token, tiempo por token y rendimiento), analiza por qué el \emph{batching} estático desperdicia el acelerador y cómo lo resuelve el \emph{batching} continuo, y estudia la gestión paginada de la caché KV, que elimina la fragmentación y permite compartir prefijos. Se siguen la clase~10 de CS336~\cite{cs336}, el artículo de Orca de Yu \emph{et al.}~\cite{orca}, las secciones~3 y~4 de Kwon \emph{et al.}~\cite{kwon} y la sección~2 de Pope \emph{et al.}~\cite{pope}.
+
+\section{Métricas de servicio}
+
+\begin{definicion}[Latencia y rendimiento]\label{def:metricas}
+Para una petición, el \emph{tiempo hasta el primer token} ($\TTFT$) es el intervalo entre su llegada y la emisión del primer token de la respuesta; incluye la espera en cola y el \emph{prefill}. El \emph{tiempo por token de salida} ($\TPOT$) es el intervalo medio entre tokens sucesivos, y su inverso es la velocidad que percibe el usuario. El \emph{rendimiento} (\emph{throughput}) del sistema es el número total de tokens generados por segundo para todas las peticiones.
+\end{definicion}
+
+\begin{proposicion}[Latencia de una respuesta]\label{prop:latencia}
+Una respuesta de $n_{\mathrm{out}}$ tokens se completa en $\TTFT+(n_{\mathrm{out}}-1)\,\TPOT$.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+Las dos métricas dependen de fases distintas: el $\TTFT$ del \emph{prefill}, limitado por el cómputo, y el $\TPOT$ de la decodificación, limitada por la memoria (\cref{tema:2}). Por eso conviene procesar el \emph{prefill} con lotes pequeños, para reducir el $\TTFT$, y la decodificación con lotes grandes, para aumentar el rendimiento~\cite{cs336}. Además, replicar el modelo en $M$ grupos de aceleradores multiplica el rendimiento por $M$ sin cambiar la latencia, mientras que repartir un modelo entre aceleradores (módulo~17) reduce la latencia a cambio de comunicación~\cite{cs336,pope}.
+
+\section{\emph{Batching} estático y continuo}
+
+\begin{definicion}[\emph{Batching} estático]\label{def:estatico}
+En el \emph{batching} estático, el servidor forma un lote de $B$ peticiones y lo ejecuta hasta que termina la más larga; solo entonces admite peticiones nuevas.
+\end{definicion}
+
+\begin{proposicion}[Utilización del lote estático]\label{prop:utilizacion}
+Si las respuestas del lote tienen longitudes $\ell_1,\dots,\ell_B$, la fracción de ranuras de cómputo útiles durante la decodificación es
+\[
+U=\frac{\sum_{i=1}^{B}\ell_i}{B\,\max_i\ell_i}.
+\]
+\end{proposicion}
+
+\begin{definicion}[\emph{Batching} continuo]\label{def:continuo}
+En el \emph{batching} continuo, o planificación por iteración, el servidor decide la composición del lote en cada paso de decodificación: cuando una secuencia termina, su ranura se asigna inmediatamente a una petición en espera~\cite{orca}. Como las secuencias tienen longitudes distintas, Orca aplica el \emph{batching selectivo}: las operaciones que actúan posición a posición (proyecciones y perceptrón) se ejecutan sobre la concatenación de todas las posiciones del lote, y la atención se calcula por separado para cada secuencia~\cite{orca,cs336}.
+\end{definicion}
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[Utilización del \emph{batching} continuo]\label{prop:continuo}
+Si en todo paso hay al menos tantas peticiones en espera como ranuras liberadas, el \emph{batching} continuo mantiene ocupadas todas las ranuras de decodificación.
+\end{proposicion}
+
+La proposición ignora el coste del \emph{prefill} de las peticiones que entran, que se intercala con la decodificación de las demás; su planificación es un problema propio de los sistemas de servicio.
+
+\section{Memoria de la caché KV y PagedAttention}
+
+Antes de vLLM, los servidores reservaban para cada petición un bloque contiguo de caché KV del tamaño máximo posible de la respuesta. Esa reserva produce \emph{fragmentación interna} (posiciones reservadas que nunca se usan) y \emph{fragmentación externa} (huecos entre reservas de tamaños distintos); en los sistemas que Kwon \emph{et al.} analizan, solo entre el $20{,}4\,\%$ y el $38{,}2\,\%$ de la memoria de la caché guarda estados de tokens~\cite[§1 y §3.1]{kwon}.
+
+\begin{definicion}[PagedAttention]\label{def:paged}
+\emph{PagedAttention} divide la caché KV de cada secuencia en \emph{bloques} de tamaño fijo de $b_{\mathrm{blk}}$ tokens, que no tienen por qué ser contiguos en memoria. Cada secuencia tiene una \emph{tabla de bloques} que traduce cada bloque lógico (posiciones $jb_{\mathrm{blk}},\dots,(j+1)b_{\mathrm{blk}}-1$) a un bloque físico. Los bloques se asignan cuando se llenan los anteriores, y el núcleo de atención lee la caché siguiendo la tabla~\cite[§4.1 y §4.2]{kwon}.
+\end{definicion}
+
+La analogía es la memoria virtual paginada de un sistema operativo: la secuencia ve un espacio lógico contiguo, formado por páginas físicas dispersas, y la tabla de bloques hace de tabla de páginas.
+
+\addtocounter{figure}{1}%
+
+\begin{proposicion}[Desperdicio acotado]\label{prop:desperdicio}
+Con bloques de $b_{\mathrm{blk}}$ tokens, una secuencia de $\ell\ge 1$ tokens ocupa $\lceil\ell/b_{\mathrm{blk}}\rceil$ bloques y desperdicia $b_{\mathrm{blk}}\lceil\ell/b_{\mathrm{blk}}\rceil-\ell\le b_{\mathrm{blk}}-1$ posiciones. Como todos los bloques tienen el mismo tamaño, no hay fragmentación externa: cualquier bloque libre sirve a cualquier secuencia.
+\end{proposicion}
+
+\addtocounter{definicion}{1}%
+
+\begin{proposicion}[Compartición de prefijos]\label{prop:prefijo}
+Sean $n_s$ secuencias que comparten un prompt de $P$ tokens. Con compartición de bloques y \emph{copia en escritura}, el prompt ocupa $\lfloor P/b_{\mathrm{blk}}\rfloor$ bloques completos compartidos más, si $P$ no es múltiplo de $b_{\mathrm{blk}}$, una copia del bloque parcial por secuencia, en lugar de $n_s\lceil P/b_{\mathrm{blk}}\rceil$ bloques.
+\end{proposicion}
+
+Este mecanismo sirve para el muestreo de varias respuestas por prompt, para la búsqueda en haz y para los prompts de sistema comunes. Las API públicas de Anthropic y de Google ofrecen una caché de prefijos del prompt (\emph{prompt caching} y \emph{context caching}) como función documentada; su implementación interna no es pública.
+

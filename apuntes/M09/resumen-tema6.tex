@@ -1,0 +1,95 @@
+% =====================================================================
+\chapter{El modelo de lenguaje neuronal}
+\label{tema:6}
+% =====================================================================
+
+Este tema reúne los anteriores en un modelo de lenguaje. Bengio, Ducharme, Vincent y Jauvin~\cite{bengio} propusieron en 2003 sustituir la tabla de un modelo de $n$-gramas por una red: cada token del contexto se convierte en un vector, los vectores se concatenan y un MLP produce la distribución del token siguiente. La presentación sigue la §2 del artículo original y la §6.5 de~\cite{jm3}; la motivación por el tamaño de las tablas, la §9.3 de~\cite{d2l}. Los resultados numéricos son los de la práctica del módulo, con el corpus de nombres del módulo~1.
+
+\section{La maldición de la dimensionalidad}
+
+Un modelo de $n$-gramas sobre un vocabulario de $K$ tokens tiene $K^{n}$ entradas (módulo~1, tema~2). Con $K=28$ y un contexto de tres caracteres ($n=4$), la tabla tiene $28^{4}=614\,656$ casillas, frente a los $1885$ ejemplos de entrenamiento del corpus de nombres: casi todos los contextos no se han visto nunca y su estimación depende por completo del suavizado. El problema de fondo es que la tabla trata cada contexto como un símbolo aislado. Los contextos «.an» y «.en» no comparten nada, aunque las vocales \texttt{a} y \texttt{e} aparezcan en entornos parecidos.
+
+\section{Embeddings como capa lineal}
+
+\begin{definicion}[Matriz de embeddings]
+Sea $\V$ un vocabulario de $K$ tokens y $d\ge 1$. Una \emph{matriz de embeddings} es $C\in\R^{K\times d}$; el \emph{embedding} del token de índice $i$ es su fila $C[i]=e_i^{\top}C\in\R^{1\times d}$, donde $e_i$ es el vector \emph{one-hot} de $i$ (módulo~2, tema~5).
+\end{definicion}
+
+\begin{proposicion}[Gradiente de los embeddings]\label{prop:grad-embedding}
+Sea un contexto de tokens $(x_1,\dots,x_c)$ y sea $e=(C[x_1],\dots,C[x_c])\in\R^{1\times cd}$ la concatenación de sus embeddings. Si $\nabla_{\!e}L=(g_1,\dots,g_c)$ con $g_j\in\R^{1\times d}$, entonces
+\[
+\nabla_{\!C[i]}L=\sum_{j\,:\,x_j=i}g_j\qquad\text{para cada token } i,
+\]
+y las filas de los tokens que no aparecen en el contexto tienen gradiente nulo.
+\end{proposicion}
+
+En la práctica, las bibliotecas no multiplican por vectores \emph{one-hot}: leen la fila correspondiente y, en la pasada hacia atrás, acumulan los gradientes en las filas usadas (en NumPy, con \texttt{np.add.at}).
+
+\section{El modelo de Bengio \emph{et al.}}
+
+\begin{definicion}[Modelo de lenguaje neuronal prealimentado]\label{def:bengio}
+Sea $n\ge 2$ el orden del modelo y $c=n-1$ la longitud del contexto. Dado el contexto $(x_{t-c},\dots,x_{t-1})$, se calcula
+\[
+e=\bigl(C[x_{t-1}],\dots,C[x_{t-c}]\bigr)\in\R^{1\times cd},\qquad
+y=b+eW+\tanh(\tilde b+eH)\,U\in\R^{1\times K},
+\]
+con $H\in\R^{cd\times h}$, $\tilde b\in\R^{1\times h}$, $U\in\R^{h\times K}$, $b\in\R^{1\times K}$ y una matriz opcional de \emph{conexiones directas} $W\in\R^{cd\times K}$, y se toma $P(x_t=k\mid\text{contexto})=\softmax(y)_k$~\cite[§2]{bengio}.
+\end{definicion}
+
+\begin{proposicion}[Número de parámetros]\label{prop:param-bengio}
+Con conexiones directas, el modelo de la \cref{def:bengio} tiene
+\[
+K(1+nd+h)+h\bigl(1+(n-1)d\bigr)
+\]
+parámetros; sin ellas, $K(1+nd+h)+h(1+(n-1)d)-K(n-1)d$.
+\end{proposicion}
+
+\addtocounter{figure}{1}%
+
+\addtocounter{definicion}{1}%
+
+\section{Entrenamiento y regularización}
+
+Los parámetros $\theta$ se ajustan minimizando la entropía cruzada media sobre los $N$ pares (contexto, token siguiente) de entrenamiento, con decaimiento de pesos (módulo~7):
+\[
+J(\theta)=-\frac1N\sum_{r=1}^{N}\ln P_\theta\bigl(x^{(r)}_t\mid\text{contexto}^{(r)}\bigr)+\frac{\lambda}{2}\norm{\theta}^{2},
+\qquad \theta\leftarrow\theta-\eta\bigl(\nabla\mathcal{L}(\theta)+\lambda\theta\bigr),
+\]
+donde $\mathcal{L}$ es el primer término de $J$. El gradiente de $\mathcal{L}$ se obtiene con el \cref{teo:backprop}, aplicado al lote completo, y con la \cref{prop:grad-embedding} para $C$. La perplejidad es $\PPL=e^{\mathcal{L}}$ (módulo~1, tema~5).
+
+\begin{table}[h]
+\centering\small
+\caption{Perplejidades en el corpus de nombres del módulo~1 (1000 pasos de descenso por lotes completos, $\eta=0{,}5$).}\label{tab:resultados}
+\begin{tabular}{@{}lcrcc@{}}
+\toprule
+Modelo & Contexto & Parámetros & \multicolumn{2}{c@{}}{PPL} \\
+\cmidrule(l){4-5}
+ & & & entren. & valid. \\
+\midrule
+Uniforme & 0 & 0 & 28 & 28 \\
+Bigramas, suavizado $\alpha=0{,}2$ & 1 & 784 & --- & $12{,}42$ \\
+MLP, $d=10$, $H=64$, $\lambda=0{,}005$ & 3 & 4084 & $6{,}62$ & $10{,}45$ \\
+MLP sin decaimiento ($\lambda=0$) & 3 & 4084 & $3{,}76$ & $30{,}73$ \\
+Tabla de 4-gramas & 3 & 614\,656 & --- & (casi vacía) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+El MLP regularizado reduce la perplejidad de validación del modelo de bigramas en un $16\,\%$, de $12{,}42$ a $10{,}45$, con menos de una centésima parte de los parámetros de una tabla de 4-gramas. Sin decaimiento de pesos, la red memoriza los nombres de entrenamiento: la perplejidad de entrenamiento baja a $3{,}76$ y la de validación sube a $30{,}73$, peor que el modelo uniforme. Es el sobreajuste del módulo~8.
+
+\section{Por qué generaliza}
+
+La red no ve tokens, sino vectores. Si dos tokens tienen embeddings próximos, los contextos que difieren solo en ellos producen distribuciones próximas. El resultado siguiente lo cuantifica. Se usa la norma espectral $\norm{A}_2=\max_{\norm{v}=1}\norm{vA}$ (módulo~3).
+
+\begin{proposicion}\label{prop:lipschitz}
+Sea $f(e)=\ReLU(eW_1+b_1)W_2+b_2$ la función que lleva la concatenación de embeddings a los logits, y sea $p(e)=\softmax(f(e))$. Para todo par $e,e'$ y todo token $k$,
+\[
+\norm{f(e)-f(e')}\le\norm{W_1}_2\norm{W_2}_2\,\norm{e-e'},\qquad
+\abs{\ln p_k(e)-\ln p_k(e')}\le 2\,\norm{W_1}_2\norm{W_2}_2\,\norm{e-e'}.
+\]
+\end{proposicion}
+
+Los embeddings se aprenden junto con el resto de la red, y tokens que aparecen en contextos parecidos reciben gradientes parecidos (\cref{prop:grad-embedding}); en la práctica del módulo, las vocales acaban agrupadas sin que nadie haya indicado a la red qué es una vocal. Lo aprendido para un contexto se transfiere así, por la \cref{prop:lipschitz}, a todos los contextos cercanos.
+
+\addtocounter{definicion}{1}%
+
